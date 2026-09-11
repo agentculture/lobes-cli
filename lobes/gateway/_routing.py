@@ -63,47 +63,46 @@ class RoutingTable:
     infeasible: frozenset[str] = frozenset()
     # Backend NAME -> the OPERATOR-DECLARED origin of the peer box that hosts
     # that backend's role (mesh-brain t3, issue #112's "direct + honest
-    # referral" decision). Populated by :func:`lobes.gateway._config.
-    # build_config` from ``<PREFIX>_PEER_ORIGIN`` env vars
-    # (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`) — the SAME
-    # per-backend-name env convention ``infeasible`` above already uses.
-    # Consulted to ANNOTATE honesty surfaces (/capabilities and the 404
-    # ``role_infeasible`` body) for a role in ``infeasible``, and — ONLY for a
-    # name that also appears in ``peer_proxied`` below — dialed by the
-    # data-plane proxy branch (:func:`lobes.gateway.server._proxy_to_peer`,
-    # proxy-lobes t6, issues #115/#127); an origin with no matching
-    # ``peer_proxied`` entry stays annotation-only, never dialed (the issue
-    # #112 referral contract, preserved byte-for-byte). Per the #92 lesson an
-    # origin here is always operator-declared, never derived from
-    # hostnames/interfaces. Defaults to empty so a deployment with no peer
-    # config is byte-identical to the pre-referral contract on every surface.
+    # referral" decision). RETIRED SOURCE (t14): this used to be populated by
+    # :func:`lobes.gateway._config.build_config` from a per-backend
+    # ``<PREFIX>_PEER_ORIGIN`` env var; that parsing is gone (the mesh
+    # RoutingSnapshot, t13, is the candidate/referral source now), so
+    # ``build_config`` no longer fills this field and it stays at its empty
+    # default. The field itself, and every reader below, are UNCHANGED —
+    # :mod:`lobes.gateway.server`'s referral/proxy code still consults it,
+    # it is simply never non-empty any more via env. Consulted to ANNOTATE
+    # honesty surfaces (/capabilities and the 404 ``role_infeasible`` body)
+    # for a role in ``infeasible``, and — ONLY for a name that also appears
+    # in ``peer_proxied`` below — dialed by the data-plane proxy branch
+    # (:func:`lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
+    # #115/#127); an origin with no matching ``peer_proxied`` entry stays
+    # annotation-only, never dialed (the issue #112 referral contract,
+    # preserved byte-for-byte). Defaults to empty so a deployment with no
+    # peer config is byte-identical to the pre-referral contract on every
+    # surface.
     peer_origins: Mapping[str, str] = field(default_factory=dict)
     # Backend NAMES whose dropped role this box has opted in to PROXY to its
     # declared peer (proxy-lobes t1, issues #115/#127 — the follow-up
-    # ``peer_origins`` above explicitly deferred). Populated by
-    # :func:`lobes.gateway._config.build_config` from ``<PREFIX>_PEER_PROXY``
-    # truthy env vars (:data:`lobes.gateway._config.PEER_PROXY_ENV`) — the
-    # SAME per-backend-name env convention ``infeasible``/``peer_origins``
-    # already use — and ONLY for a name that ALSO has a declared peer origin
-    # AND is in ``infeasible`` (a knob without an origin has nothing to dial;
-    # a knob on a locally-feasible role is ignored — the local engine serves
-    # it). Consumed by the proxy data plane (t6): a request resolving to a
-    # name here is FORWARDED to its declared peer instead of taking the
-    # referral 404 (see ``lobes.gateway.server._proxy_to_peer``), and its
-    # served id is advertised on /v1/models while the live peer probe verifies
-    # it. Defaults to empty so every existing table construction is completely
-    # unaffected, and so an origin declared WITHOUT the knob stays
+    # ``peer_origins`` above explicitly deferred). RETIRED SOURCE (t14): used
+    # to be populated by :func:`lobes.gateway._config.build_config` from a
+    # per-backend ``<PREFIX>_PEER_PROXY`` truthy env var; that parsing is gone
+    # (mesh RoutingSnapshot, t13, drives forwarding now) and this field stays
+    # at its empty default. Consumed by the proxy data plane (t6): a request
+    # resolving to a name here is FORWARDED to its declared peer instead of
+    # taking the referral 404 (see ``lobes.gateway.server._proxy_to_peer``),
+    # and its served id is advertised on /v1/models while the live peer probe
+    # verifies it. Defaults to empty so every existing table construction is
+    # completely unaffected, and so an origin declared WITHOUT the knob stays
     # annotation-only referral — the issue #112 contract is preserved
     # byte-for-byte.
     peer_proxied: frozenset[str] = frozenset()
     # Backend NAME -> the OUTBOUND API key this box presents when dialing
     # that role's declared peer (proxy-lobes t1, issues #115/#127 — the
-    # pairwise-auth half). Populated by :func:`lobes.gateway._config.
-    # build_config` from ``<PREFIX>_PEER_API_KEY`` env vars
-    # (:data:`lobes.gateway._config.PEER_API_KEY_ENV`), verbatim (stripped),
-    # and ONLY for names with a declared peer origin (a key without an
-    # origin is inert — there is no peer to authenticate to). Attached by the
-    # proxy data plane (t6) as the OUTBOUND ``Authorization: Bearer`` on a
+    # pairwise-auth half). RETIRED SOURCE (t14): used to be populated by
+    # :func:`lobes.gateway._config.build_config` from a per-backend
+    # ``<PREFIX>_PEER_API_KEY`` env var, verbatim (stripped); that parsing is
+    # gone and this field stays at its empty default. Attached by the proxy
+    # data plane (t6) as the OUTBOUND ``Authorization: Bearer`` on a
     # forwarded request — replacing, never accompanying, the caller's own
     # credential — and by the peer-readiness probe (t4).
     # ``repr=False`` because the values are SECRETS: they must NEVER appear
@@ -117,27 +116,24 @@ class RoutingTable:
     # names ONE peer for a role this box DROPPED (mesh-brain referral/proxy,
     # issue #112); this plural channel names MULTIPLE origins for a role
     # this box (or the mesh) runs as an interchangeable REPLICA POOL.
-    # Populated by :func:`lobes.gateway._config.build_config` from
-    # ``<PREFIX>_PEER_ORIGINS`` (:data:`lobes.gateway._config.
-    # PEER_ORIGINS_ENV`) — comma-separated, each entry stripped and
-    # trailing-slash-trimmed exactly like the singular channel. Per the #92
-    # lesson every origin here is OPERATOR-TYPED, never derived from
-    # hostnames/interfaces/service discovery. This task (t2) only PARSES the
-    # field — no replica-selection logic (round-robin, health-aware pick, …)
-    # consumes it yet; that lands in a later cortex-replica-pool task.
-    # Defaults to empty so every existing table construction is unaffected.
+    # RETIRED SOURCE (t14): used to be populated by
+    # :func:`lobes.gateway._config.build_config` from a comma-separated
+    # per-backend ``<PREFIX>_PEER_ORIGINS`` env var; that parsing is gone —
+    # the mesh RoutingSnapshot (t13) is the pool candidate source now — and
+    # this field stays at its empty default. No reader of it was deleted:
+    # :func:`lobes.gateway.server.build_replica_caches` and friends still
+    # consult it, and simply see an always-empty mapping.
     replica_origins: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     # Backend NAME -> the OUTBOUND API key PER REPLICA, positional against
     # ``replica_origins`` for the same backend name (index *i* is replica
-    # *i*'s credential). Populated from ``<PREFIX>_PEER_API_KEYS``
-    # (:data:`lobes.gateway._config.PEER_API_KEYS_ENV`) by
-    # :func:`~lobes.gateway._config._replica_api_keys`, which enforces the
-    # list is the SAME LENGTH as its origins list — an empty slot is legal
-    # (it means "no key for this replica"), but a length MISMATCH raises
-    # :class:`~lobes.gateway._config.ReplicaConfigError` at config-build
-    # time rather than silently shifting one replica's key onto another's
-    # origin. ``repr=False`` because the values are SECRETS: they must never
-    # appear in repr/str of this table. Defaults to empty.
+    # *i*'s credential). RETIRED SOURCE (t14): used to be populated from a
+    # comma-separated per-backend ``<PREFIX>_PEER_API_KEYS`` env var by
+    # :func:`~lobes.gateway._config._replica_api_keys` (which enforced the
+    # list was the SAME LENGTH as its origins list, raising
+    # ``ReplicaConfigError`` on mismatch); that function and error class are
+    # gone along with the env source. ``repr=False`` because the values are
+    # SECRETS: they must never appear in repr/str of this table. Defaults to
+    # empty.
     replica_api_keys: Mapping[str, tuple[str, ...]] = field(default_factory=dict, repr=False)
     # This box's own OPERATOR-DECLARED origin (cortex-replica-pool, issue
     # #199, t2), from ``GATEWAY_SELF_ORIGIN`` (stripped, trailing slash

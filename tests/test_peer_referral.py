@@ -1,52 +1,52 @@
-"""Honest referral: opt-in peer config on the gateway (mesh-brain t3, issue #112).
+"""Honest referral: the ``role_infeasible`` 404's ``hosted_by`` (mesh-brain
+t3, issue #112) — RETIRED env source, MESH source added (t14).
 
-A mesh-brain box drops a role to a peer box. With **peer config** set — the
-operator-declared ``<PREFIX>_PEER_ORIGIN`` env vars (see
-:data:`lobes.gateway._config.PEER_ORIGIN_ENV`) — the box's honesty surfaces
-name the peer that actually hosts each unhosted role:
+A box drops a role. Before t14 the only way its honesty surfaces could name
+the peer that hosts that role was an operator-declared
+``<PREFIX>_PEER_ORIGIN`` env var
+(:data:`lobes.gateway._config.PEER_ORIGIN_ENV`, now DELETED). t13 made the
+mesh ``RoutingSnapshot`` the candidate source for pool placement and
+forwarding; this task extends the SAME mesh snapshot to the referral 404:
+:func:`lobes.gateway.server._feasibility_response` (and its audio-lane
+sibling in :func:`~lobes.gateway.server.handle_audio_request`) now resolve
+``hosted_by`` via :func:`lobes.gateway.server._mesh_referral_origin` — the
+origin of the first mesh member that has VERIFIED the role — falling back to
+``None`` (the pre-referral body, byte for byte) when no mesh, or no verified
+member, is present.
 
-* ``GET /capabilities`` / ``lobes capabilities`` annotate the unhosted role
-  with ``hosted_by: <peer origin>``;
-* the ``404 role_infeasible`` body carries the referral (``hosted_by`` in the
-  error object, and the origin in the message).
+``table.peer_origins`` (the retired env family's field) is asserted
+byte-identical to empty regardless of what an operator still has set in
+``.env`` — the retired knob is now silently inert, exactly like ``lobes
+doctor``'s ``peer_family_retired`` finding describes.
 
-Two invariants bound the feature:
+``/capabilities``' own ``hosted_by`` annotation
+(:func:`lobes.roles.annotate_peer_referrals`) is OUT OF SCOPE for this task
+(``lobes/roles.py`` is not an owned file) — it still reads only
+``table.peer_origins`` and therefore never carries a mesh-sourced referral.
+That is a recorded gap, not a claim of parity between the two surfaces.
 
-* **Byte-identity with no peer config** — an operator who sets nothing gets
-  responses byte-identical to the pre-change contract (regression-pinned
-  below against the exact pre-change bytes).
-* **NO data-plane proxying** — the gateway never forwards a request to a
-  peer. A request for an unhosted role is answered locally with the 404
-  referral and zero outbound connections (proven below at both the
-  ``handle_post`` seam and the real HTTP loopback). Proxy-lobes (following
-  the referral) is explicitly deferred — issue #115.
+Two invariants remain, now proven via a fake mesh member instead of an env
+var:
 
-The referral origin is OPERATOR-DECLARED, never derived from hostnames or
-interfaces (the #92 lesson: never fabricate an absolute URL).
+* **Byte-identity with no mesh and no peer config** — the pre-t3 contract.
+* **NO data-plane proxying from a referral-only 404** — a request for an
+  unhosted, non-proxied role is answered locally, zero outbound
+  connections, whether or not a mesh names a host for it.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
-import threading
-import urllib.error
-import urllib.request
-from http.server import ThreadingHTTPServer
 
 import pytest
 
-from lobes.cli import main
 from lobes.gateway import server as S
-from lobes.gateway._config import (
-    FEASIBLE_ENV,
-    NEVER_PROXIED_BACKENDS,
-    PEER_ORIGIN_ENV,
-    build_config,
-)
+from lobes.gateway._config import build_config
+from lobes.gateway._mesh_routing import build_snapshot
+from lobes.gateway._mesh_wire import Fingerprint, RoleInfo
 from lobes.gateway._routing import list_models_payload
 from lobes.roles import ROLES, annotate_peer_referrals, build_role_registry
-from lobes.runtime import _compose, _env
 
 _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 _SENSES_ID = "coolthor/gemma-4-12B-it-NVFP4A16"
@@ -54,18 +54,12 @@ _EMBED_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 _GATEWAY_URL = "http://localhost:8000"
 
-# The peer origins an operator would declare — full, dialable origins. These
-# are DECLARED per box in .env, never derived (#92).
+# A referral origin an operator's peer box would present — never derived (#92).
 _THOR_ORIGIN = "http://thor.local:8001"
-_SPARK_ORIGIN = "http://spark.local:8001"
 
 
-def _spark_lobe_env(*, peers: bool = False, **over) -> dict[str, str]:
-    """A rendered spark-lobe env: cortex + pooling hosted, senses DROPPED.
-
-    ``peers=True`` adds the opt-in referral config: the operator declares the
-    peer box (Thor) that hosts the dropped ``senses`` role.
-    """
+def _spark_lobe_env(**over) -> dict[str, str]:
+    """A rendered spark-lobe env: cortex + pooling hosted, senses DROPPED."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
@@ -76,8 +70,6 @@ def _spark_lobe_env(*, peers: bool = False, **over) -> dict[str, str]:
         "RERANK_URL": "http://vllm-rerank:8000",
         "RERANK_SERVED_NAME": _RERANK_ID,
     }
-    if peers:
-        env["MULTIMODAL_PEER_ORIGIN"] = _THOR_ORIGIN
     env.update(over)
     return env
 
@@ -110,89 +102,168 @@ def _opener():
     return opener, calls
 
 
-def _post(table, cfg, model: str, path: str = "/v1/chat/completions"):
+def _post(table, cfg, model: str, path: str = "/v1/chat/completions", mesh_snapshot=None):
     opener, calls = _opener()
-    resp = S.handle_post(table, cfg, path, [], json.dumps({"model": model}).encode(), opener)
+    resp = S.handle_post(
+        table,
+        cfg,
+        path,
+        [],
+        json.dumps({"model": model}).encode(),
+        opener,
+        mesh_snapshot=mesh_snapshot,
+    )
     return resp, calls
 
 
+def _mesh_snapshot_for(role: str, origin: str = _THOR_ORIGIN, name: str = "thor"):
+    """A minimal mesh RoutingSnapshot with one member verified for *role*."""
+    fp = Fingerprint(
+        served_id=_SENSES_ID, quantization="NVFP4A16", max_model_len=32768, runtime="vllm"
+    )
+
+    class _FakeRoster:
+        def members(self):
+            return [name]
+
+        @property
+        def _roster(self):
+            rec = type("Rec", (), {"name": name, "origin": origin, "capacity": 1.0})()
+            return {name: rec}
+
+        def now(self):
+            return 1.0
+
+    return build_snapshot(
+        _FakeRoster(),
+        announcements={
+            origin: type(
+                "Ann",
+                (),
+                {
+                    "name": name,
+                    "origin": origin,
+                    "schema_version": "1.0.0",
+                    "roles": {role: RoleInfo(
+                        model=_SENSES_ID,
+                        runtime="vllm",
+                        context=32768,
+                        quant="NVFP4A16",
+                        responsibilities=("generate",),
+                        forbidden_responsibilities=(),
+                        fingerprint=fp,
+                    )},
+                },
+            )(),
+        },
+        verified_roles={origin: frozenset([role])},
+    )
+
+
 # ============================================================================
-# Peer-config parsing (the opt-in surface)
+# Retired env source: PEER_ORIGIN_ENV is gone, and the knob is now inert
 # ============================================================================
 
 
-def test_peer_origin_env_mirrors_feasible_env_prefixes() -> None:
-    # One "<PREFIX>_<KNOB>" convention to learn: the peer-origin channel names
-    # exactly the backends the feasibility channel names.
-    # Minus the never-proxied set: `hand` runs on every box, so it has no peer
-    # channel at all (lobes.gateway._config.NEVER_PROXIED_BACKENDS).
-    assert set(PEER_ORIGIN_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
-    assert PEER_ORIGIN_ENV["multimodal"] == "MULTIMODAL_PEER_ORIGIN"
-    assert PEER_ORIGIN_ENV["primary"] == "PRIMARY_PEER_ORIGIN"
-
-
-def test_build_config_default_peer_origins_is_empty() -> None:
-    table, _cfg = build_config(_spark_lobe_env())
+def test_peer_origin_env_knob_is_now_inert() -> None:
+    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN))
     assert dict(table.peer_origins) == {}
 
 
-def test_build_config_reads_declared_peer_origins() -> None:
-    table, _cfg = build_config(_spark_lobe_env(peers=True))
-    assert dict(table.peer_origins) == {"multimodal": _THOR_ORIGIN}
-
-
-def test_build_config_peer_origin_blank_is_unset() -> None:
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN="  "))
-    assert dict(table.peer_origins) == {}
-
-
-def test_build_config_peer_origin_trailing_slash_stripped() -> None:
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN + "/"))
-    assert dict(table.peer_origins) == {"multimodal": _THOR_ORIGIN}
-
-
-def test_peer_origin_is_never_derived() -> None:
-    # The #92 lesson: no env declaration, no origin — nothing is ever inferred
-    # from hostnames/interfaces, even for a role that is clearly dropped.
+def test_peer_origin_is_never_derived_and_never_env_sourced() -> None:
+    # The #92 lesson, restated post-retirement: no declaration (env is
+    # inert), no mesh member verified for the role => no origin, ever
+    # inferred from hostnames/interfaces.
     table, _cfg = build_config(_spark_lobe_env())
     assert "multimodal" in table.infeasible
     assert table.peer_origins.get("multimodal") is None
 
 
 # ============================================================================
-# Capabilities annotation (gateway payload + shared helper)
+# The mesh source: a verified member's origin becomes `hosted_by`
 # ============================================================================
 
 
-def test_capabilities_annotates_unhosted_role_with_peer_origin() -> None:
-    env = _spark_lobe_env(peers=True)
+def test_mesh_referral_origin_resolves_a_verified_members_origin() -> None:
+    # Unit-level: a verified mesh member's origin is what _feasibility_response
+    # would name in `hosted_by`. (End to end, a verified member is actually
+    # PLACED by the peer-only pool — see test_mesh_verified_member_is_placed_
+    # not_referred below — so this proves the mechanism this task added
+    # without the pool's own forward machinery intervening.)
+    snap = _mesh_snapshot_for("senses")
+    assert S._mesh_referral_origin(snap, "multimodal") == _THOR_ORIGIN
+
+
+def test_feasibility_response_names_the_mesh_referral() -> None:
+    table, _cfg = build_config(_spark_lobe_env())
+    snap = _mesh_snapshot_for("senses")
+    resp = S._feasibility_response(table, "senses", snap)
+    assert resp is not None
+    assert resp.status == 404
+    body = json.loads(resp.body)
+    assert body["error"]["type"] == "role_infeasible"
+    assert body["error"]["hosted_by"] == _THOR_ORIGIN
+    assert _THOR_ORIGIN in body["error"]["message"]
+
+
+def test_mesh_verified_member_is_placed_not_referred() -> None:
+    # End to end: once the mesh VERIFIES a member for the dropped role, the
+    # peer-only pool (t13) places the request there instead of falling back
+    # to a referral-only 404 — a better outcome than a referral, and it runs
+    # BEFORE _feasibility_response is ever reached for this role.
+    table, cfg = build_config(_spark_lobe_env())
+    snap = _mesh_snapshot_for("senses")
+    resp, calls = _post(table, cfg, "senses", mesh_snapshot=snap)
+    assert resp.status == 200
+    assert calls == ["peer:multimodal"]
+
+
+def test_404_has_no_referral_when_mesh_has_no_verified_member() -> None:
+    table, cfg = build_config(_spark_lobe_env())
+    resp, calls = _post(table, cfg, "senses", mesh_snapshot=None)
+    assert resp.status == 404
+    assert calls == []
+    body = json.loads(resp.body)
+    assert "hosted_by" not in body["error"]
+
+
+def test_mesh_referral_for_a_hosted_role_is_never_consulted() -> None:
+    # A referral says who hosts a role THIS box does not serve. cortex is
+    # hosted here, so infeasible_owner returns None and _mesh_referral_origin
+    # is never reached — no 404 is ever built for it, mesh member or not.
+    table, _cfg = build_config(_spark_lobe_env())
+    resp = S._feasibility_response(table, "cortex", _mesh_snapshot_for("cortex"))
+    assert resp is None
+
+
+def test_embed_mesh_referral_origin_resolves_correctly() -> None:
+    env = _spark_lobe_env(EMBED_FEASIBLE="false")
+    table, _cfg = build_config(env)
+    snap = _mesh_snapshot_for("embedder", origin=_THOR_ORIGIN)
+    resp = S._feasibility_response(table, _EMBED_ID, snap)
+    assert resp is not None
+    assert resp.status == 404
+    body = json.loads(resp.body)
+    assert body["error"]["type"] == "role_infeasible"
+    assert body["error"]["hosted_by"] == _THOR_ORIGIN
+
+
+# ============================================================================
+# /capabilities' own hosted_by annotation stays env-only (out of scope: it
+# lives in lobes.roles, not an owned file of this task) — proven inert too.
+# ============================================================================
+
+
+def test_capabilities_hosted_by_stays_env_sourced_and_the_env_knob_is_inert() -> None:
+    env = _spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN)
     table, cfg = build_config(env)
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    assert payload["senses"]["hosted_by"] == _THOR_ORIGIN
-    # Existing honesty flags untouched.
+    assert "hosted_by" not in payload["senses"]
     assert payload["senses"]["feasible"] is False
     assert payload["senses"]["ready"] is False
 
 
-def test_capabilities_never_annotates_hosted_roles() -> None:
-    env = _spark_lobe_env(peers=True)
-    table, cfg = build_config(env)
-    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    for role in ("cortex", "embedder", "reranker", "stt", "tts"):
-        assert "hosted_by" not in payload[role], role
-
-
-def test_peer_declared_for_a_hosted_role_is_ignored() -> None:
-    # A referral says who hosts a role THIS box does not serve. A peer origin
-    # declared for a locally-hosted role annotates nothing — the role is here.
-    env = _spark_lobe_env(peers=True, PRIMARY_PEER_ORIGIN=_SPARK_ORIGIN)
-    table, cfg = build_config(env)
-    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    assert "hosted_by" not in payload["cortex"]
-
-
-def test_annotate_peer_referrals_requires_declared_origin() -> None:
-    # The helper itself: infeasible but undeclared → untouched.
+def test_annotate_peer_referrals_stays_a_no_op_with_an_always_empty_table() -> None:
     env = _spark_lobe_env()
     table, cfg = build_config(env)
     registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
@@ -203,14 +274,12 @@ def test_annotate_peer_referrals_requires_declared_origin() -> None:
 
 
 # ============================================================================
-# Byte-identity regression: zero peer config == the pre-change contract
+# Byte-identity regression: zero mesh, zero peer config == the pre-change
+# contract
 # ============================================================================
 
 
-def test_capabilities_bytes_identical_without_peer_config() -> None:
-    # The pre-change /capabilities construction was literally
-    # {role: dataclasses.asdict(registry[role])} — with no peer config the
-    # payload must serialise to those exact bytes, nothing added.
+def test_capabilities_bytes_identical_without_mesh_or_peer_config() -> None:
     env = _spark_lobe_env()
     table, cfg = build_config(env)
     registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
@@ -220,8 +289,7 @@ def test_capabilities_bytes_identical_without_peer_config() -> None:
     assert "hosted_by" not in got
 
 
-def test_role_infeasible_404_bytes_identical_without_peer_config() -> None:
-    # The exact pre-change 404 body, byte for byte.
+def test_role_infeasible_404_bytes_identical_without_mesh_or_peer_config() -> None:
     table, cfg = build_config(_spark_lobe_env())
     resp, calls = _post(table, cfg, "senses")
     assert resp.status == 404
@@ -243,196 +311,10 @@ def test_role_infeasible_404_bytes_identical_without_peer_config() -> None:
     assert resp.body == expected
 
 
-def test_v1_models_unaffected_by_peer_config() -> None:
+def test_v1_models_unaffected_by_mesh_referral() -> None:
     # /v1/models stays unchanged either way: it omits the unhosted role and
     # never carries a referral.
-    with_peers, _ = build_config(_spark_lobe_env(peers=True))
-    without, _ = build_config(_spark_lobe_env())
+    table, _cfg = build_config(_spark_lobe_env())
     ready = {"primary": True, "embed": True, "rerank": True}
-    assert json.dumps(list_models_payload(with_peers, ready)) == json.dumps(
-        list_models_payload(without, ready)
-    )
-    ids = {e["id"] for e in list_models_payload(with_peers, ready)["data"]}
+    ids = {e["id"] for e in list_models_payload(table, ready)["data"]}
     assert _SENSES_ID not in ids
-
-
-# ============================================================================
-# The 404 referral — and NO outbound connection, ever (handle_post seam)
-# ============================================================================
-
-
-@pytest.mark.parametrize("alias", ["senses", "multimodal", "normal"])
-def test_404_carries_referral_and_dials_nothing(alias: str) -> None:
-    table, cfg = build_config(_spark_lobe_env(peers=True))
-    resp, calls = _post(table, cfg, alias)
-    assert resp.status == 404
-    assert calls == []  # the referral is an ANSWER, never a forward
-    body = json.loads(resp.body)
-    assert body["error"]["type"] == "role_infeasible"
-    assert body["error"]["code"] == "role_infeasible"
-    assert body["error"]["hosted_by"] == _THOR_ORIGIN
-    assert _THOR_ORIGIN in body["error"]["message"]
-
-
-def test_embed_request_for_unhosted_embedder_404s_with_referral_no_dial() -> None:
-    env = _spark_lobe_env(EMBED_FEASIBLE="false", EMBED_PEER_ORIGIN=_THOR_ORIGIN)
-    table, cfg = build_config(env)
-    resp, calls = _post(table, cfg, _EMBED_ID, path="/v1/embeddings")
-    assert resp.status == 404
-    assert calls == []
-    body = json.loads(resp.body)
-    assert body["error"]["type"] == "role_infeasible"
-    assert body["error"]["hosted_by"] == _THOR_ORIGIN
-
-
-def test_hosted_role_still_routes_locally_with_peers_configured() -> None:
-    # Peer config annotates honesty surfaces only — it never changes routing
-    # for hosted roles.
-    table, cfg = build_config(_spark_lobe_env(peers=True))
-    resp, calls = _post(table, cfg, "cortex")
-    assert resp.status == 200
-    assert calls == ["primary"]
-
-
-# ============================================================================
-# Loopback: the real HTTP gateway, with a hard no-outbound guard
-# ============================================================================
-
-
-@pytest.fixture
-def spark_lobe_gateway_with_peers(monkeypatch):
-    """A real gateway serving a spark-lobe env with peers declared.
-
-    ``S.open_upstream`` — the ONLY seam through which the gateway ever dials
-    a backend or anything else — is replaced with a stub that records and
-    fails, so any attempt to open an outbound connection is both visible and
-    fatal to the test.
-    """
-    env = _spark_lobe_env(peers=True)
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
-    outbound: list[str] = []
-
-    def no_outbound(backend, *a, **k):
-        outbound.append(backend.base_url)
-        raise AssertionError(f"gateway opened an outbound connection to {backend.base_url}")
-
-    monkeypatch.setattr(S, "open_upstream", no_outbound)
-    table, cfg = build_config(env)
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg))
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    host, port = httpd.server_address
-    try:
-        yield f"http://{host}:{port}", outbound
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-
-
-def test_integration_capabilities_carries_referral(spark_lobe_gateway_with_peers) -> None:
-    url, outbound = spark_lobe_gateway_with_peers
-    with urllib.request.urlopen(url + "/capabilities", timeout=5) as r:
-        payload = json.load(r)
-    assert payload["senses"]["hosted_by"] == _THOR_ORIGIN
-    assert payload["senses"]["feasible"] is False
-    assert "hosted_by" not in payload["cortex"]
-    assert outbound == []
-
-
-@pytest.mark.parametrize(
-    "path, model",
-    [
-        ("/v1/chat/completions", "senses"),
-        ("/v1/chat/completions", "multimodal"),
-        ("/v1/chat/completions", "normal"),
-    ],
-)
-def test_integration_unhosted_role_404_referral_no_outbound(
-    spark_lobe_gateway_with_peers, path: str, model: str
-) -> None:
-    url, outbound = spark_lobe_gateway_with_peers
-    req = urllib.request.Request(
-        url + path,
-        data=json.dumps({"model": model, "messages": []}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        urllib.request.urlopen(req, timeout=5)
-    assert exc.value.code == 404
-    body = json.loads(exc.value.read())
-    assert body["error"]["type"] == "role_infeasible"
-    assert body["error"]["hosted_by"] == _THOR_ORIGIN
-    # The proof for acceptance criterion 2: the gateway answered the unhosted
-    # role locally and NEVER opened an outbound connection.
-    assert outbound == []
-
-
-def test_integration_audio_request_unconfigured_no_outbound(
-    spark_lobe_gateway_with_peers,
-) -> None:
-    # The audio lane on a box without the overlay: 404 locally, no forward.
-    url, outbound = spark_lobe_gateway_with_peers
-    req = urllib.request.Request(
-        url + "/v1/audio/speech",
-        data=json.dumps({"input": "hi", "voice": "x"}).encode(),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with pytest.raises(urllib.error.HTTPError) as exc:
-        urllib.request.urlopen(req, timeout=5)
-    assert exc.value.code == 404
-    assert outbound == []
-
-
-# ============================================================================
-# The CLI verb (offline fallback path — gateway mode renders verbatim anyway)
-# ============================================================================
-
-
-def _scaffold_fleet(path):
-    _compose.write_scaffold(path, force=True, templates=_compose.FLEET_TEMPLATES)
-    return path
-
-
-def test_cli_capabilities_offline_annotates_referral(tmp_path, capsys) -> None:
-    _scaffold_fleet(tmp_path)
-    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_FEASIBLE", "false")
-    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_PEER_ORIGIN", _SPARK_ORIGIN)
-    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
-    assert rc == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["cortex"]["hosted_by"] == _SPARK_ORIGIN
-    assert payload["cortex"]["feasible"] is False
-    for role in ("senses", "embedder", "reranker", "stt", "tts"):
-        assert "hosted_by" not in payload[role], role
-
-
-def test_cli_capabilities_offline_bytes_identical_without_peer_config(tmp_path, capsys) -> None:
-    # With no peer config the CLI's JSON payload carries EXACTLY the RoleInfo
-    # field set per role — no hosted_by key anywhere (byte-identity with the
-    # pre-change contract at the payload level).
-    _scaffold_fleet(tmp_path)
-    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_FEASIBLE", "false")
-    rc = main(["capabilities", "--compose-dir", str(tmp_path), "--json"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "hosted_by" not in out
-    from lobes.roles import RoleInfo
-
-    fields = {f.name for f in dataclasses.fields(RoleInfo)}
-    payload = json.loads(out)
-    for role in ROLES:
-        assert set(payload[role]) == fields, role
-
-
-def test_cli_capabilities_table_shows_referral(tmp_path, capsys) -> None:
-    _scaffold_fleet(tmp_path)
-    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_FEASIBLE", "false")
-    _env.set_env(tmp_path / _compose.ENV_FILE, "PRIMARY_PEER_ORIGIN", _SPARK_ORIGIN)
-    rc = main(["capabilities", "--compose-dir", str(tmp_path)])
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "infeasible on this machine" in out
-    assert _SPARK_ORIGIN in out
