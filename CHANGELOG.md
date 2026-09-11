@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.76.0] - 2026-09-12
+
+### Changed
+
+- Docs and catalog now document the mesh-brain join (LOBES_MESH_KEY/NAME/SEEDS, keyless detect/join, trust-but-verify announcements, auto-wired proxying, the gateway-only shape) as the current cross-box reachability contract, retiring the hand-typed PRIMARY_PEER_ORIGIN/PEER_ORIGINS/PEER_PROXY/PEER_API_KEY/PEER_API_KEYS family (gateway-fleet.md, deployment-shapes.md, colleague-stack.md, openai-api.md, secret-rotation.md, machine-profiles.md, CLAUDE.md, env.example, lobes explain)
+- Added a 'lobes explain mesh' topic and noted the code-level cutover to the mesh roster is still pending (deviation d6) in every touched doc
+- Re-captured deployments/jetson-agx-thor__thor-worker/ against the current templates (mesh env passthrough, issue #222 depends_on cleanup); VARIATION.md's Measured result section is unchanged
+
 ## [0.75.3] - 2026-09-11
 
 ### Added
