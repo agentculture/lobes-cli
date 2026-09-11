@@ -1,0 +1,79 @@
+# Backup + rollback-path proof, Jetson AGX Thor — BEFORE the #244 worker flip
+#
+# Plan task t10, covering c29/h25 ("back up the deployment dir and record the
+# restore path before touching it ... proven by restoring it once in a dry run
+# before the flip is committed").
+
+## 1. Backup taken (before ANY mutation of the box)
+
+    cp -a ~/.lobes ~/.lobes.pre-244-20260910T195433Z
+
+  size:            611 MiB
+  contents:        cf-tunnel.env.example, docker-compose.override.yml,
+                   docker-compose.shape.yml, docker-compose.yml,
+                   docker-compose.yml.bak-20260828-161830,
+                   docker-compose.yml.bak-moe, Dockerfile.gateway,
+                   Dockerfile.vllm-gemma4, logs/, mg-logwrap.sh,
+                   qwen3_thinking_tool_parser.py
+  verified:        `diff -q` clean for .env and docker-compose.yml
+
+  sha256 of the live originals at backup time:
+    36d1cca5ca75a2018afd77c34b0edceb2558b8d1d2dbbe6c2fdbe5313d6f634d  .env
+    a009a19ecbe69343eee2beb0c45afe31b4c3d5a1371fe40e0be0242bba1e9639  docker-compose.yml
+    4493642380185ef1f675fbbcfdb0e4b26e1319a17e47cff60781cd32520c5f91  docker-compose.override.yml
+    c490e64f3dfe649151769bf0056c7c805447a54c215189543ef001b70ea22fea  docker-compose.shape.yml
+
+  Note the two `.bak-*` compose files: this deployment is hand-edited, which is
+  the exact drift condition issue #214 was filed for and which claim c29 names.
+
+## 2. Reverse-render dry run (NO --apply)
+
+    cd ~/.lobes && lobes init . --shape spark-lobe
+
+    DRY RUN — would scaffold the fleet duo (main + multimodal) into .:
+      docker-compose.yml (exists; left as-is — pass --force to overwrite)
+      .env (exists; MERGED — missing keys appended, existing lines untouched)
+      Dockerfile.gateway (exists; left as-is — pass --force to overwrite)
+      Dockerfile.vllm-gemma4 (exists; left as-is — pass --force to overwrite)
+      mg-logwrap.sh (exists; left as-is — pass --force to overwrite)
+      cf-tunnel.env.example (exists; left as-is — pass --force to overwrite)
+      qwen3_thinking_tool_parser.py (exists; left as-is — pass --force to overwrite)
+    Profile: thor (auto-detected: device_name='NVIDIA Thor',
+             compute_capability='sm_110', total_memory_gb=122.8)
+    Shape: spark-lobe (hosts=['cortex','hand','embedder','reranker','stt','tts'])
+      would set 22 env var(s) in .env
+      docker-compose.shape.yml (parks vllm-multimodal in the inert
+      'shape-dropped' profile; !resets gateway depends_on)
+    Re-run with --apply to write.
+
+  The dry run is read-only: it wrote nothing, and the four sha256 values above
+  are unchanged after it.
+
+### FINDING — a re-render alone does NOT roll this box back
+
+The render is MERGE-ONLY for `.env` ("missing keys appended, existing lines
+untouched") and LEAVES the compose files as-is without `--force`. So after a
+flip has rewritten `.env`'s worker/cortex keys, re-running
+`lobes init . --shape spark-lobe --apply` would NOT restore them — it would only
+re-append anything missing and rewrite `docker-compose.shape.yml`.
+
+The operative rollback is therefore **restore the backup directory**, with the
+re-render as a secondary step that only rebuilds the shape override:
+
+    docker compose -f ~/.lobes/docker-compose.yml down          # stop the flipped lanes
+    rm -rf ~/.lobes && cp -a ~/.lobes.pre-244-20260910T195433Z ~/.lobes
+    env -u GATEWAY_API_KEY docker compose -f ~/.lobes/docker-compose.yml up -d
+
+This does not contradict c29 — the claim already names "restore the saved .env"
+as part of the path — but it corrects the emphasis: the SAVED FILES are the
+rollback, and the render is not what restores state. Recorded here rather than
+discovered during an incident.
+
+## 3. Limitation
+
+The rollback was proven as a DRY RUN plus a verified byte-identical backup. It
+was NOT executed end-to-end (that would mean tearing down a healthy production
+lane to prove it can be rebuilt). What is proven: the backup exists, is
+byte-identical, and the render's own output states its merge-only semantics.
+What is not proven: that a restored directory boots. That is only demonstrable
+by actually rolling back.

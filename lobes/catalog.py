@@ -396,7 +396,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=32768,
         tool_parser="qwen3_coder",
         quantization="modelopt_fp4",
-        status="configured",
+        status="load-tested",
         doc="qwen3.6-35b-a3b-nvfp4.md",
         # MoE-only serve extra: the marlin MoE kernel — verified to load this
         # checkpoint *solo* on the GB10 (2026-05-31, util 0.70). lobes switch
@@ -895,6 +895,30 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        # DEMOTED from role_hint="worker" to role_hint="associate" (issue
+        # #244, t1 then t2): the `worker` seat moves to
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 below — see that entry's own comment
+        # for the checkpoint facts and rationale. `associate` and `worker`
+        # sharing ONE catalog role_hint was a DEFECT (issue #244, t2): the two
+        # are different roles with different contracts (associate = worker
+        # minus repo_action), and a shared hint meant promoting/demoting the
+        # `worker` checkpoint silently moved the `associate` default with it
+        # — exactly what happened when t1 landed above. This entry now owns
+        # its OWN role_hint, "associate", so the two resolve independently:
+        # changing which checkpoint carries role_hint="worker" can no longer
+        # move what `_catalog_by_role_hint("associate")` names. Kept, not
+        # deleted (cite-don't-delete): this is the checkpoint the
+        # 2026-08-20..2026-09-10 worker-lane evidence transcripts (below) were
+        # measured against — it is still the deployed reality on the Orin,
+        # which actually serves this checkpoint as `associate`
+        # (`docs/evidence/2026-08-26-accept-orin-associate.txt`) — and the
+        # `WORKER_MODEL`/`ASSOCIATE_MODEL` compose defaults still name it.
+        # `worker` also still resolves to this entry when explicitly served
+        # by id (`_catalog_by_id`); only the *unwired-role canonical name*
+        # for the `worker` role_hint moved off it, to the Qwen entry below.
+        # Nothing below this comment changed — same fields, same facts, only
+        # role_hint moved.
+        #
         # The NEW `worker` gear (nemotron-lightning-worker plan, #187, t3),
         # replacing unsloth/Qwen3.6-35B-A3B-NVFP4 above (demoted to
         # role_hint="candidate", kept — cite-don't-delete). A fast, TEXT-ONLY,
@@ -978,7 +1002,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt. See
         # docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md and
         # docs/plans/2026-08-20-nemotron-lightning-worker.md.
-        role_hint="worker",
+        role_hint="associate",
         shape="hybrid Mamba-2 + sparse-MoE (~3B active per token, text-only)",
         context="1M native (1,048,576 max_position_embeddings)",
         native_max_model_len=1048576,
@@ -999,6 +1023,93 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # No speculative_config: config.json carries no MTP/draft-head field
         # (see the long comment above) — the card's MTP/DSpark claim is
         # declared, UNMEASURED, and evaluated separately by plan task t2.
+        task="generate",
+    ),
+    SupportedModel(
+        id="nvidia/Qwen3.6-35B-A3B-NVFP4",
+        # The NEW `worker` gear (issue #244, t1), taking the seat back from
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 above (demoted to
+        # role_hint="candidate", kept — cite-don't-delete). A DISTINCT entry
+        # from BOTH other Qwen3.6-35B-A3B-NVFP4 catalog ids: unsloth/'s (the
+        # former worker, also a kept candidate, compressed-tensors quant) and
+        # mmangkad/'s (the 32K-native MoE candidate, marlin moe_backend) — same
+        # architecture family, three different orgs/exports.
+        #
+        # Verified against the checkpoint's ACTUAL config files, fetched
+        # 2026-09-10 (issue #244) — NOT card prose:
+        #   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/config.json
+        #     - architectures: ["Qwen3_5MoeForConditionalGeneration"], model_type
+        #       "qwen3_5_moe" — the SAME engine-support family as the mmangkad/
+        #       and unsloth/ 35B-A3B siblings and the 27B primary line, so this
+        #       is a checkpoint swap within a known-working family, not a new
+        #       architecture bring-up.
+        #     - text_config.max_position_embeddings = 262144 (native 256K),
+        #       text_config.num_hidden_layers = 40, hybrid layer_types
+        #       (linear_attention every 4th layer full_attention),
+        #       num_experts=256, num_experts_per_tok=8 — MoE, ~3B active/token.
+        #     - vision_config IS present (deepstack_visual_indexes, its own ViT
+        #       hidden_size/depth/patch_size fields), plus top-level
+        #       image_token_id=248056, video_token_id=248057,
+        #       vision_start_token_id=248053, vision_end_token_id=248054 — this
+        #       checkpoint is MULTIMODAL (image+video intake), unlike the
+        #       outgoing Nemotron worker which carried no vision_config at all.
+        #     - text_config.mtp_num_hidden_layers=1,
+        #       text_config.mtp_use_dedicated_embeddings=false, and the
+        #       embedded quantization_config.ignore list carries
+        #       ["mtp.layers.0*", "mtp*"] — the checkpoint's own MTP draft
+        #       weight tensors physically exist and are deliberately left
+        #       unquantized, confirming a self-hosted draft module (same
+        #       signature as unsloth/Qwen3.6-27B-NVFP4's and
+        #       unsloth/Qwen3.8-27B-NVFP4's own self-hosted MTP). No "-MTP"
+        #       suffix in this id despite shipping its own draft weights,
+        #       exactly like the unsloth 35B-A3B worker before it — see
+        #       tests/test_catalog.py's _SELF_HOSTED_MTP_WITHOUT_ID_MARKER.
+        #     - config.json ALSO embeds its own compressed-tensors-shaped
+        #       "quantization_config" block (quant_method="modelopt",
+        #       config_groups: group_0 = 8-bit float weights+activations on
+        #       linear_attn/self_attn projections, group_1 = 4-bit float
+        #       group_size=16 on lm_head + the MoE expert/shared-expert
+        #       projections) — the same MIXED_PRECISION shape the separate
+        #       hf_quant_config.json file below carries.
+        #   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/hf_quant_config.json
+        #     - producer.name="modelopt" (version 0.44.0); quant_algo=
+        #       "MIXED_PRECISION"; kv_cache_quant_algo="FP8". Per-layer
+        #       quantized_layers: FP8 on every linear_attn in_proj_qkv/
+        #       in_proj_z/out_proj (and self_attn q/k/v/o_proj on the four
+        #       full_attention layers), W4A16_NVFP4 group_size=16 on every
+        #       mlp.experts and mlp.shared_expert.{gate,up,down}_proj plus
+        #       lm_head; exclude_modules=["mtp.layers.0*", "mtp*"] — the MTP
+        #       module is excluded from quantization, matching config.json's
+        #       ignore list above. This is the SAME nvidia-modelopt family the
+        #       demoted Nemotron worker and the muse 31B gear use
+        #       (quantization="modelopt"), NOT the unsloth sibling's
+        #       compressed-tensors format.
+        #
+        # STATUS: untested on this repo's hardware (declared, not measured —
+        # issue #108). No gpu_mem_util or max_model_len knob is declared here
+        # for the same reason every other candidate/opt-in gear in this
+        # catalog omits them: on a unified-memory card those are MEASURED
+        # truths, not arithmetic (the thor-muse/thor-worker rule). moe_backend
+        # is left empty (auto-select) rather than carrying an untested guess
+        # forward — the outgoing unsloth 35B-A3B worker's own hard-won sm_110
+        # lesson was that every FORCED NVFP4 MoE backend was refused there.
+        role_hint="worker",
+        shape=(
+            "hybrid Mamba/linear-attn MoE (~3B active) + ViT "
+            "(text+image+video, self-hosted MTP draft)"
+        ),
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="modelopt",
+        status="configured",  # declared 2026-09-10 (issue #244); no live boot yet
+        doc="nvidia-qwen3.6-35b-a3b-nvfp4.md",
+        moe_backend="",
+        # Self-hosted draft (no external "model"/"draft_model_id" key), same
+        # generic "mtp" method + n=2 declared default as the other self-hosted
+        # MTP siblings in this catalog (UNMEASURED acceptance on this specific
+        # checkpoint — a declared default, not a measured one).
+        speculative_config=_MTP_SELF_HOSTED_N2,
         task="generate",
     ),
     SupportedModel(
@@ -1272,27 +1383,34 @@ TIER_ROLE: dict[str, str] = {
     "cortex": "primary",
 }
 
-#: Backend role name -> the catalog ``role_hint`` that names its gear, for the
-#: roles where the two DIFFER. Empty for the nine roles that shipped before
-#: `associate`: each of them owns a catalog entry whose ``role_hint`` IS its
-#: backend role name, so :func:`resolve_tier` could look the role up directly.
+#: Backend role name -> the catalog ``role_hint`` that names its gear, for a
+#: role whose backend name DIFFERS from its own catalog ``role_hint``. Empty
+#: today: every role, `associate` included, owns a catalog entry whose
+#: ``role_hint`` IS its backend role name, so :func:`resolve_tier` looks each
+#: role up directly without indirection.
 #:
-#: `associate` breaks that 1:1 assumption honestly rather than by duplication.
-#: It serves the SAME checkpoint the `worker` seat holds
-#: (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``) — one gear, two
-#: public addresses with different authority (worker MAY act on a repo,
-#: associate may not). The catalog holds exactly one entry per checkpoint id
-#: (``tests/test_catalog.py::test_catalog_ids_are_unique``), so a second
-#: ``role_hint="associate"`` entry would mean a duplicated id — a lie about
-#: how many gears exist — while pointing the tier layer at the gear that IS
-#: served is simply true. :data:`lobes.roles.ROLE_ROLE_HINT` carries the
-#: identical alias for the role registry.
-#:
-#: A role added here MUST also be added there, or the two layers disagree
-#: about which model a role serves.
-BACKEND_ROLE_CATALOG_HINT: dict[str, str] = {
-    "associate": "worker",
-}
+#: `associate` used to break that 1:1 assumption: it shared the SAME catalog
+#: entry the `worker` seat named
+#: (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``) via an alias here
+#: (``"associate": "worker"``), on the reasoning that one gear, two public
+#: addresses with different authority (worker MAY act on a repo, associate
+#: may not), didn't need a second catalog entry. That alias was itself the
+#: DEFECT tracked as issue #244, t2: a shared ``role_hint`` meant promoting or
+#: demoting the checkpoint that carried ``role_hint="worker"`` silently moved
+#: `associate`'s own default along with it — visible the moment #244 t1
+#: repointed `worker`'s hint to a different checkpoint and `associate`'s
+#: advertised default moved too, even though the Orin's `associate` lane
+#: never stopped serving Lightning. The fix gave the Lightning entry its OWN
+#: ``role_hint="associate"`` (additive — the catalog still holds exactly one
+#: entry per checkpoint id,
+#: ``tests/test_catalog.py::test_catalog_ids_are_unique``, and `worker` still
+#: resolves that same checkpoint by explicit id via ``_catalog_by_id``), so
+#: this alias table is retained only as the GENERIC mechanism for a future
+#: role that genuinely needs one — :data:`lobes.roles.ROLE_ROLE_HINT` carries
+#: the identical alias table for the role registry, and a role added to one
+#: MUST be added to the other, or the two layers disagree about which model a
+#: role serves.
+BACKEND_ROLE_CATALOG_HINT: dict[str, str] = {}
 
 
 def resolve_tier(tier: str) -> "SupportedModel":
@@ -1314,8 +1432,9 @@ def resolve_tier(tier: str) -> "SupportedModel":
         known = ", ".join(sorted(TIER_ROLE))
         raise ValueError(f"unknown tier {tier!r} — must be one of: {known}")
     # A backend role whose gear is catalogued under a DIFFERENT role_hint
-    # (only `associate` today — it shares `worker`'s checkpoint) resolves
-    # through the alias; every other role is its own hint.
+    # would resolve through the alias here; none does today (issue #244, t2
+    # gave `associate` its own role_hint), so this is a no-op lookup kept for
+    # a future role that shares a checkpoint with another.
     hint = BACKEND_ROLE_CATALOG_HINT.get(role, role)
     for model in SUPPORTED_MODELS:
         if model.role_hint == hint and model.task == "generate":

@@ -10,7 +10,8 @@ Rewrites every golden this directory owns:
   (:func:`lobes.profiles.loader.builtin_names`, currently ``spark``/``thor``),
   the sorted ``KEY=VALUE`` projection of
   ``profile_env(resolve_profile(<name>))``.
-* ``tests/goldens/template-defaults.env`` — the ``${VAR:-default}`` surface of
+* ``tests/goldens/template-defaults.env`` — the ``${VAR:-default}`` (and
+  conditional ``${VAR:+alternate}``) substitution surface of
   ``lobes/templates/fleet/docker-compose.yml``.
 * ``tests/goldens/shapes/<shape>__<card>.env`` — one per (deployment-shape,
   card) pair that is NOT the whole-brain identity shape (brain-shapes t3), the
@@ -80,7 +81,15 @@ def profile_env_text(name: str) -> str:
 
 
 def extract_template_defaults(text: str) -> set[str]:
-    """Every ``${VAR:-default}`` substitution in *text*, as ``"VAR=default"`` strings.
+    """The template's substitution surface: ``${VAR:-default}`` AND ``${VAR:+alt}``.
+
+    ``${VAR:-default}`` entries render as ``"VAR=default"``; the CONDITIONAL
+    ``${VAR:+alternate}`` form (worker-recipe-knobs t3) renders as
+    ``"VAR:+alternate"`` — a distinct spelling, because the two mean opposite
+    things. ``:-`` says "this is what the lane runs when you say nothing";
+    ``:+`` says "this renders NOTHING unless you say something, and exactly
+    this when you do". Both belong in the golden: a conditional knob that
+    silently changed the flag it composes would otherwise move no golden byte.
 
     A brace-depth walk rather than a single regex, because the template nests
     one substitution inside another's default —
@@ -136,9 +145,11 @@ def extract_template_defaults(text: str) -> set[str]:
             j += 1
         inner = text[start + 2 : j - 1]
         i = start + 2  # advance past "${" only, so a nested "${" is still found
-        name, sep, default = inner.partition(":-")
-        if sep and _VAR_NAME_RE.fullmatch(name):
-            results.add(f"{name}={default}")
+        for operator, joiner in ((":-", "="), (":+", ":+")):
+            name, sep, value = inner.partition(operator)
+            if sep and _VAR_NAME_RE.fullmatch(name):
+                results.add(f"{name}{joiner}{value}")
+                break
     return results
 
 

@@ -445,11 +445,11 @@ gitignore negation test fails if the goldens exception is removed
 Per CLAUDE.md's #108 rule, nothing below may be described as validated, and
 this section exists so no reader has to infer it.
 
-- **No real box has been captured.** `deployments/` ships a README and a
-  template and **zero variations**. Every catalog behaviour above is
+- **The catalog holds one variation.** `deployments/jetson-agx-thor__thor-worker/` is
+  a real Thor capture. Every catalog behaviour above is
   exercised against clearly-labelled fixtures under
-  `tests/fixtures/deployments/`. No Spark, Thor or Orin variation exists;
-  do not read this page as evidence that one does.
+  `tests/fixtures/deployments/` as well. No Spark or Orin variation
+  exists yet; do not read this page as evidence that one does.
 - **There is no capture verb.** `capture_lock()` / `build_lock()` /
   `write_lock()` are a library
   (`lobes/runtime/_lock.py`) with no CLI caller anywhere in `lobes/cli/`.

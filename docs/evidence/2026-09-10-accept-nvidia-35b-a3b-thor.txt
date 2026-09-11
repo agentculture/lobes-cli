@@ -1,0 +1,187 @@
+# nvidia/Qwen3.6-35B-A3B-NVFP4 on the Jetson AGX Thor — LIVE SPIKE, 2026-09-10
+#
+# Plan tasks t11 (does it load / which MoE backend / budget) and t12 (MTP depth
+# sweep). Covers c6/h5, c23/h19, c24/h20, c25/h21, c27/h23, c20/h15, c33/h26.
+#
+# HEADLINE: it loads, auto-select picks MARLIN MoE + FLASHINFER attention on
+# sm_110, and with MTP n=3 it decodes at ~129 tok/s single-stream — above the
+# plan's 100 tok/s target and ~6.9x the incumbent cortex lane on the same box.
+
+## 0. Conditions
+
+Box:        Jetson AGX Thor, sm_110, 122.8 GiB unified, MAXN, L4T R38.2.2,
+            kernel 6.8.12-tegra
+Image:      vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+            vLLM 0.26.1rc1.dev942+g5a4c8d992  (the fleet-wide pin — NOT a
+            special image for this spike)
+Env:        VLLM_GDN_DECODE_KERNEL=triton
+Method:     standalone `docker run` on free port 8100. The deployment's own
+            lanes were NOT reconfigured; `vllm-primary` (cortex) was STOPPED to
+            free memory and the gateway/embed/rerank lanes stayed up.
+Memory:     cortex stopped + drop_caches => 101-102 GiB available before each
+            arm (tegrastats RAM 20586/125772MB). ps-RSS sum 14.6 GiB, matching
+            `free` — no leak at any point in this session (c24/h20).
+Clocks:     NOT pinned (the devfreq node reads 0 on this board). As-deployed
+            governor figures, same limitation as the same-day baseline.
+Co-resident: the Culture production stack ran throughout; it was never stopped
+            and no box-level action (reboot / JetPack / driver) was taken
+            (c23/h19).
+Auth:       every compose invocation ran as `env -u GATEWAY_API_KEY docker
+            compose ...` (c25/h21).
+
+## 1. It LOADS — risk r1 closed
+
+The recorded 2026-05-31 failure of this exact id (vLLM 0.19.0/0.21.0 on the
+GB10: `marlin`/`flashinfer_trtllm` -> "not supported for unquantized MoE";
+`triton`/auto -> `KeyError: layers.0.mlp.experts.w2_input_scale`) DOES NOT
+reproduce on this engine. Quant resolution, verbatim:
+
+    Detected ModelOpt fp8 checkpoint (quant_algo=FP8)
+    Detected ModelOpt NVFP4 checkpoint (quant_algo=NVFP4)
+    Detected ModelOpt NVFP4 checkpoint (quant_algo=W4A16_NVFP4)
+    Detected ModelOpt MXFP8 checkpoint
+    ... quantization=modelopt_mixed ...
+    Resolved architecture: Qwen3_5MoeForConditionalGeneration
+    Model loading took 20.37 GiB memory and 44.225911 seconds
+
+## 2. MoE backend — the issue's marlin recommendation is CORRECT here, by
+##    auto-select, and forcing it would still be wrong
+
+    Using MarlinNvFp4LinearKernel for NVFP4 GEMM
+    Using 'MARLIN' NvFp4 MoE backend out of potential backends:
+      ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTEDSL_BATCHED',
+       'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION']
+    Using FLASHINFER attention backend out of potential backends:
+      ['FLASHINFER', 'TRITON_ATTN']
+    Using Triton/FLA GDN prefill kernel (requested=auto, head_k_dim=128)
+    GDN decode kernel: triton
+
+So Marlin MoE + FlashInfer attention — exactly the pairing the issue asked for
+— IS what runs on sm_110 for this checkpoint. No `--moe-backend` flag was
+passed.
+
+### Why NOT to force it anyway (this is the load-bearing finding)
+
+With MTP enabled the SAME engine selects TWO different MoE backends at once:
+
+    Loading drafter model...
+    Using TRITON Unquantized MoE backend out of potential backends:
+      ['FlashInfer TRTLLM', 'FlashInfer CUTLASS', 'TRITON', 'BATCHED_TRITON']
+    Using TritonExperts MoE backend
+    Detected MTP model. Sharing target model embedding weights with the draft model.
+
+The TARGET's experts are `W4A16_NVFP4` -> MARLIN. The DRAFT's experts are
+UNQUANTIZED -> TRITON, because this export's `hf_quant_config.json` carries
+`exclude_modules: ["mtp.layers.0*", "mtp*"]`.
+
+That is the mechanism behind the 2026-07-31 refusal recorded in
+`thor-worker.toml:49-58` and `docs/evidence/2026-07-31-accept-worker-thor.txt`
+("marlin: not supported for unquantized MoE — the self-hosted MTP experts are
+unquantized"). The refusal was never about sm_110; it was about a single
+forced value being applied to two differently-quantized MoEs. The standing
+rule — DO NOT force `--moe-backend` on this lane — is therefore CONFIRMED and
+its stated reason is now precise. `WORKER_MOE_BACKEND` stays unset.
+
+## 3. Budget, measured
+
+ARM A (no speculation), util 0.45 / max_model_len 65536:
+    GPU KV cache size: 2,100,601 tokens
+    Maximum concurrency for 65,536 tokens per request: 32.05x
+
+ARM D (MTP n=3), same util/window:
+    GPU KV cache size: 1,379,105 tokens
+    Maximum concurrency for 65,536 tokens per request: 21.04x
+
+The drafter costs ~34% of the KV pool. 21.04x is a CEILING (pool / window),
+not measured concurrency — see thor-worker.toml's standing warning about
+misreading that number.
+
+Engine warning recorded, not hidden:
+    max_num_scheduled_tokens is set to 2048 based on the speculative decoding
+    settings. This may lead to suboptimal performance. Consider increasing
+    max_num_batched_tokens ...
+So the n=3 figures below are WITHOUT that suggested tuning — there is headroom
+left on the table, not borrowed from.
+
+## 4. Throughput — STREAMING, single-stream, batch 1, no timeouts
+
+TTFT is the wall time to the first content delta; decode tok/s is
+(completion_tokens - 1) / (time from first delta to last). Identical prompts
+across arms.
+
+  ARM A — no speculation
+    code (109 tok), 3 runs : TTFT 199.1 / 170.1 / 167.9 ms
+                             decode 64.57 / 69.72 / 68.49 tok/s
+    deep prompt (9020 tok) : TTFT 2364.1 ms, decode 78.47 tok/s
+    known-answer "Paris"   : TTFT 424.4 ms   (2 tokens — NO rate reported;
+                             a 2-token divide is not a throughput measurement)
+
+  ARM D — MTP n=3
+    code (109 tok), 3 runs : TTFT 105.2 / 90.0 / 88.9 ms
+                             decode 112.89 / 129.02 / 132.46 tok/s
+    deep prompt (9020 tok) : TTFT 4062.6 ms, decode 120.04 tok/s
+    known-answer "Paris"   : TTFT 2321.7 ms  (first request after boot — cold;
+                             the subsequent warm TTFTs are the ones to read)
+
+  Same prompt, same seed, identical output text in both arms — the speculation
+  did not change what the model said, as MTP's verify step guarantees.
+
+### Against the plan's bar (c21)
+
+    floor  61.2 tok/s (the old unsloth-on-0.23.1 Thor figure)
+    target 100 tok/s
+    measured: ARM A ~68.5 tok/s (median of 3)  -> above the floor, below target
+              ARM D ~129.0 tok/s (median of 3) -> TARGET MET (+29%)
+
+    Same-day incumbent cortex on this box: 18.7 / 17.2 tok/s
+    (docs/evidence/2026-09-10-baseline-thor-cortex-pre-244.txt)
+    ARM D is ~6.9x that.
+
+## 5. MTP acceptance (c27/h23)
+
+Engine-wide counters, read from the lane's own /metrics:
+    vllm:spec_decode_num_draft_tokens_total    279
+    vllm:spec_decode_num_accepted_tokens_total 260      -> 93.2%
+    per_pos_total position=0                    92
+    per_pos_total position=1                    87
+    per_pos_total position=2                    81
+
+Engine's own SpecDecoding line (the per-position array t5 taught the harness to
+keep):
+    Mean acceptance length: 3.82, Accepted: 245, Drafted: 261,
+    Per-position acceptance rate: 1.000, 0.943, 0.874,
+    Avg Draft acceptance rate: 93.9%
+
+Mean acceptance length 3.82 of a possible 4 (1 + 3 drafted). For comparison the
+unsloth export measured 89.1% on this box on the older engine.
+
+Both figures are ENGINE-WIDE over the measurement window, not per-request —
+the harness labels them as such and flags contamination when other traffic
+could be folded in.
+
+## 6. Correctness probes
+
+  known-answer      : "What is the capital of France?" -> "Paris"        PASS
+  structured tools  : finish_reason "tool_calls";
+                      tool_calls[0] = get_weather({"city": "Paris"});
+                      content EMPTY (no leak into prose)                 PASS
+                      parser pair: --tool-call-parser=qwen3_coder
+                                   --reasoning-parser=qwen3
+  vision + controls : 64x64 solid PNGs, one question, three images
+                      red   -> "Red"     PASS
+                      blue  -> "blue"    PASS (negative control)
+                      green -> "Green"   PASS (negative control)
+                      The controls discriminate, so this is image intake, not a
+                      lucky guess (c33/h26).
+
+## 7. What is NOT claimed here
+
+  * No concurrent-throughput number. Single-stream only; the aggregate leg is
+    reported separately or not at all, never substituted (c21).
+  * Clocks were not pinned; figures are as-deployed under the governor.
+  * 65536 window only. 128K and the native 262144 are unmeasured.
+  * util 0.45 was the first hypothesis and it booted; no lower/higher budget
+    was explored, so 0.45 is "sufficient", not "optimal".
+  * The engine's own max_num_batched_tokens suggestion was NOT applied.
+  * Video intake untested (images only).
+  * n=1/5/7 arms are in the sweep that follows this section's measurements.

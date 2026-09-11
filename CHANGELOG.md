@@ -4,6 +4,201 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.1] - 2026-09-11
+
+### Fixed
+
+- SonarCloud findings on this PR's new code (#244). `tests/test_worker_recipe_knobs.py` carried a **real test defect**, not just a style nit (S5778): `_sample(knob)` was evaluated *inside* the `pytest.raises` block, so had it ever raised, the test would have passed for the wrong reason - the call is now hoisted out. Also `_INT_OR_NONE` / `_BOOL_OR_NONE` constants in `lobes/profiles/schema.py` (S1192), matching the `_STR_OR_NONE` convention that file already established one line above the table; a unified assertion argument order in the same test file (S3415); and a composite assertion split in `tests/test_catalog.py` so a failure names which key was present (S9073).
+- One reported finding needed no change: the duplicated catalog doc literal is already down to 2 occurrences, below S1192's threshold of 3, since the nvidia entry was re-pointed at its own per-model doc.
+
+## [0.75.0] - 2026-09-11
+
+### Added
+
+- **The variation catalog has its first real entry**: `deployments/jetson-agx-thor__thor-worker/` captures the live Jetson AGX Thor serving `worker` — its `deployment.lock.toml`, its verbatim compose/override/shape files, both Dockerfiles, `mg-logwrap.sh` and the tool-parser plugin, plus a `VARIATION.md` citing the acceptance transcript. Until now `deployments/` shipped only a README and a template, and every catalog behaviour was exercised against fixtures. The point of the capture is reproducibility **without re-rendering**: two settings that make the measured numbers reproducible (`WORKER_KV_CACHE_DTYPE`, `WORKER_MAX_NUM_SEQS`) only became renderable in 0.74.0, and the captured compose was hand-patched to carry their slots — so a render of an older tree cannot reproduce it, but `--from-lock` can. `.env` is deliberately NOT carried (gitignored, credential-bearing); the restorable settings live in the lock's allowlisted `[env]`.
+
+### Changed
+
+- **`thor-worker` now renders the whole measured recipe, not just the checkpoint.** The shape gained `kv_cache_dtype="fp8"`, `max_num_seqs=1` and the DFlash `speculative_config`; without them a fresh render started the lane with no speculation, no fp8 KV, and the compose default `nemotron_v3` reasoning parser applied to a Qwen checkpoint.
+- `lobes/catalog.py` — the nvidia entry moves from `status="configured"` to `"load-tested"`, matching the live boot and measurements now committed.
+- `CLAUDE.md` and `docs/deployment-lock.md` — the "no real box has been captured / ZERO variations" honesty claims are now false and are corrected. There is still no capture verb; the capture was made by calling `capture_lock` directly, and the docs say so.
+- `.gitignore` — ignore `.qwen/`, the scratch state `qwen review` writes into the repo root.
+
+### Fixed
+
+- `lobes/cli/_commands/doctor.py` — `_pool_arming_check` called `build_config()` outside its `try`, so a malformed fleet `.env` aborted the entire doctor run instead of producing a finding.
+- `lobes/profiles/schema.py` — `max_num_batched_tokens` and `prefix_caching` were gated worker-only although the `associate` compose lane already consumes `ASSOCIATE_*` forms of both, leaving profile authors unable to set what the lane reads.
+- `scripts/spec-arms.py` — reject non-positive `--aggregate-concurrency` before it reaches `ThreadPoolExecutor`; catch aggregate-leg failures so one bad request no longer discards a completed single-stream transcript; and make the per-position sample count match the samples actually averaged.
+- `scripts/stream-measure.py` — surface a gateway error SSE event instead of returning a zero-rate row that looks like a successful measurement, and stop falling back from `usage.completion_tokens` to the SSE delta count (deltas are not tokens).
+
+## [0.74.6] - 2026-09-11
+
+### Fixed
+
+- **CORRECTION: the concurrency result published in 0.74.5 was wrong.** It reported "concurrency scales: 348.1 tok/s aggregate at width 4". That measurement sent four IDENTICAL short prompts with `--enable-prefix-caching` on, so every stream shared one cached prefix and the box did roughly one prompt's work. Repeated with DISTINCT ~8.8k-token prompts and a per-invocation nonce, **aggregate decode is FLAT** - 12.1 / 10.4 / 13.3 tok/s at widths 1 / 2 / 4 - while per-stream decode falls (46.5 to a mean of 15.3) and worst-case TTFT rises from 2.7 s to 9.8 s. The general lesson is recorded in the doc: any concurrency benchmark that reuses one prompt across streams measures the prefix cache, not the engine.
+
+### Changed
+
+- **`WORKER_MAX_NUM_SEQS=1`** is now the documented and deployed setting. With a flat aggregate the cap costs no total throughput and buys the best per-request latency, which is what an interactive agent experiences.
+- The per-model doc separates decode rate BY PROMPT DEPTH, because the two differ ~4x and agentic work is deep-prompt work: 185-197 tok/s at a 25-token prompt versus **41.5-46.5 tok/s at 8,786 tokens**. The headline figure is labelled a short-prompt figure throughout.
+- Recorded the counter-caveat too: a real agent re-sends a growing conversation and so DOES share prefixes turn to turn, making the distinct-prompt sweep a pessimistic bound. Both bounds are documented rather than one presented as the answer.
+
+### Added
+
+- `scripts/concurrency-probe.py` - the distinct-prompt, nonce-per-run concurrency harness, committed so the correction is re-runnable rather than merely asserted.
+
+## [0.74.5] - 2026-09-11
+
+### Added
+
+- **Concurrency is measured for the Thor `worker` lane** (#244) and it scales: a pure-decode sweep through the gateway at `max_num_seqs=4` gives 164.8 tok/s per stream at width 1, ~147 at width 2, and **131.4 tok/s per stream across all four at width 4 — 348.1 tok/s aggregate, 5.7x the width-1 aggregate for a 20% per-stream cost**. `max_num_seqs=4` is kept; capping the batch to 1 measured 182-184 tok/s single-stream, i.e. it removes headroom without meaningfully raising speed.
+- The per-model doc now separates that controlled sweep from a **prefill-dominated agentic sample** taken while Qwen Code drove a PR review against the lane (239k prefill tokens against 12k generated, 33-53 tok/s decode aggregate). The low decode figure there is a property of the workload, not of speculation under batching — the doc says so explicitly, because quoting either number as the other would be wrong. Practical consequence recorded: an agentic workload on this lane is **prefill-bound**, so multi-agent capacity planning should budget the ~1.3k tok/s prefill rate, not the 196.6 tok/s decode headline.
+
+### Fixed
+
+- markdownlint: MD018 on a line that began with an issue reference, MD004 bullet-style inconsistencies, and MD031/MD012/MD028/MD032 whitespace-structure errors across the three docs this work touches. `markdownlint-cli2` now reports 0 errors over all 64 files.
+
+## [0.74.4] - 2026-09-10
+
+### Added
+
+- **`docs/nvidia-qwen3.6-35b-a3b-nvfp4.md`** — the per-model recipe doc for the Thor's deployed `worker` checkpoint, in the same shape as the other per-model docs: what the checkpoint is (read from its own config files, not card prose), the exact pinned image plus the pre-boot probes that narrow a load risk before spending a boot, the full `.env` and the rendered argv from `docker inspect`, the measured speculation sweep (none / MTP k=1,3,5,6,7 / DFlash k=12 with per-position acceptance), the deployed 262144 budget, the correctness probes, and five operational traps hit live during bring-up. Includes a concurrency sample taken under a real agentic review workload, explicitly labelled prefill-dominated and NOT comparable to the batch-1 figures.
+
+### Changed
+
+- **The `thor-worker` shape now serves the full native `max_model_len=262144`**, raised from the 65536 the sweep measured — because a real consumer broke on the smaller window (Qwen Code requests 64000 output tokens by default and returned HTTP 400). 262144 booted at the same util with a KV pool of 1,199,883 tokens (4.58x ceiling). The TOML records why, since a window shrink breaks consumers that no model-id audit catches.
+- `lobes/catalog.py` — the `nvidia/Qwen3.6-35B-A3B-NVFP4` entry points `doc=` at its own per-model file rather than the shared family doc.
+- `docs/qwen3.6-35b-a3b-nvfp4.md` — the pre-boot section for the nvidia export is marked superseded and cross-references the new doc.
+
+## [0.74.3] - 2026-09-10
+
+### Changed
+
+- **The `thor-worker` shape points at `nvidia/Qwen3.6-35B-A3B-NVFP4` at its MEASURED budget** (#244 t15): `model`, `quantization=modelopt` (the ModelOpt MIXED_PRECISION export resolves to `modelopt_mixed`, where the outgoing unsloth export needed `compressed-tensors`), and `max_model_len=65536` — the window a live boot on the physical Thor actually proved on 2026-09-10, not the 262144 the previous occupant served. `gpu_mem_util` stays 0.45, which booted first try. 128K and native 262144 are UNMEASURED for this checkpoint and the TOML says so; raising the window is a re-measurement, not an edit.
+- The shape's `sm_110` MoE-backend note now records the measured REASON rather than the assumed one: with MTP on, the engine selects two MoE backends at once — MARLIN for the target's `W4A16_NVFP4` experts and TRITON for the drafter's unquantized ones — so the 2026-07-31 refusals were one forced value applied to two differently-quantized MoEs, never an sm_110 fact. `WORKER_MOE_BACKEND` still stays unset.
+- The superseded 2026-07-31 unsloth budget is kept in the header, explicitly labelled as belonging to a different checkpoint on a different engine, alongside the standing warning that a KV ceiling is not measured concurrency.
+
+## [0.74.2] - 2026-09-10
+
+### Added
+
+### Changed
+
+- `worker`'s role contract re-widens (issue #244, t4): `ROLE_RESPONSIBILITIES['worker']`
+  regains `image_understanding`/`video_understanding` and `code_authoring` is
+  removed from `ROLE_FORBIDDEN['worker']` — the checkpoint behind `worker`
+  ships its own ViT (image intake MEASURED live against negative controls,
+  2026-09-10; video intake is checkpoint-declared, unmeasured, #108).
+  `final_decision`/`security_decision` remain forbidden. The #187 Lightning
+  narrowing to text-only/non-coding was the temporary state of a checkpoint
+  swap, not the contract — adding a responsibility is contract-compatible,
+  removing one is a break. `senses`/`associate` are untouched.
+
+### Fixed
+
+## [0.74.1] - 2026-09-10
+
+### Added
+
+### Changed
+
+### Fixed
+
+- **`associate` no longer shares `worker`'s catalog `role_hint` (issue
+  #244, t2).** The Lightning checkpoint
+  (`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`) now carries its own
+  `role_hint="associate"` instead of being demoted to a plain `"candidate"`
+  when `worker`'s hint moved to a different checkpoint (#244 t1). Previously
+  `associate` resolved through `worker`'s hint via an alias
+  (`BACKEND_ROLE_CATALOG_HINT`/`ROLE_ROLE_HINT`), so a `worker` checkpoint
+  promotion silently moved `associate`'s advertised default with it — a real
+  defect, since the Orin's `associate` lane keeps serving Lightning
+  regardless of what `worker` serves. `lobes.gateway._config._DEFAULT_ASSOCIATE`
+  is now derived from `catalog.resolve_tier("associate")`, mirroring
+  `_DEFAULT_WORKER`, instead of a hardcoded literal id.
+
+## [0.74.0] - 2026-09-10
+
+### Added
+
+- **The `worker` lane can express its recipe.** `vllm-worker` emitted five
+  tunable flags and hardcoded `--tool-call-parser=qwen3_coder`; ten knobs now
+  reach it — `WORKER_KV_CACHE_DTYPE`, `WORKER_ATTENTION_BACKEND` (as the
+  `--attention-config` JSON, the same surface the embed/rerank/hand lanes use),
+  `WORKER_MAX_NUM_SEQS`, `WORKER_MOE_BACKEND`, `WORKER_MAX_NUM_BATCHED_TOKENS`,
+  `WORKER_LOAD_FORMAT`, `WORKER_CHUNKED_PREFILL`, `WORKER_ASYNC_SCHEDULING`,
+  `WORKER_PREFIX_CACHING` and `WORKER_TOOL_CALL_PARSER`. The first three were
+  ALREADY rendered by the profile layer and read by nothing on the lane; the
+  rest could not be expressed at all, so an arm that needed one meant
+  hand-editing a deployment's compose file — the drift `deployment.lock.toml`
+  exists to catch. Every one is default-absent: with none set, the rendered
+  argv is byte-identical to the pre-change lane (proved against real
+  `docker compose config`, `tests/test_worker_recipe_knobs.py`), the lane still
+  passes no `--language-model-only`, and every profile/shape golden is
+  unmoved. None of the values is measured on a worker box (#108) — the lane
+  can now express them, which is not a recommendation to set one.
+
+### Changed
+
+- `lobes/profiles/schema.py` — `KNOB_LANE_ROLES` generalises the
+  `SPECULATIVE_CONFIG_ROLES` rule: a knob may only be declared for a role whose
+  compose lane actually expands its slot, so a knob can never render an `.env`
+  key nothing reads. `moe_backend` / `max_num_batched_tokens` / `load_format` /
+  `chunked_prefill` / `async_scheduling` / `prefix_caching` are worker-only;
+  `tool_call_parser` is worker + associate.
+- `lobes/profiles/render.py` — `_BOOL_KNOB_TOKENS` generalises
+  `_ENFORCE_EAGER_TOKEN`: a boolean knob renders the FULL flag text
+  (`--enable-prefix-caching` / `--no-enable-prefix-caching`), which is what the
+  dash-only compose slot needs. `enforce_eager` renders exactly as before.
+- `tests/goldens/template-defaults.env` — the golden now also captures the
+  CONDITIONAL `${VAR:+alternate}` surface (written `VAR:+alternate`), so an
+  edit to the flag a default-absent knob composes moves a golden byte instead
+  of nothing.
+
+### Fixed
+
+- `lobes/templates/fleet/env.example` and the `vllm-worker` service comments
+  claimed `WORKER_ATTENTION_BACKEND` was "deliberately NOT wired" and that
+  pinning a MoE backend or another tool parser required a by-hand template
+  edit. All three statements now match the code.
+- `docs/machine-profiles.md` — the knob table said `worker` used neither
+  `KV_CACHE_DTYPE` nor `MAX_NUM_SEQS`; both render today.
+
+## [0.73.10] - 2026-09-10
+
+### Added
+
+- `docs/thor-worker-flip-rollout-notes.md` (#244 t8) — the pre-flip rollout note and raw-id consumer audit for moving the Jetson AGX Thor off a local `cortex` onto the `worker` seat, naming every consumer found that pins the cortex checkpoint id or the Thor's own gateway origin (in-repo, on-box, and across the mesh's sibling repos).
+- `docs/qwen3.6-35b-a3b-nvfp4.md` — a re-run recipe section for the Qwen3.6-35B-A3B worker lane on the Thor: candidate image digests, exact argv, `.env` overrides, the sm_110 MoE-backend auto-select requirement, and live-read power mode / L4T, with every historical throughput figure cited to its evidence transcript.
+
+## [0.73.9] - 2026-09-10
+
+### Added
+
+- `scripts/spec-arms.py` — captures vLLM's per-position speculative-decoding acceptance array (`per_position_acceptance_rate`, previously matched by the log-line regex and discarded) alongside the existing engine-wide acceptance rate, and adds an optional concurrent-aggregate leg (`--aggregate-concurrency` / `--aggregate-ramp`) that reuses `lobes.assess.run_concurrent`/`auto_ramp_concurrency` rather than a second concurrency implementation. Single-stream per-shape measurements and the concurrent-aggregate leg are tagged with distinct `leg` markers and never conflated in the transcript (issue #244 t5).
+
+## [0.73.8] - 2026-09-10
+
+### Added
+
+- `lobes doctor` gains a `pool_arming` finding (#244 t6): it reuses the
+  gateway's own `_check_pool_arming` startup guard offline against the
+  deployed `.env`, so a dropped role declaring `<PREFIX>_PEER_ORIGINS`
+  without the singular `<PREFIX>_PEER_ORIGIN` is caught before the gateway
+  ever refuses to boot on it.
+
+### Changed
+
+- `lobes.gateway._config._DEFAULT_WORKER` is now derived from the catalog's
+  own `role_hint="worker"` entry (`catalog.resolve_tier("worker")`) instead
+  of a hardcoded checkpoint id, so it can never go stale the next time the
+  `worker` seat is re-checkpointed.
+
+### Fixed
+
+- The stale `_DEFAULT_WORKER` literal (`unsloth/Qwen3.6-35B-A3B-NVFP4`) no
+  longer advertises a checkpoint no box in the mesh currently serves.
+
 ## [0.73.7] - 2026-09-02
 
 ### Fixed

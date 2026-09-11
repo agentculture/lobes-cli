@@ -819,26 +819,29 @@ _GOLDEN_CAPABILITIES = {
         # The opt-in worker lobe: unwired in this no-knob deployment, so it is
         # honestly infeasible-by-default (OPT_IN_BACKENDS, exactly like muse
         # above) and named by its catalog default. Catalog worker moved to
-        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-        # (nemotron-lightning-worker plan, #187, t3) — text-only, 1M native
-        # ceiling, nvidia modelopt quant. mtp False: config.json carries no
-        # MTP/draft-head field for this checkpoint (unlike the demoted
-        # Qwen worker's self-hosted draft); the card's separate MTP/DSpark
-        # claim is declared, unmeasured (plan t2).
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 (issue #244, t1) — 256K native ceiling,
+        # nvidia modelopt quant, MULTIMODAL (image+video), self-hosted MTP
+        # draft (mtp True: config.json's mtp_num_hidden_layers=1 plus the
+        # ignore/exclude_modules "mtp*" pattern, declared/unmeasured on this
+        # engine). Demoted from role_hint="worker":
+        # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (nemotron-
+        # lightning-worker plan, #187, t3) — text-only, 1M native, no MTP —
+        # kept as a candidate.
         #
         # NOTE: `responsibilities` below is roles.py's OWN static vocabulary
-        # (ROLE_RESPONSIBILITIES), not derived from the catalog — it still
-        # names image_understanding/video_understanding here because the
-        # sibling nemotron-lightning-worker plan task t4 (roles.py) redefines
-        # that vocabulary for the new TEXT-ONLY checkpoint; this task (t3)
-        # only changes the catalog entry.
-        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        # (ROLE_RESPONSIBILITIES) — since issue #244 t4 it regains
+        # image_understanding/video_understanding (the checkpoint ships its
+        # own ViT) and code_authoring is REMOVED from forbidden: worker is a
+        # multimodal coder. Adding responsibilities is contract-compatible;
+        # the #187 Lightning narrowing was the temporary state, not the
+        # contract.
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
         "quant": "modelopt",
-        "mtp": False,
+        "mtp": True,
         # True even though this deployment does not HOST worker: `tools` is a
         # fact about the model the role would serve (the catalog's
         # `qwen3_coder` tool parser — UNVALIDATED on our engine, cited from
@@ -860,15 +863,17 @@ _GOLDEN_CAPABILITIES = {
             "run_authorized_commands",
             "tool_use",
             "repo_action",
+            "image_understanding",
+            "video_understanding",
         ],
         # Unlike muse/senses, worker MAY act on the repo — repo_action is
         # deliberately ABSENT here (it is only permitted, never forbidden).
-        # code_authoring IS forbidden (issue #187): "not coder" does not mean
-        # "cannot touch a repository" — worker may inspect/run, never author.
+        # code_authoring is likewise ABSENT (issue #244 t4 re-widening): the
+        # checkpoint behind worker ships its own ViT and is a multimodal
+        # coder now — final_decision/security_decision remain forbidden.
         "forbidden_responsibilities": [
             "final_decision",
             "security_decision",
-            "code_authoring",
         ],
         "feasible": False,
         "ready": False,
@@ -879,8 +884,9 @@ _GOLDEN_CAPABILITIES = {
         # The TENTH Colleague role (lightning-on-orin plan, t6): worker MINUS
         # repo_action. Opt-in like muse/worker, unwired in this no-knob
         # deployment, so honestly infeasible-by-default (OPT_IN_BACKENDS) and
-        # named by the catalog gear it shares with `worker` — one checkpoint,
-        # two public addresses with different authority.
+        # named by its OWN catalog role_hint (issue #244, t2) — the Lightning
+        # checkpoint it actually serves (docs/evidence/2026-08-26-accept-orin-associate.txt),
+        # independent of whichever checkpoint carries `worker`'s role_hint.
         "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,

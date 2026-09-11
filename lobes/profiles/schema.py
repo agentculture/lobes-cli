@@ -104,6 +104,34 @@ KNOB_NAMES: tuple[str, ...] = (
     # it with no special case. See the QUOTING note on the dataclass field
     # below: the value carries its own shell quotes, and that is deliberate.
     "speculative_config",
+    # --- the worker lane's recipe knobs (worker-recipe-knobs plan, t3) -------
+    #
+    # Every one of these is a flag the `vllm-worker` lane could NOT express
+    # before: an arm that needed one meant hand-editing the packaged compose
+    # file, which is exactly the drift `deployment.lock.toml` exists to catch
+    # (CLAUDE.md's 2026-08-25 Spark incident). They are gated to the lanes that
+    # actually expand them by KNOB_LANE_ROLES below, so declaring one on a lane
+    # with no slot is a LOAD ERROR rather than a dead `.env` key.
+    #
+    # `moe_backend` / `max_num_batched_tokens` / `load_format` are plain
+    # value-carrying knobs (str/int), rendered into a ${VAR:+--flag=${VAR}}
+    # slot so an unset knob leaves no argv token at all.
+    "moe_backend",
+    "max_num_batched_tokens",
+    "load_format",
+    # `chunked_prefill` / `async_scheduling` / `prefix_caching` are BOOLEANS
+    # rendered as the FULL flag text (`--enable-prefix-caching` /
+    # `--no-enable-prefix-caching`), the same translation `enforce_eager`
+    # already gets -- see render._BOOL_KNOB_TOKENS and the RERANK_ENFORCE_EAGER
+    # / ASSOCIATE_PREFIX_CACHING idiom in the compose template.
+    "chunked_prefill",
+    "async_scheduling",
+    "prefix_caching",
+    # `tool_call_parser` -> <PREFIX>_TOOL_CALL_PARSER. The worker lane
+    # hardcoded `qwen3_coder` until this task; the default is unchanged, but a
+    # deployment serving a checkpoint that emits a different call shape (e.g.
+    # qwen3_xml) can now say so in a profile instead of editing the template.
+    "tool_call_parser",
 )
 
 
@@ -140,6 +168,29 @@ KNOB_NAMES: tuple[str, ...] = (
 # here; for `muse` that also means converting its command from a list to the
 # shell-lexed string form vllm-primary/vllm-worker use.
 SPECULATIVE_CONFIG_ROLES: frozenset[str] = frozenset({"cortex", "senses", "worker"})
+
+# The same rule, generalised: knob name -> the roles whose compose lane actually
+# expands <PREFIX>_<SUFFIX> for it. A knob ABSENT from this table is ungated
+# (every lane reads it, or the key is passed through to the gateway for every
+# prefix -- e.g. gpu_mem_util, max_model_len, kv_cache_dtype).
+#
+# The worker-recipe knobs (worker-recipe-knobs plan, t3) are worker-only
+# because only `vllm-worker`'s command grew their slots; `tool_call_parser` is
+# the exception, since `vllm-associate` has read ASSOCIATE_TOOL_CALL_PARSER
+# since the lightning-on-orin plan's t7. Giving another lane one of these knobs
+# means adding its slot to that lane's compose command FIRST, then widening the
+# entry here -- never the other way round.
+_WORKER_ONLY: frozenset[str] = frozenset({"worker"})
+KNOB_LANE_ROLES: dict[str, frozenset[str]] = {
+    "speculative_config": SPECULATIVE_CONFIG_ROLES,
+    "moe_backend": _WORKER_ONLY,
+    "max_num_batched_tokens": _WORKER_ONLY | frozenset({"associate"}),
+    "load_format": _WORKER_ONLY,
+    "chunked_prefill": _WORKER_ONLY,
+    "async_scheduling": _WORKER_ONLY,
+    "prefix_caching": _WORKER_ONLY | frozenset({"associate"}),
+    "tool_call_parser": frozenset({"worker", "associate"}),
+}
 
 
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -387,6 +438,8 @@ def _is_optional_int(value: Any) -> bool:
 # Shared "expected" description for every Optional[str] knob below — defined
 # once so the literal isn't duplicated across the validator table (S1192).
 _STR_OR_NONE = "str or None"
+_INT_OR_NONE = "int or None"
+_BOOL_OR_NONE = "bool or None"
 
 # Per-field type validator + human-readable "expected" description, used by
 # RoleProfile.from_dict to reject a value of the wrong TYPE (not just an
@@ -396,16 +449,53 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "feasible": (_is_strict_bool, "bool"),
     "model": (_is_optional_str, _STR_OR_NONE),
     "gpu_mem_util": (_is_optional_number, "int/float or None"),
-    "max_model_len": (_is_optional_int, "int or None"),
+    "max_model_len": (_is_optional_int, _INT_OR_NONE),
     "quantization": (_is_optional_str, _STR_OR_NONE),
     "kv_cache_dtype": (_is_optional_str, _STR_OR_NONE),
     "attention_backend": (_is_optional_str, _STR_OR_NONE),
-    "enforce_eager": (_is_optional_bool, "bool or None"),
-    "max_num_seqs": (_is_optional_int, "int or None"),
+    "enforce_eager": (_is_optional_bool, _BOOL_OR_NONE),
+    "max_num_seqs": (_is_optional_int, _INT_OR_NONE),
     "hf_overrides": (_is_optional_str, _STR_OR_NONE),
     "allow_long_max_model_len": (_is_optional_str, _STR_OR_NONE),
     "speculative_config": (_is_optional_str, _STR_OR_NONE),
+    "moe_backend": (_is_optional_str, _STR_OR_NONE),
+    "max_num_batched_tokens": (_is_optional_int, _INT_OR_NONE),
+    "load_format": (_is_optional_str, _STR_OR_NONE),
+    "chunked_prefill": (_is_optional_bool, _BOOL_OR_NONE),
+    "async_scheduling": (_is_optional_bool, _BOOL_OR_NONE),
+    "prefix_caching": (_is_optional_bool, _BOOL_OR_NONE),
+    "tool_call_parser": (_is_optional_str, _STR_OR_NONE),
 }
+
+
+def _check_lane_gates(role: str, data: Mapping[str, Any]) -> None:
+    """Refuse a knob whose lane cannot consume it — loudly, at LOAD time.
+
+    A knob that renders a ``.env`` key nothing reads is a silent no-op, and
+    this repo's rule is that such a declaration must fail with a message
+    naming WHY (the same rule that makes an unknown knob name a load error).
+    The gate table is :data:`KNOB_LANE_ROLES`; a knob absent from it is
+    ungated. Note the check is on ``is not None``, not truthiness: the empty
+    string is a MEANINGFUL value for ``speculative_config`` (spec-decode off),
+    so it must be refused on a lane with no slot too.
+    """
+    for knob, allowed in KNOB_LANE_ROLES.items():
+        if data.get(knob) is None or role in allowed:
+            continue
+        suffix = knob.upper()
+        servable = ", ".join(sorted(allowed))
+        raise _profile_error(
+            message=(
+                f"role {role!r}: knob {knob!r} has no effect — the "
+                f"{role!r} lane's compose command does not expand "
+                f"<PREFIX>_{suffix}"
+            ),
+            remediation=(
+                f"declare {knob!r} only for: {servable}. Using it on another "
+                f"lane needs that lane's compose command to grow a "
+                f"${{PREFIX_{suffix}}} slot first (see KNOB_LANE_ROLES)"
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -469,6 +559,35 @@ class RoleProfile:
     # `.env` by hand. Tracked as a lifecycle gap in issue #204, not a
     # property of this field.
     speculative_config: str | None = None
+    # --- the worker lane's recipe knobs (worker-recipe-knobs plan, t3) -------
+    # All seven are gated by KNOB_LANE_ROLES: today only the `worker` lane
+    # expands them (plus `associate` for tool_call_parser), so a declaration on
+    # any other role is refused at LOAD rather than rendering a dead key.
+    #
+    # The vLLM MoE kernel selection (`--moe-backend`). DELIBERATELY unset by
+    # default: measured on Thor sm_110 2026-07-31, every forced value was
+    # REFUSED and only auto-select booted
+    # (docs/evidence/2026-07-31-accept-worker-thor.txt). A card that has
+    # MEASURED a working pin can declare it.
+    moe_backend: str | None = None
+    # `--max-num-batched-tokens`: the scheduler's per-step token budget.
+    max_num_batched_tokens: int | None = None
+    # `--load-format`: how weights are read (e.g. "runai_streamer"). A
+    # deployment-shaped choice about startup time, not about the checkpoint.
+    load_format: str | None = None
+    # Three BOOLEAN toggles whose rendered `.env` value is the FULL flag text,
+    # exactly like `enforce_eager` (see render._BOOL_KNOB_TOKENS). The compose
+    # slot is the dash-only ${VAR-} form, so an unset/empty value leaves no
+    # argv token and vLLM's own default applies.
+    chunked_prefill: bool | None = None
+    async_scheduling: bool | None = None
+    prefix_caching: bool | None = None
+    # `--tool-call-parser`. The worker lane's shipped default stays
+    # `qwen3_coder` (both worker checkpoints agree on it, validated live
+    # 2026-08-20); this knob exists so a deployment serving a checkpoint with a
+    # different call shape -- `qwen3_xml`, say -- can say so in a profile
+    # instead of hand-editing the packaged compose file.
+    tool_call_parser: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view — every declared field, ``None`` included.
@@ -508,21 +627,7 @@ class RoleProfile:
                         f"(expected {expected})"
                     ),
                 )
-        if data.get("speculative_config") is not None and role not in SPECULATIVE_CONFIG_ROLES:
-            servable = ", ".join(sorted(SPECULATIVE_CONFIG_ROLES))
-            raise _profile_error(
-                message=(
-                    f"role {role!r}: knob 'speculative_config' has no effect — the "
-                    f"{role!r} lane's compose command does not expand "
-                    f"<PREFIX>_SPECULATIVE_CONFIG"
-                ),
-                remediation=(
-                    f"declare 'speculative_config' only for: {servable}. "
-                    "Serving a different draft on another lane needs that lane's "
-                    "compose command to grow a ${PREFIX_SPECULATIVE_CONFIG-default} "
-                    "slot first (see SPECULATIVE_CONFIG_ROLES)"
-                ),
-            )
+        _check_lane_gates(role, data)
         return RoleProfile(**dict(data))
 
 

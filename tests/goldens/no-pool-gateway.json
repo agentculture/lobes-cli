@@ -216,12 +216,11 @@
         "feasible": false,
         "forbidden_responsibilities": [
           "final_decision",
-          "security_decision",
-          "code_authoring"
+          "security_decision"
         ],
         "loaded": false,
-        "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
-        "mtp": false,
+        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "mtp": true,
         "path": "/v1/chat/completions",
         "quant": "modelopt",
         "ready": false,
@@ -238,7 +237,9 @@
           "repo_inspection",
           "run_authorized_commands",
           "tool_use",
-          "repo_action"
+          "repo_action",
+          "image_understanding",
+          "video_understanding"
         ],
         "role": "worker",
         "runtime": "vllm",

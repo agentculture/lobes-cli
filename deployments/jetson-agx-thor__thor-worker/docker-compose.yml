@@ -1,0 +1,1862 @@
+# lobes FLEET — the always-warm Qwen primary behind one stdlib gateway.
+#
+# `lobes init --fleet` copies this file (+ env.example -> .env, + Dockerfile.gateway)
+# into a deployment directory; `lobes fleet up --apply` drives `docker compose
+# up -d --build` there. The gateway serves an OpenAI-compatible API on the host
+# port the acp `vllm-local` provider expects; it routes by the request's `model`
+# field and defaults unknown/missing names to GATEWAY_DEFAULT_MODEL.
+#
+#   lobes init --fleet --apply     # scaffold (writes the running version into .env)
+#   docker login nvcr.io           # NGC API key for the vLLM image
+#   lobes fleet up --apply         # build the gateway + start the backend
+#   lobes fleet status             # container states + gateway /health + /v1/models
+#
+# Tuned for DGX Spark (GB10 Grace Blackwell, 128 GB unified memory). Default
+# "always-on duo" fleet, context-rebalanced (t2): the Qwen primary now serves
+# its full 128K native context (util 0.30 — util-bound, not context-bound, so
+# 64K->128K trades concurrency at the same memory) alongside the Gemma 4 12B
+# multimodal gear trimmed to 32K context (util 0.14, vision+audio+MTP; util
+# 0.14 is PROVISIONAL pending live validation, plan task t12), plus the two
+# ~0.6B embed/rerank gears (util 0.06 each). Total default budget: 0.56 on the
+# 128 GB GB10. Opt-in: the 4B minor (profile `minor`) and the legacy 14B middle
+# (profile `middle` / `legacy`). See docs/vllm-nightly-migration.md §8.
+# See env.example GPU budget. To add a warm *generate* fallback, wire a
+# vllm-fallback service + FALLBACK_URL/FALLBACK_SERVED_NAME on the gateway and
+# drop both generate GPU utils so they sum well under 1.0.
+services:
+  # vllm-primary / vllm-embed / vllm-embed-deep / vllm-rerank / vllm-hand /
+  # vllm-worker pin the SAME nightly digest — one engine, fleet-wide, for the
+  # six default/opt-in gears that ride the Qwen vllm-openai nightly lane (t4 of
+  # devague plan lobes-unifies-its-generate-lane-on-one-vllm-nightl; replaces
+  # the pre-t4 nvcr.io/nvidia/vllm:26.04-py3 NGC pin). Live-validated by the t2
+  # (27B, GO) and t3 (embed+rerank, GO) spikes — see
+  # docs/vllm-nightly-migration.md §4/§5. Bump the digest DELIBERATELY (and
+  # re-validate) rather than floating the moving :nightly tag, same discipline
+  # as Dockerfile.vllm-gemma4.
+  #
+  # BUMPED (t5 of devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p):
+  # the official Docker Hub nightly built 2026-08-19, resolving to vLLM
+  # 0.26.1rc1.dev942+g5a4c8d992 — see the t2 engine spike,
+  # docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt. This
+  # digest now DIVERGES from Dockerfile.vllm-gemma4 (pinned OLD, vLLM
+  # 0.23.1rc1.dev672+g93d8f834d, deliberately — operator decision, not
+  # re-validated against the new nightly) — "one engine, fleet-wide" no longer
+  # includes the Gemma 4 senses/muse lane. The pre-bump digest was
+  # sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9.
+  #
+  # §5 finding: nightly's memory-profiler asserts free GPU memory stays
+  # CONSTANT while it profiles — bring these gears up when fleet memory is
+  # stable, not mid-churn (concurrent teardown of another container on the
+  # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
+  # a settle gap over a simultaneous multi-gear `docker compose up`.
+  vllm-primary:
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: model-gear-vllm-primary
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71): disable the ESTIMATED cudagraph-memory headroom so the
+      # util knob maps back to true usage instead of starving the KV cache.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      # OFF by default (t5 of devague plan lobes-adopts-qwen3.8-27b-nvfp4-as-cortex-p):
+      # vLLM refuses to serve a --max-model-len beyond the checkpoint's own
+      # declared ceiling unless this is set. Only a shape that serves a YaRN-
+      # scaled window beyond the checkpoint's native 262144 (e.g. spark-lobe's
+      # 1M-token hypothesis, PRIMARY_MAX_MODEL_LEN=1048576) needs
+      # PRIMARY_ALLOW_LONG_MAX_MODEL_LEN=1 in .env; every other shape/card
+      # leaves this at its inert default.
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=${PRIMARY_ALLOW_LONG_MAX_MODEL_LEN:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # Think-aware tool-parser plugin (t2, cortex/main lane only): `lobes init`
+      # materialises this file from the packaged lobes.vllm_plugins module
+      # (importlib.resources — single source of truth, not a templates copy);
+      # mounted read-only and loaded below via --tool-parser-plugin. NOT mounted
+      # into vllm-multimodal/-embed/-rerank/-minor/-middle — those never parse
+      # tool calls in the reasoning-aware qwen3_coder_thinking format.
+      - ./qwen3_thinking_tool_parser.py:/opt/lobes/qwen3_thinking_tool_parser.py:ro
+    # No host port — reachable only as http://vllm-primary:8000 on the compose net.
+    expose:
+      - "8000"
+    # mg-logwrap tees output to /logs/model-gear, then `exec`s the command (vLLM stays
+    # the signal target).
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # Converted from a YAML list (spec-knobs task) for the SAME reason the senses
+    # lane (vllm-multimodal) was converted first: `docker compose` cannot
+    # conditionally omit a LIST item — a var that substitutes to "" still renders
+    # as an empty argv element, and `vllm serve` reads that as a second positional
+    # and dies with `unrecognized arguments`. A STRING command is shell-lexed by
+    # compose AFTER substitution, so a variable that expands to nothing leaves no
+    # token at all. Two boxes had to hand-edit their rendered docker-compose.yml
+    # to drop MTP on Jetson Thor sm_110 (the 8bd082 nightly ships no kernel image
+    # for fused_gdn_decode_post_conv_mtp there — see
+    # docs/evidence/2026-08-20-accept-cortex-local-thor.txt) before this knob
+    # existed; PRIMARY_SPECULATIVE_CONFIG below is the off-switch that replaces
+    # that hand-edit. See tests/test_senses_speculative_config.py's docstring for
+    # the full argv-parsing proof and env.example for the knob's usage.
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  compressed-tensors — the checkpoint's OWN quant_method
+    #     (mixed precision: fp8 attention/lm_head/upper-8 MLP + nvfp4 MLP
+    #     gate/up/down, ViT and every linear_attn left unquantized). The outgoing
+    #     text-only MTP export used `modelopt`; passing that here fails on a
+    #     quant-method mismatch.
+    #
+    #   --kv-cache-dtype  fp8 KV needs calibrated k_scale/v_scale in the
+    #     checkpoint. The shipped default STAYS fp8 (GB10 behavior unchanged) —
+    #     per-machine override goes in .env. On boxes serving an NVFP4 re-export
+    #     with no KV scales (kv_cache_quant_algo: null), fp8 trips `assert
+    #     layer.k_scale > 0.0`; set PRIMARY_KV_CACHE_DTYPE=auto there instead
+    #     (Thor's working value — see #109).
+    #
+    #   --max-model-len  Serves its full 128K native context (up from a 64K
+    #     trim): the 27B KV cache is util-bound, not context-bound, so
+    #     64K->128K trades concurrency at the same memory footprint. The
+    #     always-on Gemma multimodal gear frees the headroom by trimming to 32K
+    #     instead. See docs/vllm-nightly-migration.md §8.
+    #
+    #   --hf-overrides  JSON, merged into the checkpoint's own config at load —
+    #     DEFAULT is an empty dict (a documented vLLM no-op, byte-equivalent to
+    #     omitting the flag entirely). Only a long-context shape sets this: the
+    #     spark-lobe 1M-token hypothesis (t5) patches text_config.rope_parameters
+    #     to YaRN (factor 4.0, original_max_position_embeddings 262144),
+    #     preserving every other stock rope field (mrope_interleaved,
+    #     mrope_section, partial_rotary_factor, rope_theta) — see
+    #     builtin_shapes/spark-lobe.toml's [overrides.cortex] for the exact JSON
+    #     and its provenance (verified against the checkpoint's own config.json).
+    #
+    #     PLACEMENT + QUOTING ARE BOTH LOAD-BEARING (verified against real
+    #     `docker compose config`, Compose v2.40.3), for reasons that only
+    #     exist because this command became a folded STRING (this task): a
+    #     bare, EMPTY-braces default — `${PRIMARY_HF_OVERRIDES:-{}}` — corrupts
+    #     compose's OWN interpolation of every subsequent `{`/`}` pair in the
+    #     rest of the string (verified: with it positioned earlier, the LAST
+    #     brace-containing substitution downstream — the speculative-config
+    #     default — loses its closing brace; unrelated bare literal braces
+    #     placed after it get mangled the same way). Moving it to be the LAST
+    #     substitution in the command sidesteps that entirely. Separately, the
+    #     surrounding single quotes (`'${PRIMARY_HF_OVERRIDES:-{}}'`, exactly
+    #     the senses lane's own quoting idiom) keep a CUSTOM override — e.g. the
+    #     spark-lobe shape's YaRN JSON, which contains spaces and is written
+    #     unquoted into `.env` — as ONE argv token; without them the shell-lexer
+    #     splits it on every space inside the JSON. Both defaults (`{}` and the
+    #     spark-lobe YaRN JSON) round-trip correctly with this arrangement;
+    #     moving --hf-overrides earlier or dropping the quotes reintroduces one
+    #     of the two failures.
+    #
+    #   --max-num-seqs  MTP cap — 4 OOMs at n=3/high context.
+    #
+    #   --default-chat-template-kwargs  preserve historical <think> across turns
+    #     (issue #93); request-level chat_template_kwargs override this default.
+    #
+    #   --tool-call-parser  qwen3_coder_thinking (t2): a CUSTOM plugin parser,
+    #     not an upstream vLLM name. Upstream's stock qwen3_coder parser
+    #     hardcodes reasoning=False on every emitted tool call — strict
+    #     structural tags then break for a thinking model, which needs to stay
+    #     reasoning-aware across a tool turn. --tool-parser-plugin (below)
+    #     registers this name from the mounted file. Falls back to plain
+    #     upstream qwen3_coder if an operator overrides PRIMARY_TOOL_CALL_PARSER
+    #     in .env (e.g. to run a non-thinking primary here).
+    #
+    #   --enable-prefix-caching  Mamba prefix caching is experimental for this
+    #     hybrid 27B; functional, watch for drift.
+    #
+    #   PRIMARY_SPECULATIVE_CONFIG  SELF-HOSTED MTP draft, default-on — the
+    #     draft module is baked into the checkpoint (15 real `mtp.*` tensors +
+    #     an `unsloth_fixed_mtp` config flag), so the generic "mtp" method
+    #     applies with no external draft-model key. This replaces the outgoing
+    #     export's grafted '{"method": "qwen3_5_mtp", "num_speculative_tokens":
+    #     3}'. MEASURED on the GB10 2026-07-31: engages at 62-67% draft
+    #     acceptance, mean acceptance length 2.24-2.35, decode up to 19.0 tok/s
+    #     at TTFT ~0.27s.
+    #
+    #     OFF-SWITCH: put `PRIMARY_SPECULATIVE_CONFIG=` (set, but empty) in .env
+    #     to serve this lane with NO speculative decoding at all (also clear
+    #     PRIMARY_MAX_NUM_SEQS, which exists only to cap MTP's OOM risk). That is
+    #     the recorded fallback for a Jetson AGX Thor sm_110 box: the 8bd082
+    #     nightly ships no kernel image for fused_gdn_decode_post_conv_mtp there,
+    #     so a Thor serving cortex must drop MTP entirely while the non-MTP GDN
+    #     path works — see docs/evidence/2026-08-20-accept-cortex-local-thor.txt.
+    #     Uses the same dash-only default operator as MULTIMODAL_SPECULATIVE_CONFIG
+    #     (never the colon-dash operator every other knob in this file uses,
+    #     which would treat an empty value as unset and put the off-switch out
+    #     of reach) — see that knob's env.example entry for the full quoting
+    #     caveat if you want to RETARGET the draft rather than switch it off.
+    #
+    #   SECURITY: --trust-remote-code runs the model repo's code in-container.
+    #     HF_TOKEN is only needed to download gated repos (these defaults are
+    #     public) — leave it empty or use a minimal-scope read-only token; pin
+    #     revisions you trust.
+    #
+    #   DELIBERATELY ABSENT, and both removals are load-bearing:
+    #     --language-model-only  — the outgoing export had its ViT stripped, so
+    #       it had to be told to run text-only. THIS checkpoint declares
+    #       language_model_only=false and ships a 27-layer ViT; keeping the
+    #       tower is the entire point. VALIDATED live 2026-07-31 on the GB10:
+    #       image intake against an opposite-colour negative control AND video
+    #       intake against a REVERSED-motion control (a single-frame read
+    #       cannot pass that). See
+    #       docs/evidence/2026-07-31-accept-multimodal-cortex-spark.txt.
+    #     --tokenizer=mmangkad/…  — that override existed only because the
+    #       outgoing checkpoint's tokenizer_config declared a TokenizersBackend
+    #       absent from the image. This export ships its own tokenizer AND a
+    #       chat_template.jinja carrying `preserve_thinking`, so #93 survives.
+    command: >-
+      vllm serve ${PRIMARY_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
+      --served-model-name=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${PRIMARY_QUANTIZATION:-compressed-tensors}
+      --kv-cache-dtype=${PRIMARY_KV_CACHE_DTYPE:-fp8}
+      --max-model-len=${PRIMARY_MAX_MODEL_LEN:-131072}
+      --gpu-memory-utilization=${PRIMARY_GPU_MEM_UTIL:-0.30}
+      --max-num-seqs=${PRIMARY_MAX_NUM_SEQS:-2}
+      --reasoning-parser=qwen3
+      --default-chat-template-kwargs '{"preserve_thinking": true}'
+      --enable-auto-tool-choice
+      --tool-call-parser=${PRIMARY_TOOL_CALL_PARSER:-qwen3_coder_thinking}
+      --tool-parser-plugin=/opt/lobes/qwen3_thinking_tool_parser.py
+      --enable-prefix-caching
+      ${PRIMARY_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'}
+      --trust-remote-code
+      --hf-overrides='${PRIMARY_HF_OVERRIDES:-{}}'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in llama.cpp cortex lane (GGUF, the fleet's first non-vLLM engine) --
+  # qwen3-8-gguf-llamacpp plan t4. Serves the `cortex` role from a GGUF
+  # checkpoint through `llama-server`'s OWN OpenAI-compatible API, for a card
+  # that cannot run the NVFP4 primary at all: the NVFP4 exports quantize
+  # ACTIVATIONS to FP4 (W4A4) and need Blackwell FP4 tensor cores, while a GGUF
+  # Q4_K_M is weight-only and decodes on Ampere. See lobes/catalog.py's `engine`
+  # axis (ENGINE_LLAMA_CPP / serves_with_vllm) and
+  # docs/qwen3.8-27b-gguf-llamacpp.md.
+  #
+  # OPT-IN, exactly like vllm-muse / vllm-worker / vllm-minor: parked behind the
+  # `llamacpp` Docker Compose profile, so no existing deployment starts it and
+  # every pre-t4 render stays byte-identical. A shape whose composed `cortex`
+  # model is a llama.cpp catalog gear renders COMPOSE_PROFILES=llamacpp plus
+  # PRIMARY_URL=http://llamacpp-primary:8000 (lobes/profiles/shape_render.py's
+  # LLAMA_CPP_* constants), and the generated docker-compose.shape.yml parks
+  # `vllm-primary` in the same render — the two cortex lanes never run together,
+  # and the gateway reaches whichever one is up at the SAME role alias.
+  #
+  # THIS LANE CARRIES llama.cpp SERVER FLAGS ONLY (plan acceptance criterion 3).
+  # `llama-server` has no --quantization (Q4_K_M lives inside the .gguf file), no
+  # --tool-call-parser and no --reasoning-parser (it takes --jinja plus the
+  # model's own embedded chat template), no --gpu-memory-utilization (memory
+  # follows -ngl/-c), and it IGNORES the checkpoint's MTP head. Each of those
+  # vLLM knobs is deliberately ABSENT here rather than translated into something
+  # that looks equivalent — the catalog entry records the same emptiness.
+  llamacpp-primary:
+    # PINNED BY DIGEST, never a floating tag — the same discipline every other
+    # lane follows. MEASURED on the fleet's Jetson AGX Orin 64GB (sm_87),
+    # 2026-08-23: llama.cpp build 38406d597 (10373) on CUDA 13, arm64/linux,
+    # `llama-bench -p 512 -n 128 -ngl 99` at pp512 64.79 / tg128 2.61 tok/s with
+    # flash attention ON. The RUNNER-UP, kept here as the recorded alternative
+    # (do not silently swap to it — re-measure first), was
+    # ghcr.io/ggml-org/llama.cpp@sha256:f74f5805191a8030bff26e2a7890d737fc2b5d0931220c953d25e1b7d7613ef5
+    # (CUDA 12, build d775b8967/10573): pp512 63.10 / tg128 2.53. The pinned
+    # image declares CUDAARCHS=87;110, i.e. kernels for BOTH Jetson generations
+    # in this mesh, and carries llama-server at /usr/local/bin/llama-server plus
+    # bash and curl (both verified in the image — the entrypoint wrapper and the
+    # healthcheck below depend on them).
+    image: ${LLAMACPP_IMAGE:-ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c102b08252e963f9e5f92c3a36554c8f69305eb7ea257c6cd12e24c3191}
+    container_name: model-gear-llamacpp-primary
+    profiles:
+      - llamacpp
+    restart: unless-stopped
+    # The GPU request stays in the SHIPPED `deploy.resources` form every other
+    # lane uses, and is NOT hardcoded to `runtime: nvidia` here. A board whose
+    # NVIDIA container toolkit resolves to the legacy csv mode — where this
+    # stanza fails at container CREATE — declares `gpu_access = "runtime"` on its
+    # MACHINE PROFILE (lobes/profiles/builtin/orin.toml), and `lobes init`
+    # generates docker-compose.gpu.yml, which `!reset`s this stanza and sets
+    # `runtime: nvidia` for every service in lobes.runtime._compose.GPU_SERVICES
+    # — this one included. That is what makes the csv-mode form survive a
+    # re-render instead of being a hand edit; hardcoding it here would instead
+    # bake one board's toolkit mode into a card-neutral template and break the
+    # lane on a CDI/devices-mode box.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    # NOTE what is deliberately absent versus the vLLM lanes: no `ipc: host` and
+    # no memlock/stack `ulimits` (those exist for vLLM's shared-memory/NCCL
+    # worker path, which llama.cpp has no equivalent of), and no `env_file` —
+    # this lane serves a LOCAL file and never downloads a checkpoint, so it needs
+    # no HF_TOKEN and has no reason to read the deployment .env wholesale.
+    # Compose still interpolates every ${VAR} below from .env at render time.
+    environment:
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=llamacpp-primary   # → /logs/model-gear/llamacpp-primary-<boot>.log
+    volumes:
+      # The GGUF, mounted READ-ONLY. llama.cpp mmaps the file and nothing in this
+      # lane ever writes to it, so read-only is the structural statement of that.
+      # It also rules out the `-hf <repo>:<quant>` auto-download path on purpose:
+      # the served file is the one the operator placed, byte-for-byte (the spike
+      # verified its sha256), not whatever a registry resolves today.
+      - ${LLAMACPP_MODEL_DIR:-${HOME:-/root}/.cache/llama.cpp}:/models:ro
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://llamacpp-primary:8000 on the
+    # compose net, matching the vllm-multimodal precedent (`expose`, never
+    # `ports`). `docker ps` shows no published port for this container; the
+    # gateway origin is the only way in.
+    expose:
+      - "8000"
+    # mg-logwrap tees output to /logs/model-gear, then `exec`s the command
+    # (llama-server stays the signal target). The image's own entrypoint is null
+    # with CMD /bin/bash, so the command below names the binary explicitly.
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: a LIST of separate tokens, `--flag value`, never `--flag=value`
+    # llama.cpp's own arg parser does NOT accept the `=` form — verified against
+    # this exact image: `llama-server --ctx-size=4096 …` exits with
+    #   error: invalid argument: --ctx-size=4096
+    # So every flag and its value are separate list items here, unlike the vLLM
+    # lanes' `--flag=value` spellings. Nothing in this list can substitute to an
+    # empty token (every ${VAR} carries a default), so the folded-string trick the
+    # vLLM lanes need for their conditionally-omitted flags is not needed here.
+    #
+    # The flag set is the MEASURED-BEST one from the 2026-08-23 Orin spike:
+    #   -ngl 99   offload every layer to the GPU (65 blocks; 99 is the usual
+    #             "all of them" spelling). Confirmed in the boot log rather than
+    #             trusted from the flag.
+    #   -c        the served context. 262144 is this GGUF's OWN declared native
+    #             ceiling and the window the spike served; KV costs 64 KiB/token
+    #             (only 16 of 65 layers hold a per-token cache — GQA
+    #             head_count_kv=4, key_length=value_length=256 — because the other
+    #             49 are Mamba/SSM with constant state), i.e. 16.00 GiB of KV at
+    #             the full window on top of 15.33 GiB of weights.
+    #   --jinja   use the model's own embedded chat template. This is what gives
+    #             the lane tool calling (the template emits the qwen3_coder XML
+    #             dialect) and `reasoning_content` — llama.cpp auto-detects both,
+    #             so there is no parser flag to pass.
+    #   -np 1     one server slot. llama.cpp splits the -c window across slots, so
+    #             more slots would divide the served context rather than add
+    #             capacity; the spike measured single-stream only.
+    #   -fa on    flash attention. Measured faster than off on this box on both
+    #             candidate images (64.79 vs 63.56 pp512; 2.61 vs 2.57 tg128).
+    #
+    # --alias is llama.cpp's `--served-model-name`: it sets the id this backend
+    # reports on /v1/models, and the gateway builds its routing table from
+    # PRIMARY_SERVED_NAME — so the two MUST agree or `model=cortex` rewrites to an
+    # id the engine does not serve (a 404 behind a healthy backend, observed live
+    # on the vLLM lane 2026-07-31). Both read the same variable here.
+    command:
+      - llama-server
+      - --model
+      - /models/${LLAMACPP_GGUF:-Qwen3.8-27B-UD-Q4_K_M.gguf}
+      - --alias
+      - ${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --n-gpu-layers
+      - ${LLAMACPP_N_GPU_LAYERS:-99}
+      - --ctx-size
+      - ${PRIMARY_MAX_MODEL_LEN:-262144}
+      - --parallel
+      - ${LLAMACPP_PARALLEL:-1}
+      - --flash-attn
+      - ${LLAMACPP_FLASH_ATTN:-on}
+      - --jinja
+    healthcheck:
+      # llama-server answers /health with {"status":"ok"} once the model is
+      # loaded (verified live in the spike). start_period covers a COLD load:
+      # 84 s measured cold, 15.6 s warm-cache, on the Orin at the full window.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # A warm *generate* fallback backend can be added here. The default fleet runs
+  # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
+  # the primary keeps its solo generate headroom. To add
+  # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
+  # your fallback model with its own quantization / tokenizer / parser), add it to
+  # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the
+  # gateway, and lower both GPU utils so they sum well under 1.0. The archived
+  # dense Mistral-Small-3.2-24B (NVFP4) fallback config is in git history (the
+  # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
+  # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
+
+  # --- Embedding + reranker gears (co-resident on the GB10) -----------------
+  # Co-residency budget: primary at util 0.45 (~56 GiB) + two 0.6B gears at
+  # util 0.06 each (~7 GiB budget apiece; weights are only ~1.2 GiB) + opt-in
+  # middle 14B at util 0.12 (~15 GiB) sums to 0.79 on the 128 GB GB10. The gears
+  # are served at --max-model-len 8192 so KV cache stays tiny — these are
+  # short-context workloads (embed/rerank, not generation). No quantization, tool,
+  # reasoning, or speculative flags — they are not needed for the pooling runner
+  # and would interfere with --runner/--convert.
+
+  vllm-embed:
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up.
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: model-gear-vllm-embed
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${EMBED_MODEL:-Qwen/Qwen3-Embedding-0.6B}
+      - --served-model-name=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # This vLLM build (0.19.0+nv26.04) replaced the old --task with --runner +
+      # --convert: an embedding gear is --runner pooling --convert embed (load-tested
+      # 2026-06-19 on the GB10). --task embed is rejected ("unrecognized arguments").
+      - --runner=pooling
+      - --convert=embed
+      # "auto" (the shipped default) is byte-equivalent to omitting this flag
+      # entirely — vLLM's AttentionConfig.backend treats the string "auto" as
+      # None, which is its own automatic-selection sentinel (verified against
+      # vllm/config/attention.py) — so the default render's EFFECTIVE behavior
+      # is unchanged. Per-machine override goes in .env: sm_110 (Thor) forces
+      # TRITON_ATTN because the auto-picked FLASH_ATTN pooling path hangs the
+      # forward pass there (VLLM_ATTENTION_BACKEND is gone on this nightly —
+      # AttentionConfig is the only honoured knob). See #109/#105.
+      - '--attention-config={"backend": "${EMBED_ATTENTION_BACKEND:-auto}"}'
+      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024]}'
+      - --max-model-len=${EMBED_MAX_MODEL_LEN:-8192}
+      # util 0.06 (~7 GiB budget): 0.025 fails with "No available memory for the cache
+      # blocks" — vLLM's pooling runner still reserves a cache-block budget. Load-tested.
+      - --gpu-memory-utilization=${EMBED_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  vllm-embed-deep:
+    # The opt-in "deep" embedding gear (Qwen3-Embedding-4B) — the higher-fidelity
+    # companion to vllm-embed above. PROFILE-GATED: it does not start unless the
+    # operator opts in, so every existing deployment's GPU budget is unchanged.
+    #
+    #   docker compose --profile embed-deep up -d
+    #   # OR: add "embed-deep" to COMPOSE_PROFILES in .env
+    #
+    # Then set EMBED_DEEP_BASE_URL in .env so the gateway wires the backend and
+    # publishes the "embed-deep" alias. Without that var the container can run but
+    # the gateway will not route to it (the *_BASE_URL opt-in contract).
+    #
+    # BUDGET MEASURED on the GB10 2026-07-20 — boots and serves at 0.11 co-resident
+    # with the full spark-lobe fleet (weights 7.56 GiB, KV 11.34 GiB / 82,592 tokens,
+    # CUDA graph pool 0.84 GiB, 42.4 ms median vs the 0.6B's 11.5 ms). Transcript:
+    # docs/evidence/2026-07-20-accept-embed-deep-gb10.txt. Note vLLM's allocation
+    # (19.74 GiB) does NOT reconcile with util x total (13.39 GiB) on this
+    # unified-memory card — treat the knob as empirical, exactly as spark-lobe's
+    # 0.44 and thor-lobe's 0.30 had to be. sm_110/Thor is UNVALIDATED and additionally
+    # needs EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN set by hand (no trait reaches a
+    # gear — see docs/machine-profiles.md).
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: model-gear-vllm-embed-deep
+    profiles: ["embed-deep"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=embed-deep   # → /logs/model-gear/embed-deep-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${EMBED_DEEP_MODEL:-Qwen/Qwen3-Embedding-4B}
+      - --served-model-name=${EMBED_DEEP_SERVED_NAME:-Qwen/Qwen3-Embedding-4B}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=embed
+      # Same sm_110/Thor caveat as vllm-embed — see that service's comment.
+      - '--attention-config={"backend": "${EMBED_DEEP_ATTENTION_BACKEND:-auto}"}'
+      # 2560-dim Matryoshka (the 4B's full width) — a SUPERSET of the 0.6B's ladder
+      # in dimension count only. Truncating this model to 1024 does NOT yield a
+      # vector comparable to the 0.6B's 1024: different model, different space.
+      - '--hf-overrides={"is_matryoshka": true, "matryoshka_dimensions": [32, 64, 128, 256, 512, 768, 1024, 1536, 2048, 2560]}'
+      - --max-model-len=${EMBED_DEEP_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${EMBED_DEEP_GPU_MEM_UTIL:-0.11}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  vllm-rerank:
+    # Same nightly digest as vllm-primary — see the comment above vllm-primary
+    # for the t4 rationale + the §5 stable-memory caveat before bringing this
+    # gear up (§5's spike crash was this exact gear, tripped by concurrent
+    # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: model-gear-vllm-rerank
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Nightly cudagraph-estimate gotcha (same one vllm-multimodal works
+      # around, #71) — see the vllm-primary comment above.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${RERANK_MODEL:-Qwen/Qwen3-Reranker-0.6B}
+      - --served-model-name=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      - --host=0.0.0.0
+      - --port=8000
+      # --runner pooling --convert classify is the score/rerank gear on this vLLM
+      # build (replaces --task score; vLLM auto-resolves --convert auto to classify
+      # for a *ForSequenceClassification arch, but pass it explicitly). Load-tested.
+      - --runner=pooling
+      - --convert=classify
+      # "auto" (the shipped default) is byte-equivalent to omitting this flag
+      # entirely — see the vllm-embed comment above for why. Per-machine
+      # override goes in .env: sm_110 (Thor) forces TRITON_ATTN because the
+      # same FLASH_ATTN pooling bug as vllm-embed surfaces here as NaN
+      # relevance scores instead of a hang. See #109/#105.
+      - '--attention-config={"backend": "${RERANK_ATTENTION_BACKEND:-auto}"}'
+      # vLLM's `enforce_eager: bool` field gets argparse.BooleanOptionalAction
+      # (--enforce-eager / --no-enforce-eager), so this is always an explicit,
+      # always-valid token — never a conditionally-omitted flag. The shipped
+      # default --no-enforce-eager is an explicit no-op (ModelConfig.
+      # enforce_eager already defaults to False, i.e. CUDA graphs on) —
+      # byte-equivalent effective behavior to today's flagless render.
+      # Per-machine override goes in .env: sm_110 (Thor) sets
+      # RERANK_ENFORCE_EAGER=--enforce-eager because the classify path faults
+      # under CUDA graphs (cudaErrorLaunchFailure kills the engine
+      # mid-request). See #109/#106.
+      - ${RERANK_ENFORCE_EAGER:---no-enforce-eager}
+      - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in minor co-resident generate backend --------------------------------
+  # A small (4B, bf16) companion generate model that co-resides with the primary.
+  # Activated by `docker compose --profile minor up -d` (or adding "minor" to
+  # COMPOSE_PROFILES in .env). When active, set MINOR_BASE_URL and
+  # MINOR_SERVED_NAME on the gateway (or rely on the compose defaults passed below)
+  # so the gateway routes `model: Qwen/Qwen3.5-4B` requests directly to this
+  # backend and falls over to the primary on failure.
+  #
+  # GPU budget: at util 0.10 (~13 GiB) this fits alongside the 27B primary (util
+  # 0.6, ~75 GiB) on the 128 GB GB10 with headroom to spare; tuning with the
+  # two embed/rerank gears (util 0.06 each) leaves ~35 GiB free.
+  #
+  # bf16 (NO --quantization flag): quantization="none" in the catalog means
+  # the weights are served at native precision. Do NOT add --quantization here —
+  # passing --quantization=modelopt to a bf16 checkpoint corrupts it.
+  #
+  # --language-model-only: the Qwen3.5-4B checkpoint ships a ViT vision tower;
+  # this flag drops it so only the language trunk loads (text-only serving).
+
+  vllm-minor:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-minor
+    profiles:
+      - minor
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=minor   # → /logs/model-gear/minor-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-minor:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MINOR_MODEL:-Qwen/Qwen3.5-4B}
+      - --served-model-name=${MINOR_SERVED_NAME:-Qwen/Qwen3.5-4B}
+      - --host=0.0.0.0
+      - --port=8000
+      # bf16 — NO --quantization flag (quantization="none" in catalog).
+      # A modest context cap keeps KV-cache small for the co-resident role.
+      - --max-model-len=${VLLM_MINOR_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${VLLM_MINOR_GPU_MEM_UTIL:-0.10}
+      # text-only: drop the ViT vision tower (Qwen3.5-4B ships multimodal by default).
+      - --language-model-only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- `hand` co-resident generate backend (DEFAULT-ON) ---------------------
+  # The NINTH Colleague role: LiquidAI LFM2.5-1.2B-Instruct, the fleet's
+  # designated FINE-TUNING BASE. "Muscle memory" — one cheap base, many LoRA
+  # adapters, each mastering a domain. See docs/lfm2.5-1.2b-hand.md.
+  #
+  # DEFAULT-ON (no `profiles:` key), unlike vllm-minor above and
+  # vllm-muse/vllm-worker below: ~2.4 GiB of bf16 weights co-reside on every
+  # supported card, which is the entire reason the role exists. A card that
+  # genuinely cannot host it says so honestly via HAND_FEASIBLE=false in its
+  # own profile, not by hiding behind a compose profile.
+  #
+  # bf16 (NO --quantization flag): quantization="none" in the catalog means the
+  # weights are served at native precision. Do NOT add --quantization here —
+  # passing --quantization=modelopt to a bf16 checkpoint corrupts it. Note this
+  # is the flag being OMITTED ENTIRELY, not passed empty.
+  #
+  # NO --language-model-only: LFM2.5-1.2B-Instruct is text-only and ships no
+  # ViT, so unlike vllm-minor above there is no vision tower to drop. (LiquidAI's
+  # vision variant is a different architecture, Lfm2VlForConditionalGeneration.)
+  #
+  # NO --reasoning-parser: this checkpoint has no thinking mode — LiquidAI ships
+  # LFM2.5-1.2B-Thinking separately. The cortex (qwen3) and Gemma 4 (gemma4)
+  # lanes must enable their reasoning parser as a PAIR with their tool parser;
+  # this lane has no second half to pair with.
+
+  vllm-hand:
+    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    container_name: model-gear-vllm-hand
+    # Lfm2ForCausalLM needs vLLM >= 0.23.0, so this lane pins the NIGHTLY image
+    # (like primary/embed/rerank/worker), never the NGC 26.04 tag vllm-minor
+    # uses — that engine is 0.19.0 and does not know the architecture. Verified
+    # against the PRE-t5 pinned digest on a physical Thor 2026-08-10:
+    # VLLM_VERSION 0.23.1rc1.dev672+g93d8f834d, LFM2_REGISTERED True. The
+    # digest bumped under t5 (see the vllm-primary comment above); LFM2
+    # registration against the new digest is unrevalidated — >= 0.23.0 stays
+    # satisfied since the new digest resolves to 0.26.1rc1.dev942.
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # The nightly's cudagraph memory ESTIMATE, disabled here as it is on every
+      # other lane on this image (primary, embed, rerank, multimodal, muse,
+      # worker). MEASURED on a physical Jetson AGX Orin 2026-08-10: with the
+      # estimate ON, this lane profiles to **Available KV cache memory:
+      # -9.25 GiB** at util 0.10 — NEGATIVE, so the engine cannot allocate a KV
+      # cache at all and the boot dies. vLLM's own log names the cause and
+      # suggests either raising util to 0.2762 or disabling the estimate; we
+      # disable it, matching every sibling lane, so the util knob maps back to
+      # true usage instead of a padded guess. Raising util instead would make
+      # `hand` cost 4.6x more memory on every card to buy nothing.
+      # No test asserts this parity across lanes — that gap is issue #182.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${HAND_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=hand   # → /logs/model-gear/hand-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # LoRA adapters, read-only. The host path is where `unsloth-cli` writes a
+      # trained adapter; HAND_LORA_MODULES names paths UNDER the in-container
+      # mount point, not host paths. Mounted unconditionally (an absent host
+      # directory is created empty by Docker) so declaring an adapter later
+      # needs no compose edit — only a lane restart.
+      - ${HAND_ADAPTER_DIR:-./adapters}:/adapters:ro
+    # No host port — reachable only as http://vllm-hand:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${HAND_MODEL:-LiquidAI/LFM2.5-1.2B-Instruct}
+      - --served-model-name=${HAND_SERVED_NAME:-LiquidAI/LFM2.5-1.2B-Instruct}
+      - --host=0.0.0.0
+      - --port=8000
+      # bf16 — NO --quantization flag (quantization="none" in catalog).
+      - --max-model-len=${HAND_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${HAND_GPU_MEM_UTIL:-0.06}
+      # Attention backend, via AttentionConfig — NOT the VLLM_ATTENTION_BACKEND
+      # env var, which is GONE on this nightly (see the vllm-embed lane's own
+      # note). "auto" is byte-equivalent to omitting the flag: vLLM treats the
+      # string as its automatic-selection sentinel.
+      #
+      # This line exists because the orin card profile DECLARES
+      # attention_backend = "TRITON_ATTN" for hand and the lane originally had
+      # nowhere to receive it — `lobes init --profile orin` rendered
+      # HAND_ATTENTION_BACKEND into .env and the lane silently ignored it. A
+      # profile knob that reaches no flag is exactly the kind of dead
+      # declaration #92 exists to prevent: it reads as configured and does
+      # nothing.
+      - '--attention-config={"backend": "${HAND_ATTENTION_BACKEND:-auto}"}'
+      # LoRA serving: ARMED by default with an EMPTY inventory (v1 ships zero
+      # adapters). --enable-lora costs a small fixed amount of memory and makes
+      # the lane able to serve an adapter the moment one is declared; arming it
+      # later would be a restart anyway, so it is armed from the start.
+      - --enable-lora
+      # Comma-separated `name=path`. vLLM advertises each adapter as its OWN
+      # model id on this backend's /v1/models — which is exactly how the gateway
+      # verifies an adapter really loaded before advertising it (a
+      # declared-but-unloaded adapter is absent from /v1/models AND from
+      # /capabilities; see lobes/gateway/_readiness.probe_backend_adapters).
+      - --lora-modules=${HAND_LORA_MODULES:-}
+      - --max-loras=${HAND_MAX_LORAS:-4}
+      # Rank ceiling. 32 covers the ranks unsloth's defaults produce at this
+      # model size. An adapter above it FAILS TO LOAD rather than being served
+      # degraded — and then, per the honesty rule above, is simply not
+      # advertised. Raise this knob and restart the lane to serve higher ranks.
+      - --max-lora-rank=${HAND_MAX_LORA_RANK:-32}
+      # LFM2's own <|tool_call_start|>/<|tool_call_end|> delimiters are SPECIAL
+      # TOKENS; the purpose-built `lfm2` parser decodes with
+      # skip_special_tokens=False so it can see them. The generic `pythonic`
+      # parser cannot — that exact mistake silently broke Gemma 4 tool calling
+      # (see lobes/runtime/_parser.py). This parser's __init__ RAISES if the
+      # tokenizer lacks either delimiter, so a bad revision fails loudly here
+      # rather than degrading to prose at request time.
+      - --enable-auto-tool-choice
+      - --tool-call-parser=lfm2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in (legacy) middle co-resident generate backend ------------------
+  # LEGACY CANDIDATE: the 14B NVFP4 "middle" is no longer the fleet's "normal"
+  # tier — that role is now filled by the default-on vllm-multimodal (Gemma 4
+  # 12B) gear. This service is kept as a selectable legacy option for operators
+  # who explicitly want the Qwen 14B text-only model.
+  # Activate with `docker compose --profile middle up -d` (or `--profile legacy`
+  # once the alias lands), or add "middle" to COMPOSE_PROFILES in .env.
+  # When active, set MIDDLE_BASE_URL and MIDDLE_SERVED_NAME on the gateway so it
+  # routes `model: nvidia/Qwen3-14B-NVFP4` requests here.
+  #
+  # GPU budget: at util 0.12 (~15 GiB) this fits alongside the 27B primary
+  # (util 0.45, 128K context, ~56 GiB) on the 128 GB GB10 with headroom to
+  # spare; see env.example for the full budget line. Primary context is trimmed
+  # to 128K to free KV cache — the GPU weight budget alone does NOT free memory,
+  # vLLM fills its util ceiling with KV cache regardless of --max-model-len.
+  #
+  # --quantization=modelopt_fp4: this is the NVFP4 path for the nvidia/ Qwen3
+  # checkpoints (same as the 32B dense entry). Do NOT omit it — unlike the
+  # bf16 minor, the 14B checkpoint was quantised and must be served at FP4.
+  # Context is set to 32K by default (YaRN can extend to 131K — see catalog).
+
+  vllm-middle:
+    image: nvcr.io/nvidia/vllm:26.04-py3   # same image as vllm-primary (NGC ARM64/Blackwell)
+    container_name: model-gear-vllm-middle
+    profiles:
+      - middle
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=middle   # → /logs/model-gear/middle-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-middle:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MIDDLE_MODEL:-nvidia/Qwen3-14B-NVFP4}
+      - --served-model-name=${MIDDLE_SERVED_NAME:-nvidia/Qwen3-14B-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      # NVFP4 quantization (modelopt_fp4 = the native SM120 FP4 path).
+      - --quantization=${MIDDLE_QUANTIZATION:-modelopt_fp4}
+      # 32K default context; raise MIDDLE_MAX_MODEL_LEN up to 131072 for YaRN
+      # extended context if GPU budget allows (see env.example for budget math).
+      - --max-model-len=${MIDDLE_MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${MIDDLE_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=${MIDDLE_TOOL_CALL_PARSER:-hermes}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Default-on multimodal generate backend (Gemma 4 12B, NVFP4) ----------
+  # The fleet's "multimodal" generate gear and the "normal" capability tier.
+  # Gemma 4 12B is a UNIFIED multimodal model: text + image + AUDIO in one
+  # checkpoint (no separate sidecars), so the generate lane gains native
+  # vision+audio without the realtime overlay.
+  #
+  # Vision + audio are ACTIVE: do NOT add --language-model-only (that would
+  # disable the ViT/audio tower and defeat the headline capability).
+  #
+  # Native MTP draft head for speculative decoding (like the 27B primary's
+  # qwen3_5_mtp config). Tool calls use Gemma 4's own `<|tool_call>call:...`
+  # syntax via the "gemma4" parser PAIR (tool + reasoning) — NOT the generic
+  # "pythonic" parser, which cannot see its special-token delimiters (disproven
+  # live 2026-07-17; see docs/gemma-4-31b-nvfp4.md#tool-calling).
+  # NVFP4 (modelopt_fp4). NO --profiles key — starts with the default fleet.
+  #
+  # GPU budget: util 0.14 (~18 GiB, 32K context) alongside the 27B primary
+  # (util 0.30, 128K context, ~38 GiB) + embed/rerank (util 0.06 each):
+  # 0.30+0.14+0.06+0.06 = 0.56 on the 128 GB GB10. util 0.14 is PROVISIONAL,
+  # pending live validation on the GB10 (plan task t12) — see
+  # docs/vllm-nightly-migration.md §8.
+  # TODO(risk r5): measure real multimodal util (vision+audio KV) on the Spark in t7.
+
+  vllm-multimodal:
+    # Gemma 4's gemma4_unified arch (early-fusion multimodal, heterogeneous
+    # per-layer head sizes) needs vLLM's NATIVE Gemma4UnifiedForConditionalGeneration
+    # class, which only exists in vLLM nightly (>= 0.23.1rc1). So this service uses
+    # a custom Dockerfile (Dockerfile.vllm-gemma4) built FROM the official
+    # vllm/vllm-openai nightly image (pinned by digest) + the vllm[audio] extra.
+    # Live-validated on the DGX Spark GB10 (#71, 2026-07-01): text+image+audio serve.
+    # When MULTIMODAL_IMAGE is unset, `lobes fleet up` (which runs `up -d --build`)
+    # builds Dockerfile.vllm-gemma4 and tags the result as lobes/vllm-gemma4:local;
+    # a subsequent `docker compose up` (no --build) reuses that local tag.
+    # When MULTIMODAL_IMAGE is set to a registry tag (e.g.
+    # ghcr.io/agentculture/vllm-gemma4:latest), pull it and run WITHOUT --build
+    # (a --build would rebuild Dockerfile.vllm-gemma4 and shadow the pulled tag):
+    #   docker compose pull vllm-multimodal      # pull the pre-built image
+    #   docker compose up -d vllm-multimodal     # no --build; uses the pulled tag
+    # Note: `lobes fleet up` forces --build, so use plain docker compose for a
+    # registry tag (or a future `lobes fleet up --no-build`).
+    # See env.example MULTIMODAL_IMAGE. (Tracked as risk r5 in the build plan.)
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-multimodal
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
+      # TRITON_ATTN. The native gemma4_unified class auto-forces it, but we set it
+      # explicitly too (belt-and-suspenders; matches the vLLM recipe).
+      # DELIBERATELY LEFT AS-IS (not removed as dead env): its removal is gated
+      # on a GB10 live-verification tracked in agentculture/lobes-cli#109 (risk r6).
+      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
+      # vLLM 0.23 reserves an ESTIMATED cudagraph-memory headroom inside the util
+      # budget, and for this gear it wildly overshoots — 12.74 GiB estimated vs
+      # 0.46 GiB actual (#71) — starving the KV cache so util 0.12 fails with "No
+      # available memory for the cache blocks". Disabling the estimate maps the
+      # util knob back to true usage (~15.7 GiB actual ≈ 0.12 of the 128 GB GB10).
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=multimodal   # → /logs/model-gear/multimodal-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-multimodal:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # This is the only lane whose `command:` is a string, and the MTP off-switch
+    # below is the whole reason. `docker compose` CANNOT conditionally omit a
+    # LIST item: an item that substitutes to "" renders as an empty argv element,
+    # and `vllm serve` reads that as a second positional and dies with
+    #   usage: vllm serve [model_tag] [options]
+    #   error: unrecognized arguments:
+    # (exit 2 — verified by parsing that exact argv through the served build's own
+    # serve parser, vLLM 0.23.1rc1.dev672+g93d8f834d). A STRING command is
+    # shell-lexed by compose AFTER substitution, so a variable that expands to
+    # nothing leaves no token at all — the flag is omitted ENTIRELY, which is the
+    # only "off" rendering vLLM accepts. Every other lane keeps its list; nothing
+    # else about this one moved. The default render is byte-identical to the pre-t5
+    # argv and is pinned by tests/test_senses_speculative_config.py, which
+    # reimplements compose's substitution + lexing offline (cross-checked against
+    # real `docker compose config` on Compose v5.3.1).
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  compressed-tensors (nvfp4-pack-quantized), NOT modelopt —
+    #     the checkpoint's config.json quant_method; modelopt_fp4 fails with a
+    #     method mismatch (#71).
+    #
+    #   --max-model-len  Trimmed to 32K (from a 128K/util-0.22 pairing) to free KV
+    #     headroom for the 27B primary to serve its full 128K native context — the
+    #     always-on duo's context rebalance. See docs/vllm-nightly-migration.md §8.
+    #
+    #   --gpu-memory-utilization  util 0.14 (~18 GiB) is PROVISIONAL — validated
+    #     live on the GB10 (plan task t12). DO NOT go lower: Gemma-12B
+    #     weights+CUDA-graph are ~13.4 GiB (~util 0.105 floor), so 0.10 would OOM
+    #     before any KV cache; 0.14 leaves ~4.6 GiB KV for the 32K context — fits
+    #     the 0.56 default-fleet budget. Requires the
+    #     VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0 env above (see note there).
+    #
+    #   --reasoning-parser  Gemma 4 needs the PAIR: the tool parser forces
+    #     skip_special_tokens=False (that is how it sees <|tool_call>), which also
+    #     exposes Gemma's <|channel> markers — the tool parser has no business
+    #     stripping those, so without the matching reasoning parser they leak into
+    #     `content`. Mirrors the cortex lane pairing --reasoning-parser=qwen3 with
+    #     its qwen3_coder tool parser. Measured live on the 31B muse lane
+    #     2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+    #
+    #   MULTIMODAL_SPECULATIVE_CONFIG  Native MTP, default-on
+    #     (docs/vllm-nightly-migration.md §7, measured 2026-07-02): the public
+    #     google/gemma-4-12B-it-assistant draft against this NVFP4 base target —
+    #     57.9% draft acceptance, ~1.45x decode (19.8 -> 28.6 tok/s), the fastest
+    #     Gemma config measured. The DEFAULT must match
+    #     lobes.catalog.SUPPORTED_MODELS' coolthor/gemma-4-12B-it-NVFP4A16 entry
+    #     byte for byte (tests/test_catalog.py guards the two against drift). Note
+    #     the "model" key, NOT "draft_model_id" — vLLM 0.23's SpeculativeConfig
+    #     rejects that outdated key (verified live, §6).
+    #
+    #     OFF-SWITCH: put `MULTIMODAL_SPECULATIVE_CONFIG=` (set, but empty) in .env
+    #     to serve this lane with NO speculative decoding at all. That is the
+    #     recorded fallback for a checkpoint shipping no MTP draft head (e.g.
+    #     unsloth/gemma-4-12B-it-qat-w4a16): attempt the draft, and if vLLM refuses
+    #     it, drop speculative decoding rather than block the swap.
+    #
+    #     The dash-only default form used below is deliberate. Compose's OTHER
+    #     default operator, the colon-dash one every knob in this file uses, treats
+    #     an EMPTY value as unset — it would substitute the draft straight back and
+    #     put the off-switch out of reach. The single quotes inside the default
+    #     are part of the string, not YAML — they survive substitution and make the
+    #     JSON (which contains spaces) lex as ONE argv token.
+    #
+    #     RETARGETING the draft (rather than switching it off) needs BOTH quoting
+    #     layers, because the value passes through compose's dotenv parser first
+    #     and its shell-lexer second. This exact .env line works (verified live on
+    #     Compose v5.3.1) — double quotes for dotenv, single quotes for the lexer,
+    #     the JSON's own quotes escaped:
+    #       MULTIMODAL_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"ngram\", \"num_speculative_tokens\": 2}'"
+    #     Bare single quotes instead yield `--speculative-config={method:` plus a
+    #     stray token — silently MANGLED, not rejected. Off and default need no
+    #     quoting at all.
+    command: >-
+      vllm serve ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
+      --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${MULTIMODAL_QUANTIZATION:-compressed-tensors}
+      --max-model-len=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      --gpu-memory-utilization=${MULTIMODAL_GPU_MEM_UTIL:-0.14}
+      --enable-auto-tool-choice
+      --tool-call-parser=gemma4
+      --reasoning-parser=gemma4
+      ${MULTIMODAL_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'}
+      --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in coder co-resident generate backend (Gemma 4 12B coder fine-tune) --
+  # KEPT (cite-don't-delete), DEMOTED from the default "multimodal" gear by the
+  # "support both" decision (docs/vllm-nightly-migration.md §7, 2026-07-02):
+  # coding-strong, but native MTP only reaches 30.8% draft acceptance on this
+  # fine-tune (the assistant draft was trained against the base it-model, not this
+  # coder checkpoint) — a marginal ~6% decode win, not worth wiring by default.
+  # Activate with `docker compose --profile multimodal-coder up -d` (or add
+  # "multimodal-coder" to COMPOSE_PROFILES in .env). When active, set
+  # MULTIMODAL_CODER_BASE_URL so the gateway routes the "multimodal-coder" alias
+  # (and the coder's served id) here — see MULTIMODAL_CODER_* in env.example.
+  #
+  # Same custom image as vllm-multimodal (Dockerfile.vllm-gemma4 — the native
+  # gemma4_unified class needs vLLM nightly): both services build the SAME
+  # Dockerfile and default to the SAME local tag (lobes/vllm-gemma4:local), only
+  # the --model / --served-model-name arg differs at runtime.
+  #
+  # GPU budget: adds util 0.12 (~15 GiB) ON TOP of the default 0.69 fleet budget
+  # when active — see env.example for the combined math.
+
+  vllm-multimodal-coder:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MULTIMODAL_CODER_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-multimodal-coder
+    profiles:
+      - multimodal-coder
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-multimodal-coder:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MULTIMODAL_CODER_MODEL:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --served-model-name=${MULTIMODAL_CODER_SERVED_NAME:-sakamakismile/gemma-4-12B-coder-fable5-composer2.5-MTP-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MULTIMODAL_CODER_QUANTIZATION:-compressed-tensors}
+      - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
+      - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=gemma4
+      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
+      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
+      # markers — the tool parser has no business stripping those, so without the
+      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
+      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
+      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+      - --reasoning-parser=gemma4
+      # No speculative-decoding flag here: native MTP measured only 30.8% draft
+      # acceptance on this coder fine-tune (§6/§7) — not worth wiring. See the
+      # catalog entry's comment (role_hint="candidate", speculative_config="").
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in muse generate backend (Gemma 4 31B IT, NVIDIA NVFP4) ---------
+  # The seventh Colleague role: the creative/ideation lobe (`muse`). An OPT-IN
+  # heavy lobe — parked behind the "muse" Docker Compose profile, so a plain
+  # `docker compose up` (machine-as-brain, and every pre-muse deployment)
+  # never starts a 31B by accident. A muse-hosting deployment shape
+  # (`lobes init --shape thor-muse --apply`) activates it: the shape render
+  # writes COMPOSE_PROFILES=muse (un-gates this service) + MUSE_BASE_URL
+  # (wires the gateway backend) + the MUSE_* knobs below into .env.
+  #
+  # GPU budget: NOT part of the default 0.56 fleet budget — muse only ever
+  # runs on a shape that drops BOTH heavy default lobes first (thor-muse).
+  # util 0.55 at the FULL 262144 native context is MEASURED on the physical
+  # Thor (2026-07-17): 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency;
+  # util 0.40 was refused live (0.6 GiB KV after the 256K profiling pass) —
+  # see lobes/profiles/builtin_shapes/thor-muse.toml.
+  #
+  # Same custom image as vllm-multimodal (Dockerfile.vllm-gemma4 — vLLM
+  # nightly + vllm[audio]): the plain-gemma4 31B line and the Unified 12B
+  # line ship in the same image; both services build the SAME Dockerfile and
+  # default to the SAME local tag, only the model args differ at runtime.
+  #
+  # --quantization=modelopt: NVIDIA's export (config.json
+  # quant_method="modelopt", resolves to modelopt_fp4) — NOT the community
+  # 12B's compressed-tensors. The checkpoint also ships calibrated FP8
+  # KV-cache scales (hf_quant_config.json kv_cache_quant_algo=FP8).
+
+  vllm-muse:
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm-gemma4
+    image: ${MUSE_IMAGE:-lobes/vllm-gemma4:local}
+    container_name: model-gear-vllm-muse
+    profiles:
+      - muse
+    # Boot ORDERING, not just start order (the Thor unified-memory first-boot
+    # race, docs/machine-profiles.md — measured live 2026-07-17 at 31B scale):
+    # a concurrent cold boot of the whole fleet crashed muse's CUDA-graph
+    # capture (CUBLAS_STATUS_EXECUTION_FAILED) while the pooling gears were
+    # still allocating, and every restart then failed vLLM's free-at-boot
+    # check against the dirtied page cache. Waiting for the two cheap gears
+    # to be HEALTHY first removes the concurrent-allocation window.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the
+      # same divergence the 12B senses gear carries (see vllm-multimodal).
+      - VLLM_ATTENTION_BACKEND=${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}
+      # Same vLLM 0.23 cudagraph-estimate overshoot mitigation as the 12B
+      # gear (#71) — the estimate starves the KV cache inside the util budget.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MUSE_CUDAGRAPH_ESTIMATE:-0}
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=muse   # → /logs/model-gear/muse-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-muse:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${MUSE_MODEL:-nvidia/Gemma-4-31B-IT-NVFP4}
+      - --served-model-name=${MUSE_SERVED_NAME:-nvidia/Gemma-4-31B-IT-NVFP4}
+      - --host=0.0.0.0
+      - --port=8000
+      - --quantization=${MUSE_QUANTIZATION:-modelopt}
+      - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
+      - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.55}
+      - --enable-auto-tool-choice
+      - --tool-call-parser=gemma4
+      # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
+      # (that is how it sees <|tool_call>), which also exposes Gemma's <|channel>
+      # markers — the tool parser has no business stripping those, so without the
+      # matching reasoning parser they leak into `content`. Mirrors the cortex lane
+      # pairing --reasoning-parser=qwen3 with its qwen3_coder tool parser. Measured
+      # live on the 31B muse lane 2026-07-17 (docs/gemma-4-31b-nvfp4.md#tool-calling).
+      - --reasoning-parser=gemma4
+      # Native MTP via the public plain-line assistant draft (gemma4_assistant
+      # family — normalized by vLLM's hf_config_override to gemma4_mtp with
+      # forced n_predict=1; see docs/gemma4-mtp-draft.md). DECLARED, not yet
+      # measured on this 31B target — the first acceptance run gates it. MUST
+      # match lobes.catalog.SUPPORTED_MODELS' nvidia/Gemma-4-31B-IT-NVFP4
+      # entry byte for byte (tests/test_catalog.py guards the pairing).
+      - '--speculative-config={"method": "mtp", "model": "google/gemma-4-31B-it-assistant", "num_speculative_tokens": 1}'
+      - --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in worker generate backend (Qwen3.6-35B-A3B, NVFP4 MoE) ----------
+  # The EIGHTH Colleague role: the fast ground-work DOER (`worker`). An OPT-IN
+  # heavy lobe — parked behind the "worker" Docker Compose profile exactly like
+  # vllm-muse, so a plain `docker compose up` (machine-as-brain, and every
+  # pre-worker deployment) never starts a 35B by accident. A worker-hosting
+  # deployment shape (`lobes init --shape thor-worker --apply`) activates it:
+  # the shape render writes COMPOSE_PROFILES=worker (un-gates this service) +
+  # WORKER_BASE_URL (wires the gateway backend) + the WORKER_* budget knobs.
+  #
+  # Checkpoint: unsloth/Qwen3.6-35B-A3B-NVFP4 — a Qwen3.5 MoE (~3B active/token)
+  # that is MULTIMODAL (Qwen3_5MoeForConditionalGeneration, a 27-layer ViT,
+  # image+video intake — NO audio). Served MULTIMODAL: do NOT add
+  # --language-model-only (that would drop the ViT and defeat vision/video).
+  #
+  # IMAGE: worker is a Qwen3.5 MoE, NOT a Gemma gear, so it rides the SAME
+  # Qwen/vllm-openai nightly lane the primary/embed/rerank gears use (pinned by
+  # digest via VLLM_NIGHTLY_IMAGE) — NOT the custom lobes/vllm-gemma4:local tag.
+  # WORKER_IMAGE overrides it because the multimodal
+  # Qwen3_5MoeForConditionalGeneration arch + baked-in MTP self-draft support on
+  # Thor sm_110 is UNCONFIRMED until the live boot (thor-worker-lobe plan t7) —
+  # an operator may need to point this at a fixed/nightlier image there.
+  #
+  # GPU budget: NOT part of the default fleet budget — worker only ever runs on
+  # a shape that drops the heavy default lobes first (thor-worker). The
+  # WORKER_GPU_MEM_UTIL default below is a PLACEHOLDER; the real value is
+  # MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55 was
+  # measured (not computed) — do NOT treat 0.30 as validated.
+  vllm-worker:
+    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    container_name: model-gear-vllm-worker
+    profiles:
+      - worker
+    # Boot ORDERING, not just start order — the same Thor unified-memory
+    # first-boot race the vllm-muse block documents (measured live 2026-07-17 at
+    # 31B scale): waiting for the two cheap pooling gears to be HEALTHY first
+    # removes the concurrent-allocation window that crashed a cold heavy-lobe boot.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      # Same nightly cudagraph-estimate gotcha the Qwen primary works around
+      # (#71): disable the ESTIMATED cudagraph headroom so the util knob maps
+      # back to true usage instead of starving the KV cache.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      # NOTE: worker rides the Qwen GENERATE lane, so — like vllm-primary and
+      # UNLIKE the Gemma gears — it wires NO VLLM_ATTENTION_BACKEND: this nightly
+      # honours AttentionConfig, not that env, and a Qwen generate model needs no
+      # attention override on Thor (cortex's only sm_110 divergence is
+      # kv_cache_dtype). WORKER_ATTENTION_BACKEND is left unwired on purpose (t7
+      # confirms on sm_110); see env.example.
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-worker:8000 on the compose net.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: ONE shell-lexed STRING, not a list ------------------------
+    # Converted from a YAML list (spec-knobs task), same mechanism and the same
+    # reason as the senses lane (vllm-multimodal) and vllm-primary above: a
+    # `docker compose` LIST item cannot be conditionally omitted (a var that
+    # substitutes to "" still renders as an empty argv element and `vllm serve`
+    # dies on it), while a STRING command is shell-lexed by compose AFTER
+    # substitution, so an empty variable leaves no token at all. The Spark box
+    # serving Lightning as worker had to hand-remove the MTP line (plain decode
+    # first, #187) before WORKER_SPECULATIVE_CONFIG existed — see
+    # docs/evidence/2026-08-20-accept-worker-hand-spark.txt. See
+    # tests/test_senses_speculative_config.py's docstring for the argv-parsing
+    # proof and env.example for both new knobs' usage.
+    #
+    # Per-arg notes (these were interleaved in the list this replaced):
+    #
+    #   --quantization  modelopt: the DEFAULT worker checkpoint's OWN
+    #     quant_method (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4,
+    #     verified against its real config.json 2026-08-20). If you serve the
+    #     demoted unsloth/Qwen3.6-35B-A3B-NVFP4 candidate here instead,
+    #     override WORKER_QUANTIZATION=compressed-tensors alongside
+    #     WORKER_MODEL — each checkpoint fails on the other's quant method.
+    #
+    #   --max-model-len  Default 65536 — the window VALIDATED live for the
+    #     default Lightning worker on the DGX Spark (2026-08-20, KV 3.56M
+    #     tokens / 54.33x concurrency at 65K — see
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
+    #     checkpoint's ceiling is 1M (config-verified); grow progressively
+    #     with evidence (#187), and a worker-hosting shape renders the real
+    #     served length into WORKER_MAX_MODEL_LEN.
+    #
+    #   --gpu-memory-utilization  PLACEHOLDER default — the real util is
+    #     MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55
+    #     was measured, not computed. Do NOT treat 0.30 as validated.
+    #
+    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced: measured
+    #     live on Thor sm_110 (2026-07-31,
+    #     docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value
+    #     was REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not
+    #     support current device cuda"; flashinfer NVFP4 is sm_121a/Spark-only),
+    #     marlin ("not supported for unquantized MoE" — the self-hosted MTP
+    #     experts are unquantized), triton ("not supported for NvFP4 MoE").
+    #     Only AUTO-SELECT boots: vLLM picks TRITON for the unquantized/fp8 MoE
+    #     and a modular NVFP4 kernel for the main experts, and auto-picks the
+    #     fastest SUPPORTED kernel on any card (incl. flashinfer_b12x on a
+    #     Spark). To pin a backend, add a `--moe-backend=<x>` line here by hand
+    #     (see env.example WORKER_MOE_BACKEND).
+    #
+    #   WORKER_SPECULATIVE_CONFIG  DEFAULT-OFF (empty): the default Lightning
+    #     worker's MTP/DSpark benefit is declared by its card but UNMEASURED on
+    #     this fleet — the validated Spark serve (2026-08-20,
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt) ran plain
+    #     decode per #187 ("measure plain decoding first"). To enable
+    #     speculative decoding once measured, set e.g.
+    #       WORKER_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"mtp\", \"num_speculative_tokens\": 2}'"
+    #     (the value the demoted Qwen candidate validated on Thor 2026-07-31 —
+    #     use it when serving that candidate). Dash-only default operator, same
+    #     as MULTIMODAL_SPECULATIVE_CONFIG — see its env.example entry for the
+    #     dotenv/shell-lexer quoting caveat.
+    #
+    #   WORKER_REASONING_PARSER  Default is nemotron_v3, matching the CURRENT
+    #     catalog role_hint=worker model
+    #     (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — validated live
+    #     on the Spark 2026-08-20, structured tool_calls PASS through the
+    #     nemotron_v3 + qwen3_coder pair, see
+    #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
+    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH
+    #     the default Nemotron worker and the demoted
+    #     unsloth/Qwen3.6-35B-A3B-NVFP4 candidate use it; only the reasoning
+    #     parser differs between the two. If you serve the demoted Qwen
+    #     candidate, override WORKER_REASONING_PARSER=qwen3 to match it —
+    #     nemotron_v3 is the wrong grammar for that checkpoint's thinking
+    #     traces (and vice versa).
+    #
+    #   SECURITY: --trust-remote-code runs the model repo's code in-container
+    #     (same posture as the 27B primary). The default Lightning worker is
+    #     TEXT-ONLY (no vision_config in its config.json — #187's contract);
+    #     no --language-model-only flag is needed because there is no tower to
+    #     drop. (The demoted Qwen candidate DOES ship a ViT and serves it when
+    #     selected — its multimodal validation is 2026-07-31 history.)
+    command: >-
+      vllm serve ${WORKER_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --served-model-name=${WORKER_SERVED_NAME:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${WORKER_QUANTIZATION:-modelopt}
+      --max-model-len=${WORKER_MAX_MODEL_LEN:-65536}
+      --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
+      ${WORKER_KV_CACHE_DTYPE:+--kv-cache-dtype=${WORKER_KV_CACHE_DTYPE}}
+      ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
+      ${WORKER_SPECULATIVE_CONFIG-}
+      --enable-auto-tool-choice
+      --tool-call-parser=qwen3_coder
+      --reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}
+      --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+      args:
+        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+        # Dev lane only (see Dockerfile.gateway): empty on release deployments.
+        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
+    container_name: model-gear-gateway
+    restart: unless-stopped
+    # The gateway reads the SAME .env truth the CLI reads (one builder, one
+    # config — the #92 lesson), but ONLY the scoped, non-secret keys it
+    # consumes (below) — never the whole file via env_file. compose
+    # interpolates each ${VAR} from .env at render time, so shape-rendered
+    # flags like MULTIMODAL_FEASIBLE=false still reach the container and
+    # GET /capabilities stays honest with `lobes capabilities` — without
+    # inheriting HF_TOKEN or any other .env secret into the gateway (the
+    # vllm-* services legitimately keep env_file since they need HF_TOKEN
+    # to pull gated checkpoints; Qodo finding on PR #117).
+    # Start order only — the gateway tolerates a backend still loading (it routes
+    # and fails over per request), so it must not block on backend health.
+    depends_on:
+      - vllm-primary
+      - vllm-multimodal
+      - vllm-embed
+      - vllm-rerank
+    environment:
+      - GATEWAY_PORT=8000
+      # MUST default to EMPTY (issue #92 / #96). GATEWAY_PUBLIC_URL is an
+      # operator override ONLY — a tunnel URL or a Host-rewriting reverse
+      # proxy. Do NOT default it to a localhost/published-port URL: reachable_origin
+      # prefers a set public_url OVER the request Host header, so ANY default
+      # here (e.g. http://localhost:${VLLM_PORT}) would advertise loopback to
+      # every remote client in GET /capabilities — a LAN/tunnel caller dialing
+      # spark.local:8001 would be told to use http://localhost:8001, a foreign
+      # service on THEIR machine (the #92 defect). Empty → the gateway echoes
+      # the origin the client actually dialed (its Host header); with neither,
+      # it emits an empty endpoint, never one built from the internal GATEWAY_PORT.
+      - GATEWAY_PUBLIC_URL=${GATEWAY_PUBLIC_URL:-}
+      # Audio/realtime backend for /v1/audio/*. Empty by default — this base
+      # template has no realtime container; the --audio overlay
+      # (docker-compose.audio.yml) supplies the real http://realtime:8080
+      # value via its gateway environment: override (issue #96). Declaring the
+      # key here (rather than leaving it entirely absent) means a base-only
+      # deployment resolves audio_url to unset (stt/tts report loaded=false),
+      # instead of a 404ing endpoint /capabilities still calls ready=true.
+      - AUDIO_URL=${AUDIO_URL:-}
+      # The cortex backend origin. Defaults to the vLLM lane — byte-identical
+      # to the hardcoded value this replaced — and is overridable so a card
+      # serving cortex on the ALTERNATIVE engine can point it at the llama.cpp
+      # lane instead (a shape whose composed cortex model is a llama.cpp
+      # catalog gear renders PRIMARY_URL=http://llamacpp-primary:8000; see
+      # lobes/profiles/shape_render.py's LLAMA_CPP_ACTIVATION_ENV). The role
+      # alias the caller uses does not move with the engine.
+      - PRIMARY_URL=${PRIMARY_URL:-http://vllm-primary:8000}
+      # MUST match vllm-primary's own --served-model-name default above. The
+      # gateway builds its routing table from THIS value, so a mismatch makes it
+      # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
+      # with a perfectly healthy backend behind it (observed live 2026-07-31).
+      - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
+      # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
+      # gateway wires a second backend only when these are present).
+      # Minor co-resident generate backend (opt-in: activate with --profile minor
+      # and set MINOR_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in — default fleet is unchanged).
+      - MINOR_BASE_URL=${MINOR_BASE_URL:-}
+      - MINOR_SERVED_NAME=${MINOR_SERVED_NAME:-}
+      # Middle co-resident generate backend (legacy opt-in: activate with
+      # --profile middle and set MIDDLE_BASE_URL in .env; empty defaults mean no
+      # backend is wired unless the operator explicitly opts in).
+      - MIDDLE_BASE_URL=${MIDDLE_BASE_URL:-}
+      - MIDDLE_SERVED_NAME=${MIDDLE_SERVED_NAME:-}
+      # Multimodal gear (default-on: always started, always wired). Default id is
+      # the NVFP4 base + native-MTP gear (docs/vllm-nightly-migration.md §7).
+      - MULTIMODAL_BASE_URL=${MULTIMODAL_BASE_URL:-http://vllm-multimodal:8000}
+      - MULTIMODAL_SERVED_NAME=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
+      # Opt-in coder gear (activate with --profile multimodal-coder and set
+      # MULTIMODAL_CODER_BASE_URL in .env; empty defaults mean no backend is wired
+      # unless the operator explicitly opts in). Reachable via the
+      # "multimodal-coder" alias once wired — see lobes/gateway/_config.py.
+      - MULTIMODAL_CODER_BASE_URL=${MULTIMODAL_CODER_BASE_URL:-}
+      - MULTIMODAL_CODER_SERVED_NAME=${MULTIMODAL_CODER_SERVED_NAME:-}
+      # Opt-in muse gear — the seventh Colleague role (a muse-hosting shape
+      # sets MUSE_BASE_URL + COMPOSE_PROFILES=muse in .env; empty default =
+      # no backend wired, AND `model=muse` 404s role_infeasible instead of
+      # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
+      - MUSE_BASE_URL=${MUSE_BASE_URL:-}
+      - MUSE_SERVED_NAME=${MUSE_SERVED_NAME:-}
+      # Opt-in worker gear — the eighth Colleague role (a worker-hosting shape
+      # sets WORKER_BASE_URL + COMPOSE_PROFILES=worker in .env; empty default =
+      # no backend wired, AND `model=worker` 404s role_infeasible instead of
+      # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
+      - WORKER_BASE_URL=${WORKER_BASE_URL:-}
+      - WORKER_SERVED_NAME=${WORKER_SERVED_NAME:-}
+      # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
+      # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
+      # every supported card, which is the whole point of the role, so it is
+      # wired unconditionally like the multimodal gear rather than behind a
+      # compose profile. It is also what `model=minor`/`model=cheap` resolve to
+      # (it replaced Qwen3.5-4B in that tier) and the pressure-policy servable
+      # floor.
+      - HAND_BASE_URL=${HAND_BASE_URL:-http://vllm-hand:8000}
+      - HAND_SERVED_NAME=${HAND_SERVED_NAME:-LiquidAI/LFM2.5-1.2B-Instruct}
+      # The LoRA adapter inventory, declared ONCE and read by BOTH the engine
+      # (vllm-hand's --lora-modules) and the gateway (which derives the
+      # `hand:<domain>` aliases from it) — so the two can never disagree about
+      # which adapters exist. Empty by default: v1 ships the lane ARMED with
+      # --enable-lora and the inventory EMPTY.
+      - HAND_LORA_MODULES=${HAND_LORA_MODULES:-}
+      # Empty default = follow the primary gear's served name (see _config.py's
+      # `or primary.served_name` fallback) — stays correct when a profile swaps
+      # the cortex model instead of routing no-model requests to an unserved id.
+      - GATEWAY_DEFAULT_MODEL=${GATEWAY_DEFAULT_MODEL:-}
+      # Embedding + reranker gear endpoints (gateway routes /v1/embeddings and
+      # /v1/rerank to these when EMBED_URL / RERANK_URL are set).
+      - EMBED_URL=${EMBED_URL:-http://vllm-embed:8000}
+      - EMBED_SERVED_NAME=${EMBED_SERVED_NAME:-Qwen/Qwen3-Embedding-0.6B}
+      - RERANK_URL=${RERANK_URL:-http://vllm-rerank:8000}
+      - RERANK_SERVED_NAME=${RERANK_SERVED_NAME:-Qwen/Qwen3-Reranker-0.6B}
+      # The opt-in "deep" embedding gear. EMPTY default on purpose: the gateway
+      # wires this backend (and publishes the "embed-deep" alias) only when the
+      # operator sets EMBED_DEEP_BASE_URL, matching the vllm-embed-deep service's
+      # own COMPOSE_PROFILES gate. Unset ⇒ no backend, no alias, and a request for
+      # "embed-deep" is an unknown model — never a silent fallback to the 0.6B,
+      # which would answer from a different vector space.
+      - EMBED_DEEP_BASE_URL=${EMBED_DEEP_BASE_URL:-}
+      - EMBED_DEEP_SERVED_NAME=${EMBED_DEEP_SERVED_NAME:-Qwen/Qwen3-Embedding-4B}
+      # Served context lengths — the gateway reads these so GET /capabilities and
+      # 'lobes capabilities' report each role's SERVED --max-model-len (issue #81),
+      # not the catalog native. Kept in sync with the gear services' own
+      # ${*_MAX_MODEL_LEN} defaults; the overlay falls back to catalog native when
+      # a var is unset. (These are otherwise passed only to the gear containers,
+      # so without them the gateway couldn't see the served lengths.)
+      - PRIMARY_MAX_MODEL_LEN=${PRIMARY_MAX_MODEL_LEN:-131072}
+      - MULTIMODAL_MAX_MODEL_LEN=${MULTIMODAL_MAX_MODEL_LEN:-32768}
+      # Empty default (NOT the vllm-muse service's 262144): muse is opt-in, so
+      # a deployment with no muse shape reports the catalog native for the
+      # sleeping lobe; a muse-hosting shape renders the served value into .env.
+      - MUSE_MAX_MODEL_LEN=${MUSE_MAX_MODEL_LEN:-}
+      # Empty default (NOT the vllm-worker service's 262144): worker is opt-in,
+      # so a deployment with no worker shape reports the catalog native for the
+      # sleeping lobe; a worker-hosting shape renders the served value into .env.
+      - WORKER_MAX_MODEL_LEN=${WORKER_MAX_MODEL_LEN:-}
+      - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
+      - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
+      - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
+      - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
+      - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
+      # Pressure-policy thresholds (issue #68) — the gateway degrades the generate
+      # lane to `minor` when host swap%/iowait% exceed these. Passed here so
+      # operators can tune per box via .env; defaults match the code
+      # (_pressure_policy.py). Raise LOBES_IOWAIT_DEGRADED_THRESHOLD (e.g. 100) on
+      # boxes where /proc/pressure/io reads a phantom high value with an idle disk
+      # (see dgx-spark-cli#22). Without this passthrough the gateway container
+      # never receives the vars, so the knobs are un-tunable.
+      - LOBES_SWAP_DEGRADED_THRESHOLD=${LOBES_SWAP_DEGRADED_THRESHOLD:-75}
+      - LOBES_IOWAIT_DEGRADED_THRESHOLD=${LOBES_IOWAIT_DEGRADED_THRESHOLD:-50}
+      # Shape/feasibility flags (issue #110's FEASIBLE_ENV contract,
+      # lobes/gateway/_config.py) — the ONLY .env keys the gateway needs from
+      # a shape render. Passed explicitly (rather than via env_file) so the
+      # gateway container never inherits HF_TOKEN or any other .env secret.
+      - PRIMARY_FEASIBLE=${PRIMARY_FEASIBLE:-}
+      - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
+      - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
+      - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
+      # hand joined the peer channels 2026-08-20 (d1 reversal — see
+      # lobes/gateway/_config.py's NEVER_PROXIED_BACKENDS): a box whose card
+      # cannot serve LFM2.5 correctly (Thor sm_110) declares HAND_FEASIBLE=false
+      # and refers/proxies to a box that can.
+      - HAND_FEASIBLE=${HAND_FEASIBLE:-}
+      - EMBED_FEASIBLE=${EMBED_FEASIBLE:-}
+      - RERANK_FEASIBLE=${RERANK_FEASIBLE:-}
+      # First-class audio lanes (issue #129): declare one off exactly like a
+      # dropped core role (absent = feasible — the sleeping-lobe default).
+      - STT_FEASIBLE=${STT_FEASIBLE:-}
+      - TTS_FEASIBLE=${TTS_FEASIBLE:-}
+      # Opt-in honest referral (mesh-brain t3, issue #112; PEER_ORIGIN_ENV in
+      # lobes/gateway/_config.py): the OPERATOR-DECLARED origin of the peer box
+      # hosting a role this box dropped (e.g. http://spark.local:8001). On its
+      # own this only ANNOTATES GET /capabilities + the 404 role_infeasible
+      # body; arming the matching *_PEER_PROXY knob (below) additionally makes
+      # the gateway follow the referral itself (proxy-lobes, issues #115/#127).
+      # Unset (the default) keeps every response byte-identical to the
+      # pre-referral contract.
+      - PRIMARY_PEER_ORIGIN=${PRIMARY_PEER_ORIGIN:-}
+      - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
+      - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
+      - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
+      - HAND_PEER_ORIGIN=${HAND_PEER_ORIGIN:-}
+      - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
+      - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
+      - STT_PEER_ORIGIN=${STT_PEER_ORIGIN:-}
+      - TTS_PEER_ORIGIN=${TTS_PEER_ORIGIN:-}
+      # Inbound gateway auth (OPT-IN; proxy-lobes t1, issue #115/#127): a
+      # bearer key callers of THIS gateway must present. GATEWAY_API_KEY is
+      # the explicit, gateway-scoped knob; CULTURE_VLLM_API_KEY is a fallback
+      # so an operator already distributing that key to Culture-mesh callers
+      # gets gateway auth without minting a second secret (first non-blank of
+      # the two wins — see lobes/gateway/_config.py's _gateway_api_key). Both
+      # unset (the default) = auth disabled, byte-identical to today's
+      # no-auth behaviour. CONFIG ONLY here: nothing enforces the key yet.
+      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}
+      - CULTURE_VLLM_API_KEY=${CULTURE_VLLM_API_KEY:-}
+      # Follow-the-referral opt-in (proxy-lobes t1, #115/#127): a truthy
+      # <PREFIX>_PEER_PROXY additionally arms the gateway to itself forward a
+      # dropped role's request to its declared *_PEER_ORIGIN, rather than the
+      # origin staying honesty-only annotation. Declaring *_PEER_ORIGIN alone
+      # (above) stays referral-only — this knob is the second, deliberate
+      # opt-in step (mirrors the #112 contract: origin without the knob never
+      # silently upgrades to proxying). Inert without a matching declared
+      # origin, and inert on a role this box actually hosts. All empty by
+      # default. CONFIG ONLY here: nothing dials a peer yet.
+      - PRIMARY_PEER_PROXY=${PRIMARY_PEER_PROXY:-}
+      - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
+      - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
+      - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
+      - HAND_PEER_PROXY=${HAND_PEER_PROXY:-}
+      - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
+      - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
+      - STT_PEER_PROXY=${STT_PEER_PROXY:-}
+      - TTS_PEER_PROXY=${TTS_PEER_PROXY:-}
+      # Outbound pairwise credential (proxy-lobes t1, #115/#127): the API key
+      # THIS box presents when dialing that role's declared peer — i.e. the
+      # PEER's own inbound GATEWAY_API_KEY, never a caller's forwarded key.
+      # Taken verbatim from the operator's env; kept only for a name with a
+      # declared peer origin. SECRET — scoped env on purpose (never env_file,
+      # per the PR #117 finding: the gateway must not inherit HF_TOKEN or any
+      # other .env secret it doesn't explicitly need). Empty by default.
+      - PRIMARY_PEER_API_KEY=${PRIMARY_PEER_API_KEY:-}
+      - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
+      - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
+      - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
+      - HAND_PEER_API_KEY=${HAND_PEER_API_KEY:-}
+      - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
+      - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
+      - STT_PEER_API_KEY=${STT_PEER_API_KEY:-}
+      - TTS_PEER_API_KEY=${TTS_PEER_API_KEY:-}
+      # Replica-pool plural peer family (issue #199, t3): the SINGULAR
+      # *_PEER_ORIGIN/*_PEER_API_KEY pair above names exactly ONE peer per
+      # dropped role (referral/proxy-lobes, #112/#115/#127); the PLURAL family
+      # below names a whole POOL of same-role replicas this box can spread
+      # `model=cortex`-shaped load across (issue #199's replica pool), and can
+      # be set alongside a role this box ITSELF hosts — a hosted role can
+      # still have peers in its pool. Comma-separated, POSITIONAL: origin[i]
+      # pairs with key[i]; an empty key slot is legal ("this peer has no
+      # inbound gate"); a shorter or longer key list than the origin list is
+      # a startup configuration error (see lobes/gateway/_config.py, t2).
+      # Parsed the SAME way as the singular origin (trailing slash + outer
+      # whitespace stripped per entry). Unset everywhere (the default) yields
+      # empty replica maps — byte-identical to the pre-pool contract. See
+      # env.example's "Replica pool" section for the worked example; the
+      # peer SET differs per box (each box lists every OTHER pool member,
+      # never itself).
+      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}
+      - MULTIMODAL_PEER_ORIGINS=${MULTIMODAL_PEER_ORIGINS:-}
+      - MUSE_PEER_ORIGINS=${MUSE_PEER_ORIGINS:-}
+      - WORKER_PEER_ORIGINS=${WORKER_PEER_ORIGINS:-}
+      - HAND_PEER_ORIGINS=${HAND_PEER_ORIGINS:-}
+      - EMBED_PEER_ORIGINS=${EMBED_PEER_ORIGINS:-}
+      - RERANK_PEER_ORIGINS=${RERANK_PEER_ORIGINS:-}
+      - STT_PEER_ORIGINS=${STT_PEER_ORIGINS:-}
+      - TTS_PEER_ORIGINS=${TTS_PEER_ORIGINS:-}
+      - PRIMARY_PEER_API_KEYS=${PRIMARY_PEER_API_KEYS:-}
+      - MULTIMODAL_PEER_API_KEYS=${MULTIMODAL_PEER_API_KEYS:-}
+      - MUSE_PEER_API_KEYS=${MUSE_PEER_API_KEYS:-}
+      - WORKER_PEER_API_KEYS=${WORKER_PEER_API_KEYS:-}
+      - HAND_PEER_API_KEYS=${HAND_PEER_API_KEYS:-}
+      - EMBED_PEER_API_KEYS=${EMBED_PEER_API_KEYS:-}
+      - RERANK_PEER_API_KEYS=${RERANK_PEER_API_KEYS:-}
+      - STT_PEER_API_KEYS=${STT_PEER_API_KEYS:-}
+      - TTS_PEER_API_KEYS=${TTS_PEER_API_KEYS:-}
+      - PRIMARY_MAX_ACTIVE=${PRIMARY_MAX_ACTIVE:-}
+      - MULTIMODAL_MAX_ACTIVE=${MULTIMODAL_MAX_ACTIVE:-}
+      - MUSE_MAX_ACTIVE=${MUSE_MAX_ACTIVE:-}
+      - WORKER_MAX_ACTIVE=${WORKER_MAX_ACTIVE:-}
+      - ASSOCIATE_MAX_ACTIVE=${ASSOCIATE_MAX_ACTIVE:-}
+      - HAND_MAX_ACTIVE=${HAND_MAX_ACTIVE:-}
+      - EMBED_MAX_ACTIVE=${EMBED_MAX_ACTIVE:-}
+      - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
+      - STT_MAX_ACTIVE=${STT_MAX_ACTIVE:-}
+      - TTS_MAX_ACTIVE=${TTS_MAX_ACTIVE:-}
+      - GATEWAY_CAPACITY_KILL_SWITCH=${GATEWAY_CAPACITY_KILL_SWITCH:-}
+      # GATEWAY_SELF_ORIGIN (issue #199): this box's OWN origin, as its peers
+      # would dial it (e.g. http://peer-a.example:8000) — used to stamp
+      # X-Lobes-Served-By on a locally-answered pooled request so a caller
+      # can tell which replica actually served it. OPERATOR-TYPED, never
+      # derived from hostname/interface (the same #92 rule every other
+      # origin knob here follows). Unset (the default) falls back to the
+      # literal string 'local' on that header — byte-identical to a
+      # pre-#199 deployment that never declares it.
+      - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}
+      # Declared lane fingerprint (issue #199, t3): the SAME knobs each
+      # vLLM lane below is started with, passed through to the gateway
+      # container too so GET /capabilities and the replica pool's
+      # compatibility check (t4/t5) can compare what THIS box's lane
+      # actually declares against a peer's fingerprint — without this the
+      # gateway can only guess from the catalog. Not every prefix's lane
+      # actually reads its own copy of these five suffixes from .env today
+      # (several vLLM services hardcode the flag instead of taking an env
+      # override — see the per-service --quantization/--reasoning-parser/
+      # --tool-call-parser lines above) — passed through for EVERY prefix
+      # anyway for uniformity (${VAR:-} is harmless when nothing sets it),
+      # with the ones a lane does NOT consume called out below.
+      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}
+      - PRIMARY_KV_CACHE_DTYPE=${PRIMARY_KV_CACHE_DTYPE:-}
+      # PRIMARY_REASONING_PARSER: no such lane knob exists — vllm-primary
+      # hardcodes --reasoning-parser=qwen3. Passed through anyway so
+      # /capabilities can still report the fixed value once t4 fills it in.
+      - PRIMARY_REASONING_PARSER=${PRIMARY_REASONING_PARSER:-}
+      - PRIMARY_TOOL_CALL_PARSER=${PRIMARY_TOOL_CALL_PARSER:-}
+      - PRIMARY_SPECULATIVE_CONFIG=${PRIMARY_SPECULATIVE_CONFIG-}
+      - MULTIMODAL_QUANTIZATION=${MULTIMODAL_QUANTIZATION:-}
+      # MULTIMODAL_KV_CACHE_DTYPE / MULTIMODAL_REASONING_PARSER /
+      # MULTIMODAL_TOOL_CALL_PARSER: no such lane knobs exist —
+      # vllm-multimodal hardcodes --reasoning-parser=gemma4 and
+      # --tool-call-parser=gemma4 (no --kv-cache-dtype override). Passed
+      # through anyway per the uniformity note above.
+      - MULTIMODAL_KV_CACHE_DTYPE=${MULTIMODAL_KV_CACHE_DTYPE:-}
+      - MULTIMODAL_REASONING_PARSER=${MULTIMODAL_REASONING_PARSER:-}
+      - MULTIMODAL_TOOL_CALL_PARSER=${MULTIMODAL_TOOL_CALL_PARSER:-}
+      - MULTIMODAL_SPECULATIVE_CONFIG=${MULTIMODAL_SPECULATIVE_CONFIG-}
+      # MUSE_KV_CACHE_DTYPE / MUSE_REASONING_PARSER / MUSE_TOOL_CALL_PARSER /
+      # MUSE_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-muse
+      # hardcodes all four (reasoning/tool parser gemma4, no kv-cache-dtype
+      # override, a fixed --speculative-config). Passed through anyway.
+      - MUSE_QUANTIZATION=${MUSE_QUANTIZATION:-}
+      - MUSE_KV_CACHE_DTYPE=${MUSE_KV_CACHE_DTYPE:-}
+      - MUSE_REASONING_PARSER=${MUSE_REASONING_PARSER:-}
+      - MUSE_TOOL_CALL_PARSER=${MUSE_TOOL_CALL_PARSER:-}
+      - MUSE_SPECULATIVE_CONFIG=${MUSE_SPECULATIVE_CONFIG-}
+      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER: no such lane knobs
+      # exist — vllm-worker hardcodes --tool-call-parser=qwen3_coder (no
+      # --kv-cache-dtype override). Passed through anyway.
+      - WORKER_QUANTIZATION=${WORKER_QUANTIZATION:-}
+      - WORKER_KV_CACHE_DTYPE=${WORKER_KV_CACHE_DTYPE:-}
+      - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
+      - WORKER_TOOL_CALL_PARSER=${WORKER_TOOL_CALL_PARSER:-}
+      - WORKER_SPECULATIVE_CONFIG=${WORKER_SPECULATIVE_CONFIG-}
+      # HAND_QUANTIZATION / HAND_KV_CACHE_DTYPE / HAND_REASONING_PARSER /
+      # HAND_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-hand is
+      # bf16 (deliberately NO --quantization flag), has no thinking mode
+      # (no --reasoning-parser), no kv-cache-dtype override, and no
+      # speculative decoding. HAND_TOOL_CALL_PARSER also has no lane knob —
+      # vllm-hand hardcodes --tool-call-parser=lfm2. Passed through anyway.
+      - HAND_QUANTIZATION=${HAND_QUANTIZATION:-}
+      - HAND_KV_CACHE_DTYPE=${HAND_KV_CACHE_DTYPE:-}
+      - HAND_REASONING_PARSER=${HAND_REASONING_PARSER:-}
+      - HAND_TOOL_CALL_PARSER=${HAND_TOOL_CALL_PARSER:-}
+      - HAND_SPECULATIVE_CONFIG=${HAND_SPECULATIVE_CONFIG-}
+      # EMBED_*/RERANK_*/STT_*/TTS_*: the pooling gears and the audio overlay
+      # have no analogous fingerprint knobs at all today (no thinking mode,
+      # no tool calling, no speculative decoding). Passed through anyway for
+      # uniformity — every one of these is a harmless ${VAR:-} no-op today.
+      - EMBED_QUANTIZATION=${EMBED_QUANTIZATION:-}
+      - EMBED_KV_CACHE_DTYPE=${EMBED_KV_CACHE_DTYPE:-}
+      - EMBED_REASONING_PARSER=${EMBED_REASONING_PARSER:-}
+      - EMBED_TOOL_CALL_PARSER=${EMBED_TOOL_CALL_PARSER:-}
+      - EMBED_SPECULATIVE_CONFIG=${EMBED_SPECULATIVE_CONFIG-}
+      - RERANK_QUANTIZATION=${RERANK_QUANTIZATION:-}
+      - RERANK_KV_CACHE_DTYPE=${RERANK_KV_CACHE_DTYPE:-}
+      - RERANK_REASONING_PARSER=${RERANK_REASONING_PARSER:-}
+      - RERANK_TOOL_CALL_PARSER=${RERANK_TOOL_CALL_PARSER:-}
+      - RERANK_SPECULATIVE_CONFIG=${RERANK_SPECULATIVE_CONFIG-}
+      - STT_QUANTIZATION=${STT_QUANTIZATION:-}
+      - STT_KV_CACHE_DTYPE=${STT_KV_CACHE_DTYPE:-}
+      - STT_REASONING_PARSER=${STT_REASONING_PARSER:-}
+      - STT_TOOL_CALL_PARSER=${STT_TOOL_CALL_PARSER:-}
+      - STT_SPECULATIVE_CONFIG=${STT_SPECULATIVE_CONFIG-}
+      - TTS_QUANTIZATION=${TTS_QUANTIZATION:-}
+      - TTS_KV_CACHE_DTYPE=${TTS_KV_CACHE_DTYPE:-}
+      - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
+      - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
+      - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
+    ports:
+      - "${VLLM_PORT:-8000}:8000"
+    healthcheck:
+      # python:3.12-slim has no curl — probe /health with stdlib urllib instead.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

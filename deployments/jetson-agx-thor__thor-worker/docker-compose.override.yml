@@ -1,0 +1,3 @@
+services:
+  gateway:
+    image: lobes-gateway:worker

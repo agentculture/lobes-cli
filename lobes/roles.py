@@ -158,15 +158,24 @@ ROLE_ROLE_HINT: dict[str, str] = {
     "senses": "multimodal",
     "muse": "muse",
     "worker": "worker",
-    # `associate` serves the SAME catalog gear the `worker` role_hint names
-    # (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — one checkpoint,
-    # two public addresses with different authority. The catalog holds ONE
-    # entry per checkpoint id (tests/test_catalog.py::test_catalog_ids_are_unique),
-    # so the honest mapping is a shared role_hint, not a duplicated entry —
-    # the same name↔role_hint indirection the pooling lanes already use
-    # (`embedder` → "embedding"). See lobes.catalog.BACKEND_ROLE_CATALOG_HINT,
-    # which carries the identical alias for the tier layer.
-    "associate": "worker",
+    # `associate` OWNS its own role_hint (issue #244, t2). It used to share
+    # the `worker` role_hint on the reasoning that both serve the SAME
+    # checkpoint (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) — one
+    # gear, two public addresses with different authority. That sharing was
+    # itself the defect: promoting/demoting whichever catalog entry carried
+    # role_hint="worker" silently moved `associate`'s unwired-role canonical
+    # name along with it (issue #244 t1 moved `worker` to a different
+    # checkpoint and `associate`'s advertised default moved too, even though
+    # no box's associate lane changed). The catalog now gives the Lightning
+    # entry its own role_hint="associate" — additive, the catalog still holds
+    # exactly ONE entry per checkpoint id
+    # (tests/test_catalog.py::test_catalog_ids_are_unique), and `worker` still
+    # resolves that same checkpoint by explicit id via `_catalog_by_id` — so
+    # the two roles resolve independently. See
+    # lobes.catalog.BACKEND_ROLE_CATALOG_HINT, which carries the identical
+    # (now empty) alias table for the tier layer, kept as the generic
+    # mechanism a future role sharing a checkpoint could still use.
+    "associate": "associate",
     "hand": "hand",
     "embedder": "embedding",
     "reranker": "reranker",
@@ -257,34 +266,46 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "divergent_second_opinion",
         "tool_use",
     ),
-    # `worker` is the fast, TEXT-ONLY, NON-CODING doer (issue #187,
-    # superseding the earlier thor-worker-lobe plan's multimodal "seeing
-    # doer" framing — the checkpoint moves to Nemotron 3.5 Lightning,
-    # text-only). Unlike every other non-cortex role its list carries
-    # `repo_action`: worker is the FIRST role besides cortex permitted to
-    # ACT on the repo — but #187 draws an explicit line INSIDE that
-    # permission, not just around it: "not coder does not mean cannot touch
-    # a repository". So the vocabulary is split into two families:
+    # `worker` is the fast, multimodal-coder DOER (issue #244, t4). Issue
+    # #187 temporarily narrowed this contract to TEXT-ONLY/NON-CODING when
+    # the checkpoint moved to Nemotron 3.5 Lightning (no vision tower); that
+    # narrowing was the temporary state of a checkpoint swap, NOT the
+    # contract — deviation d1 relocated worker again, and the checkpoint
+    # behind the `worker` role_hint (nvidia/Qwen3.6-35B-A3B-NVFP4, catalog.py
+    # t1) ships its own ViT. Adding a responsibility is contract-compatible;
+    # removing one is a break, so the re-widening restores the earlier
+    # thor-worker-lobe plan's multimodal "seeing doer" framing rather than
+    # inventing a new one. Unlike every other non-cortex role its list
+    # carries `repo_action`: worker is the FIRST role besides cortex
+    # permitted to ACT on the repo. So the vocabulary is:
     #
-    #   * ALLOWED "touch the repo" tokens: `repo_action` (may act),
-    #     `repo_inspection` (search code, inspect diffs, retrieve files,
-    #     navigate), `run_authorized_commands` (run tests/already-authorized
-    #     commands) — plus the general doer tokens (`execution`,
-    #     `ground_work`, `bulk_transform`, `drafting`) and the explicit
-    #     agent-work tokens #187 calls out by name: `action_selection`
-    #     (choose the next tool/step), `retrieval_synthesis` (RAG answers
-    #     from supplied evidence), `summarization`, `log_digestion`
-    #     (summarize a long tool/log result), `structured_extraction`
-    #     (extract/normalize structured data).
-    #   * FORBIDDEN "author code" token: `code_authoring`, in
-    #     ROLE_FORBIDDEN below, alongside final_decision/security_decision.
-    #     New code or deep code reasoning ESCALATES to cortex — the
-    #     forbidden list is what keeps `repo_action` from silently widening
-    #     into coding authority now that the vocabulary can say so directly,
-    #     rather than the policy hiding in prose or a model-name check.
+    #   * "touch the repo" tokens: `repo_action` (may act), `repo_inspection`
+    #     (search code, inspect diffs, retrieve files, navigate),
+    #     `run_authorized_commands` (run tests/already-authorized commands)
+    #     — plus the general doer tokens (`execution`, `ground_work`,
+    #     `bulk_transform`, `drafting`) and the explicit agent-work tokens
+    #     #187 called out by name: `action_selection` (choose the next
+    #     tool/step), `retrieval_synthesis` (RAG answers from supplied
+    #     evidence), `summarization`, `log_digestion` (summarize a long
+    #     tool/log result), `structured_extraction` (extract/normalize
+    #     structured data).
+    #   * perception tokens: `image_understanding` / `video_understanding` —
+    #     REGAINED here (issue #244, t4). A live spike on the physical Thor,
+    #     2026-09-10 (docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt),
+    #     proved IMAGE intake against negative controls (three 64x64 solid
+    #     PNGs, red/blue/green, each correctly named). VIDEO intake was NOT
+    #     probed — the checkpoint DECLARES video support (video_token_id,
+    #     video_preprocessor_config.json in its own config, see
+    #     lobes/catalog.py) but that is card-declared, not measured (#108);
+    #     it is claimed here on the strength of the same ViT that measurably
+    #     passed the image probe, not on the card's prose alone. Advertising
+    #     these on `lobes capabilities` / `GET /capabilities` is a SEPARATE,
+    #     later task — this dict only states the contract.
     #
-    # No image_understanding / video_understanding: perception stays with
-    # `senses`/the talker lane; worker is text-only.
+    # `code_authoring` is REMOVED from ROLE_FORBIDDEN below: worker is a
+    # multimodal coder now. `final_decision` and `security_decision` remain
+    # forbidden — worker still never makes the final call or a security
+    # call on its own authority.
     "worker": (
         "execution",
         "ground_work",
@@ -299,6 +320,8 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "run_authorized_commands",
         "tool_use",
         "repo_action",
+        "image_understanding",
+        "video_understanding",
     ),
     # The `associate` lobe (lightning-on-orin plan, t6): worker MINUS
     # `repo_action`. It DOES, but it does not ACT — every doer token worker
@@ -376,23 +399,28 @@ STT_REALTIME_RESPONSIBILITY = "realtime_vad_session"
 # on the repo (repo_action is deliberately ABSENT from its forbidden list — see
 # ROLE_RESPONSIBILITIES above), but it still must never make the final decision
 # or a security call, so worker acts under cortex's direction, never on its own
-# authority. Issue #187 adds a THIRD worker-forbidden token, `code_authoring`:
-# "not coder does not mean cannot touch a repository" — worker may inspect,
-# search, run tests/authorized commands (repo_action stays permitted), but
-# authoring new code or deep code reasoning is explicitly barred and escalates
-# to cortex. This is deliberately a vocabulary token, not a prose caveat or a
-# model-name check, so a consumer reading only these two lists gets the whole
-# policy. The service roles carry no forbidden list of their own.
+# authority. Issue #187 had temporarily added a THIRD worker-forbidden token,
+# `code_authoring`, while worker's then-checkpoint (Nemotron 3.5 Lightning) was
+# text-only; issue #244 (t4) REMOVES it now that the checkpoint behind `worker`
+# ships its own ViT and worker is a multimodal coder — adding a responsibility
+# is contract-compatible, removing one is a break, and `code_authoring` was
+# never a removal of authority worker is meant to keep losing, just a
+# checkpoint-shaped stopgap. This is deliberately a vocabulary token, not a
+# prose caveat or a model-name check, so a consumer reading only these two
+# lists gets the whole policy. The service roles carry no forbidden list of
+# their own.
 ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "cortex": (),
     "senses": ("final_decision", "repo_action", "security_decision"),
     "muse": ("final_decision", "repo_action", "security_decision"),
-    "worker": ("final_decision", "security_decision", "code_authoring"),
-    # `associate` is worker's forbidden list PLUS `repo_action` — the single
-    # token that separates the two roles. "They do, but not act": associate may
-    # run authorized commands and inspect a repo, but it never changes one, and
-    # like worker it never makes the final call, a security call, or authors
-    # code. See ROLE_RESPONSIBILITIES above.
+    "worker": ("final_decision", "security_decision"),
+    # `associate` serves a DIFFERENT, still text-only checkpoint (Nemotron 3.5
+    # Lightning — see ROLE_RESPONSIBILITIES above) and keeps the conservative
+    # forbidden list worker carried before #244 t4's re-widening: `repo_action`
+    # (the token that separates the two roles — "they do, but not act") plus
+    # `code_authoring`, since associate's checkpoint has no ViT and is not
+    # being claimed as a coder here. Like worker it never makes the final
+    # call or a security call.
     "associate": (
         "final_decision",
         "security_decision",

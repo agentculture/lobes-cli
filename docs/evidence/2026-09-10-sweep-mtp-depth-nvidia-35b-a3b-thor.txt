@@ -1,0 +1,153 @@
+# MTP depth sweep — nvidia/Qwen3.6-35B-A3B-NVFP4 on the Jetson AGX Thor
+# 2026-09-10.  Plan task t12; covers c27/h23, c20/h15, and the c21 target.
+#
+# HEADLINE: every speculative depth beats the 100 tok/s target, and throughput
+# keeps rising to k=7 (155.3 tok/s) — but the per-position acceptance data says
+# k=7 is buying that with mostly-wasted draft work, and the issue's own warning
+# ("do not assume a larger k is faster") is only half right here: larger k IS
+# faster, and also progressively less efficient.
+
+## Conditions — identical across every arm
+
+Box / image / env / method: see
+docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt sections 0-2. In short:
+physical Thor sm_110, MAXN, fleet-pinned nightly 8bd082 (vLLM
+0.26.1rc1.dev942), VLLM_GDN_DECODE_KERNEL=triton, standalone `docker run` on
+port 8100, cortex lane stopped, Culture production stack co-resident and
+untouched, clocks NOT pinned.
+
+Per arm, mechanically enforced by scripts/…/sweep.sh:
+  * previous container removed, `sync` + drop_caches, ~102 GiB available
+    verified BEFORE each boot (c24 memory discipline);
+  * identical serve args except `--speculative-config`;
+  * identical prompts, streamed, temperature 0, NO client timeouts;
+  * KV pool + acceptance read from the lane's own logs and /metrics.
+
+Measurement definition: TTFT = wall time to the FIRST content delta.
+decode tok/s = (completion_tokens - 1) / (last delta - first delta), i.e. the
+decode window only, prefill excluded. Single-stream, batch 1.
+
+## Results — code prompt (109 completion tokens), 3 runs per arm
+
+  k    decode tok/s (run1, run2, run3)    median    TTFT ms (3 runs)
+  ---  ---------------------------------  --------  ------------------------
+  off  64.57, 69.72, 68.49                  68.5    199.1, 170.1, 167.9
+  1    91.72, 102.08, 101.76               101.8    698.4, 172.4, 177.0
+  3    112.89, 129.02, 132.46              129.0    105.2,  90.0,  88.9
+  5    117.47, 137.74, 136.70              136.7    125.5, 107.4, 109.5
+  7    135.07, 155.84, 155.30              155.3    126.7, 109.1, 107.9
+
+  (The first run of each arm is a cold-cache outlier — k=1's 698 ms TTFT is the
+  clearest case. Read the 2nd/3rd runs as the warm figures. Nothing is dropped.)
+
+## Deep-prompt leg (9020 server-reported prompt tokens)
+
+  k    decode tok/s    TTFT ms
+  ---  --------------  --------
+  off  78.47           2364.1
+  1    108.85          3161.6
+  3    120.04          4062.6
+  7    133.44          3681.9
+
+TTFT rises with k on a deep prompt while decode also rises — the drafter adds
+prefill-side work. On the short prompts the opposite holds (k>=3 has LOWER
+TTFT than unspeculated). Both effects are real and neither is claimed as
+general.
+
+## Acceptance — the number the throughput table does not tell you
+
+  k   avg acceptance   mean accept length   per-position acceptance
+  --  ---------------  -------------------  ----------------------------------
+  1   97.7%            1.98 / 2             0.977
+  3   93.2% (counters) 3.82 / 4             1.000, 0.943, 0.874
+      93.9% (log line)
+  5   96.2%            5.81 / 6             1.000, 1.000, 1.000, 0.946, 0.865
+  7   73.0%            6.11 / 8             1.000, 1.000, 1.000, 0.889, 0.667,
+                                            0.333, 0.222
+
+k=3's two figures come from the two independent surfaces (Prometheus counters
+260/279 = 93.2%; the engine's own SpecDecoding line 93.9% over its window) —
+both are ENGINE-WIDE over a window, never per-request, and they do not have to
+agree exactly because they cover different windows. Reported as both rather
+than picking the flattering one.
+
+### What the per-position data shows
+
+Positions 0-2 are accepted essentially always at EVERY depth. The falloff
+starts at position 3 and collapses after position 4:
+
+  k=7 positions 5 and 6 are accepted 33.3% and 22.2% of the time.
+
+So at k=7 the engine drafts 7 tokens and typically keeps ~6.1 — it is doing
+roughly 15% more draft work than k=5 for ~14% more throughput, with the last
+two positions mostly discarded. That is still a net win on THIS box because
+the drafter is cheap relative to the 35B target, but it is a genuinely
+different efficiency regime, and it is the reason k=7's headline acceptance
+(73.0%) looks worse than k=5's (96.2%) while being faster.
+
+CAVEAT on the k=7 acceptance sample: 46 accepted / 63 drafted in the reported
+window — a small sample from the tail of the run. The per-position SHAPE is
+consistent with k=5's, but the 73.0% scalar is noisier than the others.
+
+## KV cost of the drafter
+
+  k    GPU KV cache tokens   concurrency ceiling at 65,536
+  ---  --------------------  -----------------------------
+  off  2,100,601             32.05x
+  1    1,569,667             23.95x
+  3    1,379,105             21.04x
+  5    1,201,073             18.33x
+  7    1,079,619             16.47x
+
+Deeper speculation costs KV pool monotonically: k=7 keeps only 51% of the
+unspeculated pool. These are CEILINGS (pool / window), not measured
+concurrency — the same misreading thor-worker.toml warns about.
+
+## Correctness across the sweep
+
+Every arm produced byte-identical code output for the code prompt (the same
+`merge_sorted_lists` implementation), which is what MTP's verify step
+guarantees: speculation changes speed, not semantics. The known-answer probe
+returned "Paris" at every depth.
+
+One difference worth recording rather than smoothing: at k=7 the deep-prompt
+summary came back as "...repeated numerous times." (22 tokens) instead of
+"...the repeated phrase..." (19 tokens) at lower depths. Both are correct
+summaries; greedy decoding is not bit-identical across different speculative
+batch shapes. Not an error, but it is why "identical output" is claimed for
+the code prompt specifically and not as a blanket property.
+
+## Verdict for the plan
+
+Against c21's bar (floor 61.2, target 100):
+
+  * unspeculated (68.5) clears the FLOOR but not the target;
+  * every speculative depth clears the TARGET;
+  * fastest measured is k=7 at 155.3 tok/s (+127% over unspeculated,
+    +154% over the 61.2 floor, ~8.3x the same-day incumbent cortex's 18.7).
+
+RECOMMENDATION — the boring default should be k=3, not the fastest arm:
+
+  * k=3 already exceeds the target by 29% while keeping 93-94% acceptance and
+    a 21x KV ceiling;
+  * k=5 is a strictly better operating point than k=3 on this data (+6% speed,
+    HIGHER acceptance at 96.2%) and is the best-evidenced candidate to promote;
+  * k=7 is fastest but spends a third of its draft budget on positions accepted
+    under 35% of the time, on the smallest sample of the sweep, and cuts the KV
+    ceiling to 16.47x.
+
+The issue asked to "keep MTP3 as the reliability reference unless physical-Thor
+evidence shows another depth is both faster and stable." k=5 is faster AND has
+higher acceptance than k=3 — so that condition is arguably met for k=5, and NOT
+met for k=7 (faster, but the acceptance profile and sample size do not support
+calling it stable). Recorded as evidence; the promotion decision is the
+operator's.
+
+## Not measured
+
+  * concurrent/aggregate throughput at any depth (single-stream only);
+  * k=2, k=4, k=6;
+  * 128K and 262144 windows (65536 only);
+  * DFlash (plan task t14 / risk r2);
+  * the engine's own max_num_batched_tokens suggestion, which it emits whenever
+    speculation is on and which was NOT applied in any arm.

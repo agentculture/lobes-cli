@@ -1,0 +1,88 @@
+# The pressure floor on a cortex-less Thor — MEASURED, 2026-09-10
+#
+# Plan task t7, covering c26/h22: "with cortex gone, this box needs a stated
+# answer for the pressure floor ... Either hand becomes feasible here, or the
+# shape declares the floor's absence deliberately and the docs say so."
+
+## 1. What the card says
+
+lobes/profiles/builtin/thor.toml:93-109 declares `hand` feasible=false on this
+card, MEASURED (2026-08-20, the fifth validated sm_110 divergence): LFM2.5-1.2B
+BOOTS here, including LoRA init, but INFERENCE is broken — corrupted
+deterministic generations escalating to a CUDA unspecified-launch-failure /
+EngineCore death within 1-3 requests, on BOTH the 8bd082 nightly and the prior
+0.23.1 engine, while the identical config passes on the Spark the same day.
+Evidence: docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt.
+
+The engine has NOT been upgraded since that measurement (the box still runs
+`8bd082c274fa`), so the comment's own "re-measure on engine upgrades" trigger
+has not fired. Re-measuring `hand` on the same engine would be re-running a
+known result, at the cost of a heavy-lobe recreate on a box also serving the
+Culture production stack. NOT re-run.
+
+## 2. What the deployed mesh actually does — probed live
+
+The Thor's .env declares:
+
+    HAND_FEASIBLE=false
+    HAND_BASE_URL=            (unwired: this box does not serve hand)
+    HAND_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+
+and the peer PROXY is armed for it. Probing the Thor's own gateway:
+
+    POST http://127.0.0.1:8000/v1/chat/completions   {"model": "hand", ...}
+
+    HTTP/1.1 404 Not Found
+    X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+    {"error": {"message": "the declared peer for this role
+      (`http://spark.tail0be7e0.ts.net:8001`) declined it as role_infeasible —
+      the peer does not host this role either (a misdeclared referral/proxy
+      origin); no further hop is attempted. Peer said: The model
+      `LiquidAI/LFM2.5-1.2B-Instruct` is not feasible on this machine — its
+      backend (`hand`) is declared hardware-infeasible by this deployment"}}
+
+### FINDING — the Thor's `hand` referral is MISDECLARED, today, before any flip
+
+The forward works; the destination is wrong. Confirmed by reading each box's
+own `/capabilities` (2026-09-10):
+
+    box    role  feasible  ready   model
+    Spark  hand  false     false   LiquidAI/LFM2.5-1.2B-Instruct
+    Orin   hand  true      false   LiquidAI/LFM2.5-1.2B-Instruct
+    Thor   hand  false     -       (proxied to the Spark)
+
+The Thor points `HAND_PEER_ORIGIN` at the **Spark**, which declares `hand`
+infeasible. The only box in this mesh that declares `hand` feasible is the
+**Orin** — and its lane is `ready:false`, i.e. declared but not running.
+
+So `model=hand` is unservable from every box in this mesh right now. The
+gateway names the fault precisely in its own 404 body ("a misdeclared
+referral/proxy origin") and refuses a second hop, which is correct behaviour —
+it did not silently fall back to a different model.
+
+## 3. The decision (c26)
+
+Branch taken: **the floor's absence is declared deliberately and documented**,
+not papered over by re-measuring a known-broken lane.
+
+  * `hand` stays feasible=false on the thor card. Re-measure when the engine
+    is upgraded, per the card's own trigger — not before.
+  * After the flip, this box's ONLY local generate lane is `worker`, and
+    `worker` sheds 429 under swap/iowait pressure exactly like cortex/senses/
+    muse. There is therefore **no servable generate floor on the Thor**: under
+    pressure, local generate requests 429 with no cheaper rung.
+  * That is a REGRESSION IN DEGREE, not in kind: the floor is already absent
+    today (section 2), because `hand` is unservable mesh-wide. What the flip
+    removes is the local cortex lane that was absorbing the traffic.
+
+## 4. Two follow-ups this measurement opens (NOT done here)
+
+  a. **Repoint the Thor's HAND_PEER_ORIGIN at the Orin.** That is a one-line
+     .env change on a live box and belongs to an operator-scheduled window,
+     not to this measurement. It only helps once (b) is true.
+  b. **The Orin's hand lane is declared but not running** (`ready:false`).
+     Until it runs, repointing the referral moves the 404 rather than fixing
+     it.
+
+Neither is in this plan's scope; both are recorded so the next person does not
+rediscover them from a production 429.

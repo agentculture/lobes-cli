@@ -28,10 +28,12 @@ from lobes.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
-_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
-# The DEMOTED former worker gear (nemotron-lightning-worker plan, #187, t3) —
-# kept in the catalog as a candidate (cite-don't-delete), no longer the
-# role_hint="worker" holder.
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# The DEMOTED former worker gear (issue #244, t1) — kept in the catalog as a
+# candidate (cite-don't-delete), no longer the role_hint="worker" holder.
+_NEMOTRON_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# The DEMOTED former-former worker gear (nemotron-lightning-worker plan, #187,
+# t3) — kept in the catalog as a candidate (cite-don't-delete) too.
 _QWEN_WORKER_ID = "unsloth/Qwen3.6-35B-A3B-NVFP4"
 
 # Fields required non-empty for ALL models (task-agnostic).
@@ -154,7 +156,12 @@ def test_moe_backend_aligns_with_shape() -> None:
 # 2026-08-19): text_config.mtp_num_hidden_layers=1 — a self-hosted MTP draft
 # module, no external draft repo, and no "-MTP" marker in its upstream id.
 _SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset(
-    {_QWEN_WORKER_ID, "unsloth/Qwen3.6-27B-NVFP4", "unsloth/Qwen3.8-27B-NVFP4"}
+    {
+        _WORKER_ID,
+        _QWEN_WORKER_ID,
+        "unsloth/Qwen3.6-27B-NVFP4",
+        "unsloth/Qwen3.8-27B-NVFP4",
+    }
 )
 
 
@@ -712,69 +719,70 @@ def test_tier_aliases_capability_order_is_hand_multimodal_worker_muse_associate_
 
 
 # ---------------------------------------------------------------------------
-# `worker` gear: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-# (nemotron-lightning-worker plan, #187, t3) — replaces the former worker gear
-# unsloth/Qwen3.6-35B-A3B-NVFP4, demoted below to a kept candidate.
+# `worker` gear: nvidia/Qwen3.6-35B-A3B-NVFP4 (issue #244, t1) — replaces the
+# former worker gear nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4,
+# demoted below to a kept candidate (which itself had earlier replaced
+# unsloth/Qwen3.6-35B-A3B-NVFP4, also a kept candidate).
 # ---------------------------------------------------------------------------
 # Facts below are verified against the checkpoint's ACTUAL config files
-# (fetched 2026-08-20), not card prose:
-#   https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4/resolve/main/config.json
-#     - architectures: ["NemotronHForCausalLM"], model_type "nemotron_h"
-#     - max_position_embeddings = 1048576 (1M native ceiling)
-#     - NO vision_config anywhere in the file — TEXT-ONLY
-#     - no mtp_num_hidden_layers / draft-head / speculative field
-#   https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4/resolve/main/hf_quant_config.json
-#     - producer.name = "modelopt"; quant_algo = "MIXED_PRECISION"
-#       (FP8 + W4A16_NVFP4), kv_cache_quant_algo = "FP8"
-#   Model card (prose, cited separately): OWN example vLLM serve command
-#   passes --reasoning-parser nemotron_v3 and --tool-call-parser qwen3_coder
-#   — UNVALIDATED on our engine until plan task t2's structured tool_calls
-#   probe runs.
+# (fetched 2026-09-10), not card prose:
+#   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/config.json
+#     - architectures: ["Qwen3_5MoeForConditionalGeneration"], model_type
+#       "qwen3_5_moe"
+#     - text_config.max_position_embeddings = 262144 (native 256K)
+#     - vision_config IS present — MULTIMODAL (image+video)
+#     - text_config.mtp_num_hidden_layers = 1, with the embedded
+#       quantization_config.ignore carrying ["mtp.layers.0*", "mtp*"] — a
+#       self-hosted MTP draft module, physically present, deliberately
+#       unquantized
+#   https://huggingface.co/nvidia/Qwen3.6-35B-A3B-NVFP4/raw/main/hf_quant_config.json
+#     - producer.name = "modelopt"; quant_algo = "MIXED_PRECISION" (experts
+#       W4A16_NVFP4 group_size=16, linear_attn/self_attn FP8),
+#       kv_cache_quant_algo = "FP8", exclude_modules = ["mtp.layers.0*", "mtp*"]
 
 
 def test_worker_gear_exists_with_correct_fields() -> None:
     worker = next((m for m in SUPPORTED_MODELS if m.id == _WORKER_ID), None)
     assert worker is not None, f"{_WORKER_ID} not found in catalog"
     assert worker.role_hint == "worker"
-    assert worker.native_max_model_len == 1048576  # config.json max_position_embeddings
+    assert worker.native_max_model_len == 262144  # config.json max_position_embeddings
     assert worker.quantization == "modelopt"  # hf_quant_config.json producer/quant_algo
-    assert (
-        worker.tool_parser == "qwen3_coder"
-    )  # VALIDATED live on the Spark 2026-08-20 (with nemotron_v3 reasoning)
-    assert (
-        worker.status == "load-tested"
-    )  # Spark GB10 2026-08-20 (d1); Thor sm_110 is a NO-GO (Mamba2 warmup wedge)
+    assert worker.tool_parser == "qwen3_coder"  # infer_parser("...qwen3.6...")
+    assert worker.status == "configured"  # declared 2026-09-10, no live boot yet
     assert worker.task == "generate"
     assert worker.dimension == 0
     assert worker.hf_overrides == ""
     assert worker.doc, f"{_WORKER_ID}: doc must be non-empty"
 
 
-def test_worker_gear_is_text_only() -> None:
-    # config.json carries no vision_config — unlike the demoted Qwen worker,
-    # this checkpoint must never be described as multimodal.
+def test_worker_gear_is_multimodal() -> None:
+    # config.json carries a vision_config (image+video intake), unlike the
+    # demoted Nemotron worker, which was text-only.
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
-    assert "vit" not in worker.shape.lower()
-    assert "vision" not in worker.shape.lower()
-    assert "image" not in worker.shape.lower()
-    assert "video" not in worker.shape.lower()
-    assert "text-only" in worker.shape.lower()
+    shape = worker.shape.lower()
+    assert "vit" in shape or "vision" in shape or "image" in shape or "video" in shape
+    assert "text-only" not in shape
 
 
-def test_worker_gear_has_no_speculative_config() -> None:
-    # config.json declares no MTP/draft-head/speculative field; the card's
-    # MTP/DSpark claim is declared-by-the-card, unmeasured by us (plan t2).
+def test_worker_gear_has_self_hosted_mtp_speculative_config() -> None:
+    # config.json's text_config.mtp_num_hidden_layers=1 plus the ignore/
+    # exclude_modules ["mtp.layers.0*", "mtp*"] pattern confirm a physically
+    # present, self-hosted MTP draft module — declared here as a MEASUREMENT
+    # of the checkpoint's own config, not the card's separate MTP/DSpark prose.
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
-    assert worker.speculative_config == ""
+    cfg = json.loads(worker.speculative_config)
+    assert cfg["method"] == "mtp"
+    assert "model" not in cfg
+    assert "draft_model_id" not in cfg
 
 
 def test_worker_gear_is_moe_with_auto_selected_backend() -> None:
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
     assert worker.shape.lower().startswith("hybrid")
     assert "moe" in worker.shape.lower()
-    # NO forced moe_backend: mirrors the demoted worker's own hard-won sm_110
-    # lesson (forced NVFP4 MoE backends were refused there) rather than
-    # carrying the card's untested "marlin" suggestion forward.
+    # NO forced moe_backend: mirrors the demoted unsloth worker's own
+    # hard-won sm_110 lesson (forced NVFP4 MoE backends were refused there)
+    # rather than carrying an untested guess forward.
     assert worker.moe_backend == ""
 
 
@@ -794,7 +802,7 @@ def test_worker_gear_does_not_modify_the_mmangkad_candidate_sibling() -> None:
 
 
 def test_qwen_worker_is_demoted_to_candidate_and_kept() -> None:
-    # unsloth/Qwen3.6-35B-A3B-NVFP4 — the FORMER worker gear — is KEPT
+    # unsloth/Qwen3.6-35B-A3B-NVFP4 — the FORMER-FORMER worker gear — is KEPT
     # (cite-don't-delete) but no longer carries role_hint="worker"; every
     # other fact about it is untouched by the demotion.
     outgoing = next((m for m in SUPPORTED_MODELS if m.id == _QWEN_WORKER_ID), None)
@@ -806,6 +814,28 @@ def test_qwen_worker_is_demoted_to_candidate_and_kept() -> None:
     assert outgoing.status == "load-tested"
     assert outgoing.moe_backend == ""
     assert outgoing.speculative_config == '{"method": "mtp", "num_speculative_tokens": 2}'
+
+
+def test_nemotron_worker_is_demoted_from_worker_to_its_own_associate_hint() -> None:
+    # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — the FORMER worker
+    # gear (nemotron-lightning-worker plan, #187, t3) — is KEPT
+    # (cite-don't-delete) and no longer carries role_hint="worker", but it is
+    # NOT demoted to a plain candidate either: issue #244 t2 gives it its own
+    # role_hint="associate" (it is still the checkpoint the Orin's associate
+    # lane actually serves), so `worker`'s and `associate`'s catalog
+    # resolutions stop sharing one entry. Every other fact about it (its
+    # Spark validation, its Thor NO-GO) is untouched by the demotion.
+    outgoing = next((m for m in SUPPORTED_MODELS if m.id == _NEMOTRON_ID), None)
+    assert outgoing is not None, f"{_NEMOTRON_ID}: expected to remain in the catalog"
+    assert (
+        outgoing.role_hint == "associate"
+    ), f"{_NEMOTRON_ID}: expected its own role_hint='associate'"
+    assert outgoing.native_max_model_len == 1048576
+    assert outgoing.quantization == "modelopt"
+    assert outgoing.tool_parser == "qwen3_coder"
+    assert outgoing.status == "load-tested"
+    assert outgoing.moe_backend == ""
+    assert outgoing.speculative_config == ""
 
 
 def test_exactly_one_worker_gear() -> None:

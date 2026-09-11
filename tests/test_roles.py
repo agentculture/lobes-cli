@@ -62,9 +62,11 @@ _EXPECTED_ROLES = {
     "tts",
 }
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
-# the catalog worker default — nemotron-lightning-worker plan (#187, t3)
-# moved this from unsloth/Qwen3.6-35B-A3B-NVFP4 (demoted, kept as candidate).
-_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# the catalog worker default — issue #244, t1 moved this from
+# nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as
+# candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
+# also a kept candidate).
+_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 
 # The gateway-fronted roles' endpoint is NEVER fabricated from GATEWAY_HOST/
 # GATEWAY_PORT (issue #81 t5, criterion 3 — those are the gateway's INTERNAL
@@ -409,11 +411,15 @@ def test_static_responsibility_maps_cover_all_ten_roles() -> None:
         "repo_action",
         "security_decision",
     )
-    # worker — the fast, TEXT-ONLY, NON-CODING doer (issue #187): execution/
-    # drafting tokens, the explicit RAG/summarization/digestion/extraction
-    # tokens, and the split of "may touch the repo" (repo_inspection,
-    # run_authorized_commands, repo_action) from "may author code"
-    # (code_authoring — forbidden, below). No vision token remains.
+    # worker — the multimodal coder DOER (issue #244, t4, re-widening the
+    # #187 Lightning narrowing): execution/drafting tokens, the explicit
+    # RAG/summarization/digestion/extraction tokens, repo_action/
+    # repo_inspection/run_authorized_commands, AND the vision tokens the
+    # nemotron-lightning-worker plan had dropped — the checkpoint behind
+    # `worker` regained its own ViT (nvidia/Qwen3.6-35B-A3B-NVFP4, t1).
+    # code_authoring is REMOVED from forbidden (below): worker is now a
+    # multimodal coder. Adding responsibilities is contract-compatible;
+    # removing is a break — this only widens.
     assert ROLE_RESPONSIBILITIES["worker"] == (
         "execution",
         "ground_work",
@@ -428,15 +434,17 @@ def test_static_responsibility_maps_cover_all_ten_roles() -> None:
         "run_authorized_commands",
         "tool_use",
         "repo_action",
+        "image_understanding",
+        "video_understanding",
     )
     assert ROLE_FORBIDDEN["worker"] == (
         "final_decision",
         "security_decision",
-        "code_authoring",
     )
     assert "repo_action" not in ROLE_FORBIDDEN["worker"]
-    assert "image_understanding" not in ROLE_RESPONSIBILITIES["worker"]
-    assert "video_understanding" not in ROLE_RESPONSIBILITIES["worker"]
+    assert "code_authoring" not in ROLE_FORBIDDEN["worker"]
+    assert "image_understanding" in ROLE_RESPONSIBILITIES["worker"]
+    assert "video_understanding" in ROLE_RESPONSIBILITIES["worker"]
     assert ROLE_RESPONSIBILITIES["stt"] == ("transcribe", "audio_input_to_text")
     assert ROLE_RESPONSIBILITIES["tts"] == ("speech_output", "synthesize")
     assert ROLE_RESPONSIBILITIES["embedder"] == ("vectorization", "memory_retrieval_input")
@@ -480,12 +488,13 @@ def test_worker_is_present_and_resolves_to_the_worker_gear() -> None:
 
 
 def test_worker_responsibilities_are_the_doer_contract() -> None:
-    """worker (issue #187) is the fast, TEXT-ONLY, NON-CODING doer:
-    execution/drafting tokens PLUS the explicit RAG/summarization/digestion/
+    """worker (issue #244, t4) is the multimodal coder DOER: execution/
+    drafting tokens PLUS the explicit RAG/summarization/digestion/
     extraction tokens AND repo_action/repo_inspection/run_authorized_commands
     — it may touch the repo (search, inspect, run authorized commands/tests)
-    but never author code (code_authoring is forbidden, below) and never
-    make the final decision or a security call. No vision token remains."""
+    and it regains image_understanding/video_understanding (the checkpoint
+    ships its own ViT); code_authoring is no longer forbidden. It still
+    never makes the final decision or a security call."""
     worker = _registry(_full_env())["worker"]
     for token in (
         "execution",
@@ -503,14 +512,14 @@ def test_worker_responsibilities_are_the_doer_contract() -> None:
         assert token in worker.responsibilities
     assert "tool_use" in worker.responsibilities
     assert "repo_action" in worker.responsibilities
-    assert "image_understanding" not in worker.responsibilities
-    assert "video_understanding" not in worker.responsibilities
+    assert "image_understanding" in worker.responsibilities
+    assert "video_understanding" in worker.responsibilities
     assert worker.forbidden_responsibilities == (
         "final_decision",
         "security_decision",
-        "code_authoring",
     )
     assert "repo_action" not in worker.forbidden_responsibilities
+    assert "code_authoring" not in worker.forbidden_responsibilities
 
 
 def test_worker_may_act_on_repo_unlike_senses_and_muse() -> None:

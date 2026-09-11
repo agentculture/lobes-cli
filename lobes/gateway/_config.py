@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from lobes.catalog import TIER_ROLE
+from lobes.catalog import TIER_ROLE, resolve_tier
 from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
@@ -51,22 +51,39 @@ _DEFAULT_MIDDLE = "nvidia/Qwen3-14B-NVFP4"
 # and, like the worker gear below, it is INFEASIBLE by default when unwired
 # (see OPT_IN_BACKENDS).
 _DEFAULT_MUSE = "nvidia/Gemma-4-31B-IT-NVFP4"
-# The opt-in worker gear (unsloth Qwen3.6-35B-A3B-NVFP4, MoE with a
-# self-hosted MTP draft) — the eighth Colleague role's backend
+# The opt-in worker gear — the eighth Colleague role's backend
 # (thor-worker-lobe plan, t1/t3). Hosted only by a worker-hosting deployment
 # shape (never machine-as-brain), so its backend is wired only when
 # WORKER_BASE_URL is set — and, like muse above, it is INFEASIBLE by default
 # when unwired (see OPT_IN_BACKENDS).
-_DEFAULT_WORKER = "unsloth/Qwen3.6-35B-A3B-NVFP4"
+#
+# DERIVED from the catalog's own role_hint="worker" entry (#244 t6) rather
+# than a literal id — the previous literal here
+# (``unsloth/Qwen3.6-35B-A3B-NVFP4``) went stale the moment deviation d1
+# re-checkpointed `worker` to Lightning
+# (``nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4``, see CLAUDE.md and
+# catalog.py's role_hint="worker" entry): an unset WORKER_SERVED_NAME was
+# advertising a checkpoint no box in the mesh serves any more. Deriving
+# instead of hardcoding means the next checkpoint swap only has to update
+# the catalog, not this file too — see catalog.resolve_tier.
+_DEFAULT_WORKER = resolve_tier("worker").id
 # The opt-in associate gear (lightning-on-orin plan, t6) — the TENTH Colleague
-# role's backend. Deliberately the SAME checkpoint the `worker` seat holds:
-# associate is worker MINUS repo_action, a different AUTHORITY over the same
-# gear, not a different model. Hosted only by an associate-hosting deployment
-# shape (never machine-as-brain), so its backend is wired only when
-# ASSOCIATE_BASE_URL is set — and, like muse/worker, it is INFEASIBLE by
-# default when unwired (see OPT_IN_BACKENDS). The compose lane's own default
-# (docker-compose.yml's vllm-associate) is this same id.
-_DEFAULT_ASSOCIATE = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
+# role's backend. It shares its checkpoint HISTORY with `worker` (associate is
+# worker MINUS repo_action, a different AUTHORITY, not a different model) but
+# NOT its catalog role_hint any more: issue #244 t2 gave the Lightning entry
+# its own role_hint="associate", precisely so a `worker` checkpoint swap
+# cannot silently move this default (the shared hint WAS the defect — #244
+# t1 repointed `worker` to a different checkpoint, and this literal, unlike
+# _DEFAULT_WORKER above, would otherwise never have noticed).
+#
+# DERIVED from the catalog's own role_hint="associate" entry, the same
+# pattern _DEFAULT_WORKER uses, rather than a literal id — see that comment
+# for the failure mode a hardcoded literal repeats. Hosted only by an
+# associate-hosting deployment shape (never machine-as-brain), so its backend
+# is wired only when ASSOCIATE_BASE_URL is set — and, like muse/worker, it is
+# INFEASIBLE by default when unwired (see OPT_IN_BACKENDS). The compose
+# lane's own default (docker-compose.yml's vllm-associate) is this same id.
+_DEFAULT_ASSOCIATE = resolve_tier("associate").id
 # The `hand` gear (LiquidAI LFM2.5-1.2B-Instruct) — the NINTH Colleague role's
 # backend and the fleet's designated fine-tuning base. Unlike muse/worker this
 # one is DEFAULT-HOSTED on every card (~2.4 GiB bf16 is cheap enough to always

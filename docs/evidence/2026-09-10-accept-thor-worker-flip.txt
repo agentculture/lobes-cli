@@ -1,0 +1,159 @@
+# THE FLIP — Jetson AGX Thor: cortex OUT, worker IN. 2026-09-10
+#
+# Plan task t13 (+ the DFlash arm of t14). Covers c1/h1, c12/h10, c18/h13,
+# c21/h16, c33/h26, c34/h27.
+#
+# HEADLINE: the Thor serves nvidia/Qwen3.6-35B-A3B-NVFP4 as `worker` at the FULL
+# native 262144 window with DFlash k=12 speculation, measured 196.6 tok/s
+# single-stream THROUGH THE GATEWAY — 10.5x the cortex lane it replaced. Qwen
+# Code drives it end to end. `model=cortex` still answers from this box,
+# forwarded to the Spark.
+
+## 1. Before / after on this box
+
+  before: PRIMARY (cortex) unsloth/Qwen3.8-27B-NVFP4, 262144, util 0.58,
+          MTP n=2 on the triton GDN path, 18.7 tok/s single-stream.
+          WORKER_FEASIBLE=false; model=worker 404 role_infeasible.
+  after:  WORKER nvidia/Qwen3.6-35B-A3B-NVFP4, 262144, util 0.45, fp8 KV,
+          DFlash k=12. PRIMARY_FEASIBLE=false, proxied to the Spark.
+
+`GET /capabilities` on the Thor after the flip:
+
+    worker: feasible=True  ready=True  proxied=None
+            model=nvidia/Qwen3.6-35B-A3B-NVFP4  context=65536 -> later 262144
+    cortex: feasible=False ready=False proxied=True
+            hosted_by=http://spark.tail0be7e0.ts.net:8001
+            model=unsloth/Qwen3.8-27B-NVFP4  context=262144
+
+`GET /v1/models`: nvidia/Qwen3.6-35B-A3B-NVFP4, Qwen/Qwen3-Embedding-0.6B,
+Qwen/Qwen3-Reranker-0.6B.
+
+## 2. Served argv — from `docker inspect`, never from .env
+
+    vllm serve nvidia/Qwen3.6-35B-A3B-NVFP4
+      --served-model-name=nvidia/Qwen3.6-35B-A3B-NVFP4
+      --host=0.0.0.0 --port=8000
+      --quantization=modelopt
+      --max-model-len=262144
+      --gpu-memory-utilization=0.45
+      --kv-cache-dtype=fp8
+      --max-num-seqs=4
+      --speculative-config={"method": "dflash", "num_speculative_tokens": 12,
+                            "model": "z-lab/Qwen3.6-35B-A3B-DFlash"}
+      --enable-auto-tool-choice
+      --tool-call-parser=qwen3_coder
+      --reasoning-parser=qwen3
+      --trust-remote-code
+
+    measured: GPU KV cache 1,199,883 tokens = 4.58x ceiling at 262,144.
+    (At the 65536 window the same config measured 548,233 tokens = 8.37x.)
+
+## 3. Throughput THROUGH THE GATEWAY, addressed by role (`model=worker`)
+
+Streaming, single-stream, batch 1, no client timeouts. TTFT = first content
+delta; decode = (completion_tokens-1)/(last delta - first delta).
+
+    code prompt (109 tokens), 3 runs
+      TTFT   148.5 / 144.0 / 130.5 ms
+      decode 163.19 / 198.12 / 196.56 tok/s     -> median 196.6
+    deep prompt (9020 tokens)
+      TTFT   3033.9 ms, decode 91.52 tok/s
+    known-answer "Paris": PASS
+
+Against the plan's bar (floor 61.2, target 100): TARGET MET, +97%.
+Against this box's same-day incumbent cortex (18.7 tok/s): 10.5x.
+Notably the gateway path measured FASTER than the standalone spike (182.6),
+so the proxy hop is not the bottleneck at this rate.
+
+## 4. Correctness through the gateway
+
+  tool calls : finish_reason "tool_calls";
+               get_weather({"city": "Paris"}); content EMPTY       PASS
+  vision     : 64x64 solid PNGs -> red "Red", blue "Blue"          PASS
+               (negative control discriminates)
+  cortex     : model=cortex -> 200, X-Lobes-Proxied-By:
+               http://spark.tail0be7e0.ts.net:8001                 PASS
+
+## 5. Qwen Code end-to-end on the new lane
+
+`~/.qwen/settings.json` (a raw-id pinner the t8 audit found) was repointed from
+`unsloth/Qwen3.8-27B-NVFP4` to the new id, same baseUrl `http://thor:8000/v1/`.
+Backup at `~/.qwen/settings.json.pre-244`.
+
+    qwen -y -p "Implement fizzbuzz(n) in fizz.py ... Write the file"
+
+The agent read the file, called `write_file`, and produced a correct
+implementation, verified by executing it:
+    ['1','2','Fizz','4','Buzz','Fizz','7','8','Fizz','Buzz','11','Fizz','13','14','FizzBuzz']
+
+## 6. THREE OPERATIONAL FINDINGS worth more than the throughput number
+
+### 6a. The 64K window BROKE a consumer — a context regression, not a 404
+
+The rollout note predicted raw-id 404s. The first real breakage was different:
+
+    API Error: 400 This model's maximum context length is 65536 tokens.
+    However, you requested 64000 output tokens and your prompt contains at
+    least 1537 input tokens, for a total of at least 65537 tokens.
+
+Qwen Code requests 64000 max output tokens by default. Against the outgoing
+cortex's 262144 window that fit; against 65536 it cannot. THIS is why the lane
+now serves the full native 262144 rather than the 65536 the spike measured.
+A window shrink breaks consumers that size max_tokens against the old window,
+and no model-id audit would have caught it.
+
+### 6b. The restart policy STARVES a heavy lane out of its own memory
+
+`restart: unless-stopped` plus vLLM's startup free-memory precheck is a trap on
+a unified-memory box. Observed repeatedly:
+
+    ValueError: Free memory on device cuda:0 (53.28/122.82 GiB) on startup is
+    less than desired GPU memory utilization (0.45, 55.27 GiB).
+
+...while `free -g` simultaneously reported ~102 GiB available. The dying
+attempt still holds its allocation when the next one starts, so each retry sees
+LESS memory than the last (53 -> 30 GiB observed) and the lane never recovers.
+RestartCount reached 30.
+
+  * NOT a leak. With the container stopped, `torch.cuda.mem_get_info()` read
+    100.80 GiB free and ps-RSS matched `free`.
+  * The working procedure is: `compose stop` -> sleep -> `sync; drop_caches` ->
+    `compose up -d` (NOT `--force-recreate`, which restarts the loop).
+  * `--force-recreate` on a heavy lane is the specific move to avoid.
+
+### 6c. The deployed compose could not express the measured recipe
+
+The deployment's `docker-compose.yml` predates this work, so its `vllm-worker`
+command had no `--kv-cache-dtype` slot. Without fp8 KV the lane needed more
+memory than the spike and could not hold util 0.45; at util 0.40 it fitted but
+the KV ceiling fell to 4.61x. The two lines this work added upstream (t3) were
+patched into the deployed lane surgically:
+
+    ${WORKER_KV_CACHE_DTYPE:+--kv-cache-dtype=${WORKER_KV_CACHE_DTYPE}}
+    ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
+
+after which util 0.45 + fp8 KV reproduced the spike's 8.37x exactly. Backup at
+`~/.lobes/docker-compose.yml.pre-244`. This is the #214 drift story in
+miniature: the measurement was only reproducible on the deployed box after the
+deployed file learned the knob.
+
+## 7. Also fixed during the flip: the singular peer credential
+
+`model=cortex` first returned 401 with `X-Lobes-Proxied-By` set — the forward
+worked, the credential did not. The Thor declared `PRIMARY_PEER_API_KEYS` (the
+pool channel) but no singular `PRIMARY_PEER_API_KEY`, and the two parse
+independently. Set from the pool's first slot; the probe then returned 200.
+
+## 8. NOT done / NOT claimed
+
+  * The SPARK does not yet declare a WORKER_PEER_ORIGIN pointing at the Thor,
+    so `model=worker` on the Spark still reports feasible=false with the stale
+    Nemotron id. The cross-box leg of c21 is therefore INCOMPLETE — the Thor
+    serves worker locally and answers cortex by proxy, but no peer has been
+    wired to reach this box's worker.
+  * No concurrent/aggregate throughput at any setting.
+  * DFlash acceptance on the DEPLOYED lane was not re-read after the window
+    change to 262144 (the spike measured 74.7% at 65536).
+  * The 262144 window is proven to BOOT and serve; no long-context retrieval
+    probe was run at depth.
+  * Clocks unpinned throughout, box not quiesced (Culture production co-resident).

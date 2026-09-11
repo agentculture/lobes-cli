@@ -302,26 +302,39 @@ dormant, not deleted — and the tier vocabulary above still ranks `worker` <
 `muse`. See `docs/gemma-4-31b-nvfp4.md`.
 
 **`worker` — the eighth role (opt-in hosting), the fast ground-work DOER —
-RE-CHECKPOINTED to Lightning on the Spark, deviation d1 (2026-08-20).**
-Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
-(`NemotronHForCausalLM`, a Mamba-2/MoE/attention hybrid with ~3B active of
-30B total parameters, 1,048,576-token native ceiling, modelopt NVFP4;
-served at a trimmed 65536 window). **TEXT-ONLY, non-coding** — this
-checkpoint carries no `vision_config`, so `worker` LOST
-`image_understanding`/`video_understanding` on this swap (the "seeing
-doer" framing below is now dead language, kept only as history).
+RE-CHECKPOINTED AGAIN, issue #244 (2026-09-10), off Lightning onto
+`nvidia/Qwen3.6-35B-A3B-NVFP4`.** Deviation d1 (2026-08-20) had put worker on
+`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (`NemotronHForCausalLM`,
+a Mamba-2/MoE/attention hybrid, ~3B active of 30B total, 1,048,576-token
+native ceiling, modelopt NVFP4) — that checkpoint carried no `vision_config`,
+and issue #187 temporarily narrowed the role's contract to TEXT-ONLY,
+non-coding to match. Issue #244 supersedes that narrowing: adding a
+responsibility is contract-compatible, removing one is a break, so the
+narrowing was the temporary state of a checkpoint swap, not the contract.
+The checkpoint now behind `worker` ships its own ViT — `worker` regains
+`image_understanding`/`video_understanding`, and `code_authoring` is REMOVED
+from forbidden — worker is a **multimodal coder**. Image intake was
+MEASURED live against negative controls on the Thor, 2026-09-10
+(`docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt`: three 64x64
+solid-colour PNGs, red/blue/green, each correctly named); video intake is
+DECLARED by the checkpoint (`video_token_id`,
+`video_preprocessor_config.json`) but UNMEASURED (#108) — a probe that lets
+`lobes capabilities` / `GET /capabilities` ADVERTISE either is a separate,
+later task. The demoted Nemotron Lightning checkpoint is kept
+(cite-don't-delete) as a candidate, and is still what `associate` serves
+(still text-only, non-coding — see the `associate` paragraph below).
 Responsibilities: execution, ground_work, bulk_transform, drafting,
-repo_inspection, run_authorized_commands, `tool_use`, and **`repo_action`**
-— worker is the FIRST role besides `cortex` permitted to act on the repo,
-under `cortex`'s direction (forbidden: final_decision, security_decision,
-**code_authoring** — worker never makes the final call, a security
-decision, or writes code, on its own authority). Alias `model=worker`. It
-is the **second opt-in core role** (`OPT_IN_CORE_ROLES = ("muse",
-"worker")`): machine-as-brain NEVER hosts it, the gateway wires its backend
-only behind `WORKER_BASE_URL`, and an unwired `worker` defaults to
-infeasible (`OPT_IN_BACKENDS` — `model=worker` 404s `role_infeasible`,
-never a silent fallback), mirroring `muse`'s mechanics exactly
-(`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
+repo_inspection, run_authorized_commands, `tool_use`, `repo_action`,
+`image_understanding`, `video_understanding` — worker is the FIRST role
+besides `cortex` permitted to act on the repo, under `cortex`'s direction
+(forbidden: final_decision, security_decision — worker never makes the
+final call or a security decision on its own authority). Alias
+`model=worker`. It is the **second opt-in core role**
+(`OPT_IN_CORE_ROLES = ("muse", "worker")`): machine-as-brain NEVER hosts it,
+the gateway wires its backend only behind `WORKER_BASE_URL`, and an unwired
+`worker` defaults to infeasible (`OPT_IN_BACKENDS` — `model=worker` 404s
+`role_infeasible`, never a silent fallback), mirroring `muse`'s mechanics
+exactly (`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
 `WORKER_PEER_API_KEY`; `base.toml` vetoes it on an unrecognised card just
 like `muse`). Under pressure `worker` sheds (429) exactly like
 cortex/senses/muse.
@@ -370,10 +383,13 @@ proxy-chain probe, run from the Thor's own gateway).
 
 **`associate` — the TENTH role (opt-in hosting), the Jetson AGX Orin's local
 generate lobe.** Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
-— the SAME Lightning checkpoint the Spark serves as `worker`. The metaphor is
-"they do, but not act": associate's responsibilities are worker's MINUS
-`repo_action` — execution, ground_work, bulk_transform, drafting,
-repo_inspection, run_authorized_commands, `tool_use` (forbidden:
+— the SAME Lightning checkpoint the Spark served as `worker` under
+deviation d1; issue #244 has since moved the `worker` role_hint off this
+checkpoint (above), so this is now the checkpoint `associate` alone holds.
+The metaphor is "they do, but not act": associate's responsibilities are the
+PRE-#244 worker contract MINUS `repo_action` — execution, ground_work,
+bulk_transform, drafting, repo_inspection, run_authorized_commands,
+`tool_use` (forbidden:
 `final_decision`, `security_decision`, `code_authoring`, `repo_action`). It
 exists as a SEPARATE public address rather than a responsibilities token on
 `worker` for one operator reason: the mesh may switch `worker` and `cortex`
@@ -878,12 +894,15 @@ record"; issue #214).
   every verbatim-committed compose/override/Dockerfile — the half the
   allowlist cannot protect. Leak recovery: `docs/secret-rotation.md`.
 
-**Honesty (#108) — read this before citing any of it as working.** **No real
-box has been captured**: `deployments/` ships a README and a template and
-ZERO variations, and every catalog behaviour is exercised against fixtures
-under `tests/fixtures/deployments/`. **There is no capture verb** — the lock
-writer is a library with no CLI caller, so every "re-capture the lock"
-instruction means calling it. **Serve-after-restore is unmeasured**: the
+**Honesty (#108) — read this before citing any of it as working.** **One real
+box has now been captured** (#244, 2026-09-11): `deployments/jetson-agx-thor__thor-worker/`
+holds the live Thor's lock, its verbatim compose/Dockerfiles/scaffold files and
+a `VARIATION.md` citing its acceptance transcript — the catalog's first
+non-fixture entry. Every *other* catalog behaviour is still exercised only
+against fixtures under `tests/fixtures/deployments/`. **There is still no
+capture verb** — the lock writer is a library with no CLI caller, so that
+capture was made by calling `lobes.runtime._lock.capture_lock` directly, and
+every "re-capture the lock" instruction still means calling it. **Serve-after-restore is unmeasured**: the
 mechanism guarantees byte-identical files and a merge-only `.env` (both
 test-proven), but no box has been restored and then served. A lock-restored
 **fresh** box is not yet servable (**deviation d2**): the fleet compose

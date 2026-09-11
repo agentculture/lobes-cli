@@ -298,6 +298,22 @@
   msg: tool-call parser (auto-selected): qwen3_coder
   msg: quantization (from catalog): modelopt
   note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### nvidia/Qwen3.6-35B-A3B-NVFP4
+  VLLM_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4
+  VLLM_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
 ### Qwen/Qwen3-Reranker-0.6B
   VLLM_MODEL=Qwen/Qwen3-Reranker-0.6B
   VLLM_SERVED_NAME=Qwen/Qwen3-Reranker-0.6B

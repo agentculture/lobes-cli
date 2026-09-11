@@ -132,13 +132,19 @@ class TestWorkerCommand:
         assert any(c.startswith("--gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-") for c in cmd)
 
     def test_moe_backend_not_forced_so_vllm_auto_selects(self) -> None:
-        # --moe-backend is DELIBERATELY not forced. Measured on Thor sm_110
-        # (docs/evidence/2026-07-31-accept-worker-thor.txt): every forced NVFP4
-        # MoE backend was refused (flashinfer_* lack sm_110 kernels;
+        # --moe-backend is DELIBERATELY not forced BY DEFAULT. Measured on Thor
+        # sm_110 (docs/evidence/2026-07-31-accept-worker-thor.txt): every forced
+        # NVFP4 MoE backend was refused (flashinfer_* lack sm_110 kernels;
         # marlin/triton reject the mixed quantized-main/unquantized-MTP experts).
         # vLLM auto-selects a working kernel per path when the flag is absent.
+        # Since worker-recipe-knobs t3 the flag is EXPRESSIBLE (WORKER_MOE_BACKEND)
+        # but still absent unless set — the raw token carries no bare
+        # `--moe-backend`, only a ${VAR:+…} slot that renders nothing when unset
+        # (proved against real `docker compose config` in
+        # tests/test_worker_recipe_knobs.py).
         cmd = _worker_command()
         assert not any(c.startswith("--moe-backend") for c in cmd)
+        assert "${WORKER_MOE_BACKEND:+--moe-backend=${WORKER_MOE_BACKEND}}" in cmd
 
     def test_speculative_default_off(self) -> None:
         # DEFAULT-OFF since 2026-08-20: the Lightning worker's MTP/DSpark is
@@ -150,14 +156,17 @@ class TestWorkerCommand:
         assert not any("--speculative-config" in c for c in cmd)
 
     def test_parser_pair_default(self) -> None:
-        # --tool-call-parser stays hardcoded qwen3_coder: BOTH the shipped
+        # --tool-call-parser DEFAULTS to qwen3_coder: BOTH the shipped
         # WORKER_MODEL default (the demoted unsloth/Qwen3.6-35B-A3B-NVFP4
         # candidate) and the catalog's current role_hint=worker model
         # (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4) agree on it —
         # only the reasoning parser differs between the two (WORKER_REASONING_PARSER).
+        # Since worker-recipe-knobs t3 the value is env-carried rather than
+        # hardcoded; the DEFAULT is byte-identical (the rendered-argv proof is
+        # tests/test_worker_recipe_knobs.py's frozen baseline).
         cmd = _worker_command()
         assert "--enable-auto-tool-choice" in cmd
-        assert "--tool-call-parser=qwen3_coder" in cmd
+        assert "--tool-call-parser=${WORKER_TOOL_CALL_PARSER:-qwen3_coder}" in cmd
         assert "--reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}" in cmd
 
     def test_trust_remote_code(self) -> None:
@@ -275,6 +284,14 @@ class TestEnvExampleDocumentsWorkerKnobs:
             "WORKER_QUANTIZATION",
             "WORKER_MOE_BACKEND",
             "WORKER_ATTENTION_BACKEND",
+            "WORKER_KV_CACHE_DTYPE",
+            "WORKER_MAX_NUM_SEQS",
+            "WORKER_MAX_NUM_BATCHED_TOKENS",
+            "WORKER_CHUNKED_PREFILL",
+            "WORKER_ASYNC_SCHEDULING",
+            "WORKER_PREFIX_CACHING",
+            "WORKER_LOAD_FORMAT",
+            "WORKER_TOOL_CALL_PARSER",
             "WORKER_IMAGE",
             "WORKER_SPECULATIVE_CONFIG",
             "WORKER_REASONING_PARSER",

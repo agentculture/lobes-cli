@@ -228,6 +228,221 @@ box).
 
 ---
 
+## `nvidia/Qwen3.6-35B-A3B-NVFP4` — MOVED to its own doc
+
+> **This checkpoint is now VALIDATED and deployed as the Thor's `worker`.** Its
+> full recipe, docker/compose setup, measured budgets, speculation sweep and
+> operational traps live in
+> **[`nvidia-qwen3.6-35b-a3b-nvfp4.md`](nvidia-qwen3.6-35b-a3b-nvfp4.md)**.
+> The section below is the pre-boot summary written before it was measured;
+> the numbers that matter are in the dedicated doc.
+
+### (pre-boot summary, superseded)
+
+> **Status: DECLARED, never booted.** This is the checkpoint issue #244 puts
+> on Thor's `worker` seat. It is NVIDIA's own ModelOpt export and is a
+> DIFFERENT checkpoint from the `unsloth/` and `mmangkad/` siblings this doc
+> otherwise covers. **No box in this fleet has ever loaded it**, so this
+> section contains no throughput, no acceptance rate, and no budget — only
+> what the checkpoint's own files say.
+
+Read from the checkpoint's `config.json` + `hf_quant_config.json` on
+2026-09-10 (HF repo last modified 2026-08-29):
+
+| field | value |
+|---|---|
+| architecture | `Qwen3_5MoeForConditionalGeneration` (`qwen3_5_moe`) |
+| native context | **262144** |
+| experts | 256 total / 8 active, 40 layers |
+| modality | **MULTIMODAL** — `vision_config` present (deepstack ViT, image + video token ids) |
+| quantization | ModelOpt `MIXED_PRECISION`: experts + shared-expert `W4A16_NVFP4` (group_size 16, **weight-only**), FP8 on `linear_attn`/`self_attn` projections |
+| KV cache | `kv_cache_quant_algo: FP8` **declared** |
+| MTP | `mtp_num_hidden_layers: 1` — carries its own head — but `exclude_modules: ["mtp.layers.0*", "mtp*"]`, so **the MTP module is UNQUANTIZED** |
+
+That last row matters more than it looks. The 2026-07-31 Thor run recorded
+`marlin` failing with *"not supported for unquantized MoE — the self-hosted
+MTP experts are unquantized"*. This export has the same property, so the
+issue's headline `--moe-backend marlin` recommendation is a **hypothesis to
+test live, not a default to copy**. Note the counter-consideration: unlike
+the `unsloth/` export, this one's MAIN experts are `W4A16_NVFP4`
+(weight-only) — the same family that let Marlin work for Lightning on the
+Orin's sm_87 — so the arms genuinely have to be run rather than predicted.
+
+**What must be measured before anything here is claimed** (plan
+`docs/plans/2026-09-10-thor-worker-arm-qwen3-6-35b-a3b-recipes.md`, task
+t11): whether it loads at all on the pinned nightly on sm_110; which MoE
+backend boots; the gpu_mem_util / max_model_len budget; the parser pair
+verified live with `skip_special_tokens: false`; and image + video intake
+with a negative control.
+
+See `docs/thor-worker-flip-rollout-notes.md` for the raw-id consumer audit
+that must be published before the flip.
+
+### Prior art — this repo already failed to load this exact id once
+
+Read *"Why we serve the `mmangkad/` copy, not `nvidia/`"* further down this
+doc before running the spike. On **2026-05-31**, on the DGX Spark GB10, this
+same `nvidia/Qwen3.6-35B-A3B-NVFP4` id **would not load**: on vLLM 0.19.0 and
+0.21.0 the MoE expert loader failed with `KeyError:
+layers.0.mlp.experts.w2_input_scale` on `triton`/auto and *"not supported for
+unquantized MoE"* on `marlin`, under both `--quantization modelopt` and
+`modelopt_fp4`. That is the recorded origin of risk r1 in the #244 plan.
+
+Two things have changed since, and neither is proof either way:
+
+- the engine moved from 0.19/0.21 to the pinned `8bd082` nightly
+  (`0.26.1rc1.dev942`), which is four minor versions of NVFP4-MoE loader work
+  later; and
+- the HF repo itself was **re-uploaded 2026-08-29**, so the export on the hub
+  today is not necessarily the one that failed in May.
+
+The spike therefore has to actually run. If it fails the same way, that is a
+publishable result and the fallback recipe below is the answer — not a reason
+to quietly substitute a different checkpoint.
+
+## `unsloth/Qwen3.6-35B-A3B-NVFP4` re-taking Thor's `worker` seat — the FALLBACK recipe
+
+> **This section is the ROLLBACK/fallback path, not the #244 target.** It
+> describes re-promoting the demoted `unsloth/` candidate — the checkpoint
+> Thor actually served as `worker` before deviation d1 — and every figure in
+> it was measured on THAT export. It is kept because if the `nvidia/` target
+> above fails to load on sm_110, this is the known-good recipe to fall back
+> to.
+>
+> **Status: UNMEASURED for this specific re-run.** A flip is proposed that
+> stops Thor's `cortex` (`unsloth/Qwen3.8-27B-NVFP4`) and re-promotes this
+> checkpoint back into Thor's `worker` seat — reversing the demotion above.
+> See `docs/thor-worker-flip-rollout-notes.md` for the raw-id consumer
+> audit. **Every number below either cites an
+> existing evidence transcript from this checkpoint's PRIOR life as Thor's
+> `worker` (2026-07-31/2026-08-20, before deviation d1), or is marked
+> NOT YET MEASURED.** None of it is a claim about a post-flip boot that has
+> not happened — the #108 honesty rule applies here exactly as everywhere
+> else in this repo.
+
+### Re-run recipe (everything an operator needs, in one place)
+
+**Container image (engine pin) — this is the load-bearing gotcha:**
+
+| Pin | Digest | vLLM | Status for THIS checkpoint |
+|---|---|---|---|
+| Production pin (2026-07-31/2026-08-20 evidence) | `vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9` | `0.23.1rc1.dev672` | **VALIDATED** — both cited transcripts ran on this pin; MTP self-draft ON measured 89.1% acceptance, 50.8-61.2 tok/s single-stream. |
+| Current fleet-wide default (`VLLM_NIGHTLY_IMAGE`, `lobes/templates/fleet/env.example`) | `vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695` | `0.26.1rc1.dev942` | **KNOWN BROKEN with MTP on** — the 2026-08-20 baseline's own "FAILED PRELUDE" section recreated this exact checkpoint on this exact digest: it booted healthy (KV pool 50.02 GiB / 4,317,665 tokens / 16.47x) but **died on the first decode request** with `RuntimeError: launch_gdn_decode_post_conv_mtp ... no kernel image is available for execution on the device` — this digest's csrc GDN/MTP decode kernel ships no sm_110 image. Plain (non-MTP) decode on this digest is **NOT YET MEASURED** for this checkpoint. |
+
+**Recommendation for a re-run:** pin `WORKER_IMAGE` explicitly to the
+7c5a10e9... digest if MTP self-draft is wanted (it is what the cited
+numbers were measured on); if using the current fleet default nightly
+instead, leave `WORKER_SPECULATIVE_CONFIG` unset (its template default) and
+treat plain-decode throughput on that nightly as unmeasured until proven.
+
+**Exact argv** (from `lobes/templates/fleet/docker-compose.yml`'s
+`vllm-worker` service, substituting the overrides this checkpoint needs —
+per that file's own inline comment: "If you serve the demoted
+`unsloth/Qwen3.6-35B-A3B-NVFP4` candidate here instead, override
+`WORKER_QUANTIZATION=compressed-tensors` alongside `WORKER_MODEL`" and
+"override `WORKER_REASONING_PARSER=qwen3` to match it"):
+
+```bash
+vllm serve unsloth/Qwen3.6-35B-A3B-NVFP4 \
+  --served-model-name=unsloth/Qwen3.6-35B-A3B-NVFP4 \
+  --host=0.0.0.0 \
+  --port=8000 \
+  --quantization=compressed-tensors \
+  --max-model-len=262144 \
+  --gpu-memory-utilization=0.45 \
+  --enable-auto-tool-choice \
+  --tool-call-parser=qwen3_coder \
+  --reasoning-parser=qwen3 \
+  --trust-remote-code
+  # add, only if pinning the 7c5a10e9... image and wanting MTP:
+  # --speculative-config '{"method": "mtp", "num_speculative_tokens": 2}'
+```
+
+`.env` overrides to set (`lobes/profiles/builtin_shapes/thor-worker.toml`'s
+`[overrides.worker]` block, unchanged since 2026-07-31):
+
+```bash
+WORKER_MODEL=unsloth/Qwen3.6-35B-A3B-NVFP4
+WORKER_SERVED_NAME=unsloth/Qwen3.6-35B-A3B-NVFP4
+WORKER_QUANTIZATION=compressed-tensors
+WORKER_MAX_MODEL_LEN=262144
+WORKER_GPU_MEM_UTIL=0.45
+WORKER_REASONING_PARSER=qwen3
+WORKER_FEASIBLE=true
+COMPOSE_PROFILES=worker   # un-gates the profile-gated vllm-worker service
+```
+
+**MoE backend: do NOT force one.** Measured live on this exact box
+(2026-07-31): `flashinfer_b12x`/`flashinfer_cutlass` FAIL (sm_121a/Spark-only
+kernels), `marlin` FAILS ("not supported for unquantized MoE" — the
+self-hosted MTP experts are unquantized), `triton` FAILS ("not supported for
+NvFP4 MoE"). Only **auto-select** (omit `--moe-backend` entirely) boots —
+vLLM picks TRITON for the unquantized/fp8 MoE and a modular NVFP4 kernel for
+the main experts.
+
+**JetPack / L4T, power mode, clocks:** **NOT RECORDED in either cited
+evidence transcript** (`docs/evidence/2026-07-31-accept-worker-thor.txt`,
+`docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt` both omit these
+fields entirely — a gap in those transcripts, not something this doc can
+retroactively fill). Read live from this box on 2026-09-10, while writing
+this note, for context only — **not proof of the conditions either cited
+transcript ran under**:
+
+```text
+$ nvpmodel -q
+NV Power Mode: MAXN
+
+$ cat /etc/nv_tegra_release
+# R38 (release), REVISION: 2.2, GCID: 42205042, BOARD: generic, EABI: aarch64, DATE: Thu Sep 25 22:47:11 UTC 2025
+```
+
+A re-run should capture `nvpmodel -q` and
+`/sys/class/devfreq/17000000.gpu/{cur,min,max}_freq` alongside its own
+throughput numbers, per `docs/measuring-lane-performance.md` Rule 3 — do
+not assume MAXN / R38 2.2 were in effect for the cited historical numbers
+just because they're in effect today.
+
+**Co-resident set** (`lobes/profiles/builtin_shapes/thor-worker.toml`,
+`hosts = ["worker", "hand", "embedder", "reranker", "stt", "tts"]`):
+`worker` + `hand` (LFM2.5-1.2B, per-card util) + `embedder` (util 0.06) +
+`reranker` (util 0.06) + the opt-in audio overlay if enabled — **no
+`cortex`, no `senses`**. `muse` stays dormant/unhosted. This is the
+inverse of today's live shape (cortex + hand + embedder + reranker, no
+worker) — the flip is a shape change, not just a served-id change.
+
+**Known-good throughput (from the checkpoint's PRIOR Thor life, NOT
+re-validated for this re-run):**
+
+| Metric | Value | Source |
+|---|---|---|
+| Model load | 24.81 GiB / ~31 s | `2026-07-31-accept-worker-thor.txt` |
+| KV cache pool | 41.78 GiB = 14.07x ceiling at 262,144 tokens/request | same |
+| Decode (with thinking) | 50.8 tok/s | same |
+| Decode (no thinking, sustained) | 73.5 tok/s (600 tok / 8.17s) | same |
+| Decode (production re-baseline, 2026-08-20, just before the swap to Lightning) | 61.2 tok/s (679 tok / 11.1s) | `2026-08-20-baseline-worker-qwen35b-thor.txt` |
+| MTP self-draft acceptance | 89.1% (385/432) | `2026-07-31-accept-worker-thor.txt` |
+| TTFT (short prompt) | 2102 ms | same |
+| Vision (red/blue image + negative control) | PASS | same |
+| Video (real webcam clip, 78 KB) | PASS (accurate scene/subject/motion) | same |
+
+**! 14.07x is a KV-pool ceiling, not measured concurrency** — the same
+shape-file warning applies here: usable concurrency saturates near width
+8-9 in independent measurements, not 14 (see
+`lobes/profiles/builtin_shapes/thor-worker.toml`'s own warning block).
+
+**What is genuinely NOT YET MEASURED for a re-run today:**
+
+- plain (non-MTP) decode throughput on the current fleet-default nightly
+  digest (`8bd082...`) — only the MTP-on path was tried on that digest, and
+  it crashed;
+- any number at all under Thor's *current* clocks/power state as opposed to
+  whatever was in effect 2026-07-31/2026-08-20;
+- co-residency effects with `hand`/`embedder`/`reranker`/audio all loaded
+  simultaneously (the cited transcripts were single-service boots against
+  this checkpoint, per the thor-worker shape's own resource layout).
+
+---
+
 ## MoE candidate: `mmangkad/Qwen3.6-35B-A3B-NVFP4`
 
 A **MoE candidate** — the *former* fleet fallback. It was **superseded as the

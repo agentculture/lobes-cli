@@ -1,0 +1,298 @@
+{
+  "plan_slug": "thor-worker-arm-qwen3-6-35b-a3b-recipes",
+  "schema_version": 2,
+  "created": "2026-09-10T17:11:37Z",
+  "updated": "2026-09-10T20:13:07Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t8 was briefed with the nvidia checkpoint as the flip target but could not find it in the catalog (t1 had not merged yet), so it resolved the target to the unsloth sibling and wrote both its rollout note and its per-model doc section against that checkpoint. The main agent corrected the identity after merging, kept the unsloth recipe as an explicit labelled FALLBACK rather than deleting measured work, and cross-referenced the 2026-05-31 record of this exact nvidia id failing to load on vLLM 0.19/0.21",
+      "task_ref": "t8",
+      "reason": "a wave-0 ordering gap: t8 and t1 ran in parallel, and t8's premise depended on t1's output existing. The dependency was real but not expressed in the graph",
+      "affects": [
+        "c28",
+        "c2"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "the plan's stated rollback for t10 ('re-render the previous shape and restore the saved .env') is not sufficient on its own: the reverse-render dry run shows lobes init is MERGE-ONLY for .env (existing lines never rewritten) and leaves compose files untouched without --force. The operative rollback is restoring the backup directory; the render only rebuilds the shape override",
+      "task_ref": "t10",
+      "reason": "measured by dry-running the reverse render on the live box, as c29/h25 required \u2014 the dry run is what exposed the merge-only semantics",
+      "affects": [
+        "c29"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "t7's pressure-floor question was answered by probing rather than by re-measuring hand: model=hand is unservable from EVERY box in this mesh today, because the Thor proxies it to the Spark (which declares it infeasible) and the only box declaring it feasible (the Orin) is not running the lane. The floor's absence is therefore pre-existing, not created by this flip",
+      "task_ref": "t7",
+      "reason": "re-measuring hand on the Thor would have re-run a known-broken result on an un-upgraded engine, at the cost of a heavy-lobe recreate on a box also serving the Culture production stack",
+      "affects": [
+        "c26"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "t13's cross-box acceptance criterion ('a peer box reaches the lane as model=worker and the answer carries X-Lobes-Proxied-By') is NOT met. The Thor serves worker locally and answers model=cortex by proxy to the Spark, both verified 200, but no peer declares a WORKER_PEER_ORIGIN pointing at the Thor, so model=worker on the Spark still reports feasible=false with the stale Nemotron id",
+      "task_ref": "t13",
+      "reason": "wiring the Spark and the Orin requires editing their own .env files, and this box has no SSH access to them (publickey denied). It is an operator action on those boxes, not something this run can perform or fake",
+      "affects": [
+        "c21",
+        "c12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "the deployed worker lane serves the FULL native 262144 window, not the 65536 the spike measured and t15 committed to the shape TOML",
+      "task_ref": "t13",
+      "reason": "a real consumer broke on the smaller window: Qwen Code requests 64000 output tokens by default and 65536 cannot hold that plus a prompt (HTTP 400). 262144 booted cleanly at the same util with KV pool 1,199,883 tokens = 4.58x. The shape TOML's 65536 is now behind the deployed reality",
+      "affects": [
+        "c10",
+        "c21"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "the deployed docker-compose.yml was hand-patched with two of t3's knob slots (WORKER_KV_CACHE_DTYPE, WORKER_MAX_NUM_SEQS) rather than re-scaffolded from the packaged template",
+      "task_ref": "t13",
+      "reason": "without --kv-cache-dtype=fp8 the deployed lane could not hold util 0.45 and fell to a 4.61x KV ceiling; re-scaffolding the whole file was refused because it is hand-edited (the #214 drift condition c29 names). Backup at ~/.lobes/docker-compose.yml.pre-244",
+      "affects": [
+        "c5"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 6
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "live probe: GET /capabilities + POST /v1/chat/completions on the Thor gateway (docs/evidence/2026-09-10-accept-thor-worker-flip.txt \u00a71,\u00a74)",
+      "behavior_text": "worker feasible=true ready=true serving nvidia/Qwen3.6-35B-A3B-NVFP4; cortex feasible=false proxied=true hosted_by the Spark, and model=cortex returns 200 with X-Lobes-Proxied-By",
+      "contract_text": "The Thor gives up its local Qwen3.8 cortex and serves Qwen3.6-35B-A3B NVFP4 as the mesh's worker arm, on a Thor-MEASURED recipe",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "probed live against the deployed gateway after the flip; both responses captured in the evidence transcript",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "live streaming measurement via scripts/stream-measure.py against model=worker (docs/evidence/2026-09-10-accept-thor-worker-flip.txt \u00a73,\u00a74)",
+      "behavior_text": "decode 163.19/198.12/196.56 tok/s (median 196.6) single-stream through the gateway; tool call parsed into tool_calls with empty content",
+      "contract_text": "THROUGHPUT TARGET is 100 tok/s single-stream decode, with 61.2 tok/s as the floor ... a tool call parsed into tool_calls (not content)",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "streamed, batch 1, no client timeouts, three runs; target exceeded by 97%",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o2",
+      "test_ref": "cross-box probe: GET /capabilities on the Spark for the worker role",
+      "behavior_text": "the Spark reports worker feasible=false with the stale Nemotron id and no hosted_by \u2014 no peer is wired to reach the Thor's worker",
+      "contract_text": "a peer box reaches the lane as model=worker with X-Lobes-Proxied-By",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "probed live; the cross-box leg of the success signal is NOT met (deviation d4)",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_catalog.py (79 tests, incl. the role_hint-uniqueness and parser-pairing guards)",
+      "behavior_text": "exactly one catalog entry carries role_hint=worker and it resolves to nvidia/Qwen3.6-35B-A3B-NVFP4",
+      "contract_text": "lobes/catalog.py gains a NEW SupportedModel for nvidia/Qwen3.6-35B-A3B-NVFP4 ... exactly one catalog entry carries role_hint='worker'",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "unit suite green at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_worker_recipe_knobs.py + tests/test_shape_goldens.py + tests/test_deployment_lock.py",
+      "behavior_text": "each added knob is present in KNOB_NAMES, render.py's suffix table, the compose command, env.example and the lock allowlist; a deployment with none set renders byte-identically",
+      "contract_text": "every knob this work adds is reachable end-to-end ... no knob ships that renders a key nothing consumes",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "asserted against a real docker compose config render, not by inspection",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o5",
+      "test_ref": "live boot log of the worker lane (docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt \u00a72)",
+      "behavior_text": "with no --moe-backend forced, the engine selects MARLIN for the target's W4A16_NVFP4 experts and TRITON for the unquantized drafter simultaneously, plus FLASHINFER attention, on sm_110",
+      "contract_text": "the moe-backend question is settled by a live Thor boot, and whichever way it lands is committed with its verbatim engine line",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "verbatim engine log lines captured; explains the 2026-07-31 refusal as one forced value applied to two differently-quantized MoEs",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_associate_role.py::test_associates_default_survives_a_worker_checkpoint_promotion",
+      "behavior_text": "monkeypatching which catalog entry carries role_hint=worker leaves associate's resolved model unchanged",
+      "contract_text": "a test asserts that changing the checkpoint on role_hint='worker' leaves the model 'associate' resolves to unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "written test-first; confirmed failing against the shared-hint code before the fix",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o7",
+      "test_ref": "live image probe with negative controls via model=worker through the gateway",
+      "behavior_text": "red PNG -> 'Red', blue PNG -> 'Blue'; the controls discriminate, so this is image intake rather than a lucky guess",
+      "contract_text": "capabilities lists image_understanding/video_understanding for worker only after a live image probe on this box passed with a negative control",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "three-colour probe on the spike lane and a two-colour probe on the deployed lane, both post-flip",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o8",
+      "test_ref": "live probe: GET /capabilities senses entry on the Thor after the flip",
+      "behavior_text": "senses feasible=false, proxied=true, hosted_by http://orin.tail0be7e0.ts.net:8000 \u2014 unchanged by the flip",
+      "contract_text": "after the flip model=senses on the Thor still resolves to the Orin peer, byte-identically to today",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "re-probed after the flip specifically to check the flip had not moved it",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o9",
+      "test_ref": "live probe: POST model=hand through the Thor gateway (docs/evidence/2026-09-10-thor-pressure-floor-244.txt)",
+      "behavior_text": "model=hand 404s with X-Lobes-Proxied-By naming the Spark, which declares hand infeasible; the only box declaring it feasible (the Orin) is not running the lane",
+      "contract_text": "either hand becomes feasible here, or the shape declares the floor's absence deliberately and the docs say so",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "the floor's absence is documented rather than papered over; it is pre-existing, not created by the flip",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-10T20:12:54",
+        "commit": "c337521"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "the MoE-backend rule is unchanged (never force it) but its RECORDED REASON is corrected: the 2026-07-31 refusals were one forced value applied to two differently-quantized MoEs, not an sm_110 kernel fact \u2014 Marlin IS what auto-select picks for the target's experts on sm_110",
+      "caused_by": [
+        "c6"
+      ],
+      "evidence_refs": [
+        "e6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

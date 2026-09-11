@@ -41,7 +41,8 @@ from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
-from lobes.gateway._config import FEASIBLE_ENV
+from lobes.gateway._config import FEASIBLE_ENV, ReplicaConfigError, build_config
+from lobes.gateway.server import _check_pool_arming
 from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
@@ -453,6 +454,59 @@ def _gateway_passthrough_check(deploy_dir: Path) -> dict:
         True,
         "info",
         "every set gateway-relevant .env key has a compose passthrough",
+    )
+
+
+# --- gateway pool-arming trap (issues #199/#244, t6) -------------------------
+
+
+def _pool_arming_check(deploy_dir: Path) -> dict:
+    """Reuse the gateway's own startup guard, offline, against deployed ``.env``.
+
+    ``lobes.gateway.server._check_pool_arming`` refuses to BOOT a deployment
+    that declares the PLURAL replica-pool family (``<PREFIX>_PEER_ORIGINS``)
+    for a DROPPED role (``<PREFIX>_FEASIBLE=false``) without ALSO declaring
+    the SINGULAR ``<PREFIX>_PEER_ORIGIN`` — the referral channel a pool would
+    otherwise silently lose (see that function's own docstring for why the
+    guard exists). That guard is CORRECT and this check does not relax it;
+    it only makes the same misconfiguration catchable BEFORE a real gateway
+    container refuses to start, by building the exact same
+    :class:`~lobes.gateway._routing.RoutingTable` the gateway would from
+    this box's own ``.env`` and calling the exact same guard function — no
+    duplicated logic, no sockets, no container involved.
+
+    Fleet-only, like ``gateway_passthrough``: the legacy single-model
+    scaffold declares no per-role peer channels at all, so there is nothing
+    to check.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return _check(
+            "pool_arming",
+            True,
+            "info",
+            "pool arming check applies to fleet deployments only",
+        )
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    try:
+        table, _cfg = build_config(deployed)
+        _check_pool_arming(table)
+    except ReplicaConfigError as err:
+        return _check(
+            "pool_arming",
+            False,
+            "error",
+            str(err),
+            "declare the singular <PREFIX>_PEER_ORIGIN alongside the plural "
+            "<PREFIX>_PEER_ORIGINS for every dropped role in the pool (or "
+            "drop the plural family until this box is actually ready to pool "
+            "that role) — never relax lobes.gateway.server._check_pool_arming "
+            "itself",
+        )
+    return _check(
+        "pool_arming",
+        True,
+        "info",
+        "no dropped role declares a replica pool without its singular peer origin",
     )
 
 
@@ -931,7 +985,8 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
             files_check, missing_files = _scaffold_files_check(deploy_dir)
             stale_check, missing_env = _profile_staleness_check(deploy_dir)
             passthrough_check = _gateway_passthrough_check(deploy_dir)
-            checks.extend([files_check, stale_check, passthrough_check])
+            pool_arming_check = _pool_arming_check(deploy_dir)
+            checks.extend([files_check, stale_check, passthrough_check, pool_arming_check])
             # Only emitted when this box actually HOSTS the associate lane.
             auth_gate = _associate_auth_gate_check(deploy_dir)
             if auth_gate is not None:
