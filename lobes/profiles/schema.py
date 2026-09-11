@@ -438,6 +438,8 @@ def _is_optional_int(value: Any) -> bool:
 # Shared "expected" description for every Optional[str] knob below — defined
 # once so the literal isn't duplicated across the validator table (S1192).
 _STR_OR_NONE = "str or None"
+_INT_OR_NONE = "int or None"
+_BOOL_OR_NONE = "bool or None"
 
 # Per-field type validator + human-readable "expected" description, used by
 # RoleProfile.from_dict to reject a value of the wrong TYPE (not just an
@@ -447,21 +449,21 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "feasible": (_is_strict_bool, "bool"),
     "model": (_is_optional_str, _STR_OR_NONE),
     "gpu_mem_util": (_is_optional_number, "int/float or None"),
-    "max_model_len": (_is_optional_int, "int or None"),
+    "max_model_len": (_is_optional_int, _INT_OR_NONE),
     "quantization": (_is_optional_str, _STR_OR_NONE),
     "kv_cache_dtype": (_is_optional_str, _STR_OR_NONE),
     "attention_backend": (_is_optional_str, _STR_OR_NONE),
-    "enforce_eager": (_is_optional_bool, "bool or None"),
-    "max_num_seqs": (_is_optional_int, "int or None"),
+    "enforce_eager": (_is_optional_bool, _BOOL_OR_NONE),
+    "max_num_seqs": (_is_optional_int, _INT_OR_NONE),
     "hf_overrides": (_is_optional_str, _STR_OR_NONE),
     "allow_long_max_model_len": (_is_optional_str, _STR_OR_NONE),
     "speculative_config": (_is_optional_str, _STR_OR_NONE),
     "moe_backend": (_is_optional_str, _STR_OR_NONE),
-    "max_num_batched_tokens": (_is_optional_int, "int or None"),
+    "max_num_batched_tokens": (_is_optional_int, _INT_OR_NONE),
     "load_format": (_is_optional_str, _STR_OR_NONE),
-    "chunked_prefill": (_is_optional_bool, "bool or None"),
-    "async_scheduling": (_is_optional_bool, "bool or None"),
-    "prefix_caching": (_is_optional_bool, "bool or None"),
+    "chunked_prefill": (_is_optional_bool, _BOOL_OR_NONE),
+    "async_scheduling": (_is_optional_bool, _BOOL_OR_NONE),
+    "prefix_caching": (_is_optional_bool, _BOOL_OR_NONE),
     "tool_call_parser": (_is_optional_str, _STR_OR_NONE),
 }
 

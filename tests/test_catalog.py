@@ -772,7 +772,8 @@ def test_worker_gear_has_self_hosted_mtp_speculative_config() -> None:
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
     cfg = json.loads(worker.speculative_config)
     assert cfg["method"] == "mtp"
-    assert "model" not in cfg and "draft_model_id" not in cfg
+    assert "model" not in cfg
+    assert "draft_model_id" not in cfg
 
 
 def test_worker_gear_is_moe_with_auto_selected_backend() -> None:

@@ -135,7 +135,7 @@ class TestKnobVocabulary:
     def test_every_knob_maps_to_its_env_suffix(self) -> None:
         for knob, key in WORKER_RECIPE_KNOBS.items():
             assert knob in _KNOB_ENV_SUFFIX, f"{knob} must be mapped in render._KNOB_ENV_SUFFIX"
-            assert f"WORKER_{_KNOB_ENV_SUFFIX[knob]}" == key
+            assert key == f"WORKER_{_KNOB_ENV_SUFFIX[knob]}"
 
     def test_wrong_type_is_a_load_error(self) -> None:
         for knob, bad in (
@@ -159,8 +159,9 @@ class TestLaneGate:
         worker_only = [k for k in NEW_KNOBS if k != "tool_call_parser"]
         for role in ("cortex", "senses", "muse", "hand", "embedder", "reranker"):
             for knob in worker_only:
+                value = _sample(knob)
                 with pytest.raises(ModelGearError) as excinfo:
-                    RoleProfile.from_dict(role, {knob: _sample(knob)})
+                    RoleProfile.from_dict(role, {knob: value})
                 assert knob in str(excinfo.value)
 
     def test_worker_accepts_all_of_them(self) -> None:
