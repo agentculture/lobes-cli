@@ -6,6 +6,20 @@ A **Jetson AGX Thor** (sm_110, 122.8 GiB unified, L4T R38.2.2, MAXN) running
 the **`thor-worker`** shape over the **`thor`** card profile, captured from the
 live box on 2026-09-11 at lobes 0.74.6. It was **re-captured the same day at
 0.75.1**, after the reranker judge-prompt template (#227) was rolled out to it.
+**Re-captured again at 0.76.0** (mesh-brain-join docs task), this time
+against the repo's current templates rather than the live box — no capture
+CLI verb exists (see "Notes" below), and this repo has no reachable Thor —
+so `docker-compose.yml`/`docker-compose.shape.yml` and the `[env]` table now
+carry the mesh join's `LOBES_MESH_*` compose passthrough and the issue #222
+`depends_on` cleanup. `docker-compose.override.yml` (hand-authored) and every
+other file are untouched. The `[env]` table's `PRIMARY_*`/`MULTIMODAL_*`
+"documentation only" values (both roles are `FEASIBLE=false` on this shape)
+now reflect a fresh render of the current `thor` card profile's
+machine-as-brain defaults rather than the live box's deviation-d1-era
+leftover local-cortex tuning the previous captures preserved — this capture
+no longer claims those specific numbers describe the live box, only what a
+fresh render of today's templates produces for a dropped role's
+documentation fields. Nothing about the **measured** state below changed.
 
 It hosts **`worker`** — `nvidia/Qwen3.6-35B-A3B-NVFP4` at the full native
 262144 window, `gpu_mem_util=0.45`, fp8 KV cache, `max_num_seqs=1`, and DFlash

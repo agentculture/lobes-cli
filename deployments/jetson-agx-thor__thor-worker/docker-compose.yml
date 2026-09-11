@@ -65,6 +65,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -403,9 +405,10 @@ services:
   # one generate backend (the Qwen primary) plus the tiny embed/rerank gears, so
   # the primary keeps its solo generate headroom. To add
   # a fallback: define a `vllm-fallback` service (mirror `vllm-primary`, serving
-  # your fallback model with its own quantization / tokenizer / parser), add it to
-  # the gateway's `depends_on`, set FALLBACK_URL + FALLBACK_SERVED_NAME on the
-  # gateway, and lower both GPU utils so they sum well under 1.0. The archived
+  # your fallback model with its own quantization / tokenizer / parser), set
+  # FALLBACK_URL + FALLBACK_SERVED_NAME on the gateway, and lower both GPU utils
+  # so they sum well under 1.0. Do NOT give the gateway a `depends_on` edge to it
+  # — see the gateway service's own comment (issue #222). The archived
   # dense Mistral-Small-3.2-24B (NVFP4) fallback config is in git history (the
   # commit that removed it) and `docs/mistral-small-3.2-24b-nvfp4.md` /
   # `docs/gateway-fleet.md`; Mistral stays a selectable catalog candidate.
@@ -437,6 +440,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -524,6 +529,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -581,6 +588,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -594,6 +603,11 @@ services:
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      # Reranker chat template (issue #227) — vendored verbatim from the
+      # pinned vLLM image's own examples/pooling/score/qwen3_reranker_online.py
+      # serving line (see _compose.RERANK_TEMPLATE's comment for provenance/
+      # sha256). Bind-mounted read-only, never baked into the image, so
+      # `lobes doctor --fix --apply` can restore it without a rebuild.
       - ./qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro
     expose:
       - "8000"
@@ -628,6 +642,25 @@ services:
       # mid-request). See #109/#106.
       - ${RERANK_ENFORCE_EAGER:---no-enforce-eager}
       - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      # vLLM only applies a score/rerank chat template when one is passed
+      # explicitly — without it Qwen3ForSequenceClassification scores a bare
+      # query+document concatenation, silently dropping a caller's own
+      # `instruction`, and relevance scores go uncalibrated against the model
+      # card's judge prompt. vLLM's own example serving line for this exact
+      # --hf-overrides invocation
+      # (examples/pooling/score/qwen3_reranker_online.py) adds this flag, so
+      # this mirrors the vendor's own recipe rather than inventing one. Baked
+      # (not a RERANK_* env knob, issue #227 t3 decision) — this template is
+      # architecture-specific to is_original_qwen3_reranker above, so there is
+      # no other value an operator would sanely swap in.
+      #
+      # A PATH (not a literal template string) is deliberate: if the bind
+      # mount below is ever missing, vLLM's own validate_chat_template fails
+      # LOUD at arg-parse time (the engine refuses to boot) instead of
+      # silently falling back to untemplated scoring. Recovery is
+      # `lobes init --apply` or `lobes doctor --fix --apply`, either of which
+      # restores ./qwen3_reranker.jinja byte-identical (see _compose.py's
+      # FLEET_TEMPLATES / RERANK_TEMPLATE).
       - --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja
       - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
@@ -674,6 +707,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -757,6 +792,8 @@ services:
       stack: { soft: 67108864, hard: 67108864 }
     env_file:
       - path: .env
+        required: false
+      - path: .secrets.env
         required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
@@ -885,6 +922,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -980,15 +1019,11 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      # Gemma 4's heterogeneous head sizes (sliding 256 / full-attention 512) need
-      # TRITON_ATTN. The native gemma4_unified class auto-forces it, but we set it
-      # explicitly too (belt-and-suspenders; matches the vLLM recipe).
-      # DELIBERATELY LEFT AS-IS (not removed as dead env): its removal is gated
-      # on a GB10 live-verification tracked in agentculture/lobes-cli#109 (risk r6).
-      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}
       # vLLM 0.23 reserves an ESTIMATED cudagraph-memory headroom inside the util
       # budget, and for this gear it wildly overshoots — 12.74 GiB estimated vs
       # 0.46 GiB actual (#71) — starving the KV cache so util 0.12 fails with "No
@@ -1080,6 +1115,10 @@ services:
     #     Bare single quotes instead yield `--speculative-config={method:` plus a
     #     stray token — silently MANGLED, not rejected. Off and default need no
     #     quoting at all.
+    # NOTE: this is a FOLDED SCALAR — '#' is not a comment inside it, and
+    # Compose lexes the result with shlex. Any JSON argument must be
+    # single-quoted or shlex strips its inner double quotes (vLLM would get
+    # --attention-config={backend:TRITON_ATTN}, which is not valid JSON).
     command: >-
       vllm serve ${MULTIMODAL_MODEL:-coolthor/gemma-4-12B-it-NVFP4A16}
       --served-model-name=${MULTIMODAL_SERVED_NAME:-coolthor/gemma-4-12B-it-NVFP4A16}
@@ -1092,6 +1131,7 @@ services:
       --tool-call-parser=gemma4
       --reasoning-parser=gemma4
       ${MULTIMODAL_SPECULATIVE_CONFIG-'--speculative-config={"method": "mtp", "model": "google/gemma-4-12B-it-assistant", "num_speculative_tokens": 1}'}
+      '--attention-config={"backend": "${MULTIMODAL_ATTENTION_BACKEND:-TRITON_ATTN}"}'
       --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -1140,10 +1180,11 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      - VLLM_ATTENTION_BACKEND=${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
@@ -1165,6 +1206,7 @@ services:
       - --quantization=${MULTIMODAL_CODER_QUANTIZATION:-compressed-tensors}
       - --max-model-len=${MULTIMODAL_CODER_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${MULTIMODAL_CODER_GPU_MEM_UTIL:-0.12}
+      - '--attention-config={"backend": "${MULTIMODAL_CODER_ATTENTION_BACKEND:-TRITON_ATTN}"}'
       - --enable-auto-tool-choice
       - --tool-call-parser=gemma4
       # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
@@ -1244,12 +1286,11 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
-      # Gemma 4's heterogeneous per-layer head sizes need TRITON_ATTN — the
-      # same divergence the 12B senses gear carries (see vllm-multimodal).
-      - VLLM_ATTENTION_BACKEND=${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}
       # Same vLLM 0.23 cudagraph-estimate overshoot mitigation as the 12B
       # gear (#71) — the estimate starves the KV cache inside the util budget.
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MUSE_CUDAGRAPH_ESTIMATE:-0}
@@ -1273,6 +1314,7 @@ services:
       - --quantization=${MUSE_QUANTIZATION:-modelopt}
       - --max-model-len=${MUSE_MAX_MODEL_LEN:-262144}
       - --gpu-memory-utilization=${MUSE_GPU_MEM_UTIL:-0.55}
+      - '--attention-config={"backend": "${MUSE_ATTENTION_BACKEND:-TRITON_ATTN}"}'
       - --enable-auto-tool-choice
       - --tool-call-parser=gemma4
       # Gemma 4 needs the PAIR: the tool parser forces skip_special_tokens=False
@@ -1351,6 +1393,8 @@ services:
     env_file:
       - path: .env
         required: false
+      - path: .secrets.env
+        required: false
     environment:
       - HF_HOME=/root/.cache/huggingface
       - TOKENIZERS_PARALLELISM=false
@@ -1360,10 +1404,11 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       # NOTE: worker rides the Qwen GENERATE lane, so — like vllm-primary and
       # UNLIKE the Gemma gears — it wires NO VLLM_ATTENTION_BACKEND: this nightly
-      # honours AttentionConfig, not that env, and a Qwen generate model needs no
-      # attention override on Thor (cortex's only sm_110 divergence is
-      # kv_cache_dtype). WORKER_ATTENTION_BACKEND is left unwired on purpose (t7
-      # confirms on sm_110); see env.example.
+      # honours AttentionConfig, not that env. The lane's attention backend is
+      # therefore a --attention-config FLAG on the command below
+      # (WORKER_ATTENTION_BACKEND, worker-recipe-knobs t3), the same surface
+      # vllm-embed/vllm-rerank/vllm-hand use — unset renders no flag at all, so
+      # vLLM keeps auto-selecting exactly as it did before the knob existed.
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
     volumes:
@@ -1409,7 +1454,9 @@ services:
     #     MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55
     #     was measured, not computed. Do NOT treat 0.30 as validated.
     #
-    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced: measured
+    #   --moe-backend  MoE (~3B active/token). DELIBERATELY NOT forced by
+    #     DEFAULT (WORKER_MOE_BACKEND is unset, so its conditional slot renders no
+    #     flag and vLLM auto-selects): measured
     #     live on Thor sm_110 (2026-07-31,
     #     docs/evidence/2026-07-31-accept-worker-thor.txt), every forced value
     #     was REFUSED — flashinfer_b12x / flashinfer_cutlass ("kernel does not
@@ -1419,8 +1466,8 @@ services:
     #     Only AUTO-SELECT boots: vLLM picks TRITON for the unquantized/fp8 MoE
     #     and a modular NVFP4 kernel for the main experts, and auto-picks the
     #     fastest SUPPORTED kernel on any card (incl. flashinfer_b12x on a
-    #     Spark). To pin a backend, add a `--moe-backend=<x>` line here by hand
-    #     (see env.example WORKER_MOE_BACKEND).
+    #     Spark). To pin a MEASURED backend, set WORKER_MOE_BACKEND=<x> in .env
+    #     (or declare `moe_backend` on a profile/shape) — no template edit.
     #
     #   WORKER_SPECULATIVE_CONFIG  DEFAULT-OFF (empty): the default Lightning
     #     worker's MTP/DSpark benefit is declared by its card but UNMEASURED on
@@ -1440,13 +1487,38 @@ services:
     #     on the Spark 2026-08-20, structured tool_calls PASS through the
     #     nemotron_v3 + qwen3_coder pair, see
     #     docs/evidence/2026-08-20-accept-worker-hand-spark.txt). The
-    #     --tool-call-parser stays hardcoded qwen3_coder below because BOTH
-    #     the default Nemotron worker and the demoted
-    #     unsloth/Qwen3.6-35B-A3B-NVFP4 candidate use it; only the reasoning
-    #     parser differs between the two. If you serve the demoted Qwen
-    #     candidate, override WORKER_REASONING_PARSER=qwen3 to match it —
-    #     nemotron_v3 is the wrong grammar for that checkpoint's thinking
-    #     traces (and vice versa).
+    #     --tool-call-parser DEFAULT stays qwen3_coder because BOTH the default
+    #     Nemotron worker and the demoted unsloth/Qwen3.6-35B-A3B-NVFP4
+    #     candidate use it; only the reasoning parser differs between the two.
+    #     It is no longer HARDCODED, though (worker-recipe-knobs t3): a
+    #     checkpoint that emits a different call shape — qwen3_xml, say — is a
+    #     WORKER_TOOL_CALL_PARSER line, not a template edit. If you serve the
+    #     demoted Qwen candidate, override WORKER_REASONING_PARSER=qwen3 to
+    #     match it — nemotron_v3 is the wrong grammar for that checkpoint's
+    #     thinking traces (and vice versa).
+    #
+    #   THE RECIPE KNOBS (worker-recipe-knobs t3) — every remaining flag below
+    #     is DEFAULT-ABSENT, and that is the whole contract: with none of them
+    #     set the argv is byte-identical to the pre-t3 lane. Two idioms:
+    #
+    #       VAR:+--flag=VAR  (a compose conditional slot) -- value-carrying knobs
+    #         (WORKER_KV_CACHE_DTYPE, WORKER_ATTENTION_BACKEND — rendered as
+    #         the --attention-config JSON, WORKER_MOE_BACKEND,
+    #         WORKER_LOAD_FORMAT, WORKER_MAX_NUM_SEQS,
+    #         WORKER_MAX_NUM_BATCHED_TOKENS). Unset OR empty renders NOTHING —
+    #         not an empty argv element, which `vllm serve` reads as a second
+    #         positional and dies on (see tests/test_senses_speculative_config.py).
+    #
+    #       VAR-  (the dash-only slot) -- boolean toggles whose value is the FULL flag text
+    #         (WORKER_CHUNKED_PREFILL, WORKER_ASYNC_SCHEDULING,
+    #         WORKER_PREFIX_CACHING) — the same idiom RERANK_ENFORCE_EAGER and
+    #         ASSOCIATE_PREFIX_CACHING already use, so an operator picks the
+    #         polarity (`--enable-prefix-caching` / `--no-enable-prefix-caching`)
+    #         and a profile's bool knob renders the token for them
+    #         (lobes/profiles/render.py's _BOOL_KNOB_TOKENS).
+    #
+    #     None of these values is MEASURED on a worker box yet (#108) — the
+    #     lane can now EXPRESS them, which is not the same as recommending one.
     #
     #   SECURITY: --trust-remote-code runs the model repo's code in-container
     #     (same posture as the 27B primary). The default Lightning worker is
@@ -1463,11 +1535,206 @@ services:
       --max-model-len=${WORKER_MAX_MODEL_LEN:-65536}
       --gpu-memory-utilization=${WORKER_GPU_MEM_UTIL:-0.30}
       ${WORKER_KV_CACHE_DTYPE:+--kv-cache-dtype=${WORKER_KV_CACHE_DTYPE}}
+      ${WORKER_ATTENTION_BACKEND:+'--attention-config={"backend": "${WORKER_ATTENTION_BACKEND}"}'}
+      ${WORKER_MOE_BACKEND:+--moe-backend=${WORKER_MOE_BACKEND}}
+      ${WORKER_LOAD_FORMAT:+--load-format=${WORKER_LOAD_FORMAT}}
       ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
+      ${WORKER_MAX_NUM_BATCHED_TOKENS:+--max-num-batched-tokens=${WORKER_MAX_NUM_BATCHED_TOKENS}}
+      ${WORKER_CHUNKED_PREFILL-}
+      ${WORKER_ASYNC_SCHEDULING-}
+      ${WORKER_PREFIX_CACHING-}
       ${WORKER_SPECULATIVE_CONFIG-}
       --enable-auto-tool-choice
-      --tool-call-parser=qwen3_coder
+      --tool-call-parser=${WORKER_TOOL_CALL_PARSER:-qwen3_coder}
       --reasoning-parser=${WORKER_REASONING_PARSER:-nemotron_v3}
+      --trust-remote-code
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 600s
+
+  # --- Opt-in associate generate backend (Nemotron 3.5 Lightning, NVFP4 MoE) -
+  # lightning-on-orin plan, t7. This lane exists to give EIGHT vLLM serve
+  # flags from NVIDIA's published Jetson recipe a real home in this repo —
+  # nothing more. When t7 first landed it, this lane wired no Colleague role
+  # at all — that surface arrived later: t6 registered `associate` as the
+  # TENTH role (lobes/roles.py, catalog tier, the gateway's
+  # ASSOCIATE_BASE_URL/ASSOCIATE_FEASIBLE/peer-proxy environment below) and
+  # t10 put it behind the gateway's authenticated front (see the exposure
+  # note at `expose:` further down). Gated behind the "associate" Compose
+  # profile, exactly like vllm-muse/vllm-worker, so a plain `docker compose up`
+  # never starts it; the gateway backend is wired only when an
+  # associate-hosting shape renders ASSOCIATE_BASE_URL.
+  #
+  # Checkpoint: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 — the SAME
+  # checkpoint family the `worker` role serves on the Spark (see vllm-worker
+  # above); this lane rides the same Qwen/vLLM nightly image lane by default.
+  # GPU budget (gpu_mem_util / max_model_len) is a PLACEHOLDER here, same as
+  # the worker lane's own placeholder was before ITS live boot — the Orin's
+  # measured budget is t8's job (builtin/orin.toml), not this lane's.
+  #
+  # THE EIGHT FLAGS (the reason this block exists — see
+  # docs/specs/2026-08-25-lightning-on-orin.md and
+  # docs/plans/2026-08-25-lightning-on-orin.md, task t7):
+  #
+  #   --mamba-backend                Governs the Mamba2 SSU (state-space
+  #     update) kernel selection, NOT the SSD Triton warmup (measured live on
+  #     the Orin 2026-08-25: the warmup runs and completes regardless of this
+  #     flag — see docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt).
+  #     ASSOCIATE_MAMBA_BACKEND, default flashinfer (the recipe's value).
+  #
+  #   --mamba-ssm-cache-dtype        The SSM state cache dtype.
+  #     ASSOCIATE_MAMBA_SSM_CACHE_DTYPE, default float16 (the recipe's value).
+  #
+  #   --enable-mamba-cache-stochastic-rounding / --no-...  A boolean toggle,
+  #     so — like RERANK_ENFORCE_EAGER above — the env var holds the FULL flag
+  #     text (enabled or its --no- negation), not just a value:
+  #     ASSOCIATE_MAMBA_CACHE_STOCHASTIC_ROUNDING, default
+  #     --enable-mamba-cache-stochastic-rounding (the recipe's value).
+  #
+  #   --mamba-cache-philox-rounds    ASSOCIATE_MAMBA_CACHE_PHILOX_ROUNDS,
+  #     default 5 (the recipe's value).
+  #
+  #   --mamba-cache-mode             ASSOCIATE_MAMBA_CACHE_MODE, default align
+  #     (the recipe's value).
+  #
+  #   --enable-prefix-caching / --no-...  Same full-flag-text idiom as the
+  #     stochastic-rounding knob above: ASSOCIATE_PREFIX_CACHING, default
+  #     --enable-prefix-caching. (The `cortex` primary lane above hardcodes
+  #     this same flag unconditionally on a different checkpoint family — this
+  #     lane keeps it a knob because Mamba prefix caching on a THIRD
+  #     architecture, on THIS card, is unmeasured.)
+  #
+  #   ASSOCIATE_SPECULATIVE_CONFIG  DSpark speculative decoding. DEFAULT-OFF
+  #     (the dash-only operator: unset renders NOTHING, so the lane serves plain
+  #     decode). This is deliberately the reverse of PRIMARY_SPECULATIVE_CONFIG's
+  #     default-ON, and the reason is evidence, not taste: the checkpoint's own
+  #     config.json carries no draft-head field, so the catalog's
+  #     speculative_config is the empty honest sentinel, and the DSpark drafter
+  #     is a SEPARATE repo that must be downloaded before the lane can start.
+  #     A default-on line would make a first boot fail on a missing model.
+  #
+  #     The 2026-08-25 lane spike measured ~78-81 tok/s WITH DSpark at 5 draft
+  #     tokens versus 54.3 tok/s plain on this board — roughly +45%, though not
+  #     a controlled A/B (different engine build, different resident set). To
+  #     arm it, put ONE shell-quoted line in .env:
+  #
+  #       ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
+  #
+  #     NOTE the drafter repo id carries an -NVFP4 infix. NVIDIA's own published
+  #     Jetson recipe omits it and names a repo that does not exist; vLLM refuses
+  #     the boot with "Invalid repository ID". That was one of three defects
+  #     found in those recipes — see
+  #     docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt.
+  #
+  #     The drafter costs KV: measured at util 0.63 WITH the drafter the pool was
+  #     1,249,280 tokens; at 0.56 WITHOUT it, 1,524,000. Arming DSpark on the
+  #     full orin-associate shape (which leaves ~1 GiB free) is UNMEASURED.
+  #
+  #   --max-num-batched-tokens       ASSOCIATE_MAX_NUM_BATCHED_TOKENS, default
+  #     16384 (the recipe's value).
+  #
+  #   --trust-remote-code            HARDCODED, not a knob — every generate
+  #     lane in this file (primary/senses/worker/muse) hardcodes this
+  #     unconditionally; it is a fixed security posture (run the model repo's
+  #     own code in-container), not a per-deployment tuning choice, so this
+  #     lane follows the same fleet-wide convention rather than inventing an
+  #     eighth on/off switch nothing else in the file has.
+  #
+  # Two flags NVIDIA's recipe also carries are covered by mechanism this repo
+  # ALREADY has (verified, not rebuilt here): --kv-cache-dtype
+  # (ASSOCIATE_KV_CACHE_DTYPE, the same knob shape as PRIMARY_KV_CACHE_DTYPE)
+  # and --max-model-len / --gpu-memory-utilization / the speculative-config
+  # off-switch (same ${VAR-default} idiom as WORKER_SPECULATIVE_CONFIG).
+  #
+  # ASSOCIATE_IMAGE overrides the lane's OCI image — verified by
+  # `docker compose config` in tests/test_associate_compose.py — falling back
+  # to the SAME fleet-wide Qwen/vLLM nightly digest pin every other
+  # non-Gemma generate lane uses.
+  vllm-associate:
+    image: ${ASSOCIATE_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    container_name: model-gear-vllm-associate
+    profiles:
+      - associate
+    # Same Thor/unified-memory first-boot ordering mitigation as vllm-muse and
+    # vllm-worker: wait for the two cheap pooling gears to be healthy first.
+    depends_on:
+      vllm-embed:
+        condition: service_healthy
+      vllm-rerank:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=associate   # → /logs/model-gear/associate-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # No host port — reachable only as http://vllm-associate:8000 on the
+    # compose net, i.e. only through the gateway, which carries the opt-in
+    # GATEWAY_API_KEY bearer gate (lightning-on-orin plan t10).
+    #
+    # THE ONE NAMED DEPARTURE FROM NVIDIA'S PUBLISHED JETSON RECIPE (frame
+    # boundary c29 — a departure must be named as a correction, never
+    # smuggled): the recipe's `--network host` is NOT inherited. Running it
+    # verbatim during the 2026-08-25 spike put an uncredentialed 30B generate
+    # endpoint on this box's tailnet, and within seconds two distinct tailnet
+    # peers queried it unprompted (100.127.105.72 and 100.105.216.63 — see
+    # docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt and the writeup
+    # in docs/evidence/2026-08-26-associate-gateway-auth-front.txt).
+    #
+    # The `--host=0.0.0.0` below is KEPT, and is safe ONLY because of that:
+    # inside this bridge network namespace it means "this container's own
+    # interfaces", which is what lets the gateway dial the lane — it is not
+    # the box's tailnet address. The two are a PAIR; changing either alone
+    # re-opens the hole or breaks the gateway's dial, and
+    # tests/test_associate_exposure.py pins them together.
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # --- serve args: ONE shell-lexed STRING, same mechanism/reason as
+    # vllm-primary/vllm-multimodal/vllm-worker above (an empty variable must
+    # leave NO argv token, which a YAML list command cannot do).
+    command: >-
+      vllm serve ${ASSOCIATE_MODEL:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --served-model-name=${ASSOCIATE_SERVED_NAME:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}
+      --host=0.0.0.0
+      --port=8000
+      --quantization=${ASSOCIATE_QUANTIZATION:-modelopt}
+      --kv-cache-dtype=${ASSOCIATE_KV_CACHE_DTYPE:-bfloat16}
+      --max-model-len=${ASSOCIATE_MAX_MODEL_LEN:-65536}
+      --gpu-memory-utilization=${ASSOCIATE_GPU_MEM_UTIL:-0.30}
+      --mamba-backend=${ASSOCIATE_MAMBA_BACKEND:-flashinfer}
+      --mamba-ssm-cache-dtype=${ASSOCIATE_MAMBA_SSM_CACHE_DTYPE:-float16}
+      ${ASSOCIATE_MAMBA_CACHE_STOCHASTIC_ROUNDING:---enable-mamba-cache-stochastic-rounding}
+      --mamba-cache-philox-rounds=${ASSOCIATE_MAMBA_CACHE_PHILOX_ROUNDS:-5}
+      --mamba-cache-mode=${ASSOCIATE_MAMBA_CACHE_MODE:-align}
+      ${ASSOCIATE_PREFIX_CACHING:---enable-prefix-caching}
+      --max-num-batched-tokens=${ASSOCIATE_MAX_NUM_BATCHED_TOKENS:-16384}
+      ${ASSOCIATE_SPECULATIVE_CONFIG-}
+      --enable-auto-tool-choice
+      --tool-call-parser=${ASSOCIATE_TOOL_CALL_PARSER:-qwen3_coder}
+      --reasoning-parser=${ASSOCIATE_REASONING_PARSER:-nemotron_v3}
       --trust-remote-code
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -1495,13 +1762,25 @@ services:
     # inheriting HF_TOKEN or any other .env secret into the gateway (the
     # vllm-* services legitimately keep env_file since they need HF_TOKEN
     # to pull gated checkpoints; Qodo finding on PR #117).
-    # Start order only — the gateway tolerates a backend still loading (it routes
-    # and fails over per request), so it must not block on backend health.
-    depends_on:
-      - vllm-primary
-      - vllm-multimodal
-      - vllm-embed
-      - vllm-rerank
+    # NO `depends_on` — deliberately (issue #222). It used to list every core
+    # vLLM lane as "start order only", but `docker compose up -d <service>` WALKS
+    # `depends_on`: any gateway (re)start therefore started/recreated all four
+    # heavy lanes unconditionally, ignoring MULTIMODAL_FEASIBLE=false, a declared
+    # peer origin and an active proxy alike. Measured live on the Jetson AGX Thor
+    # 2026-08-28: `docker compose up -d --build gateway`, meant to re-image the
+    # gateway alone, recreated the resident 27B cortex (a multi-minute reload) and
+    # STARTED vllm-multimodal on a box that proxies that role to a peer — burning
+    # the exact GPU budget the shape exists to reclaim, in a unified-memory race
+    # against the load it was meant to leave alone.
+    #
+    # The edge bought nothing to lose: the gateway tolerates a backend still
+    # loading (it routes and fails over per request, and reports
+    # `health: unreachable` per lane rather than failing), so ordering it after
+    # the lanes was never a correctness property. A role-dropping shape already
+    # had to `!reset` this attribute away for exactly this reason
+    # (`lobes init --shape`, docker-compose.shape.yml) — #222 makes the base
+    # template honest instead, which also covers the hand-scaffolded and
+    # lock-restored boxes no shape override reaches.
     environment:
       - GATEWAY_PORT=8000
       # MUST default to EMPTY (issue #92 / #96). GATEWAY_PUBLIC_URL is an
@@ -1536,8 +1815,13 @@ services:
       # rewrite model=cortex|main|hard to an id the engine does not serve — a 404
       # with a perfectly healthy backend behind it (observed live 2026-07-31).
       - PRIMARY_SERVED_NAME=${PRIMARY_SERVED_NAME:-unsloth/Qwen3.8-27B-NVFP4}
-      # To add a fallback: set FALLBACK_URL + FALLBACK_SERVED_NAME here (the
-      # gateway wires a second backend only when these are present).
+      # Optional second generate backend. To add a fallback: run a
+      # vllm-fallback service and set FALLBACK_URL (+ optionally
+      # FALLBACK_SERVED_NAME) in .env — the gateway wires a second backend
+      # only when FALLBACK_URL is non-empty, so the empty defaults below
+      # leave the default fleet unchanged.
+      - FALLBACK_URL=${FALLBACK_URL:-}
+      - FALLBACK_SERVED_NAME=${FALLBACK_SERVED_NAME:-}
       # Minor co-resident generate backend (opt-in: activate with --profile minor
       # and set MINOR_BASE_URL in .env; empty defaults mean no backend is wired
       # unless the operator explicitly opts in — default fleet is unchanged).
@@ -1570,6 +1854,13 @@ services:
       # upward-falling-back — see OPT_IN_BACKENDS in lobes/gateway/_config.py).
       - WORKER_BASE_URL=${WORKER_BASE_URL:-}
       - WORKER_SERVED_NAME=${WORKER_SERVED_NAME:-}
+      # The opt-in `associate` lobe (the tenth Colleague role — the doer that
+      # does NOT act; lightning-on-orin plan t6). Same mechanics as muse/worker
+      # above: an associate-hosting shape sets ASSOCIATE_BASE_URL +
+      # COMPOSE_PROFILES=associate in .env; empty default = backend unwired =
+      # `model=associate` 404s role_infeasible, never a silent fallback.
+      - ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}
+      - ASSOCIATE_SERVED_NAME=${ASSOCIATE_SERVED_NAME:-}
       # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
       # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
       # every supported card, which is the whole point of the role, so it is
@@ -1619,6 +1910,7 @@ services:
       # so a deployment with no worker shape reports the catalog native for the
       # sleeping lobe; a worker-hosting shape renders the served value into .env.
       - WORKER_MAX_MODEL_LEN=${WORKER_MAX_MODEL_LEN:-}
+      - ASSOCIATE_MAX_MODEL_LEN=${ASSOCIATE_MAX_MODEL_LEN:-}
       - EMBED_MAX_MODEL_LEN=${EMBED_MAX_MODEL_LEN:-8192}
       - RERANK_MAX_MODEL_LEN=${RERANK_MAX_MODEL_LEN:-8192}
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
@@ -1641,6 +1933,7 @@ services:
       - MULTIMODAL_FEASIBLE=${MULTIMODAL_FEASIBLE:-}
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
+      - ASSOCIATE_FEASIBLE=${ASSOCIATE_FEASIBLE:-}
       # hand joined the peer channels 2026-08-20 (d1 reversal — see
       # lobes/gateway/_config.py's NEVER_PROXIED_BACKENDS): a box whose card
       # cannot serve LFM2.5 correctly (Thor sm_110) declares HAND_FEASIBLE=false
@@ -1664,6 +1957,7 @@ services:
       - MULTIMODAL_PEER_ORIGIN=${MULTIMODAL_PEER_ORIGIN:-}
       - MUSE_PEER_ORIGIN=${MUSE_PEER_ORIGIN:-}
       - WORKER_PEER_ORIGIN=${WORKER_PEER_ORIGIN:-}
+      - ASSOCIATE_PEER_ORIGIN=${ASSOCIATE_PEER_ORIGIN:-}
       - HAND_PEER_ORIGIN=${HAND_PEER_ORIGIN:-}
       - EMBED_PEER_ORIGIN=${EMBED_PEER_ORIGIN:-}
       - RERANK_PEER_ORIGIN=${RERANK_PEER_ORIGIN:-}
@@ -1692,6 +1986,7 @@ services:
       - MULTIMODAL_PEER_PROXY=${MULTIMODAL_PEER_PROXY:-}
       - MUSE_PEER_PROXY=${MUSE_PEER_PROXY:-}
       - WORKER_PEER_PROXY=${WORKER_PEER_PROXY:-}
+      - ASSOCIATE_PEER_PROXY=${ASSOCIATE_PEER_PROXY:-}
       - HAND_PEER_PROXY=${HAND_PEER_PROXY:-}
       - EMBED_PEER_PROXY=${EMBED_PEER_PROXY:-}
       - RERANK_PEER_PROXY=${RERANK_PEER_PROXY:-}
@@ -1708,6 +2003,7 @@ services:
       - MULTIMODAL_PEER_API_KEY=${MULTIMODAL_PEER_API_KEY:-}
       - MUSE_PEER_API_KEY=${MUSE_PEER_API_KEY:-}
       - WORKER_PEER_API_KEY=${WORKER_PEER_API_KEY:-}
+      - ASSOCIATE_PEER_API_KEY=${ASSOCIATE_PEER_API_KEY:-}
       - HAND_PEER_API_KEY=${HAND_PEER_API_KEY:-}
       - EMBED_PEER_API_KEY=${EMBED_PEER_API_KEY:-}
       - RERANK_PEER_API_KEY=${RERANK_PEER_API_KEY:-}
@@ -1733,6 +2029,7 @@ services:
       - MULTIMODAL_PEER_ORIGINS=${MULTIMODAL_PEER_ORIGINS:-}
       - MUSE_PEER_ORIGINS=${MUSE_PEER_ORIGINS:-}
       - WORKER_PEER_ORIGINS=${WORKER_PEER_ORIGINS:-}
+      - ASSOCIATE_PEER_ORIGINS=${ASSOCIATE_PEER_ORIGINS:-}
       - HAND_PEER_ORIGINS=${HAND_PEER_ORIGINS:-}
       - EMBED_PEER_ORIGINS=${EMBED_PEER_ORIGINS:-}
       - RERANK_PEER_ORIGINS=${RERANK_PEER_ORIGINS:-}
@@ -1742,11 +2039,23 @@ services:
       - MULTIMODAL_PEER_API_KEYS=${MULTIMODAL_PEER_API_KEYS:-}
       - MUSE_PEER_API_KEYS=${MUSE_PEER_API_KEYS:-}
       - WORKER_PEER_API_KEYS=${WORKER_PEER_API_KEYS:-}
+      - ASSOCIATE_PEER_API_KEYS=${ASSOCIATE_PEER_API_KEYS:-}
       - HAND_PEER_API_KEYS=${HAND_PEER_API_KEYS:-}
       - EMBED_PEER_API_KEYS=${EMBED_PEER_API_KEYS:-}
       - RERANK_PEER_API_KEYS=${RERANK_PEER_API_KEYS:-}
       - STT_PEER_API_KEYS=${STT_PEER_API_KEYS:-}
       - TTS_PEER_API_KEYS=${TTS_PEER_API_KEYS:-}
+      # Declared per-role CAPACITY (issue #199, capacity-relative pool
+      # routing): this box's own MEASURED max concurrently-active requests
+      # for that role, the weight the replica pool ranks a candidate's
+      # observed load against. Deliberately NOT <PREFIX>_MAX_NUM_SEQS —
+      # that knob is vLLM's OOM safety cap, not a validated throughput
+      # figure. Unset (the default) means this box declares no capacity
+      # and the pool falls back to its neutral ranking, byte-identical to
+      # a pre-#199 deployment. These MUST be listed here: the gateway does
+      # not use env_file (see the note above), so a knob an operator sets
+      # in .env but that is absent from this list never reaches the
+      # container and the feature is silently inert.
       - PRIMARY_MAX_ACTIVE=${PRIMARY_MAX_ACTIVE:-}
       - MULTIMODAL_MAX_ACTIVE=${MULTIMODAL_MAX_ACTIVE:-}
       - MUSE_MAX_ACTIVE=${MUSE_MAX_ACTIVE:-}
@@ -1757,7 +2066,17 @@ services:
       - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
       - STT_MAX_ACTIVE=${STT_MAX_ACTIVE:-}
       - TTS_MAX_ACTIVE=${TTS_MAX_ACTIVE:-}
+      # GATEWAY_CAPACITY_KILL_SWITCH (issue #199): truthy pins EVERY
+      # resolved capacity — local and peer alike — back to the 1.0
+      # sentinel, reproducing today's ranking exactly while leaving the
+      # replica pool itself armed. Unset by default.
       - GATEWAY_CAPACITY_KILL_SWITCH=${GATEWAY_CAPACITY_KILL_SWITCH:-}
+      # GATEWAY_FORCE_STRICT_TOOLS (colleague#320, opt-in, unset by
+      # default): injects "strict": true into every function tool on a
+      # cortex-lane chat request so tool-call arguments are grammar-
+      # constrained. Documented in env.example; must be listed here to
+      # reach the container at all.
+      - GATEWAY_FORCE_STRICT_TOOLS=${GATEWAY_FORCE_STRICT_TOOLS:-}
       # GATEWAY_SELF_ORIGIN (issue #199): this box's OWN origin, as its peers
       # would dial it (e.g. http://peer-a.example:8000) — used to stamp
       # X-Lobes-Served-By on a locally-answered pooled request so a caller
@@ -1806,14 +2125,32 @@ services:
       - MUSE_REASONING_PARSER=${MUSE_REASONING_PARSER:-}
       - MUSE_TOOL_CALL_PARSER=${MUSE_TOOL_CALL_PARSER:-}
       - MUSE_SPECULATIVE_CONFIG=${MUSE_SPECULATIVE_CONFIG-}
-      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER: no such lane knobs
-      # exist — vllm-worker hardcodes --tool-call-parser=qwen3_coder (no
-      # --kv-cache-dtype override). Passed through anyway.
+      # WORKER_KV_CACHE_DTYPE / WORKER_TOOL_CALL_PARSER now reach the LANE
+      # too (worker-recipe-knobs t3): vllm-worker expands both above —
+      # --kv-cache-dtype only when set, --tool-call-parser with the shipped
+      # qwen3_coder default. They still ALSO arrive here, because the gateway
+      # reads them for the capabilities `tool_parser` field and the
+      # replica-pool fingerprint; a knob that fed only the passthrough would
+      # let `lobes capabilities` advertise a parser the lane is not running.
       - WORKER_QUANTIZATION=${WORKER_QUANTIZATION:-}
       - WORKER_KV_CACHE_DTYPE=${WORKER_KV_CACHE_DTYPE:-}
       - WORKER_REASONING_PARSER=${WORKER_REASONING_PARSER:-}
       - WORKER_TOOL_CALL_PARSER=${WORKER_TOOL_CALL_PARSER:-}
       - WORKER_SPECULATIVE_CONFIG=${WORKER_SPECULATIVE_CONFIG-}
+      # ASSOCIATE_TOOL_CALL_PARSER reaches BOTH the lane's --tool-call-parser
+      # (default qwen3_coder, the vendor recipe's own pairing) and this
+      # passthrough. It has to reach both: the gateway consumes the value for
+      # the capabilities `tool_parser` field and the replica-pool fingerprint
+      # (_config.py's FINGERPRINT_SUFFIXES), so a knob that fed only the
+      # passthrough would let `lobes capabilities` ADVERTISE a parser the lane
+      # is not actually running. That is worse than a dead knob -- it is a
+      # lying one. (WORKER_TOOL_CALL_PARSER reaches both the same way since
+      # worker-recipe-knobs t3; before that it was passthrough-only.)
+      - ASSOCIATE_QUANTIZATION=${ASSOCIATE_QUANTIZATION:-}
+      - ASSOCIATE_KV_CACHE_DTYPE=${ASSOCIATE_KV_CACHE_DTYPE:-}
+      - ASSOCIATE_REASONING_PARSER=${ASSOCIATE_REASONING_PARSER:-}
+      - ASSOCIATE_TOOL_CALL_PARSER=${ASSOCIATE_TOOL_CALL_PARSER:-}
+      - ASSOCIATE_SPECULATIVE_CONFIG=${ASSOCIATE_SPECULATIVE_CONFIG-}
       # HAND_QUANTIZATION / HAND_KV_CACHE_DTYPE / HAND_REASONING_PARSER /
       # HAND_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-hand is
       # bf16 (deliberately NO --quantization flag), has no thinking mode
@@ -1849,6 +2186,48 @@ services:
       - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
       - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
       - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
+      # Mesh join (mesh-brain-join, t4): the six LOBES_MESH_* keys the
+      # gateway's MeshConfig parses (lobes/gateway/_mesh_config.py, t1). Same
+      # silent-inert trap as the capacity block above: the gateway does not
+      # use env_file, so a key set in .env but absent from this list never
+      # reaches the container and the mesh is silently OFF.
+      # Unset LOBES_MESH_KEY (the default) keeps the mesh OFF — no heartbeat
+      # thread, every /mesh/* route 404s, byte-identical to the pre-mesh
+      # contract (c13); the other five keys are inert without it. The
+      # heartbeat interval and the missed-max carry their PARSER defaults
+      # (60 / 3) rather than an empty passthrough on purpose: the container
+      # never reads .env itself, so an empty value would reach t1's parser
+      # as an empty string, which it rejects with a named error. Every other
+      # mesh key keeps the empty default, so nothing the parser derives
+      # moves on the default fleet. LOBES_MESH_KEY is a SECRET (the fleet's
+      # shared join credential) — see scripts/scan_deployment_secrets.py and
+      # env.example's "Mesh join" section.
+      - LOBES_MESH_KEY=${LOBES_MESH_KEY:-}
+      - LOBES_MESH_NAME=${LOBES_MESH_NAME:-}
+      - LOBES_MESH_SEEDS=${LOBES_MESH_SEEDS:-}
+      - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
+      - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
+      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
+    volumes:
+      # The mesh runtime directory (mesh-brain-join, t4 / c9): the gateway's
+      # FIRST bind mount. Mesh state — the approval ledger file lives here —
+      # is directory-scoped, mounted read-write under /home/gateway/mesh.
+      # The host-side default is ./mesh beside the compose file (created by
+      # Docker as a root-owned dir on first recreate; the operator must
+      # `chown 10001 <dir>` before enabling the mesh, since the gateway runs
+      # uid 10001). LOBES_MESH_DIR is a compose-interpolation-only knob: it
+      # never reaches the container as an env var, so a golden line for it
+      # does not surface (c9: a gitignored runtime directory under the
+      # deployment dir). Read-WRITE on purpose (no :ro): the gateway appends
+      # approvals (name -> approved_by, expiry) and rewrites files via temp
+      # file + rename.
+      #
+      # LOBES_MESH_LEDGER_PATH defaults to /home/gateway/mesh/ledger.json
+      # inside the mounted directory — the gateway process opens its own
+      # LOBES_MESH_LEDGER_PATH value. When SET to another absolute path, it
+      # must live under this mounted directory (or be another bind mount).
+      # Mesh OFF, so the ledger file is never opened on the default fleet.
+      - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:
