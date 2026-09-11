@@ -32,6 +32,7 @@ and ``GET /status`` with the pressure block warm, busy, and unwired.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 
@@ -641,12 +642,17 @@ def test_the_booby_trap_is_not_vacuous(monkeypatch) -> None:
         raise AssertionError("reached")
 
     monkeypatch.setattr(S, "_pool_marker_headers", _explode)
-    env = _env(
-        PRIMARY_PEER_ORIGINS="http://thor.local:8001",
-        PRIMARY_PEER_API_KEYS="sk-thor",
-        GATEWAY_SELF_ORIGIN="http://spark.local:8001",
-    )
+    # Retired (t14): PRIMARY_PEER_ORIGINS/PRIMARY_PEER_API_KEYS no longer
+    # populate table.replica_origins/replica_api_keys — set them directly so
+    # the pool really is declared, proving the trapped seam above stays
+    # reachable in principle (not merely "never callable").
+    env = _env(GATEWAY_SELF_ORIGIN="http://spark.local:8001")
     table, cfg = build_config(env)
+    table = dataclasses.replace(
+        table,
+        replica_origins={"primary": ("http://thor.local:8001",)},
+        replica_api_keys={"primary": ("sk-thor",)},
+    )
     state = ReplicaState(
         origin=_LOCAL_URL,
         local=True,
