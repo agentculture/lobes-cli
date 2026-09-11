@@ -1,0 +1,258 @@
+ACCEPTANCE — Jetson AGX Thor: reranker judge-prompt template (#227) rolled out, senses proxy withdrawn
+Date: 2026-09-11
+Box:  Jetson AGX Thor (thor, gateway :8000, lobes-cli 0.75.1), thor-worker shape
+Catalog: deployments/jetson-agx-thor__thor-worker/ re-captured from the live box afterwards
+
+Two operator changes, each touching ONE service:
+  A. vllm-rerank: serve Qwen3-Reranker-0.6B with the vendored judge-prompt
+     chat template (#227 had rolled to the Spark only; `lobes doctor` on the
+     Thor reported `scaffold_files: missing qwen3_reranker.jinja`).
+  B. gateway: stop proxying `senses` to the AGX Orin, which does not host it.
+
+================================================================================
+A0. BASELINE — untemplated reranker (scripts/probe_reranker_calibration.py,
+    run ON the Thor with `env -u GATEWAY_API_KEY … --url http://localhost:8000`)
+================================================================================
+# reranker calibration probe (#227)
+date:       2026-09-11T10:51:51+0300
+host:       thor
+url:        http://localhost:8000
+model:      Qwen/Qwen3-Reranker-0.6B
+git sha:    
+container:  vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+args:       ["/usr/local/bin/mg-logwrap","vllm","serve","Qwen/Qwen3-Reranker-0.6B","--served-model-name=Qwen/Qwen3-Reranker-0.6B","--host=0.0.0.0","--port=8000","--runner=pooling","--convert=classify","--attention-config={\"backend\": \"TRITON_ATTN\"}","--enforce-eager","--hf-overrides={\"architectures\": [\"Qwen3ForSequenceClassification\"], \"classifier_from_token\": [\"no\", \"yes\"], \"is_original_qwen3_reranker\": true}","--max-model-len=8192","--gpu-memory-utilization=0.06"]
+templated:  False
+vllm:       0.26.1rc1.dev942+g5a4c8d992
+
+## probe set — relevance_score per document, usage.prompt_tokens
+
+[sky]  Q: What colour is the sky on a clear day?
+  prompt_tokens total=67 per_pair=22.3  latency=164ms
+  [0] 0.971  On a clear day the sky is blue because air scatters short wavelengths.
+  [1] 0.783  Cats purr when they are content.
+  [2] 0.267  The invoice is due on the last business day of the month.
+  ranking: [0, 1, 2]
+
+[ports-ledger]  Q: Which file lists the ports the gateway exposes?
+  prompt_tokens total=71 per_pair=23.7  latency=65ms
+  [0] 0.937  The gateway port ledger is docs/gateway-fleet.md, which lists 8000 and 8001.
+  [1] 0.540  Cats purr when they are content.
+  [2] 0.521  Bananas are a good source of potassium.
+  ranking: [0, 1, 2]
+
+[france (assess probe)]  Q: What is the capital of France?
+  prompt_tokens total=51 per_pair=17.0  latency=60ms
+  [0] 0.970  Paris is the capital and most populous city of France.
+  [1] 0.209  The Amazon rainforest spans several South American countries.
+  [2] 0.872  Bananas are a good source of potassium.
+  ranking: [0, 2, 1]
+
+[toolbatch inversion]  Q: How does the tool batcher group tool calls into one request?
+  prompt_tokens total=81 per_pair=27.0  latency=58ms
+  [0] 0.795  NOTICE: this file is generated; do not edit by hand.
+  [1] 0.988  toolbatch collects consecutive tool calls and issues them as a single batched 
+  [2] 0.733  Cats purr when they are content.
+  ranking: [1, 0, 2]
+
+[graded relevance]  Q: How do I stop the lobes fleet without deleting the deployment directory?
+  prompt_tokens total=89 per_pair=29.7  latency=52ms
+  [0] 0.968  Run `lobes stop --apply`; it runs `docker compose down`, removing the containe
+  [1] 0.713  `lobes stop` stops the fleet.
+  [2] 0.298  Cats purr when they are content.
+  ranking: [0, 1, 2]
+
+## instruction probe — same pair with and without a top-level `instruction`
+  /v1/rerank: without=[(0, 0.9358), (1, 0.5226)] tokens=53
+  /v1/rerank: with   =[(0, 0.9358), (1, 0.5226)] tokens=53
+  /v1/rerank: instruction changes scores: False
+  /v1/score: without=[(0, 0.9358), (1, 0.5226)] tokens=53
+  /v1/score: with   =[(0, 0.9358), (1, 0.5226)] tokens=53
+  /v1/score: instruction changes scores: False
+
+## latency — 1 query x 5 docs, median of 5 (1 warm-up discarded)
+  samples_ms=[43.2, 42.6, 43.2, 46.9, 43.4]
+  median_ms=43.2
+
+================================================================================
+A1. DEPLOY RECORD
+================================================================================
+The Thor's docker-compose.yml is the hand-edited #244 capture, so it was NOT
+re-rendered (same decision as the Spark's #227 deploy, deviation d2 there).
+  cp docker-compose.yml docker-compose.yml.bak-20260911-pre-227
+  lobes doctor --fix            -> "would write qwen3_reranker.jinja" (nothing else)
+  lobes doctor --fix --apply    -> wrote qwen3_reranker.jinja
+    sha256 e1ee98e69aab7b2da366edf1c50efcef37e34b4a0c50fb816336213e68d9047a
+    == lobes/templates/fleet/qwen3_reranker.jinja == the Spark's deployed copy
+  diff bak -> live: exactly two added lines under vllm-rerank:
+    596a597  - ./qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro
+    629a631  - --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja
+  env -u GATEWAY_API_KEY lobes up reranker --apply
+    -> docker compose … up -d --no-deps vllm-rerank   (worker/embed/gateway untouched)
+
+  FIRST BOOT FAILED, second succeeded (RestartCount=1, OOMKilled=false):
+    rerank-20260911T075242Z.log:
+      AssertionError: Error in memory profiling. Initial free memory 46.42 GiB,
+      current free memory 46.43 GiB. This happens when other processes sharing
+      the same container release GPU memory …
+    That is the Thor's unified-memory boot race (CLAUDE.md support table,
+    "concurrent first boot can fail on a memory race"), not the template.
+    rerank-20260911T075345Z.log (the restart):
+      non-default args: … 'chat_template': '/usr/local/share/lobes/qwen3_reranker.jinja' …
+      GPU KV cache size: 64,880 tokens, Maximum concurrency for 8,192 tokens per request: 7.92x
+      Detected the chat template content format to be 'string'.
+      Application startup complete.
+    healthy 115 s after `up` (including the failed attempt).
+
+================================================================================
+A2. AFTER — templated reranker (same script, same box)
+================================================================================
+# reranker calibration probe (#227)
+date:       2026-09-11T10:55:05+0300
+host:       thor
+url:        http://localhost:8000
+model:      Qwen/Qwen3-Reranker-0.6B
+git sha:    
+container:  vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+args:       ["/usr/local/bin/mg-logwrap","vllm","serve","Qwen/Qwen3-Reranker-0.6B","--served-model-name=Qwen/Qwen3-Reranker-0.6B","--host=0.0.0.0","--port=8000","--runner=pooling","--convert=classify","--attention-config={\"backend\": \"TRITON_ATTN\"}","--enforce-eager","--hf-overrides={\"architectures\": [\"Qwen3ForSequenceClassification\"], \"classifier_from_token\": [\"no\", \"yes\"], \"is_original_qwen3_reranker\": true}","--chat-template=/usr/local/share/lobes/qwen3_reranker.jinja","--max-model-len=8192","--gpu-memory-utilization=0.06"]
+templated:  True
+vllm:       0.26.1rc1.dev942+g5a4c8d992
+
+## probe set — relevance_score per document, usage.prompt_tokens
+
+[sky]  Q: What colour is the sky on a clear day?
+  prompt_tokens total=279 per_pair=93.0  latency=898ms
+  [0] 0.998  On a clear day the sky is blue because air scatters short wavelengths.
+  [1] 0.000  Cats purr when they are content.
+  [2] 0.000  The invoice is due on the last business day of the month.
+  ranking: [0, 1, 2]
+
+[ports-ledger]  Q: Which file lists the ports the gateway exposes?
+  prompt_tokens total=283 per_pair=94.3  latency=65ms
+  [0] 1.000  The gateway port ledger is docs/gateway-fleet.md, which lists 8000 and 8001.
+  [1] 0.000  Cats purr when they are content.
+  [2] 0.000  Bananas are a good source of potassium.
+  ranking: [0, 1, 2]
+
+[france (assess probe)]  Q: What is the capital of France?
+  prompt_tokens total=264 per_pair=88.0  latency=64ms
+  [0] 0.995  Paris is the capital and most populous city of France.
+  [1] 0.000  The Amazon rainforest spans several South American countries.
+  [2] 0.000  Bananas are a good source of potassium.
+  ranking: [0, 2, 1]
+
+[toolbatch inversion]  Q: How does the tool batcher group tool calls into one request?
+  prompt_tokens total=292 per_pair=97.3  latency=61ms
+  [0] 0.000  NOTICE: this file is generated; do not edit by hand.
+  [1] 1.000  toolbatch collects consecutive tool calls and issues them as a single batched 
+  [2] 0.000  Cats purr when they are content.
+  ranking: [1, 0, 2]
+
+[graded relevance]  Q: How do I stop the lobes fleet without deleting the deployment directory?
+  prompt_tokens total=301 per_pair=100.3  latency=52ms
+  [0] 1.000  Run `lobes stop --apply`; it runs `docker compose down`, removing the containe
+  [1] 1.000  `lobes stop` stops the fleet.
+  [2] 0.000  Cats purr when they are content.
+  ranking: [1, 0, 2]
+
+## instruction probe — same pair with and without a top-level `instruction`
+  /v1/rerank: without=[(0, 0.9999), (1, 0.0)] tokens=194
+  /v1/rerank: with   =[(0, 0.9996), (1, 0.0)] tokens=200
+  /v1/rerank: instruction changes scores: True
+  /v1/score: without=[(0, 0.9999), (1, 0.0)] tokens=194
+  /v1/score: with   =[(0, 0.9996), (1, 0.0)] tokens=200
+  /v1/score: instruction changes scores: True
+
+## latency — 1 query x 5 docs, median of 5 (1 warm-up discarded)
+  samples_ms=[48.5, 44.5, 47.3, 49.4, 45.3]
+  median_ms=47.3
+
+lobes assess --probes --role reranker --json:
+{"passed": true, "probes": {"reranker": {"role": "reranker", "probe": "rerank_relevance", "ok": true, "evidence": {"top_index": 0, "expected_index": 0, "ranking": [0, 2, 1], "prompt_tokens": {"total": 264, "per_pair": 88.0}}, "latency_ms": 82.2, "error": null}}}
+
+A. SUMMARY (Thor, before -> after)
+  prompt tokens per pair   17–30  ->  88–100
+  distractor scores        0.209–0.872 (bananas 0.872 for "capital of France")  ->  all 0.000 at 3 dp
+                           (raw values are ~1e-5, STRICTLY POSITIVE — see note below)
+  relevant documents       0.937–0.988  ->  0.995–1.000
+  toolbatch inversion      NOTICE 0.795 beside the right answer  ->  0.000
+  `instruction` honoured   False  ->  True (/v1/rerank and /v1/score)
+  median latency (1q x 5d) 43.2 ms  ->  47.3 ms
+Scores are identical to the Spark's #227 acceptance numbers AT THE PROBE'S
+3-DECIMAL PRECISION (docs/evidence/2026-08-30-accept-reranker-template-spark.txt),
+same probe set.
+
+Note — "0.000" is rounding, not an exact zero. Raw /v1/rerank relevance_score,
+"What is the capital of France?", 2026-09-11 (PR #248 review follow-up):
+  thor : Paris 0.9951247572898865 | Bananas 1.9502436771290377e-05 | Amazon 6.019133252266329e-06
+  spark: Paris 0.9953681230545044 | Bananas 1.8491691662347876e-05 | Amazon 5.395844254962867e-06
+A consumer that treats scores as strictly positive (e.g. eidetic-cli's
+`--rerank-threshold`, where a non-positive cutoff means "no cutoff") is
+unaffected; pick a small positive cutoff such as 0.01 to drop distractors.
+Latency diverges from the Spark: the Spark got FASTER (28.0 -> 18.1 ms); the
+Thor got slightly slower. The Thor lane runs `--enforce-eager` + TRITON_ATTN
+(validated sm_110 divergences), so the ~4x longer templated prompt is not
+offset the way it was on the GB10. The same saturation caveat as #227
+applies: two relevant documents both score 1.000 with the weaker one first.
+
+================================================================================
+B. SENSES — proxy to the Orin withdrawn
+================================================================================
+The Orin does not host senses — its own GET /capabilities, 2026-09-11:
+  orin senses: {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None}
+{"error": {"message": "Invalid API key. Pass this gateway's configured key as 'Authorization: Bearer <key>'.", "type": "invalid_api_key", "code": "invalid_api_key"}}
+HTTP/1.1 401 Unauthorized
+X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000
+{'feasible': False, 'ready': False, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000', 'context': 262144}
+
+Change (~/.lobes/.env, backup .env.bak-20260911-pre-senses-unproxy):
+  MULTIMODAL_PEER_ORIGIN=http://orin.tail0be7e0.ts.net:8000  -> commented out
+  MULTIMODAL_PEER_PROXY=true                                 -> commented out
+  (MULTIMODAL_FEASIBLE=false unchanged; the stale "deviation d1" topology
+   header comment rewritten to the #244 topology)
+  env -u GATEWAY_API_KEY lobes up gateway --apply     (gateway only)
+  post-recreate: inbound key UNSET (unchanged posture), no MULTIMODAL_PEER_ORIGIN in env
+
+### AFTER — Thor model=senses
+{"error": {"message": "The model `senses` is not feasible on this machine \u2014 its backend (`multimodal`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here.", "type": "role_infeasible", "code": "role_infeasible"}}
+HTTP/1.1 404 Not Found
+capabilities senses: {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'context': 32768}
+thor /v1/models: ['nvidia/Qwen3.6-35B-A3B-NVFP4', 'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Reranker-0.6B', 'unsloth/Qwen3.8-27B-NVFP4']
+### regression — Thor model=cortex (-> Spark)
+  'pong'
+X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+### regression — Spark model=worker (-> Thor)
+  'pong'
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### regression — Spark model=embedder (-> Thor)
+  dims: 1024
+X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+### Thor reranker via Thor gateway /v1/rerank
+  [(1, 0.995), (0, 0.0)]
+
+(senses `context: 32768` is the Thor's own operator-declared
+MULTIMODAL_MAX_MODEL_LEN — #234's rule: a declared window is still reported.
+Before the change it was 262144, relayed from a peer that does not host it.)
+
+================================================================================
+C. HEALTH AFTER BOTH CHANGES
+================================================================================
+lobes doctor (Thor): healthy — every check [ok], including
+  scaffold_files: all 8 expected scaffold files present
+  gateway_version_match: gateway and CLI both report lobes-cli 0.75.1
+LOBES_SMOKE_BASE_URL=http://thor.tail0be7e0.ts.net:8000 pytest tests/test_live_capabilities.py:
+  PASSED test_advertised_ready_roles_are_reachable
+  PASSED test_advertised_models_are_reachable
+  PASSED test_colleague_discovers_and_dials_generate_roles
+  FAILED test_cli_and_gateway_capabilities_agree   — harness artifact: it shells the
+         LOCAL `lobes capabilities --port 8000` on the Spark, which is not this box
+  FAILED test_deployed_gateway_version_matches_cli — main is 0.75.2 (docs/test-only
+         release), the deployed gateway 0.75.1; no runtime change between them
+
+================================================================================
+Honest scope
+================================================================================
+VALIDATED: the templated reranker on sm_110 (calibration, instruction, assess
+probe), senses honestly infeasible with no referral, no regression on the
+cortex/worker/embedder proxy paths. NOT validated: rerank ordering among
+several relevant documents (saturation, as on the Spark); serve-after-restore
+of the re-captured catalog entry.
