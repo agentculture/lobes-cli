@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 import pytest
 
@@ -346,6 +347,13 @@ def test_start_and_stop_tunnel_roundtrip(tmp_path) -> None:
     try:
         assert _tunnel.pid_path(tmp_path).is_file()
         assert _tunnel.log_path(tmp_path).is_file()
+        # /proc/<pid>/cmdline reads empty for a moment while a fresh child is
+        # still inside exec on a loaded runner, so the identity-verified pid can
+        # lag the spawn by a few ms — poll briefly instead of asserting at once
+        # (seen twice on CI's publish runner, never locally).
+        deadline = time.monotonic() + 2.0
+        while _tunnel.tunnel_pid(tmp_path) != pid and time.monotonic() < deadline:
+            time.sleep(0.02)
         assert _tunnel.tunnel_pid(tmp_path) == pid
     finally:
         status, stopped = _tunnel.stop_tunnel(tmp_path)
