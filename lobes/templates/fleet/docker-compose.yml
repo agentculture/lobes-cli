@@ -2207,30 +2207,28 @@ services:
       - LOBES_MESH_SEEDS=${LOBES_MESH_SEEDS:-}
       - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
       - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
-      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-}
+      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
+      - LOBES_MESH_DIR=${LOBES_MESH_DIR:-}
     volumes:
-      # The mesh approval ledger (mesh-brain-join, t4 / c9): the gateway's
-      # FIRST bind mount. The roster is soft, in-memory state rebuilt from
-      # heartbeats; ONLY the approval ledger persists, in a gitignored
-      # runtime file under the deployment dir (the host-side default
-      # ./mesh-ledger.json, whose name .gitignore ignores positionally),
-      # never in the lock, never rendered into .env. Read-WRITE on purpose
-      # (no :ro): the gateway appends approvals (name -> approved_by,
-      # expiry) and rewrites the file via temp file + rename.
+      # The mesh runtime directory (mesh-brain-join, t4 / c9): the gateway's
+      # FIRST bind mount. Mesh state — the approval ledger file lives here —
+      # is directory-scoped, mounted read-write under /home/gateway/mesh.
+      # The host-side default is ./mesh beside the compose file (created by
+      # Docker as a root-owned dir on first recreate; the operator must
+      # `chown 10001 <dir>` before enabling the mesh, since the gateway runs
+      # uid 10001). LOBES_MESH_DIR is a compose-interpolation-only knob: it
+      # never reaches the container as an env var, so a golden line for it
+      # does not surface (c9: a gitignored runtime directory under the
+      # deployment dir). Read-WRITE on purpose (no :ro): the gateway appends
+      # approvals (name -> approved_by, expiry) and rewrites files via temp
+      # file + rename.
       #
-      # The value is the host-side source AND the in-container mount point:
-      # the gateway process opens its own LOBES_MESH_LEDGER_PATH value, so
-      # the two sides must agree inside the container. When SET, use an
-      # ABSOLUTE path under the deployment dir — a relative value would name
-      # a mount target the engine rejects — and make the file writable by
-      # the gateway container user (uid 10001; the image runs unprivileged
-      # and never matches the host operator's uid — e.g. `chown 10001
-      # <path>`). When UNSET both sides fall back to their defaults: the
-      # host file ./mesh-ledger.json beside the compose, the in-container
-      # path under the gateway user's own home (/home/gateway/mesh-ledger.json,
-      # matching the process-side default t1's parser applies to an empty
-      # value). Mesh OFF, so the file is never opened on the default fleet.
-      - ${LOBES_MESH_LEDGER_PATH:-./mesh-ledger.json}:${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh-ledger.json}
+      # LOBES_MESH_LEDGER_PATH defaults to /home/gateway/mesh/ledger.json
+      # inside the mounted directory — the gateway process opens its own
+      # LOBES_MESH_LEDGER_PATH value. When SET to another absolute path, it
+      # must live under this mounted directory (or be another bind mount).
+      # Mesh OFF, so the ledger file is never opened on the default fleet.
+      - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:

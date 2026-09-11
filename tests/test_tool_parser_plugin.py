@@ -203,7 +203,13 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # `gateway` is again the ONLY service that moved — all twelve other
     # non-primary services stayed byte-identical, which is this tripwire
     # proving the blast radius. See tests/test_mesh_templates.py.
-    "gateway": "c861eafb67e174b292b4bc48d8a1a21232fdc04f1642b7bbc2eaa0d894c320f2",
+    #
+    # Recomputed 2026-09-11 for t4 follow-up (volume defect fix): the gateway's
+    # only volume changed from a file bind (P:P ledger) to a directory bind
+    # (./mesh:/home/gateway/mesh), and the LOBES_MESH_LEDGER_PATH passthrough
+    # gained a default (/home/gateway/mesh/ledger.json). LOBES_MESH_DIR is
+    # also added to the passthrough. See tests/test_mesh_templates.py.
+    "gateway": "65f1f2e6775e385013f1bc902760cda5ea7884320ae698559643bc47bdc63547",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

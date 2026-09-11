@@ -61,11 +61,11 @@ MESH_KEYS = (
     "LOBES_MESH_LEDGER_PATH",
 )
 
-# The in-container default the UNSET fallback names (host side defaults to
-# ./mesh-ledger.json in the deployment dir; the gateway image runs the
-# unprivileged `gateway` user, uid 10001 — see Dockerfile.gateway).
-_DEFAULT_LEDGER_CONTAINER_PATH = "/home/gateway/mesh-ledger.json"
-_DEFAULT_LEDGER_HOST_NAME = "./mesh-ledger.json"
+# The host-side default for the mesh runtime directory (compose interpolation);
+# the in-container mount is /home/gateway/mesh (the unprivileged gateway user's
+# home, per Dockerfile.gateway — uid 10001).
+_DEFAULT_LEDGER_HOST_NAME = "./mesh"
+_DEFAULT_LEDGER_CONTAINER_PATH = "/home/gateway/mesh"
 
 
 # --- compose interpolation emulation (no docker in the test suite) ---------
@@ -185,15 +185,16 @@ class TestMeshKeysOnGatewayPassthrough:
 
     def test_key_name_seeds_and_ledger_path_default_to_empty(self) -> None:
         """Mesh is OPT-IN: with nothing in .env the rendered gateway gets
-        empty values for the key/identity/seeds/ledger keys, so t1's
-        build_mesh_config sees them unset (enabled=False, c13)."""
+        empty values for the key/identity/seeds keys, so t1's
+        build_mesh_config sees them unset (enabled=False, c13). The ledger
+        path defaults to a path inside the mounted mesh directory — the
+        process never opens it when LOBES_MESH_KEY is empty."""
         gateway = _render_gateway({})
         env = {e.partition("=")[0]: e.partition("=")[2] for e in gateway["environment"]}
         for key in (
             "LOBES_MESH_KEY",
             "LOBES_MESH_NAME",
             "LOBES_MESH_SEEDS",
-            "LOBES_MESH_LEDGER_PATH",
         ):
             assert env[key] == "", f"{key} must render empty on the default fleet, got {env[key]!r}"
 
@@ -217,45 +218,46 @@ class TestMeshKeysOnGatewayPassthrough:
 
 class TestGatewayLedgerMount:
     def test_rendered_compose_mounts_ledger_read_write_when_set(self) -> None:
-        """The acceptance criterion: a rendered compose with
-        LOBES_MESH_LEDGER_PATH set mounts the file read-write into the
-        gateway. The value is the host-side source AND the in-container
-        mount point (the gateway process opens its own LOBES_MESH_LEDGER_PATH
-        value), so the entry must be ``P:P`` — and must carry no ``:ro``."""
-        path = "/home/spark/.lobes/mesh-ledger.json"
+        """Acceptance criterion: a rendered compose with
+        LOBES_MESH_LEDGER_PATH set still mounts the mesh directory read-write
+        into the gateway. The value controls the in-container ledger path
+        (defaults to /home/gateway/mesh/ledger.json); the volume itself is
+        LOBES_MESH_DIR's interpolation. The mount carries no :ro."""
+        path = "/home/spark/.lobes/mesh/ledger.json"
         gateway = _render_gateway({"LOBES_MESH_LEDGER_PATH": path})
         volumes = gateway["volumes"]
-        assert f"{path}:{path}" in volumes, (
-            f"expected the ledger bind {path!r}:{path!r} on the rendered gateway "
+        # The volume is the mesh directory bind (LOBES_MESH_DIR interpolation),
+        # not P:P — the file path is controlled by LOBES_MESH_LEDGER_PATH env.
+        assert "./mesh:/home/gateway/mesh" in volumes, (
+            f"expected the mesh dir bind mount on the rendered gateway "
             f"service, got volumes={volumes!r}"
         )
-        entry = volumes[volumes.index(f"{path}:{path}")]
-        assert ":ro" not in entry, "the ledger is read-WRITE — the gateway appends approvals"
+        entry = volumes[volumes.index("./mesh:/home/gateway/mesh")]
+        assert ":ro" not in entry, "the mesh dir is read-WRITE — the gateway appends approvals"
+        # The custom path lands in the env passthrough.
+        env = {e.partition("=")[0]: e.partition("=")[2] for e in gateway["environment"]}
+        assert env["LOBES_MESH_LEDGER_PATH"] == path
 
     def test_ledger_mount_is_the_gateway_first_volume(self) -> None:
-        """c9: the gateway service has NO volumes today — the ledger bind is
+        """c9: the gateway service has NO volumes today — the mesh dir bind is
         its first (and, on the base template, only) mount."""
         gateway = _render_gateway({})
-        assert gateway["volumes"] == [
-            f"{_DEFAULT_LEDGER_HOST_NAME}:{_DEFAULT_LEDGER_CONTAINER_PATH}"
-        ], (
-            "the gateway's volume list must be exactly the ledger bind — the "
+        assert gateway["volumes"] == [f"{_DEFAULT_LEDGER_HOST_NAME}:/home/gateway/mesh"], (
+            "the gateway's volume list must be exactly the mesh dir bind — the "
             "first volume the gateway service has ever had"
         )
 
-    def test_unset_fallback_keeps_the_ledger_in_the_deployment_dir(self) -> None:
-        """With no .env value the host side falls back to
-        ./mesh-ledger.json beside the compose (the deployment dir — c9's
-        'gitignored runtime file under the deployment dir'), and the
-        container side to the unprivileged gateway user's own home (uid
-        10001, per Dockerfile.gateway — /var/lib is not writable there)."""
+    def test_default_volume_is_mesh_dir_not_ledger_file(self) -> None:
+        """With no .env value the default volume is the mesh runtime
+        directory (./mesh:/home/gateway/mesh), not a file bind. The container
+        side defaults to /home/gateway/mesh/ledger.json inside that mount."""
         gateway = _render_gateway({})
         env = {e.partition("=")[0]: e.partition("=")[2] for e in gateway["environment"]}
-        assert env["LOBES_MESH_LEDGER_PATH"] == ""
+        assert env["LOBES_MESH_LEDGER_PATH"] == "/home/gateway/mesh/ledger.json"
         volume = gateway["volumes"][0]
         host, _, target = volume.partition(":")
         assert host == _DEFAULT_LEDGER_HOST_NAME
-        assert target == _DEFAULT_LEDGER_CONTAINER_PATH
+        assert target == "/home/gateway/mesh"
 
 
 # --- env.example documents the keys -----------------------------------------
@@ -294,26 +296,27 @@ class TestEnvExampleDocumentsMesh:
 class TestGitignoreCoversRuntimeLedger:
     def test_default_ledger_name_is_git_ignored(self, tmp_path: Path) -> None:
         """A real ``git check-ignore`` in a scratch repo carrying this
-        .gitignore: the ledger's default name is ignored wherever it lands
+        .gitignore: the ledger's default dir is ignored wherever it lands
         (including a deployment dir that ``lobes init .`` places inside a
         working tree)."""
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         (tmp_path / ".gitignore").write_text(
             _GITIGNORE.read_text(encoding="utf-8"), encoding="utf-8"
         )
-        (tmp_path / "mesh-ledger.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "mesh").mkdir()
+        (tmp_path / "mesh" / "ledger.json").write_text("{}", encoding="utf-8")
         result = subprocess.run(
-            ["git", "-C", str(tmp_path), "check-ignore", "-q", "mesh-ledger.json"],
+            ["git", "-C", str(tmp_path), "check-ignore", "-q", "mesh/ledger.json"],
             check=False,
         )
         assert result.returncode == 0, (
-            "mesh-ledger.json is NOT gitignored — the runtime approval ledger "
+            "mesh/ledger.json is NOT gitignored — the runtime approval ledger "
             "would be committable (c9/h11: a gitignored runtime file the lock "
             "never captures and the goldens never render)"
         )
 
     def test_gitignore_rule_is_positional_not_scoped(self) -> None:
-        """The rule must name the file (anywhere under the tree), the same
+        """The rule must name the directory (anywhere under the tree), the same
         positional style as the ``*.env`` secret-dotfile rule — not a
         deployment-dir-scoped path this repo's .gitignore has never needed."""
         text = _GITIGNORE.read_text(encoding="utf-8")
@@ -323,9 +326,9 @@ class TestGitignoreCoversRuntimeLedger:
             if line.strip() and not line.strip().startswith("#")
         ]
         assert any(
-            line == "mesh-ledger.json" for line in lines
-        ), "expected a bare positional `mesh-ledger.json` rule in .gitignore"
-        assert not any(line.startswith("!") and "mesh-ledger.json" in line for line in lines)
+            line == "mesh/" for line in lines
+        ), "expected a bare positional `mesh/` rule in .gitignore"
+        assert not any(line.startswith("!") and "mesh/" in line for line in lines)
 
 
 # --- criterion 3: goldens ----------------------------------------------------
@@ -356,14 +359,14 @@ class TestGoldens:
         golden (verified at commit time by the regen diff)."""
         lines = set(template_defaults_text().splitlines())
         expected = {
+            "LOBES_MESH_DIR=",
+            "LOBES_MESH_DIR=./mesh",
             "LOBES_MESH_KEY=",
             "LOBES_MESH_NAME=",
             "LOBES_MESH_SEEDS=",
             "LOBES_MESH_HEARTBEAT_S=60",
             "LOBES_MESH_MISSED_MAX=3",
-            "LOBES_MESH_LEDGER_PATH=",
-            f"LOBES_MESH_LEDGER_PATH={_DEFAULT_LEDGER_HOST_NAME}",
-            f"LOBES_MESH_LEDGER_PATH={_DEFAULT_LEDGER_CONTAINER_PATH}",
+            "LOBES_MESH_LEDGER_PATH=/home/gateway/mesh/ledger.json",
         }
         assert expected <= lines, f"missing from the golden: {expected - lines}"
         mesh_only = {line for line in lines if line.startswith("LOBES_MESH_")}
