@@ -124,17 +124,14 @@ def test_deep_gear_wires_even_without_the_shallow_gear() -> None:
 
 def test_deep_gear_has_no_feasibility_or_peer_channel() -> None:
     # embed-deep shares the embedder role's responsibility contract, so it gets
-    # no RoleProfile, no *_FEASIBLE, and no peer referral/proxy knobs — exactly
-    # like every other opt-in gear (minor / middle / multimodal-coder).
-    from lobes.gateway._config import (
-        FEASIBLE_ENV,
-        PEER_API_KEY_ENV,
-        PEER_ORIGIN_ENV,
-        PEER_PROXY_ENV,
-    )
+    # no RoleProfile and no *_FEASIBLE knob — exactly like every other opt-in
+    # gear (minor / middle / multimodal-coder). Retired (t14): the peer
+    # referral/proxy dicts (PEER_ORIGIN_ENV/PEER_PROXY_ENV/PEER_API_KEY_ENV)
+    # this test also checked embed-deep's absence from are deleted along with
+    # the rest of the env peer family — there is nothing left to check there.
+    from lobes.gateway._config import FEASIBLE_ENV
 
-    for table_ in (FEASIBLE_ENV, PEER_ORIGIN_ENV, PEER_PROXY_ENV, PEER_API_KEY_ENV):
-        assert "embed-deep" not in table_
+    assert "embed-deep" not in FEASIBLE_ENV
 
     table, _ = build_config({"EMBED_URL": _EMBED_URL, "EMBED_DEEP_BASE_URL": _DEEP_URL})
     assert "embed-deep" not in table.infeasible
