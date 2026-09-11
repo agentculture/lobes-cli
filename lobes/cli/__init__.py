@@ -88,6 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import learn as _learn_cmd
     from lobes.cli._commands import logs as _logs_cmd
     from lobes.cli._commands import measure as _measure_cmd
+    from lobes.cli._commands import mesh as _mesh_cmd
     from lobes.cli._commands import overview as _overview_cmd
     from lobes.cli._commands import route as _route_cmd
     from lobes.cli._commands import run as _run_cmd
@@ -130,6 +131,9 @@ def _build_parser() -> argparse.ArgumentParser:
     _up_cmd.register(sub)
     _logs_cmd.register(sub)
     _tunnel_cmd.register(sub)
+    # Mesh membership (mesh-brain-join, t10): status is read-only; request/
+    # approve/revoke are write verbs — dry-run by default, --apply commits.
+    _mesh_cmd.register(sub)
 
     # Inference / eval verbs (read-only; no --apply needed).
     _eval_cmd.register(sub)
