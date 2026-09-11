@@ -990,7 +990,8 @@ per-role env var per core role in the deployment's `.env` — honest referral
 (`<PREFIX>_PEER_ORIGIN`, mirroring the `*_FEASIBLE` flags), then a second
 opt-in to actually forward on the caller's behalf
 (`<PREFIX>_PEER_PROXY`/`<PREFIX>_PEER_API_KEY`, see `lobes explain gateway`'s
-"Proxy-lobes" section), then a plural replica-pool form
+"Retired" section), then a plural replica-pool form that composed on TOP of
+the awake/asleep(referral)/proxy states above — not a fourth one
 (`<PREFIX>_PEER_ORIGINS`/`<PREFIX>_PEER_API_KEYS`, VALIDATED live 2026-08-25
 for `cortex` only on the Spark+Thor NVFP4 pair — see `lobes explain
 gateway`'s "Replica pools" section). This family is RETIRED as the
