@@ -740,7 +740,9 @@ def test_unknown_model_still_404s_model_not_found_never_proxied() -> None:
     # anywhere (not wired, not an alias, not the proxied role's served id) is a
     # model_not_found 404 — never silently forwarded to the peer under the
     # default model's identity.
-    table, cfg, specs = _build(_thor_env(), **_thor_kwargs())  # default_model routes to the PROXIED cortex
+    table, cfg, specs = _build(
+        _thor_env(), **_thor_kwargs()
+    )  # default_model routes to the PROXIED cortex
     resp, calls = _post(table, cfg, specs, b'{"model":"never-advertised-id"}')
     assert calls == []
     assert resp.status == 404

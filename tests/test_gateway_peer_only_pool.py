@@ -602,9 +602,7 @@ def test_the_singular_key_is_inherited_when_no_plural_slots_are_declared() -> No
 
 
 def test_a_replica_that_is_not_the_singular_peer_never_borrows_its_key() -> None:
-    table, _cfg = _build_config(
-        _orin_env(), **_orin_kwargs(replica_api_keys={"primary": ("", "")})
-    )
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs(replica_api_keys={"primary": ("", "")}))
     assert S._replica_api_key(table, "primary", _SPARK) == _SPARK_KEY
     assert S._replica_api_key(table, "primary", _THOR) == ""
 

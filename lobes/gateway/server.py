@@ -1629,9 +1629,7 @@ def _strip_peer_pool_markers(headers: list[tuple[str, str]]) -> list[tuple[str, 
     return [(k, v) for k, v in headers if k.lower() not in _PEER_POOL_MARKERS]
 
 
-def _mesh_referral_origin(
-    mesh_snapshot: "RoutingSnapshot | None", backend_name: str
-) -> str | None:
+def _mesh_referral_origin(mesh_snapshot: "RoutingSnapshot | None", backend_name: str) -> str | None:
     """The origin of a verified mesh member hosting ``backend_name``, or ``None``.
 
     The referral 404's honesty source (t14): the retired env peer family

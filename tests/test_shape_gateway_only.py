@@ -298,9 +298,7 @@ def test_dropped_role_404s_role_infeasible_and_refers_the_declared_peer() -> Non
 
     env = _gateway_only_env("spark")
     table, cfg = build_config(env)
-    table = dataclasses.replace(
-        table, peer_origins={"primary": "http://cortex-peer.local:8001"}
-    )
+    table = dataclasses.replace(table, peer_origins={"primary": "http://cortex-peer.local:8001"})
     opener, calls = _opener()
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], json.dumps({"model": "cortex"}).encode(), opener

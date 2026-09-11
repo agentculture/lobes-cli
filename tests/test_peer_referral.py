@@ -39,8 +39,6 @@ from __future__ import annotations
 import dataclasses
 import json
 
-import pytest
-
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 from lobes.gateway._mesh_routing import build_snapshot
@@ -144,15 +142,17 @@ def _mesh_snapshot_for(role: str, origin: str = _THOR_ORIGIN, name: str = "thor"
                     "name": name,
                     "origin": origin,
                     "schema_version": "1.0.0",
-                    "roles": {role: RoleInfo(
-                        model=_SENSES_ID,
-                        runtime="vllm",
-                        context=32768,
-                        quant="NVFP4A16",
-                        responsibilities=("generate",),
-                        forbidden_responsibilities=(),
-                        fingerprint=fp,
-                    )},
+                    "roles": {
+                        role: RoleInfo(
+                            model=_SENSES_ID,
+                            runtime="vllm",
+                            context=32768,
+                            quant="NVFP4A16",
+                            responsibilities=("generate",),
+                            forbidden_responsibilities=(),
+                            fingerprint=fp,
+                        )
+                    },
                 },
             )(),
         },

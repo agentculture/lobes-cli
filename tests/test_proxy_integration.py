@@ -1278,7 +1278,9 @@ def _bind_handler(box) -> None:
     )
 
 
-def _wire_gateway(httpd, base: str, env: dict[str, str], log: list, table_kwargs: dict | None = None):
+def _wire_gateway(
+    httpd, base: str, env: dict[str, str], log: list, table_kwargs: dict | None = None
+):
     """Serve an already-bound gateway with the pool DORMANT (no caches yet).
 
     Two phases, deliberately: :func:`S.build_replica_caches` probes every
@@ -1410,9 +1412,7 @@ def _n_gateways(n: int = 2, pool_env=None):
             keys_override = override.pop("PRIMARY_PEER_API_KEYS", None)
             table_kwargs = _pool_table_kwargs(peers)
             if keys_override is not None:
-                table_kwargs["replica_api_keys"] = {
-                    "primary": tuple(keys_override.split(","))
-                }
+                table_kwargs["replica_api_keys"] = {"primary": tuple(keys_override.split(","))}
             env.update(override)
             boxes.append(_wire_gateway(httpd, base, env, [], table_kwargs=table_kwargs))
         for box in boxes:

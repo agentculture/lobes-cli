@@ -191,9 +191,7 @@ def test_passthrough_in_override_overlay_counts(tmp_path, monkeypatch):
         "      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}\n",
         encoding="utf-8",
     )
-    (tmp_path / ".env").write_text(
-        "PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8")
     monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
     result = D._gateway_passthrough_check(tmp_path)
     assert result["passed"] is True, result
@@ -209,9 +207,7 @@ def test_passthrough_under_another_service_does_not_count(tmp_path, monkeypatch)
         "      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}\n",
         encoding="utf-8",
     )
-    (tmp_path / ".env").write_text(
-        "PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8")
     monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
     result = D._gateway_passthrough_check(tmp_path)
     assert result["passed"] is False, result
