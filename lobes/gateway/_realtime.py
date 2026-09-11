@@ -127,7 +127,9 @@ def is_websocket_upgrade(headers: Iterable[tuple[str, str]]) -> bool:
     return upgrade == "websocket" and "upgrade" in tokens
 
 
-def plan_realtime_upgrade(table, cfg, path: str, headers: Iterable[tuple[str, str]]):
+def plan_realtime_upgrade(
+    table, cfg, path: str, headers: Iterable[tuple[str, str]], *, mesh_stt_origin: str | None = None
+):
     """Decide what to do with a ``/v1/realtime`` request. Pure.
 
     Returns a :class:`TunnelTarget` to tunnel, or a :class:`RealtimeRefusal`.
@@ -146,7 +148,7 @@ def plan_realtime_upgrade(table, cfg, path: str, headers: Iterable[tuple[str, st
             kind="role_infeasible",
             status=404,
             role=REALTIME_ROLE,
-            peer_origin=getattr(table, "peer_origins", {}).get(REALTIME_ROLE),
+            peer_origin=getattr(table, "peer_origins", {}).get(REALTIME_ROLE) or mesh_stt_origin,
         )
     if not cfg.audio_url:
         return RealtimeRefusal(kind="audio_not_configured", status=404)

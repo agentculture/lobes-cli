@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING
 
 from lobes.gateway._authlog import RejectionLog
 from lobes.gateway._mesh_config import MeshConfig, MeshConfigError, build_mesh_config
+from lobes.gateway._mesh_routing import build_snapshot
+from lobes.gateway._mesh_roster import TickResult
 from lobes.gateway._mesh_wire import (
     SCHEMA_MAJOR,
     Announcement,
@@ -91,10 +93,12 @@ class MeshRoutes:
         self._join_log = _join_log
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._reannounce_event = threading.Event()
-        # Pending joins are initialized here (finding 11: never getattr default).
         self._pending: list[_PendingJoin] = []
+        self._announcements: dict[str, Announcement] = {}
+        self._verify_event = threading.Event()
+        self._holder: SnapshotHolder | None = None
 
     @classmethod
     def build(
@@ -358,6 +362,17 @@ class MeshRoutes:
             self.roster.announce(name, origin, None, now=roster_now)
         except Exception as exc:
             if "conflict" in str(exc).lower() or "already held" in str(exc).lower():
+                # Drop any stored announcement from an origin that no longer
+                # matches the roster record for *name*.
+                rec = self.roster._roster.get(name)  # noqa: SLF001
+                if rec is not None:
+                    current_origin = rec.origin
+                    stale_origins = [
+                        o for o, a in self._announcements.items()
+                        if a.origin != current_origin
+                    ]
+                    for o in stale_origins:
+                        self._announcements.pop(o, None)
                 return (
                     409,
                     [
@@ -375,6 +390,13 @@ class MeshRoutes:
                     ).encode(),
                 )
             raise
+
+        # Store the decoded announcement keyed by origin for snapshot rebuilds.
+        self._announcements[origin] = public
+
+        # Mark verification as dirty so the heartbeat loop rebuilds the
+        # snapshot with updated announcement data.
+        self._verify_event.set()
 
         return (
             200,
@@ -488,6 +510,8 @@ class MeshRoutes:
         self.roster.approve(str(name), approved_by, expiry_abs, now=roster_now)
         # Finding 6: persist the ledger.
         self.roster.save()
+        # Mark verification as dirty.
+        self._verify_event.set()
         return (
             200,
             [("Content-Type", "application/json")],
@@ -548,6 +572,17 @@ class MeshRoutes:
         self.roster.revoke(str(name), now=roster_now, approved_by=approved_by)
         # Finding 6: persist the ledger.
         self.roster.save()
+        # Remove the revoked member's announcement and rebuild the snapshot
+        # so revoked members get zero forwards immediately.
+        with self._lock:
+            self._announcements.pop(name, None)
+            snap = build_snapshot(self.roster, announcements=self._announcements)
+            if self._holder is not None:
+                from lobes.gateway._mesh_routing import MeshRoutingView
+
+                self._holder.replace(
+                    MeshRoutingView(snapshot=snap, peer_states={})
+                )
         return (
             200,
             [("Content-Type", "application/json")],
@@ -648,11 +683,13 @@ def _build_announcement(
 
     # Collect ready, hosted roles from the local gateway.
     # Finding 1: build real roles from the gateway's own data.
+    from lobes.roles import BACKEND_ROLE
+
     if readiness_cache is not None:
         # Use readiness cache to determine which roles are ready.
+        # current() returns a flat dict[str, bool|None], not a nested dict.
         try:
-            current = readiness_cache.current()
-            ready_roles: dict = current.get("roles", {})
+            ready_roles: dict[str, bool | None] = readiness_cache.current()  # type: ignore[assignment]
         except (AttributeError, TypeError):
             ready_roles = {}
     else:
@@ -660,9 +697,11 @@ def _build_announcement(
 
     # Build per-role RoleInfo from lane configs or from replica caches.
     for backend_name, lane_config in (declared_lane_configs or {}).items():
-        role_name = backend_name
+        # Convert backend name → role name (mesh speaks roles: cortex, senses, …)
+        role_name = BACKEND_ROLE.get(backend_name, backend_name)
+
         # Check readiness: only include ready+hosted roles.
-        if ready_roles and role_name not in ready_roles:
+        if ready_roles and ready_roles.get(role_name) is not True:
             continue
 
         # Get live fingerprint from replica cache if available.
@@ -670,13 +709,13 @@ def _build_announcement(
         if replica_caches and role_name in replica_caches:
             cache = replica_caches[role_name]
             try:
-                snapshot = cache.snapshot()
-                if isinstance(snapshot, dict):
-                    local_replicas = snapshot.get("local_replicas", [])
-                    if local_replicas:
-                        rep_state = local_replicas[0]
-                        if isinstance(rep_state, dict):
-                            fp = rep_state.get("fingerprint")
+                # cache.current() returns tuple[ReplicaState]; find local=True.
+                states = cache.current()
+                if isinstance(states, (list, tuple)):
+                    for st in states:
+                        if getattr(st, "local", False):
+                            fp = getattr(st, "fingerprint", None)
+                            break
             except (AttributeError, TypeError):
                 fp = None
 
@@ -752,14 +791,14 @@ def build_mesh_routes(
 
     # Finding 10: inject missed_max into Roster.
     if missed_max is not None:
-        from lobes.gateway._mesh_roster import Roster as _Roster
-
-        # Reconstruct with the injected missed_max.
-        roster = _Roster(clock=clock, ledger_path=config.ledger_path, capacity_max=1000000.0)
-        # Store it on the roster for the heartbeat to access.
-        roster._missed_max_override = missed_max  # noqa: SLF001
+        roster = _Roster(clock=clock, ledger_path=config.ledger_path, missed_max=missed_max)
 
     routes = MeshRoutes(config, roster, _join_log=join_log)
+    # Create the snapshot holder and attach it to routes.
+    from lobes.gateway._mesh_routing import SnapshotHolder
+
+    holder = SnapshotHolder(roster)
+    routes._holder = holder  # noqa: SLF001
 
     # Build the initial announcement from gateway data (finding 1).
     announcement = _build_announcement(
@@ -862,6 +901,7 @@ def _heartbeat_loop(
     interval: float,
     stop_event: threading.Event,
     reannounce_event: threading.Event,
+    holder: "SnapshotHolder | None" = None,
 ) -> None:
     """Background thread that announces the local member to seeds + roster.
 
@@ -902,17 +942,46 @@ def _heartbeat_loop(
             continue
 
         # Finding 10: tick the roster once per pass under the lock.
-        with routes._lock:
-            try:
-                routes.roster.tick()
-            except Exception:  # nosec B110 — best-effort: tick never blocks
-                pass
+        tick_result: TickResult
+        try:
+            with routes._lock:
+                try:
+                    tick_result = routes.roster.tick()
+                except Exception:  # nosec B110 — best-effort: tick never blocks
+                    tick_result = TickResult()
 
-            # Collect the announcement to send.
-            if routes._announcement_bytes is not None:
-                to_send = routes._announcement_bytes
-            else:
-                to_send = announcement_bytes
+                # Drop refresh: prune announcements for any dropped members.
+                if tick_result.dropped > 0 and holder is not None:
+                    try:
+                        from lobes.gateway._mesh_routing import MeshRoutingView
+
+                        for mname in list(routes.roster.members()):
+                            rec = routes.roster._roster.get(mname)  # noqa: SLF001
+                            if rec is not None:
+                                routes._announcements.pop(rec.origin, None)
+                        snap = build_snapshot(
+                            routes.roster, announcements=routes._announcements
+                        )
+                        holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
+                    except Exception:  # nosec B110 — best-effort: drop refresh never blocks
+                        pass
+
+                # Verification pass: rebuild snapshot if verification is dirty.
+                if routes._verify_event.is_set():
+                    routes._verify_event.clear()
+                    try:
+                        _run_verify_pass(routes, holder)
+                    except Exception:  # nosec B110 — verification is best-effort
+                        pass
+
+                # Collect the announcement to send.
+                if routes._announcement_bytes is not None:
+                    to_send = routes._announcement_bytes
+                else:
+                    to_send = announcement_bytes
+        except Exception:  # nosec B110 — best-effort: lock block never blocks
+            tick_result = TickResult()
+            to_send = announcement_bytes
 
         if to_send is None:
             continue
@@ -931,7 +1000,7 @@ def _heartbeat_loop(
         # Finding 3: first fetch from seed roster.
         if seeds:
             try:
-                _fetch_seed_roster(seeds, routes.config.key, routes.roster, dial_timeout)
+                _fetch_seed_roster(seeds, routes.config.key, routes.roster, routes, dial_timeout)
             except Exception:  # nosec B110 — best-effort: seed fetch never blocks
                 pass
 
@@ -977,6 +1046,7 @@ def _fetch_seed_roster(
     key: str | None,
     roster: "Roster",
     timeout: float,
+    routes: "MeshRoutes | None" = None,
 ) -> None:
     """GET /mesh/roster from every seed and merge entries (finding 3)."""
     bearer = f"Bearer {key}" if key else None
@@ -1016,7 +1086,11 @@ def _fetch_seed_roster(
                                 mname = member.get("name", "")
                                 morigin = member.get("origin", "")
                                 if mname and morigin:
-                                    roster.announce(mname, morigin, None, now=time.monotonic())
+                                    if routes is not None:
+                                        with roster._lock:
+                                            roster.announce(mname, morigin, None, now=time.monotonic())
+                                    else:
+                                        roster.announce(mname, morigin, None, now=time.monotonic())
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass
         except Exception:  # nosec B110 — best-effort: seed roster fetch never blocks
@@ -1026,6 +1100,127 @@ def _fetch_seed_roster(
                 conn.close()
             except Exception:  # nosec B110 — silently ignore close errors
                 pass
+
+
+def _run_verify_pass(
+    routes: "MeshRoutes",
+    holder: "SnapshotHolder | None",
+) -> None:
+    """Run a verification pass and rebuild the snapshot.
+
+    Lightweight wrapper around :func:`verify_members` that runs on the
+    heartbeat thread.  Does nothing when the holder is not yet available.
+    """
+    if holder is None:
+        return
+    try:
+        verify_members(routes, holder)
+    except Exception:  # nosec B110 — verification is best-effort
+        pass
+
+
+def verify_members(
+    routes: "MeshRoutes",
+    holder: "SnapshotHolder",
+    join_key: str | None = None,
+    timeout: float | None = None,
+) -> None:
+    """Verify announced members by probing ``/capabilities``.
+
+    For each roster member with a stored announcement:
+
+    1. GET ``<origin>/capabilities`` with ``Authorization: Bearer <join_key>``
+    2. For each announced role, compare fingerprints
+    3. Store verified roles
+    4. Rebuild snapshot
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from lobes.gateway._mesh_routing import MeshRoutingView, verify_member_roles
+    from lobes.gateway._readiness import (
+        _PEER_PROBE_TIMEOUT,
+        _default_peer_opener,
+    )
+    from lobes.gateway._mesh_wire import decode
+
+    key = join_key or (routes.config.key if hasattr(routes.config, "key") else None)
+    probe_timeout = timeout or _PEER_PROBE_TIMEOUT
+
+    # Collect members with stored announcements.
+    members_to_verify: list[tuple[str, str, Announcement]] = []
+    with routes._lock:
+        for mname in list(routes.roster.members()):
+            rec = routes.roster._roster.get(mname)  # noqa: SLF001
+            if rec is None:
+                continue
+            origin = rec.origin
+            ann = routes._announcements.get(origin)
+            if ann is not None:
+                members_to_verify.append((mname, origin, ann))
+
+    if not members_to_verify:
+        # Rebuild snapshot even without verification (e.g. stale data).
+        snap = build_snapshot(routes.roster, announcements=routes._announcements)
+        holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
+        return
+
+    # Probe all members in parallel.
+    verified_by_origin: dict[str, frozenset[str]] = {}
+
+    def _probe_peer(member_data: tuple[str, str, Announcement]) -> tuple[str, frozenset[str]]:
+        """Probe one member's /capabilities and verify roles."""
+        _mname, origin, ann = member_data
+        try:
+            get_caps = _default_peer_opener
+            status, body = get_caps(
+                origin.rstrip("/") + "/capabilities",
+                probe_timeout,
+                key,
+            )
+            if status != 200:
+                return origin, frozenset()
+
+            payload = json.loads(body)
+            roles_data = payload.get("roles", {})
+
+            # Build the probed_roles dict per the verify_member_roles signature.
+            probed_roles: dict[str, dict] = {}
+            for role_name, role_entry in roles_data.items():
+                if not isinstance(role_entry, dict):
+                    continue
+                role_fp = role_entry.get("fingerprint")
+                probed_roles[role_name] = {
+                    "fingerprint": role_fp,
+                    "ready": role_entry.get("ready"),
+                }
+
+            # Compare announced vs probed fingerprints.
+            verified = verify_member_roles(ann, probed_roles)
+            return origin, verified
+
+        except Exception:  # nosec B110 — best-effort: probe never blocks
+            return origin, frozenset()
+
+    max_workers = min(8, len(members_to_verify))
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_probe_peer, md): md for md in members_to_verify
+        }
+        for fut in as_completed(futures):
+            try:
+                origin, verified = fut.result(timeout=probe_timeout)
+                if verified:
+                    verified_by_origin[origin] = verified
+            except Exception:  # nosec B110 — best-effort: drop failed probes
+                pass
+
+    # Build the verified_roles mapping for build_snapshot.
+    snap = build_snapshot(
+        routes.roster,
+        announcements=routes._announcements,
+        verified_roles=verified_by_origin,
+    )
+    holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 
 
 def start_mesh(
@@ -1048,6 +1243,7 @@ def start_mesh(
             routes.config.heartbeat_s,
             routes._stop,  # Use the __init__ stop event.
             routes._reannounce_event,
+            routes._holder,
         ),
         name="lobes-mesh-heartbeat",
         daemon=True,

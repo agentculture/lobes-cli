@@ -839,7 +839,7 @@ class TestAnnouncementConstruction:
             },
             local_capacities={"embed": 16.0},
         )
-        role = announcement.roles["embed"]
+        role = announcement.roles["embedder"]
         assert role.model == "sentence-transformers/all-MiniLM-L6-v2"
 
 

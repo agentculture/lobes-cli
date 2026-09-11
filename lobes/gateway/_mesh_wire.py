@@ -181,24 +181,29 @@ def decode(data: bytes) -> Announcement:
     # --- role info (per-lane fingerprint + capacity) ----------------------
     roles: dict[str, RoleInfo] = {}
     for role_name, role_obj in obj.get("roles", {}).items():
-        fp_obj = role_obj["fingerprint"]
-        capacity = role_obj.get("capacity")
-        roles[role_name] = RoleInfo(
-            model=role_obj["model"],
-            runtime=role_obj["runtime"],
-            context=role_obj["context"],
-            quant=role_obj["quant"],
-            responsibilities=tuple(role_obj["responsibilities"]),
-            forbidden_responsibilities=tuple(role_obj["forbidden_responsibilities"]),
-            fingerprint=Fingerprint(
-                served_id=fp_obj["served_id"],
-                quantization=fp_obj["quantization"],
-                max_model_len=fp_obj["max_model_len"],
-                runtime=fp_obj["runtime"],
-            ),
-            capacity=float(capacity) if capacity is not None else None,
-            private=bool(role_obj.get("private", False)),
-        )
+        try:
+            fp_obj = role_obj["fingerprint"]
+            capacity = role_obj.get("capacity")
+            roles[role_name] = RoleInfo(
+                model=role_obj["model"],
+                runtime=role_obj["runtime"],
+                context=role_obj["context"],
+                quant=role_obj["quant"],
+                responsibilities=tuple(role_obj["responsibilities"]),
+                forbidden_responsibilities=tuple(role_obj["forbidden_responsibilities"]),
+                fingerprint=Fingerprint(
+                    served_id=fp_obj["served_id"],
+                    quantization=fp_obj["quantization"],
+                    max_model_len=fp_obj["max_model_len"],
+                    runtime=fp_obj["runtime"],
+                ),
+                capacity=float(capacity) if capacity is not None else None,
+                private=bool(role_obj.get("private", False)),
+            )
+        except (KeyError, ValueError) as exc:
+            raise ValueError(
+                f"malformed role {role_name!r}: {exc}"
+            ) from exc
 
     return Announcement(
         name=obj["name"],

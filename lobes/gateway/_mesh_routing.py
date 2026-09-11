@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_roster import Roster
-    from lobes.gateway._mesh_wire import Announcement
+    from lobes.gateway._mesh_wire import Announcement, Fingerprint
+    from lobes.gateway._replicas import Fingerprint as ReplicaFingerprint, ReplicaState
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +104,110 @@ class RoutingSnapshot:
 
 
 # ---------------------------------------------------------------------------
+# MeshRoutingView + wire fingerprint converter
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MeshRoutingView:
+    """Bundle of routing snapshot + per-origin replica states.
+
+    Replaces ``RoutingSnapshot | None`` on :class:`SnapshotHolder` so that
+    consumers can also inspect live replica state per peer.
+    """
+
+    snapshot: RoutingSnapshot
+    peer_states: Mapping[str, Mapping[str, "ReplicaState"]]
+
+
+# ---------------------------------------------------------------------------
+# Fingerprint verification
+# ---------------------------------------------------------------------------
+
+
+def verify_member_roles(
+    announced: "Announcement",
+    probed_roles: dict[str, dict],  # role -> {fingerprint: {...}, ready: bool|None}
+) -> frozenset[str]:
+    """Compare announced fingerprints against probed fingerprints.
+
+    Returns the frozenset of role names that are verified (compatible AND ready).
+    Roles with no fingerprint key or with incompatible fingerprints are excluded.
+    """
+    verified: list[str] = []
+    for role_name, probed_entry in probed_roles.items():
+        if role_name not in announced.roles:
+            continue
+        # Skip if probed entry has no fingerprint key.
+        if "fingerprint" not in probed_entry:
+            continue
+        # Skip if probed entry is not ready.
+        if probed_entry.get("ready") is not True:
+            continue
+
+        # Get the announced fingerprint.
+        announced_fp = announced.roles[role_name].fingerprint
+        # Get the probed fingerprint.
+        probed_fp_data = probed_entry.get("fingerprint")
+
+        # Convert both to replica Fingerprint for comparison.
+        announced_replica_fp: ReplicaFingerprint | None = (
+            _wire_fingerprint_to_replica(announced_fp)
+            if announced_fp is not None
+            else None
+        )
+        probed_replica_fp: ReplicaFingerprint | None = (
+            _wire_fingerprint_to_replica(probed_fp_data)
+            if probed_fp_data is not None
+            else None
+        )
+
+        # Run comparison.
+        from lobes.gateway._replicas import compare_fingerprints
+
+        compatible, _reason = compare_fingerprints(
+            announced_replica_fp, probed_replica_fp
+        )
+        if compatible:
+            verified.append(role_name)
+
+    return frozenset(verified)
+
+
+# ---------------------------------------------------------------------------
+# Wire fingerprint converter
+# ---------------------------------------------------------------------------
+
+
+def _wire_fingerprint_to_replica(
+    fp: "Fingerprint | None",
+) -> "lobes.gateway._replicas.Fingerprint | None":  # noqa: F821 — resolved at runtime
+    """Convert a wire :class:`~lobes.gateway._mesh_wire.Fingerprint` to a
+    replica :class:`~lobes.gateway._replicas.Fingerprint`.
+
+    Conversions:
+    * ``max_model_len=0`` → ``None`` (unknown)
+    * ``null`` / ``""`` fields → ``None`` (unknown)
+    * Otherwise pass through.
+    """
+    if fp is None:
+        return None
+
+    from lobes.gateway._replicas import Fingerprint as ReplicaFingerprint
+
+    return ReplicaFingerprint(
+        served_id=fp.served_id if fp.served_id else None,  # type: ignore[arg-type]
+        max_model_len=None if fp.max_model_len == 0 else fp.max_model_len,
+        runtime=fp.runtime if fp.runtime else None,  # type: ignore[arg-type]
+        quantization=fp.quantization if fp.quantization else None,  # type: ignore[arg-type]
+        kv_cache_dtype="",
+        reasoning_parser="",
+        tool_parser="",
+        speculative_config="",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
 
@@ -153,6 +258,9 @@ def build_snapshot(
     ann_map: dict[str, Announcement] = {} if announcements is None else dict(announcements)
     ver_map: dict[str, frozenset[str]] = {} if verified_roles is None else dict(verified_roles)
 
+    # Collect the set of known origins from the roster so we can prune stale data.
+    roster_origins: set[str] = set()
+
     members: list[MemberInfo] = []
 
     for name in roster.members():
@@ -161,6 +269,7 @@ def build_snapshot(
             continue
 
         origin = rec.origin
+        roster_origins.add(origin)
         # Announcement roles.
         ann: Announcement | None = ann_map.get(origin)
         if ann is not None:
@@ -195,6 +304,10 @@ def build_snapshot(
             )
         )
 
+    # Prune stale announcements and verified roles to origins still in the roster.
+    ann_map = {o: a for o, a in ann_map.items() if o in roster_origins}
+    ver_map = {o: v for o, v in ver_map.items() if o in roster_origins}
+
     # Build announcement tuples for lookups.
     ann_tuples: list[tuple[str, Announcement]] = []
     for origin, ann in ann_map.items():
@@ -217,54 +330,56 @@ class SnapshotHolder:
     Usage:
         holder = SnapshotHolder(roster)
         # Background thread:
-        with holder.update() as snap:
-            # snap is a RoutingSnapshot; mutate nothing — just replace.
-            ...
-        holder.replace(new_snapshot)
+        new_view = holder.update(...)  # Returns MeshRoutingView
+        holder.replace(new_view)
 
         # Request handler:
-        current = holder.current()  # Returns RoutingSnapshot | None
-        # current is immutable; no lock is held.
-        ...
+        view = holder.current()  # Returns MeshRoutingView | None
+        if view is not None:
+            snap = view.snapshot
+            ...
         # Dial: no lock.
+
+    The holder stores a :class:`MeshRoutingView` (snapshot + peer states), not
+    just a bare :class:`RoutingSnapshot`.  The ``update`` method is a
+    convenience builder – it is **not** a context manager.
     """
 
     def __init__(self, roster: "Roster") -> None:
         self._roster = roster
         self._lock = threading.Lock()
-        self._snapshot: RoutingSnapshot | None = None
+        self._snapshot: MeshRoutingView | None = None
 
-    def replace(self, snapshot: RoutingSnapshot) -> None:
-        """Replace the current snapshot.  Atomic with respect to .current()."""
+    def replace(self, view: MeshRoutingView) -> None:
+        """Replace the current view.  Atomic with respect to .current()."""
         with self._lock:
-            self._snapshot = snapshot
+            self._snapshot = view
 
-    def current(self) -> RoutingSnapshot | None:
-        """Return the current snapshot (immutable, not held under lock)."""
+    def current(self) -> MeshRoutingView | None:
+        """Return the current view (immutable, not held under lock)."""
         with self._lock:
             snap = self._snapshot
         return snap
 
-    def update(self, **kwargs) -> RoutingSnapshot:
-        """Build a new snapshot from the current roster and kwargs, then replace.
+    def update(self, **kwargs) -> MeshRoutingView:
+        """Build a new view from the current roster and kwargs, then replace.
 
         Convenience method: read the roster under the lock, build, and replace
-        atomically.  Returns the new snapshot.
+        atomically.  Returns the new :class:`MeshRoutingView`.
         """
         # Read roster members under lock.
         with self._lock:
             roster_members = list(self._roster.members())
-            member_records = {}
-            for mname in roster_members:
-                rec = self._roster._roster.get(mname)  # noqa: SLF001
-                if rec is not None:
-                    member_records[mname] = rec
 
         # Build the snapshot outside the lock.
         new_snap = build_snapshot(self._roster, **kwargs)
+        view = MeshRoutingView(
+            snapshot=new_snap,
+            peer_states={},  # peer_states wired by the caller; empty by default.
+        )
         with self._lock:
-            self._snapshot = new_snap
-        return new_snap
+            self._snapshot = view
+        return view
 
 
 # ---------------------------------------------------------------------------
