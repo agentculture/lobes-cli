@@ -24,6 +24,7 @@
 
 - Mesh membership becomes RUNTIME-MUTABLE gateway state: a box admitted by key or by operator approval (timed or permanent) is added to the peer set of a RUNNING gateway with no restart. Today RoutingTable is frozen at process start (lobes/gateway/`_routing.py`:44 frozen dataclass; server.py:4230-4258 bakes it onto the handler) and ReplicaCache.`_peers` is a tuple fixed at `__init__` (`_replicas.py`:719) with no add/remove-peer method.
   - honesty: A member restarted or disconnected disappears from every other member's roster after a bounded number of missed heartbeats and requests for its roles either pool elsewhere or 404 `role_infeasible` naming no `hosted_by` — never hang.
+  - honesty: The mutable routing state is a copy-on-write snapshot swapped atomically; the request path never takes a lock across a dial, and an in-flight request keeps the snapshot it started with.
 - The heartbeat is one more background daemon thread started in serve() (lobes/gateway/server.py:4261-4328), following the PressureCache/ReadinessCache/ReplicaCache pattern (Event.wait(interval) loop, `_tier_request.py`:223-229), interval configurable with a 60 s default. It cannot live in the CLI: every verb is exec-once and no daemon/systemd/cron surface exists (lobes/cli/`__init__.py`:82-152; repo grep).
   - instruction: Unit test: fake opener that sleeps past the timeout on one peer; assert other peers' rosters refresh within one interval and `handle_post` latency is unaffected.
   - honesty: The heartbeat thread never blocks the request path and its interval is read from one env key with a 60 s default; a hung peer delays no other peer's probe.
@@ -38,7 +39,7 @@
 - Every new gateway env key lands on the gateway service's explicit environment passthrough list (lobes/templates/fleet/docker-compose.yml:1784-2088; the silent-inert trap is documented at :2055-2058), in lobes/templates/fleet/env.example, and — for any new secret key name — in scripts/`scan_deployment_secrets.py`:37-38, which only knows the existing \*`_PEER_`\* vocabulary.
   - instruction: Extend the existing `_gateway_passthrough_check` test table with the new keys; CI secrets-scan fixture contains the join key name with a value and must fail.
   - honesty: Every new env key appears on the gateway compose passthrough, in env.example, and (for secrets) in the secrets scan; a key set in .env but missing from the list is caught by lobes doctor's passthrough check.
-- The membership roster and approval ledger are RUNTIME STATE in a new git-ignored location, not rendered .env keys: no runtime state directory exists today (lobes/runtime/ holds only pure modules), the deployment lock allowlist excludes every \*`_PEER_`\* key by operator decision (lobes/runtime/`_lock.py`:44-49, 96-125), and tests/goldens only capture the profile->env pure function (tests/goldens/regen.py:1-24), so runtime state leaves goldens and lock untouched.
+- Membership state is RUNTIME state, never a rendered .env key: the roster is in-memory soft state rebuilt from heartbeats, and only the approval ledger persists, in a git-ignored runtime file under the deployment dir bind-mounted into the gateway (the gateway service has no volumes today — docker-compose.yml gateway block — so this is its first). The deployment lock allowlist (lobes/runtime/`_lock.py`:44-49, 96-125) and tests/goldens (regen.py:1-24) stay untouched.
   - instruction: Test: `lock_keys`() does not contain any roster/ledger key; regen goldens unchanged; .gitignore covers the runtime file.
   - honesty: Roster and approval ledger live under the deployment dir in a git-ignored runtime file that the lock never captures and the goldens never render.
 - Role-name conflict handling: a member's lane for role R joins the plain 'R' pool only on fingerprint agreement (served id, quantization, `max_model_len`, runtime — `compare_fingerprints`, `_replicas.py`:602-626); on disagreement it is exposed as 'R-<machine-name>', a new served alias listed on /v1/models and /capabilities of every member, addressable like any role and never silently substituted for plain 'R'. <machine-name> is the member's own declared name, never a hostname derived by a peer.
@@ -52,6 +53,48 @@
 - Private roles (cheap, additive): a member's announcement carries an optional per-role private flag (one boolean beside the existing RoleInfo fields, lobes/roles.py:471-568); a private role is omitted from what the member broadcasts, so it never enters any peer's roster, pool, or auto-proxy, while staying addressable locally. No new endpoint, no new state beyond the announcement payload.
   - instruction: Test: member announces {cortex: private}; peer roster lacks it; local model=cortex still 200.
   - honesty: A role announced private is absent from every other member's roster, /v1/models and /capabilities, yet answers locally.
+- Roster is SOFT, in-memory state rebuilt from heartbeats (no file, survives nothing, needs nothing); only the approval LEDGER (member name, approved-by, expiry) persists, in a git-ignored runtime file under the deployment dir bind-mounted into the gateway via a new compose volume — the first volume the gateway service has ever had (docker-compose.yml gateway block has none today).
+  - instruction: Test: gateway starts with an empty ledger file path and an empty roster; after two fake heartbeats the roster has two members; restart -> roster empty, ledger intact.
+  - honesty: After a gateway restart the roster is empty until the next heartbeats arrive, while the ledger file is unchanged; no roster content is ever written to disk.
+- Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce `LOBES_MESH_SEEDS` (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (tail0be7e0.ts.net) where multicast does not cross nodes.
+  - instruction: Test: a box with one seed learns all N members from the seed's roster within one interval; a box with no seeds and no key behaves byte-identically to today.
+  - honesty: A joining box with `LOBES_MESH_SEEDS` naming one live member learns every other member without any other box being edited; with no seeds and no key, nothing dials out.
+- Member-to-member forwarding authenticates with the join key as bearer: each member's inbound gate accepts EITHER its own `GATEWAY_API_KEY` (clients) OR the mesh join key (members), replacing the per-box `PEER_API_KEY` copy (`_replicas.py`:283 attaches Authorization from the declared peer key today). The caller's own Authorization is still stripped before forwarding.
+  - instruction: Test: forward from A to B carries Bearer <join key>; B with `GATEWAY_API_KEY` set accepts it; a forward with a client key or no key is 401.
+  - honesty: No member ever sends a client's bearer to another member; every forwarded request carries the join key and nothing else in Authorization.
+- Documentation and catalog follow the replacement in the same PR: docs/gateway-fleet.md, deployment-shapes.md, colleague-stack.md, openai-api.md, secret-rotation.md, env.example, lobes explain, and CLAUDE.md describe the join-key mesh and retire the \*`_PEER_`\* family (cite-don't-delete: the old sections move under a 'Retired' heading); deployments/jetson-agx-`thor__thor`-worker is re-captured because its verbatim compose carries the old passthrough list (no capture verb: call lobes.runtime.`_lock`.`capture_lock` directly).
+  - instruction: doc-test-alignment pass: grep docs/ for `PEER_ORIGIN` outside 'Retired' headings returns nothing; secrets-scan passes on the re-captured Thor entry.
+  - honesty: No doc outside a 'Retired' heading references \*`_PEER_ORIGIN`, \*`_PEER_PROXY`, \*`_PEER_API_KEY` or \*`_PEER_ORIGINS` after the change; the re-captured Thor catalog entry passes the secrets scan.
+- Member identity: `LOBES_MESH_NAME`, a short operator-typed name required whenever the join key is set (no default from hostname — variation.py:1-13 records why hostname is never identity). It is the '{role}-{machine-name}' suffix source and the ledger key; a join whose name collides with a live, differently-originated member is refused with `mesh_name_conflict`.
+  - instruction: Test: two fake members announce name 'spark' from different origins -> second refused; same origin re-announcing is an update.
+  - honesty: A member with the join key but no `LOBES_MESH_NAME` refuses to start the mesh thread with a named error rather than deriving a name.
+- Timed approval is enforced by IDENTITY, not by the key: every member's ledger (gossiped with the roster) records name -> expiry; an announcement from a lapsed or revoked name is refused by every member even when it carries the join key, and 'lobes mesh approve' on any one member propagates to all within one interval. Rotating the join key itself remains a fleet-wide restart, documented in docs/secret-rotation.md.
+  - instruction: Test: approve name X for 1 s; after expiry X's announcement is refused with `mesh_approval_expired` on two members that never saw the approve call directly.
+  - honesty: A lapsed name is refused by a member that never processed the approve call directly, proving the ledger gossips.
+- Trust but verify: an announcement is a HINT. A receiver adds a role to a pool or to auto-proxy only after its own probe of the announcer's GET /capabilities confirms the announced fingerprint and ready — the live-probed-never-config-derived rule (#220) survives; a mismatch between announcement and probe marks the member 'unverified' in lobes mesh status and routes nothing to it.
+  - instruction: Test: member announces cortex fingerprint F1 but its /capabilities probe returns F2 -> not pooled, status shows unverified.
+  - honesty: A member whose probe disagrees with its announcement receives zero forwarded requests and shows 'unverified' in lobes mesh status.
+- Announcements carry a schema version; a receiver ignores unknown fields from a newer member and refuses an incompatible major with `mesh_schema_incompatible` (named in lobes mesh status), so a fleet upgraded one box at a time never silently drops members.
+  - instruction: Test: announcement with version+1 and an extra field is accepted; version with a different major is refused and visible in status.
+  - honesty: A member two minor versions ahead, sending one unknown field, is admitted; a different major is refused with a named error visible in status.
+- Fingerprint changes re-announce immediately: lobes switch / lobes up / a lane going unhealthy trigger an announcement at once, not at the next 60 s tick; receivers re-verify (F8) and move the lane between the plain pool and its suffixed name; in-flight requests complete on the lane they started on.
+  - instruction: Test: fake member changes quantization -> peers reflect the suffixed lane on the next probe, well under one heartbeat interval.
+  - honesty: The interval between lobes switch completing on member A and member B reflecting the new lane is bounded by B's probe refresh (5 s), not by the heartbeat interval.
+- CLI surface: 'lobes mesh status' (members, last-heartbeat age, approval expiry, verified/unverified, roles incl. suffixed and private), 'lobes mesh request' (keyless ask from a box without the key), 'lobes mesh approve <name> \[--for <duration>\]' and 'lobes mesh revoke <name>' — the write verbs dry-run by default with --apply, registered like the fleet noun (lobes/cli/`_commands`/fleet.py:169-213). lobes capabilities renders members and suffixed lanes; every mesh answer carries X-Lobes-Mesh-Member naming the serving member.
+  - instruction: Golden test of lobes mesh status output against a fake roster; --apply convention test as for fleet up.
+  - honesty: lobes mesh approve without --apply changes nothing and prints the plan; every mesh answer carries X-Lobes-Mesh-Member.
+- Raw served-id addressing (deployed consumers pin ids, e.g. culture.yaml model: vllm-local/<id>): a raw id resolves to the local lane if hosted, else to the plain pool for that id; a raw id that exists only on suffixed (fingerprint-divergent) lanes 404s `role_infeasible` with `hosted_by` listing the suffixed names rather than picking one.
+  - instruction: Test: raw id hosted only as cortex-thor and cortex-orin -> 404 listing both; hosted locally -> local.
+  - honesty: A raw id hosted on divergent lanes only is never answered by one of them; the 404 body lists every suffixed name.
+- The keyless detect and join-request endpoints are bounded: at most N pending join requests (default 8) with a TTL, one request per origin, rate-limited, and rejections logged through the collapsed `_authlog` pattern so a scanner cannot flood logs or memory. Detect returns only 'a mesh exists, name of this member, schema version' — never the roster.
+  - instruction: Test: 100 join requests from one fake origin -> one pending entry; detect body contains no member list.
+  - honesty: Under a flood of keyless join requests memory stays bounded at N pending entries and the log shows one collapsed line, not one per request.
+- Cutover rollback: before touching a box, its ~/.lobes is copied to ~/.lobes.pre-mesh-<UTC timestamp> and the previous `MODEL_GEAR_VERSION` recorded; rollback = copy back + recreate the gateway with the four -f compose files (Spark) / env -u `GATEWAY_API_KEY` (Thor). The evidence transcript names the backup path per box.
+  - instruction: Evidence: ls of the backup dir on all three boxes before the first change.
+  - honesty: The backup directory exists on every box before its .env is modified, and the transcript names it.
+- Containment of a misbehaving member: announced capacity passes the existing `resolve_capacity` clamp (`CAPACITY_CLAMP_MAX`=64, `_replicas.py`:455-497); a flapping member (joins/leaves > 3 times in 10 intervals) is held out for one interval with reason `mesh_flapping` in status; nothing a member announces can remove another member.
+  - instruction: Test: clamp applied to a fake announcement of capacity 10^6; flapping fake member held out.
+  - honesty: A fake announcement with capacity 10^6 ranks with weight <= 64; a flapping member is held out for one interval and shown as `mesh_flapping`.
 
 ## Honesty conditions
 
@@ -64,10 +107,14 @@
 - render.py, `shape_render.py` and schema.py contain no mesh, roster, peer or self-origin logic after the change.
 - No committed file under deployments/, docs/evidence/ or tests/goldens/ contains a join key value; the scan fails on a fixture that does.
 - Delivering the join key to an approved requestor travels over the same tailnet HTTP the gateways already trust (no TLS at this layer per docs/gateway-fleet.md); the approval flow must state this rather than imply a secure channel.
+- 'Approve' on ANY member is enough: the approval and the delivered key reach the requestor once, and every other member learns the approval by gossip — the operator never repeats it per box.
+- The keyless detect endpoint never returns the roster or any member origin; the keyed roster endpoint returns it in full.
 - Observed end-to-end on the live fleet, with the roster listing captured before and after the join and after the removal.
 - The pre-cutover state is captured verbatim before any change (the three .env peer blocks, redacted keys, and the stale Orin pool entry).
 - Adding a member never requires editing any other member's files.
 - Each numbered signal is measured on the live fleet, with the number recorded, and any that fails is recorded as failed rather than dropped.
+- GET /v1/realtime on a member that lacks stt returns 404 `role_infeasible` even while another member announces stt.
+- doctor reports a named finding when the shell's `LOBES_MESH_KEY` differs from the .env value.
 
 ## Success signals
 
@@ -88,6 +135,10 @@
   - instruction: grep gate in tests: none of MESH/PEER/`SELF_ORIGIN` symbols appear in lobes/profiles/; shape goldens unchanged except the new gateway-only shape.
 - No mesh credential ever enters deployment.lock.toml or deployments/: keys stay in .env / .secrets.env / runtime state, and the secrets-scan CI job (.github/workflows/tests.yml:83-114) learns any new key name.
   - instruction: secrets-scan fixture test plus a grep of the evidence transcript before commit.
+- Auto-wired proxying covers POST lanes only; GET /v1/realtime (WebSocket tunnel) stays local-only exactly as today — the proxy-lobes forwarder is POST-only (lobes/gateway/`_realtime.py`:19, docs/realtime-pipeline.md:688).
+  - instruction: Test: a member without stt answers 404 `role_infeasible` on /v1/realtime even when another member announces stt.
+- The join key is read from .env / .secrets.env via the compose passthrough only; lobes doctor warns when the invoking shell exports a different value (the Thor ~/.bashrc trap, issue #209), since compose interpolates shell env ahead of .env.
+  - instruction: doctor test: shell env `LOBES_MESH_KEY` != .env value -> named finding.
 
 ## Non-goals
 
@@ -128,6 +179,22 @@
   - seeds: `c19`
 - `s13` — `user decisions q1-q6 (2026-09-11)`: Every member is the brain (no hub); dynamic membership REPLACES the typed peer family; one mesh-wide join key with request/approve delivery; roster keyed, detect/join keyless; queue = today's load balancing; auto-wire proxying with '{role}-{machine-name}' suffix on fingerprint conflict.
   - seeds: `c21`, `c22`, `c23`, `c24`, `c25`, `c26`, `c27`, `c28`, `c29`
+- `s14` — `challenge pass / adjacent-systems lens: lobes/templates/fleet/docker-compose.yml gateway block, _realtime.py:19, deployments/jetson-agx-thor__thor-worker, docs/*`: Gateway has NO volumes (contradicts c9's file roster); realtime forwarder is POST-only; the Thor catalog entry carries the old passthrough verbatim; six docs plus CLAUDE.md describe the retired family.
+  - seeds: `c37`, `c40`, `c41`
+- `s15` — `challenge pass / hidden-dependency lens: tailnet transport (tail0be7e0.ts.net), no multicast; _replicas.py:283 outbound bearer`: Every member is the brain, but the FIRST contact needs a typed seed — no broadcast on a tailnet; member-to-member auth must move from per-box peer keys to the join key.
+  - seeds: `c38`, `c39`
+- `s16` — `challenge pass / unstated-assumptions lens: lobes/variation.py:1-13 (hostname never identity), announcement trust, version skew`: No member-name concept exists; suffix and ledger need one. Announced fingerprints are self-declared — the #220 live-probe rule must survive. Mixed lobes versions across members were unaddressed.
+  - seeds: `c42`, `c43`, `c44`, `c45`
+- `s17` — `challenge pass / lifecycle-and-actors lens: lobes switch/up, lobes/cli verb registry, culture.yaml raw-id consumers`: A fingerprint change mid-run, the absent CLI verb family, and raw-id addressing on divergent lanes were all unspecified.
+  - seeds: `c46`, `c47`, `c48`
+- `s18` — `challenge pass / security lens: keyless endpoints, _authlog.py, issue #209 shell-env trap`: Keyless detect/join are unauthenticated surfaces needing bounds; the join key inherits the Thor ~/.bashrc interpolation trap.
+  - seeds: `c49`, `c50`
+- `s19` — `challenge pass / concurrency-and-distributed-state lens: frozen RoutingTable (_routing.py:44), roster agreement`: Copy-on-write snapshot swap needed; no consensus by design, staleness bounded by missed-heartbeat count.
+  - seeds: `c51`
+- `s20` — `challenge pass / observability-rollback-containment lens: capacity clamp _replicas.py:455-497, cutover procedure`: Rollback path and backup naming were missing from the cutover decision; capacity clamp already contains bogus announcements; flapping needed a rule.
+  - seeds: `c52`, `c53`
+- `s21` — `challenge pass / hardware lens: Spark GB10, Thor sm_110, Orin sm_87`: Clean: no lane budget, kernel, or engine change is implied — the mesh layer touches only the gateway container. Residual: a gateway-only shape on the Orin has never been booted (#108).
+- `s22` — `challenge pass / data-loss lens: .env, ~/.lobes, eidetic stores`: Clean for data: the cutover rewrites .env only, with a full-dir backup required (F16); downtime is approved. Residual: consumers mid-request during the gateway recreate get connection errors, not corruption.
 
 ## Decisions
 
@@ -139,6 +206,8 @@
 - Auto-wire proxying for every role a member lacks. When two members serve the same role with DIFFERENT config or capabilities (fingerprint mismatch), the conflicting lanes are exposed under the suffixed name '{role}-{machine-name}' so every role name means exactly one thing; matching fingerprints pool under the plain role name.
 - Cutover approved: the Spark, Thor and Orin migrate off the typed peer family onto the join key in one move, implemented over ssh thor@thor / ssh orin@orin, with downtime as needed.
 - hand is proxied like any other role a member lacks; no never-proxied carve-out. Whether a member can mark a role PRIVATE (served locally, withheld from the mesh) is a follow-up unless it is cheap.
+- No consensus protocol: each member routes on its OWN roster view; two members may briefly disagree about a third. A member is dropped from a view after 3 missed heartbeats (default, configurable), so staleness is bounded at ~3 intervals and the mesh never blocks waiting for agreement.
+  - instruction: Test: stop a fake member's heartbeats -> removed after the 3rd missed tick, not before; requests for its roles pool elsewhere or 404.
 
 ## Hard questions
 
@@ -149,11 +218,15 @@
 - Auth posture of the new join/heartbeat endpoint: /capabilities and /status are keyless by design (server.py:195-238) while every /v1/\* and POST is bearer-gated. Should announcements be accepted only with the join key or an approved identity (recommended), and should the roster itself be readable keylessly like /capabilities? (resolved: decided by the user 2026-09-11 -> c24)
 - 'Queue mechanism works out of the box' — today the outcomes are dispatch, forward to a less-loaded compatible replica, or 429 shed; only vLLM's own engine queue waits (`_pressure_policy.py`:98-111, server.py:1513-1521). Is auto-formed pooling with today's dispatch/forward/shed enough, or is a gateway-level bounded WAIT (hold the request until a slot frees anywhere in the pool) in scope? (resolved: decided by the user 2026-09-11 -> c25)
 - A member that serves a role NOBODY else serves (a new model, e.g. the second Spark brings senses) must be reachable from every other member. Today that is the singular proxy path (feasible:false + `PEER_ORIGIN` + `PEER_PROXY`). Should membership auto-wire proxying for roles a box lacks, or only pooling for roles it already hosts? (resolved: decided by the user 2026-09-11 -> c26)
+- contradiction with The gateway service in lobes/templates/fleet/docker-compose.yml declares NO volumes (probe: awk over the gateway block finds no volumes: key), so a roster file 'under the deployment dir' is invisible to the container as written.? (resolved: Resolved by the user confirming amended c9 (2026-09-11): roster in-memory, approval ledger persisted via a new gateway bind mount.)
 
 ## Open parks
 
 - [unknown_nonblocking] Service-rate weighting so a heterogeneous pool does not slow down under load (issue #232): PeerReplica.weight exists but no channel populates it. Not needed to form the pool; needed before any throughput claim.
+- [unknown_nonblocking] Join-key rotation without a fleet-wide restart (e.g. accepting old+new for one interval).
 - [follow_up] Fleet hygiene before live validation: Orin `MODEL_GEAR_VERSION` pin drift (0.63.1 vs 0.70.0 served), missing `GATEWAY_SELF_ORIGIN` on Orin, lobes CLI absent on Thor and Orin, stale Thor entry in Orin's cortex pool.
+- [follow_up] Raw-id requests under local pressure are not forwarded (#215, pressure gate is tier-alias-only); an auto-formed pool inherits this divergence until #215 lands. (Re-parked: v4 was resolved by mistake in place of the hygiene park v3.)
+- [follow_up] LAN-local zero-config discovery (mDNS) for robots on the same Wi-Fi with no tailnet — seeds suffice for this fleet; revisit when a box joins without a tailnet address.
 
 ## Resolved vagueness
 
