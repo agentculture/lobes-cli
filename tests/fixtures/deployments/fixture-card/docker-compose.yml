@@ -11,6 +11,11 @@ services:
     environment:
       - GATEWAY_API_KEY=${GATEWAY_API_KEY}
       - PRIMARY_MODEL=${PRIMARY_MODEL:-fixture/Fixture-Primary}
+      # mesh-brain-join (t4): the fleet join key rides the gateway's scoped
+      # environment in PURE template form (no value at rest) — the committed
+      # line the secrets-scan test plants a value into (tests/
+      # test_scan_deployment_secrets.py).
+      - LOBES_MESH_KEY=${LOBES_MESH_KEY}
     ports:
       - "8000:8000"
   vllm-primary:

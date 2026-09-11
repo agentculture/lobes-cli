@@ -2186,6 +2186,49 @@ services:
       - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
       - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
       - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
+      # Mesh join (mesh-brain-join, t4): the six LOBES_MESH_* keys the
+      # gateway's MeshConfig parses (lobes/gateway/_mesh_config.py, t1). Same
+      # silent-inert trap as the capacity block above: the gateway does not
+      # use env_file, so a key set in .env but absent from this list never
+      # reaches the container and the mesh is silently OFF.
+      # Unset LOBES_MESH_KEY (the default) keeps the mesh OFF — no heartbeat
+      # thread, every /mesh/* route 404s, byte-identical to the pre-mesh
+      # contract (c13); the other five keys are inert without it. The
+      # heartbeat interval and the missed-max carry their PARSER defaults
+      # (60 / 3) rather than an empty passthrough on purpose: the container
+      # never reads .env itself, so an empty value would reach t1's parser
+      # as an empty string, which it rejects with a named error. Every other
+      # mesh key keeps the empty default, so nothing the parser derives
+      # moves on the default fleet. LOBES_MESH_KEY is a SECRET (the fleet's
+      # shared join credential) — see scripts/scan_deployment_secrets.py and
+      # env.example's "Mesh join" section.
+      - LOBES_MESH_KEY=${LOBES_MESH_KEY:-}
+      - LOBES_MESH_NAME=${LOBES_MESH_NAME:-}
+      - LOBES_MESH_SEEDS=${LOBES_MESH_SEEDS:-}
+      - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
+      - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
+      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
+      - LOBES_MESH_DIR=${LOBES_MESH_DIR:-}
+    volumes:
+      # The mesh runtime directory (mesh-brain-join, t4 / c9): the gateway's
+      # FIRST bind mount. Mesh state — the approval ledger file lives here —
+      # is directory-scoped, mounted read-write under /home/gateway/mesh.
+      # The host-side default is ./mesh beside the compose file (created by
+      # Docker as a root-owned dir on first recreate; the operator must
+      # `chown 10001 <dir>` before enabling the mesh, since the gateway runs
+      # uid 10001). LOBES_MESH_DIR is a compose-interpolation-only knob: it
+      # never reaches the container as an env var, so a golden line for it
+      # does not surface (c9: a gitignored runtime directory under the
+      # deployment dir). Read-WRITE on purpose (no :ro): the gateway appends
+      # approvals (name -> approved_by, expiry) and rewrites files via temp
+      # file + rename.
+      #
+      # LOBES_MESH_LEDGER_PATH defaults to /home/gateway/mesh/ledger.json
+      # inside the mounted directory — the gateway process opens its own
+      # LOBES_MESH_LEDGER_PATH value. When SET to another absolute path, it
+      # must live under this mounted directory (or be another bind mount).
+      # Mesh OFF, so the ledger file is never opened on the default fleet.
+      - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh
     ports:
       - "${VLLM_PORT:-8000}:8000"
     healthcheck:
