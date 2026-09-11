@@ -366,6 +366,18 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
             elif info.get("hosted_by"):
                 lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
+        # Mesh-brain-join (task t10, c47/h38): the mesh member actually
+        # serving this role, and any '{role}-{machine}' suffixed lanes a
+        # fingerprint disagreement exposed (task t8 wires these onto the
+        # live gateway payload). Both are ADDITIVE — a non-mesh gateway or
+        # the offline .env-derived fallback simply never has these keys, so
+        # `.get` renders nothing extra rather than guessing.
+        member = info.get("member")
+        if member:
+            lines.append(f"          served by mesh member: {member}")
+        suffixed = info.get("suffixed_lanes")
+        if suffixed:
+            lines.append(f"          suffixed lanes: {', '.join(suffixed)}")
     return "\n".join(lines)
 
 
