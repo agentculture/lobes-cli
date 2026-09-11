@@ -12,6 +12,7 @@ one. No real credential appears anywhere in this file.
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
@@ -438,3 +439,114 @@ def test_dockerfile_bare_arg_and_comments_stay_clean(tmp_path: Path) -> None:
     )
 
     assert scan_paths(tmp_path, DEFAULT_SCAN_GLOBS) == []
+
+
+# --- mesh-brain-join (t4): the join key learns the gate ---------------------
+#
+# LOBES_MESH_KEY is the fleet-wide mesh join credential — the replacement
+# for the per-pair *_PEER_API_KEY family (spec c8/c18/h17). It is a SECRET
+# whose value must never enter a committed deployment artifact; the other
+# five LOBES_MESH_* keys (name, seeds, heartbeat, missed-max, ledger path)
+# are operator-typed and NOT secret-shaped.
+
+
+def test_lobes_mesh_key_is_a_known_secret() -> None:
+    assert scan_deployment_secrets._is_secret_key("LOBES_MESH_KEY")
+
+
+def test_the_other_mesh_keys_are_not_secret_shaped() -> None:
+    for key in (
+        "LOBES_MESH_NAME",
+        "LOBES_MESH_SEEDS",
+        "LOBES_MESH_HEARTBEAT_S",
+        "LOBES_MESH_MISSED_MAX",
+        "LOBES_MESH_LEDGER_PATH",
+    ):
+        assert not scan_deployment_secrets._is_secret_key(key), key
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "${LOBES_MESH_KEY}",
+        "${LOBES_MESH_KEY:-}",
+        "${LOBES_MESH_KEY-}",
+    ],
+)
+def test_mesh_key_template_forms_are_not_flagged(tmp_path: Path, value: str) -> None:
+    box = tmp_path / "deployments" / "spark-box"
+    box.mkdir(parents=True)
+    (box / "docker-compose.yml").write_text(f"LOBES_MESH_KEY={value}\n")
+
+    assert scan_paths(tmp_path, DEFAULT_SCAN_GLOBS) == []
+
+
+def test_planted_mesh_key_value_fails(tmp_path: Path) -> None:
+    box = _write_clean_tree(tmp_path)
+
+    (box / "docker-compose.override.yml").write_text(
+        "\n".join(
+            [
+                "services:",
+                "  gateway:",
+                "    environment:",
+                f"      - LOBES_MESH_KEY={_FAKE_TOKEN}",
+                "",
+            ]
+        )
+    )
+
+    findings = scan_paths(tmp_path, DEFAULT_SCAN_GLOBS)
+
+    assert [f.key for f in findings] == ["LOBES_MESH_KEY"]
+    assert findings[0].value == _FAKE_TOKEN
+    assert main(["--root", str(tmp_path)]) == 1
+
+
+def test_committed_fixtures_carry_the_mesh_key_in_template_form() -> None:
+    """The CI-scanned fixture (tests/fixtures/deployments/fixture-card) names
+    the key in PURE template form, so a planted value has a realistic line to
+    land on — and the committed line itself trips nothing."""
+    compose = (
+        Path(__file__).resolve().parents[1]
+        / "tests"
+        / "fixtures"
+        / "deployments"
+        / "fixture-card"
+        / "docker-compose.yml"
+    )
+    assert "LOBES_MESH_KEY=${LOBES_MESH_KEY}" in compose.read_text(encoding="utf-8")
+
+
+def test_planted_mesh_key_in_committed_fixture_fails_the_ci_scan(tmp_path: Path) -> None:
+    """Acceptance criterion 2, run the way CI runs it: the job scans
+    ``--root <repo>/tests/fixtures`` (the default globs name deployments/**
+    relative to that root). Copy the committed fixture tree, plant a
+    LOBES_MESH_KEY value in the fixture-card's gateway environment, and the
+    scanner must fail with that finding."""
+    fixtures = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+    root = tmp_path / "fixtures-root"
+    shutil.copytree(fixtures, root)
+
+    compose = root / "deployments" / "fixture-card" / "docker-compose.yml"
+    compose.write_text(
+        compose.read_text(encoding="utf-8").replace(
+            "- LOBES_MESH_KEY=${LOBES_MESH_KEY}", f"- LOBES_MESH_KEY={_FAKE_TOKEN}"
+        ),
+        encoding="utf-8",
+    )
+
+    findings = scan_paths(root, DEFAULT_SCAN_GLOBS)
+
+    assert [(f.key, f.value) for f in findings] == [("LOBES_MESH_KEY", _FAKE_TOKEN)]
+    assert main(["--root", str(root)]) == 1
+
+
+def test_committed_fixture_tree_is_scan_clean() -> None:
+    """The tree CI actually scans stays green: the template-form line
+    committed into the fixture must not itself trip the gate (h17 — no
+    committed file carries a join key value)."""
+    fixtures = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+
+    assert scan_paths(fixtures, DEFAULT_SCAN_GLOBS) == []

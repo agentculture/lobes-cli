@@ -160,6 +160,15 @@ activemq-data/
 # snapshots of rendered .env output, not secrets) — un-ignore them so a
 # newly generated golden stays stageable. See tests/goldens/README.md.
 !tests/goldens/**/*.env
+# mesh-brain-join (t4): the approval ledger's default runtime file name
+# (LOBES_MESH_LEDGER_PATH's deployment-dir default — see
+# lobes/templates/fleet/docker-compose.yml's gateway volumes block). It is a
+# gitignored RUNTIME file under the deployment dir: never a lock, never a
+# golden. Positional, like the *.env rule above — `lobes init .` can place
+# the deployment dir inside a working tree, so the name is ignored wherever
+# it appears (a custom LOBES_MESH_LEDGER_PATH name is the operator's to
+# gitignore).
+mesh-ledger.json
 .envrc
 .venv
 env/

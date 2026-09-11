@@ -192,7 +192,18 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # which were inert for the same reason. `gateway` is again the ONLY
     # service that moved; no vLLM lane was touched. The new guard against
     # this whole class of gap is tests/test_gateway_env_passthrough_guard.py.
-    "gateway": "95fa6d9cf4eb802b1bbb8ab6489501d1202030eb9469f1e87d0e8e75933ee039",
+    #
+    # Recomputed 2026-09-11 for the mesh-brain-join plan (t4): `gateway`
+    # gained the six `LOBES_MESH_*` passthroughs (KEY/NAME/SEEDS/LEDGER_PATH
+    # empty defaults; HEARTBEAT_S=60 / MISSED_MAX=3 carry their parser
+    # defaults) and its FIRST `volumes:` block — the approval ledger's
+    # read-write bind mount (spec c9; the host side defaults to
+    # ./mesh-ledger.json in the deployment dir, the container side to
+    # /home/gateway/mesh-ledger.json under the unprivileged gateway user).
+    # `gateway` is again the ONLY service that moved — all twelve other
+    # non-primary services stayed byte-identical, which is this tripwire
+    # proving the blast radius. See tests/test_mesh_templates.py.
+    "gateway": "c861eafb67e174b292b4bc48d8a1a21232fdc04f1642b7bbc2eaa0d894c320f2",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

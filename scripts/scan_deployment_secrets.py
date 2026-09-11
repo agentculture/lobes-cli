@@ -39,7 +39,20 @@ from typing import Iterable, Iterator
 # patterns cover every role prefix (PRIMARY_, MULTIMODAL_, MUSE_, WORKER_,
 # HAND_, ASSOCIATE_, EMBED_, RERANK_, STT_, TTS_, ...) without enumerating
 # roles, so a future role's key is covered by construction.
-_EXACT_SECRET_KEYS = frozenset({"GATEWAY_API_KEY", "CULTURE_VLLM_API_KEY", "HF_TOKEN"})
+#
+# LOBES_MESH_KEY (mesh-brain-join, t4) is the fleet's shared join credential
+# — the replacement for the per-pair *_PEER_API_KEY family — and is an exact
+# name rather than a suffix pattern because it protects ONE fleet, not a
+# role prefix. The other LOBES_MESH_* keys (name, seeds, heartbeat,
+# missed-max, ledger path) are operator-typed, not secret-shaped.
+_EXACT_SECRET_KEYS = frozenset(
+    {
+        "GATEWAY_API_KEY",
+        "CULTURE_VLLM_API_KEY",
+        "HF_TOKEN",
+        "LOBES_MESH_KEY",
+    }
+)
 _SECRET_KEY_SUFFIXES = ("_PEER_API_KEY", "_PEER_API_KEYS", "_PEER_ORIGIN", "_PEER_ORIGINS")
 
 # Glob patterns, relative to the scan root, naming every committed
