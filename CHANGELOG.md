@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.3] - 2026-09-11
+
+### Added
+
+- Evidence `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`: the #227 reranker judge-prompt template rolled out to the Jetson AGX Thor (distractors 0.21–0.87 -> all 0.000, relevant 0.995–1.000, `instruction` now honoured, byte-identical to the Spark's #227 scores; 43.2 -> 47.3 ms median on sm_110's eager/TRITON lane), including the first boot's unified-memory race and its clean restart; and the Thor's `senses` -> Orin proxy withdrawn (the Orin does not host it), so `model=senses` 404s `role_infeasible` with no `hosted_by`.
+
+### Changed
+
+- `deployments/jetson-agx-thor__thor-worker/` re-captured from the live Thor at 0.75.1: `docker-compose.yml` gains the two #227 reranker lines, `qwen3_reranker.jinja` is now committed and locked, and the lock's evidence points at the new transcript. `[env]` is unchanged. A restore from the old capture would have booted the uncalibrated reranker.
+- `VARIATION.md` for that entry: senses is infeasible with no peer, the cross-box worker path is now covered (#247), and the `.env`-digest claim is corrected (a catalog entry cannot carry `.env` in `[files]`, because every entry must be committed beside the lock).
+- `docs/qwen3-reranker-0.6b.md` rollout section now shows per-box template status (Spark and Thor templated; the Orin is still untemplated), and CLAUDE.md records that no box in the mesh serves `senses` today.
+
 ## [0.75.2] - 2026-09-11
 
 ### Added

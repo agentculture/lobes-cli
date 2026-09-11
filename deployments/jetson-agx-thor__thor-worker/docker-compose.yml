@@ -594,6 +594,7 @@ services:
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ./qwen3_reranker.jinja:/usr/local/share/lobes/qwen3_reranker.jinja:ro
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -627,6 +628,7 @@ services:
       # mid-request). See #109/#106.
       - ${RERANK_ENFORCE_EAGER:---no-enforce-eager}
       - '--hf-overrides={"architectures": ["Qwen3ForSequenceClassification"], "classifier_from_token": ["no", "yes"], "is_original_qwen3_reranker": true}'
+      - --chat-template=/usr/local/share/lobes/qwen3_reranker.jinja
       - --max-model-len=${RERANK_MAX_MODEL_LEN:-8192}
       - --gpu-memory-utilization=${RERANK_GPU_MEM_UTIL:-0.06}
     healthcheck:

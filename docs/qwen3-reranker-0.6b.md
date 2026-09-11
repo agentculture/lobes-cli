@@ -213,11 +213,23 @@ given box is templated; the probe's PASS rule is unchanged (ordering only).
 
 ### Rollout — by-box divergence, accepted
 
-Validated on the **DGX Spark only** (decision q3). The Jetson AGX Thor and the
-Jetson AGX Orin also host `vllm-rerank` and **serve untemplated scores until
-their next `lobes init --apply`**. That divergence window is accepted, not
-overlooked: during it, two boxes in the same mesh answer the same rerank request
-on different score scales.
+This was first validated on the **DGX Spark only** (decision q3), with the
+other boxes serving untemplated scores until they were rolled. That divergence
+window is accepted, not overlooked: during it, boxes in the same mesh answer
+the same rerank request on different score scales.
+
+| box | templated | evidence |
+|---|---|---|
+| DGX Spark GB10 | yes, 2026-08-30 | `docs/evidence/2026-08-30-accept-reranker-template-spark.txt` |
+| Jetson AGX Thor (sm_110) | yes, 2026-09-11 | `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt` |
+| Jetson AGX Orin | **no**, still untemplated as of 2026-09-11 (no `--chat-template` in its args, no jinja in its deploy dir) | — |
+
+On the Thor the scores are identical to the Spark's on the same probe set.
+Latency differs, though: 43.2 → 47.3 ms median, where the Spark went
+28.0 → 18.1 ms. The Thor lane's validated sm_110 divergences (`--enforce-eager`,
+`TRITON_ATTN`) do not offset the ~4× longer templated prompt. Both boxes
+were rolled by adding the two lines by hand, because both deployed compose
+files are hand-edited and were not re-rendered.
 
 ### Gateway note
 

@@ -9,8 +9,8 @@ schema_version = 1
 id = "jetson-agx-thor"
 profile = "thor"
 shape = "thor-worker"
-lobes_version = "0.74.6"
-evidence = "docs/evidence/2026-09-10-accept-thor-worker-flip.txt"
+lobes_version = "0.75.1"
+evidence = "docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt"
 
 [env]
 EMBED_ATTENTION_BACKEND = "TRITON_ATTN"
@@ -64,6 +64,7 @@ WORKER_SPECULATIVE_CONFIG = "\"'--speculative-config={\\\"method\\\": \\\"dflash
 "Dockerfile.vllm-gemma4" = "sha256:a12f2cfdb57c4e1c6495dadf1344d00eeca25eb64546a7a9432760a5311271b1"
 "docker-compose.override.yml" = "sha256:4493642380185ef1f675fbbcfdb0e4b26e1319a17e47cff60781cd32520c5f91"
 "docker-compose.shape.yml" = "sha256:c490e64f3dfe649151769bf0056c7c805447a54c215189543ef001b70ea22fea"
-"docker-compose.yml" = "sha256:2fba2005571fad3ae5348af1886a61a537cd90f0b22d1f776119c5af10a1ea4e"
+"docker-compose.yml" = "sha256:68476d8edd4887d0b58b03ab70d90659351a5a2363c6bd627254996b5cc2f821"
 "mg-logwrap.sh" = "sha256:fd9dfb7d30cee5d8e3045201ecb9c99ee3b1e82c5d397a1b993c99f0006e0ee0"
+"qwen3_reranker.jinja" = "sha256:e1ee98e69aab7b2da366edf1c50efcef37e34b4a0c50fb816336213e68d9047a"
 "qwen3_thinking_tool_parser.py" = "sha256:22a030552d033b897316ca2d0aa75ccac53dc955fe9ddd6c614b75c684338130"

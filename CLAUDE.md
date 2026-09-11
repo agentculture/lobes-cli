@@ -745,10 +745,12 @@ stays byte-identical to the pre-proxy contract.
 Orin. The Thor in turn proxies `cortex` to the Spark. A caller addresses any
 of these on its own box's gateway and never dials the peer. Proxied answers
 carry `X-Lobes-Proxied-By`, image input included
-(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`). The Spark's
-former `senses` → Orin proxy was withdrawn because the Orin does not host
-`senses` either, so `model=senses` on the Spark now 404s `role_infeasible`
-with no `hosted_by`. The 2026-07-31 layout proxied `senses` → Orin and
+(`docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt`). Both the
+Spark and the Thor withdrew their `senses` → Orin proxies, because the Orin
+does not host `senses` either. `model=senses` on either box now 404s
+`role_infeasible` with no `hosted_by`
+(`docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`),
+so no box in the mesh serves `senses` today. The 2026-07-31 layout proxied `senses` → Orin and
 `worker` → Thor. **A proxied
 role's `ready` and `context` are the PEER's own advert (issue #220):** the
 background probe reads the peer's `GET /capabilities` and relays that role
