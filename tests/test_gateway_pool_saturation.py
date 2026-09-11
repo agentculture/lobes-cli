@@ -48,6 +48,7 @@ from .test_gateway_pool_pressure import (  # noqa: F401  (fixture reuse, not re-
     _build,
     _header,
     _pool_env,
+    _pool_kwargs,
     _post,
     _snapshot,
     _state,
@@ -72,7 +73,7 @@ def test_every_replica_full_dials_local_instead_of_429(pressure) -> None:
     # honest answer is the pre-pool one: dial the local owner and let vLLM's
     # own queue hold the request, exactly as the pool-bypassed baseline did
     # when it served 8/8.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=2),
         _state(_THOR_ORIGIN, weight=2.0, running=1, waiting=1),
@@ -91,7 +92,7 @@ def test_a_full_local_engine_alone_is_never_a_429() -> None:
     # The narrowest statement of d5: local at capacity, no peer reachable in
     # the snapshot at all, zero host pressure. Before d5 this shed 429 on the
     # engine signal; now it queues locally.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, weight=2.0, running=2))
     resp, calls = _post(
         table, cfg, specs, _body("cortex"), pressure=_NO_PRESSURE, replica_snapshot=snapshot
@@ -104,7 +105,7 @@ def test_a_burst_beyond_fleet_capacity_serves_every_request() -> None:
     # The measured regression itself, in miniature: eight arrivals against a
     # fleet whose two boxes hold two slots each. Four fit; the other four must
     # still be SERVED (queued), not refused. Any 429 here is the t10 defect.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     statuses = []
     for arrival in range(8):
         local_active = min(arrival, 2)
@@ -130,7 +131,7 @@ def test_a_full_local_engine_still_prefers_a_peer_with_headroom() -> None:
     # excluded from candidacy, so the peer with room wins. d5 changes the
     # REASON this reports (the local replica lost on capacity, not on a
     # pressure verdict) but never the placement.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=4.0, running=4),
         _state(_THOR_ORIGIN, weight=4.0, running=1),
@@ -147,7 +148,7 @@ def test_the_less_utilised_peer_still_wins_on_capacity_relative_load() -> None:
     # Both boxes have room, so both are selectable; the capacity-relative
     # ranking (t3's whole point) still picks the peer even though it holds
     # MORE active requests, because it has more headroom.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=1),
         _state(_THOR_ORIGIN, weight=8.0, running=2),
@@ -164,7 +165,7 @@ def test_swap_pressure_still_forwards_with_local_busy_forwarded() -> None:
     # The other marker t10 measured. It belongs to the PRESSURE path, which d5
     # leaves intact: under swap the box is genuinely degraded, so it hands the
     # request to a peer and says so.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=0),
         _state(_THOR_ORIGIN, weight=2.0, running=0),
@@ -185,7 +186,7 @@ def test_swap_pressure_still_forwards_with_local_busy_forwarded() -> None:
 def test_swap_thrash_still_sheds_when_no_replica_can_take_it() -> None:
     # Criterion 3: removing the engine signal must not weaken the swap band.
     # Paging locally, and the only peer is full ⇒ nowhere to go ⇒ 429.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=0),
         _state(_THOR_ORIGIN, weight=2.0, running=2),
@@ -214,7 +215,8 @@ def test_hand_is_served_with_every_replica_saturated(tier) -> None:
         _pool_env(
             HAND_BASE_URL="http://vllm-hand:8000",
             HAND_SERVED_NAME="LiquidAI/LFM2.5-1.2B-Instruct",
-        )
+        ),
+        **_pool_kwargs(),
     )
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=2),
@@ -247,7 +249,7 @@ def test_the_request_path_never_passes_engine_state_to_decide(monkeypatch) -> No
         return real(*args, **kwargs)
 
     monkeypatch.setattr(S, "decide", _spy)
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=2),
         _state(_THOR_ORIGIN, weight=2.0, running=2),
