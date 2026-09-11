@@ -32,6 +32,7 @@ import socket
 from lobes import profiles
 from lobes.catalog import mtp_compose_command_items, serves_with_vllm, supported_models
 from lobes.cli import _runtime_ops
+from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._commands.whoami import _gpu_name
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env, _health, _parser
@@ -535,6 +536,11 @@ def _apply_switch(
     _runtime_ops.compose_check(_compose.compose_down(deploy_dir), "docker compose down")
     _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
     _health.wait_health(port)
+    # Mesh-brain-join (t8 follow-up): a switch changes this box's own served
+    # fingerprint, so peers should learn it within one probe refresh rather
+    # than waiting for the next scheduled heartbeat. No-op when LOBES_MESH_KEY
+    # is unset; best-effort (never fails an already-successful switch).
+    trigger_reannounce(port, _env.read_env_file(env_path))
     tc = None if not probe else _runtime_ops.probe_tool_calling(port, served)
     result = {
         "switched": model,

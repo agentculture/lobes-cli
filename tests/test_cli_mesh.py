@@ -49,6 +49,8 @@ class _FakeMeshHandler(BaseHTTPRequestHandler):
     approve_payload: dict = {"status": "approved"}
     revoke_status: int = 200
     revoke_payload: dict = {"status": "revoked"}
+    reannounce_status: int = 200
+    reannounce_payload: dict = {"status": "reannounced", "name": "me"}
     require_key: str | None = None
     last_request: dict | None = None
 
@@ -99,6 +101,11 @@ class _FakeMeshHandler(BaseHTTPRequestHandler):
                 self._send(401, {"error": {"message": "Invalid API key."}})
                 return
             self._send(self.revoke_status, self.revoke_payload)
+        elif self.path == "/mesh/reannounce":
+            if self._unauthorized():
+                self._send(401, {"error": {"message": "Invalid API key."}})
+                return
+            self._send(self.reannounce_status, self.reannounce_payload)
         else:
             self.send_response(404)
             self.end_headers()
@@ -221,6 +228,143 @@ def test_mesh_revoke_with_apply_posts_with_join_key(tmp_path, fake_mesh) -> None
     assert handler.last_request["path"] == "/mesh/revoke"
     assert handler.last_request["body"]["name"] == "bob"
     assert handler.last_request["headers"]["Authorization"] == "Bearer sk-mesh-test"
+
+
+# ---------------------------------------------------------------------------
+# t8 follow-up (c27/h1, c46/h37): trigger_reannounce — the switch/up hook
+# ---------------------------------------------------------------------------
+
+
+def test_trigger_reannounce_noop_when_key_unset(fake_mesh) -> None:
+    from lobes.cli._commands.mesh import trigger_reannounce
+
+    port, handler = fake_mesh
+    trigger_reannounce(port, {})
+    assert handler.last_request is None  # no request at all
+
+
+def test_trigger_reannounce_posts_with_bearer_key_when_set(fake_mesh) -> None:
+    from lobes.cli._commands.mesh import trigger_reannounce
+
+    port, handler = fake_mesh
+    handler.require_key = "sk-mesh-test"
+    trigger_reannounce(port, {"LOBES_MESH_KEY": "sk-mesh-test"})
+    assert handler.last_request is not None
+    assert handler.last_request["path"] == "/mesh/reannounce"
+    assert handler.last_request["headers"]["Authorization"] == "Bearer sk-mesh-test"
+
+
+def test_trigger_reannounce_swallows_errors_on_unreachable_gateway() -> None:
+    from lobes.cli._commands.mesh import trigger_reannounce
+
+    # Nothing listens on port 1 — must not raise.
+    trigger_reannounce(1, {"LOBES_MESH_KEY": "sk-mesh-test"})
+
+
+def test_trigger_reannounce_swallows_a_non_2xx_response(fake_mesh) -> None:
+    from lobes.cli._commands.mesh import trigger_reannounce
+
+    port, handler = fake_mesh
+    handler.require_key = "sk-mesh-test"
+    # Wrong key -> the fake gateway 401s -> HTTPError -> swallowed, no raise.
+    trigger_reannounce(port, {"LOBES_MESH_KEY": "wrong-key"})
+    assert handler.last_request is not None
+    assert handler.last_request["path"] == "/mesh/reannounce"
+
+
+# ---------------------------------------------------------------------------
+# t8 follow-up: lobes switch/up call trigger_reannounce on --apply, never
+# on a dry run.
+# ---------------------------------------------------------------------------
+
+
+def test_switch_apply_triggers_reannounce_when_key_set(tmp_path, monkeypatch) -> None:
+    from lobes.cli._commands import switch as switch_module
+
+    _compose.write_scaffold(tmp_path, force=True)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "LOBES_MESH_KEY", "sk-mesh-test")
+
+    monkeypatch.setattr(switch_module._runtime_ops, "compose_check", lambda *a, **k: None)
+    monkeypatch.setattr(switch_module._health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(switch_module._runtime_ops, "probe_tool_calling", lambda *a, **k: None)
+
+    calls = []
+    monkeypatch.setattr(
+        switch_module, "trigger_reannounce", lambda port, env: calls.append((port, env))
+    )
+
+    rc = main(
+        [
+            "switch",
+            "unsloth/Qwen3.8-27B-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+            "--no-probe",
+            "--apply",
+        ]
+    )
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0][1].get("LOBES_MESH_KEY") == "sk-mesh-test"
+
+
+def test_switch_dry_run_never_triggers_reannounce(tmp_path, monkeypatch) -> None:
+    from lobes.cli._commands import switch as switch_module
+
+    _compose.write_scaffold(tmp_path, force=True)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "LOBES_MESH_KEY", "sk-mesh-test")
+
+    calls = []
+    monkeypatch.setattr(
+        switch_module, "trigger_reannounce", lambda port, env: calls.append((port, env))
+    )
+
+    rc = main(
+        [
+            "switch",
+            "unsloth/Qwen3.8-27B-NVFP4",
+            "--compose-dir",
+            str(tmp_path),
+            "--no-probe",
+        ]
+    )
+    assert rc == 0
+    assert calls == []
+
+
+def test_up_apply_triggers_reannounce_when_key_set(tmp_path, monkeypatch) -> None:
+    from lobes.cli._commands import up as up_module
+
+    _compose.write_scaffold(tmp_path, force=True)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "LOBES_MESH_KEY", "sk-mesh-test")
+
+    monkeypatch.setattr(up_module._runtime_ops, "compose_check", lambda *a, **k: None)
+
+    calls = []
+    monkeypatch.setattr(
+        up_module, "trigger_reannounce", lambda port, env: calls.append((port, env))
+    )
+
+    rc = main(["up", "cortex", "--compose-dir", str(tmp_path), "--apply"])
+    assert rc == 0
+    assert len(calls) == 1
+    assert calls[0][1].get("LOBES_MESH_KEY") == "sk-mesh-test"
+
+
+def test_up_dry_run_never_triggers_reannounce(tmp_path, monkeypatch) -> None:
+    from lobes.cli._commands import up as up_module
+
+    _compose.write_scaffold(tmp_path, force=True)
+    _env.set_env(tmp_path / _compose.ENV_FILE, "LOBES_MESH_KEY", "sk-mesh-test")
+
+    calls = []
+    monkeypatch.setattr(
+        up_module, "trigger_reannounce", lambda port, env: calls.append((port, env))
+    )
+
+    rc = main(["up", "cortex", "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------

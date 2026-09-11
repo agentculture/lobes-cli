@@ -8,6 +8,11 @@ End-points
 * ``GET  /mesh/roster``   – Bearer-join-key member listing
 * ``POST /mesh/approve``  – Bearer-join-key approval
 * ``POST /mesh/revoke``   – Bearer-join-key revocation
+* ``POST /mesh/reannounce`` – Bearer-join-key immediate local re-announce
+  (t8): triggered by a readiness-cache health transition or by
+  ``lobes switch``/``lobes up``, so a fingerprint/health change reaches
+  peers within one probe refresh instead of waiting for the next
+  heartbeat.
 
 Heartbeat
 ---------
@@ -100,6 +105,19 @@ class MeshRoutes:
         self._announcements: dict[str, Announcement] = {}
         self._verify_event = threading.Event()
         self._holder: SnapshotHolder | None = None
+        # Rebuild hook for POST /mesh/reannounce (t8): a callable that returns
+        # a fresh Announcement reflecting this box's CURRENT state (fingerprint
+        # / readiness), so an immediate re-announce after `lobes switch`/`up`
+        # or a health transition carries the new data, not the stale one from
+        # start-up.  `None` (the default) falls back to re-broadcasting the
+        # last-known announcement unchanged — still an immediate wake of the
+        # heartbeat loop, just with no new data to send.
+        self._announcement_builder = None
+
+    def set_announcement_builder(self, builder) -> None:
+        """Wire the callable :meth:`reannounce` uses to rebuild fresh data."""
+        with self._lock:
+            self._announcement_builder = builder
 
     @classmethod
     def build(
@@ -429,17 +447,59 @@ class MeshRoutes:
             )
 
         # Finding 13: take a snapshot under the route lock.
+        # t8 follow-up (c27/h1, c46/h37): the CLI's `lobes mesh status` reads
+        # last_seen_age / expiry / verified / flapping / roles per member —
+        # all additive, all sourced from state this box already holds (the
+        # Roster, its Ledger, and the mesh routing snapshot), never new
+        # tracking. See lobes.gateway._mesh_routing.exposed_role_names for
+        # the roles column (suffixed names included, private roles excluded
+        # because they were never in a stored announcement to begin with).
+        from lobes.gateway._mesh_roster import _FLAPPING_THRESHOLD
+        from lobes.gateway._mesh_routing import exposed_role_names
+
         with self._lock:
+            now = self.roster.now()
+            snapshot = None
+            if self._holder is not None:
+                view = self._holder.current()
+                if view is not None:
+                    snapshot = view.snapshot
             member_names = list(self.roster.members())
             member_records = {}
             for mname in member_names:
                 rec = self.roster._roster.get(mname)  # noqa: SLF001
-                if rec is not None:
-                    member_records[mname] = {
-                        "name": rec.name,
-                        "origin": rec.origin,
-                        "capacity": rec.capacity,
-                    }
+                if rec is None:
+                    continue
+                entry = self.roster.ledger.entries.get(mname)
+                expiry = entry.expiry if entry is not None else None
+                member_info = None
+                if snapshot is not None:
+                    member_info = next(
+                        (m for m in snapshot.members if m.origin == rec.origin), None
+                    )
+                verified = bool(member_info.verified_roles) if member_info is not None else False
+                roles = (
+                    list(exposed_role_names(snapshot, rec.origin)) if snapshot is not None else []
+                )
+                # The flapping mechanism (Roster._flap_count/_FLAPPING_THRESHOLD)
+                # is roster-wide, not per-member — there is no per-name hold-out
+                # state to read, so every listed member reports the SAME signal:
+                # whether this roster is currently in a flapping hold at all.
+                # `announce()` (the only path `/mesh/announce` drives) never
+                # touches this counter — only the unwired `Roster.join()` does
+                # — so this is honestly `False` on every deployment today, and
+                # becomes accurate the moment `join()` is wired to an endpoint.
+                flapping = bool(getattr(self.roster, "_flap_count", 0) >= _FLAPPING_THRESHOLD)
+                member_records[mname] = {
+                    "name": rec.name,
+                    "origin": rec.origin,
+                    "capacity": rec.capacity,
+                    "last_seen_age": max(0.0, now - rec.last_seen),
+                    "expiry": expiry,
+                    "verified": verified,
+                    "flapping": flapping,
+                    "roles": roles,
+                }
 
         # Finding 3: return per-member objects with name AND origin.
         return (
@@ -587,6 +647,64 @@ class MeshRoutes:
             json.dumps({"status": "revoked", "name": name}).encode(),
         )
 
+    def reannounce(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
+        """POST /mesh/reannounce – authenticated, LOCAL-only immediate re-broadcast.
+
+        Triggered by this box's own readiness-cache health transitions and by
+        ``lobes switch``/``lobes up`` (t8): whenever this box's own served
+        fingerprint or health changes, callers hit this endpoint so peers
+        reflect the change within one probe refresh instead of waiting for
+        the next scheduled heartbeat. Gated on the same Bearer join key as
+        every other authenticated mesh route — it is a local operator/CLI
+        call, never something a remote peer needs to invoke.
+        """
+        if not self._check_key(getattr(handler, "headers", {})):
+            return (
+                401,
+                [
+                    ("Content-Type", "application/json"),
+                    ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
+                ],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Invalid API key.",
+                            "type": "invalid_api_key",
+                            "code": "invalid_api_key",
+                        }
+                    }
+                ).encode(),
+            )
+
+        with self._lock:
+            builder = self._announcement_builder
+            current = self._announcement
+
+        fresh: Announcement | None = None
+        if builder is not None:
+            try:
+                fresh = builder()
+            except Exception:  # nosec B110 — a broken builder must not wedge reannounce
+                fresh = None
+
+        announcement = fresh if fresh is not None else current
+        if announcement is None:
+            # Nothing has ever been announced from this box yet — nothing to
+            # re-broadcast, but this is not an error condition.
+            return (
+                200,
+                [("Content-Type", "application/json")],
+                json.dumps({"status": "no-op", "reason": "no announcement yet"}).encode(),
+            )
+
+        reannounce_now(self, announcement)
+        return (
+            200,
+            [("Content-Type", "application/json")],
+            json.dumps({"status": "reannounced", "name": announcement.name}).encode(),
+        )
+
 
 # --- route registry --------------------------------------------------------
 
@@ -597,6 +715,7 @@ _MESH_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/mesh/roster"): "roster_list",
     ("POST", "/mesh/approve"): "approve",
     ("POST", "/mesh/revoke"): "revoke",
+    ("POST", "/mesh/reannounce"): "reannounce",
 }
 
 

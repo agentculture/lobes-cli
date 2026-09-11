@@ -86,12 +86,14 @@ from lobes.gateway._mesh_routes import is_mesh_route as _is_mesh_route
 from lobes.gateway._mesh_routes import require_self_origin as _require_self_origin
 from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._mesh_routing import (
+    MESH_MEMBER_HEADER,
     MeshRoutingView,
     RoutingSnapshot,
     SnapshotHolder,
     build_snapshot,
+    compute_role_placement,
+    find_suffixed_lane,
     mesh_markers,
-    origins_for_role,
 )
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
@@ -719,7 +721,11 @@ def _model_not_found_body(model: str) -> bytes:
 
 
 def _role_infeasible_body(
-    requested: str | None, backend_name: str, peer_origin: str | None = None
+    requested: str | None,
+    backend_name: str,
+    peer_origin: str | None = None,
+    *,
+    suffixed_names: "tuple[str, ...] | None" = None,
 ) -> bytes:
     """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
 
@@ -759,6 +765,17 @@ def _role_infeasible_body(
     error["code"] = "role_infeasible"
     if peer_origin:
         error["hosted_by"] = peer_origin
+    # Suffixed-lane naming (t8, issue #237): a raw id/role hosted ONLY as
+    # disagreeing mesh members is never silently resolved to one of them —
+    # the 404 instead lists every suffixed name so the caller can pick one
+    # explicitly. Deliberately no `hosted_by` here: naming one member would
+    # be exactly the silent pick this exists to avoid.
+    if suffixed_names:
+        error["suffixed_lanes"] = list(suffixed_names)
+        error["message"] += (
+            " It is hosted by mesh members whose fingerprints disagree — "
+            f"address one directly: {', '.join(suffixed_names)}."
+        )
     return json.dumps({"error": error}).encode("utf-8")
 
 
@@ -2144,7 +2161,7 @@ def _pool_attempt(
     """
     selection = placement.selection
     origin = selection.origin or ""
-    markers = _pool_marker_headers(table, placement, dispatched)
+    markers = _pool_marker_headers(table, placement, dispatched, mesh_snapshot=mesh_snapshot)
     release = (counter or _uncounted)(backend_name, origin)
     answer: GatewayResponse | None = None
     try:
@@ -2263,15 +2280,36 @@ def _uncounted(_backend_name: str, _origin: str) -> "Callable[[], None]":
 
 
 def _pool_marker_headers(
-    table: RoutingTable, placement: "_Placement", dispatched: int
+    table: RoutingTable,
+    placement: "_Placement",
+    dispatched: int,
+    *,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> list[tuple[str, str]]:
     """The pool markers for one attempt: served-by (local only) + reason +
-    the capacity/utilisation the placement used (t5) + attempts."""
+    the capacity/utilisation the placement used (t5) + attempts.
+
+    When the chosen replica is a non-local MESH member (t8, #237), also adds
+    ``X-Lobes-Mesh-Member`` naming it — the same marker the mesh-forward and
+    suffixed-lane paths stamp, so every pooled/proxied/suffixed mesh answer
+    carries one consistent header regardless of which code path served it.
+    """
     selection = placement.selection
     load = _route_load_header(placement)
     if selection.local:
         return _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
-    return [(ROUTE_REASON_HEADER, selection.reason)] + load + _attempts_header(dispatched)
+    member_marker: list[tuple[str, str]] = []
+    if mesh_snapshot is not None and selection.origin:
+        for m in mesh_snapshot.members:
+            if m.origin == selection.origin:
+                member_marker = [(MESH_MEMBER_HEADER, m.name)]
+                break
+    return (
+        [(ROUTE_REASON_HEADER, selection.reason)]
+        + member_marker
+        + load
+        + _attempts_header(dispatched)
+    )
 
 
 def _pooled_busy_dispatch(
@@ -2808,7 +2846,54 @@ def handle_post(
     # for infeasible roles.  This is a no-op when mesh_snapshot is None,
     # preserving the pre-mesh behaviour byte-for-byte.
     if mesh_snapshot is not None:
-        from lobes.roles import BACKEND_ROLE
+        from lobes.roles import BACKEND_ROLE, ROLES
+
+        # Suffixed-lane direct addressing (t8, issue #237): "{role}-{member}"
+        # always resolves straight to that member's origin, independent of
+        # whether the plain role name is currently placeable at all — a
+        # caller that already knows which member it wants is never blocked
+        # by a fingerprint disagreement among the others.
+        if requested:
+            lane = find_suffixed_lane(mesh_snapshot, requested, ROLES)
+            if lane is not None:
+                arriving = _arriving_hop_marker(req_headers)
+                if arriving is not None:
+                    target = _ForwardTarget(
+                        name=lane.role, origin=lane.origin, served_name=requested
+                    )
+                    return GatewayResponse(
+                        status=_PROXY_LOOP_STATUS,
+                        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                        body=_proxy_loop_body(arriving, target),
+                    )
+                try:
+                    mesh_cfg = _build_mesh_config()
+                except MeshConfigError:
+                    mesh_cfg = None
+                join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+                target = _ForwardTarget(
+                    name=lane.role,
+                    origin=lane.origin,
+                    served_name=requested,
+                    api_key=join_key,
+                )
+                return _proxy_to_peer(
+                    cfg,
+                    target,
+                    path,
+                    req_headers,
+                    body,
+                    open_upstream,
+                    rewrite=True,
+                    extra_response_headers=(
+                        [(PROXIED_BY_HEADER, lane.origin)]
+                        + mesh_markers(mesh_snapshot, lane.role, chosen_origin=lane.origin)
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, lane.member),
+                        ]
+                    ),
+                )
 
         # Resolve the model to its owning backend name using infeasible_owner
         # (which reuses resolve_model internally and handles role aliases like
@@ -2817,7 +2902,23 @@ def handle_post(
         owned_backend = infeasible_owner(table, requested)
         if owned_backend is not None:
             role = BACKEND_ROLE.get(owned_backend, owned_backend)
-            mesh_origins = origins_for_role(mesh_snapshot, role)
+            local_fp = _local_backend_fingerprint(replica_snapshot, owned_backend)
+            placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+            mesh_origins = placement.plain_origins
+            if not mesh_origins and placement.suffixed:
+                # Every verified member disagrees on this role's fingerprint
+                # (or disagrees with this box's own local one) — the plain
+                # role name is ambiguous and is refused rather than silently
+                # picking one member (h1/h20/c46).
+                return GatewayResponse(
+                    status=404,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                    body=_role_infeasible_body(
+                        requested,
+                        owned_backend,
+                        suffixed_names=placement.suffixed_names(),
+                    ),
+                )
             if mesh_origins:
                 # W7: this box lacks the role.  If mesh has verified members,
                 # forward the request there instead of returning 404/502.
@@ -2866,7 +2967,10 @@ def handle_post(
                     extra_response_headers=(
                         [(PROXIED_BY_HEADER, member_origin)]
                         + mesh_markers(mesh_snapshot, role, chosen_origin=member_origin)
-                        + [(ROUTE_REASON_HEADER, "mesh-forwarded")]
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, member_name),
+                        ]
                     ),
                 )
                 return resp
@@ -2904,7 +3008,19 @@ def handle_post(
         if not ordered_here:
             # W7: this box lacks the role.  If mesh has verified members,
             # forward the request there instead of returning 404/502.
-            mesh_origins = origins_for_role(mesh_snapshot, role)
+            local_fp = _local_backend_fingerprint(replica_snapshot, served)
+            placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+            mesh_origins = placement.plain_origins
+            if not mesh_origins and placement.suffixed:
+                return GatewayResponse(
+                    status=404,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                    body=_role_infeasible_body(
+                        requested,
+                        served,
+                        suffixed_names=placement.suffixed_names(),
+                    ),
+                )
             if mesh_origins:
                 # Single-hop guard: if the request already crossed one proxy,
                 # refuse with 508 — same as _proxy_to_peer's loop check.
@@ -2952,7 +3068,10 @@ def handle_post(
                     extra_response_headers=(
                         [(PROXIED_BY_HEADER, member_origin)]
                         + mesh_markers(mesh_snapshot, role, chosen_origin=member_origin)
-                        + [(ROUTE_REASON_HEADER, "mesh-forwarded")]
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, member_name),
+                        ]
                     ),
                 )
                 return resp
@@ -2967,30 +3086,48 @@ def handle_post(
             def _make_mesh_candidates(
                 snap: "RoutingSnapshot | None",
                 role_name: str,
+                *,
+                plain_origins: "tuple[str, ...]" = (),
             ) -> list[ReplicaState]:
-                """Build a list of ReplicaState objects from mesh members."""
+                """Build ReplicaState objects for members placeable PLAIN.
+
+                Only origins :func:`~lobes.gateway._mesh_routing.compute_role_placement`
+                put in the plain pool are merged here — a member whose
+                fingerprint disagrees is exposed only under its suffixed
+                name (t8, #237) and must never silently join the ranked
+                plain-pool candidate set.
+                """
                 out: list[ReplicaState] = []
                 if snap is None:
                     return out
                 for m in snap.members:
-                    if role_name in m.verified_roles:
+                    if role_name in m.verified_roles and m.origin in plain_origins:
                         out.append(
                             ReplicaState(
                                 origin=m.origin,
-                                name=m.name,
+                                local=False,
+                                ready=True,
+                                busy=False,
+                                health="ok",
                                 running=0,
                                 waiting=0,
-                                busy=False,
+                                fingerprint=None,
                                 compatible=True,
-                                ready=True,
-                                local=False,
+                                reason="",
+                                last_seen=0.0,
                                 weight=8.0,
                                 calibrated=True,
                             )
                         )
                 return out
 
-            mesh_cands = _make_mesh_candidates(mesh_snapshot, role)
+            local_fp_for_merge = _local_backend_fingerprint(replica_snapshot, served)
+            merge_placement = compute_role_placement(
+                mesh_snapshot, role, local_fingerprint=local_fp_for_merge
+            )
+            mesh_cands = _make_mesh_candidates(
+                mesh_snapshot, role, plain_origins=merge_placement.plain_origins
+            )
             if mesh_cands:
 
                 def _merged_snapshot(backend_name: str):
@@ -3490,6 +3627,34 @@ def probe_audio_ready(
         return None
 
 
+def _local_backend_fingerprint(
+    replica_snapshot: "ReplicaSnapshot | None",
+    backend_name: str,
+) -> "object | None":
+    """This box's OWN fingerprint for *backend_name*, or ``None`` if unhosted.
+
+    ``replica_snapshot`` here is the ``handle_post``-shaped callable (backend
+    name -> that backend's replica tuple), NOT the role-keyed mapping
+    :func:`_pooled_peer_advert` reads — the two channels use the same
+    underlying data with different keys, so this looks up by BACKEND. The
+    local entry (``.local is True``) is this box's own served fingerprint —
+    the reference :func:`~lobes.gateway._mesh_routing.compute_role_placement`
+    uses to decide which mesh members agree with what THIS box actually
+    serves. ``None`` when there is no snapshot, no entry for the backend, or
+    no local replica in it (this box does not host it at all).
+    """
+    if replica_snapshot is None:
+        return None
+    try:
+        states = replica_snapshot(backend_name)
+    except Exception:  # nosec B110 — best-effort: a broken snapshot never blocks placement
+        return None
+    for state in states or ():
+        if getattr(state, "local", False):
+            return getattr(state, "fingerprint", None)
+    return None
+
+
 def _pooled_peer_advert(
     table: RoutingTable,
     replica_snapshot: "Mapping[str, tuple[ReplicaState, ...]] | None",
@@ -3539,6 +3704,7 @@ def capabilities_payload(
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_context: Mapping[str, int | None] | None = None,
     replica_snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> dict:
     """The nine first-class roles (issue #81), resolved via the shared registry.
 
@@ -3586,6 +3752,7 @@ def capabilities_payload(
     # deferred imports — see the module-level NOTE
     from lobes.roles import (
         ROLES,
+        annotate_mesh_naming,
         annotate_peer_referrals,
         annotate_replicas,
         build_role_registry,
@@ -3634,7 +3801,16 @@ def capabilities_payload(
     # it is published even for a role whose own peer list is empty. With no
     # pool declared and no snapshot, `annotate_replicas` is a no-op for every
     # role and the payload stays byte-identical to the pre-pool contract (h1).
-    return annotate_replicas(payload, table, replica_snapshot)
+    payload = annotate_replicas(payload, table, replica_snapshot)
+    # Suffixed-lane naming (t8, issue #237): the additive per-role
+    # `member`/`suffixed_lanes` keys, from the mesh routing snapshot when this
+    # process has one. With mesh disabled (`mesh_snapshot is None`, every
+    # pre-t8 deployment) this is a no-op and the payload stays byte-identical.
+    local_fingerprints = {
+        role: next((s for s in (replica_snapshot or {}).get(role, ()) if s.local), None)
+        for role in ROLES
+    }
+    return annotate_mesh_naming(payload, mesh_snapshot, local_fingerprints=local_fingerprints)
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to
@@ -3911,7 +4087,7 @@ class _Handler(BaseHTTPRequestHandler):
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         elif route == "/capabilities":
-            self._get_capabilities()
+            self._get_capabilities(mesh_snapshot=mesh_snapshot)
         else:
             self._send_json(404, _not_found_body(route))
 
@@ -4093,7 +4269,7 @@ class _Handler(BaseHTTPRequestHandler):
             ),
         )
 
-    def _get_capabilities(self) -> None:
+    def _get_capabilities(self, *, mesh_snapshot: "RoutingSnapshot | None" = None) -> None:
         # The #81 role→endpoint contract: NINE first-class roles resolved to
         # live metadata via the shared lobes.roles registry. The endpoint is
         # the client-reachable origin this request actually dialed (#87),
@@ -4128,6 +4304,7 @@ class _Handler(BaseHTTPRequestHandler):
                 backend_ready=backend_ready,
                 peer_context=peer_context,
                 replica_snapshot=replica_role_snapshot(self.replica_caches),
+                mesh_snapshot=mesh_snapshot,
             ),
         )
 

@@ -474,3 +474,226 @@ def snapshot_member_roles(
     if snapshot is None:
         return ()
     return snapshot.announced_roles(origin)
+
+
+# ---------------------------------------------------------------------------
+# Suffixed-lane naming (t8, issue #237 naming/exposure)
+# ---------------------------------------------------------------------------
+#
+# When two or more mesh members disagree on the FINGERPRINT they serve for
+# one role, the role name alone ("cortex") is ambiguous: a plain request
+# cannot honestly pick one without silently favouring an arbitrary member. A
+# member whose fingerprint for a role does not match the REFERENCE for that
+# role (this box's own local fingerprint when it hosts the role, or — when it
+# does not — the fingerprint every OTHER verified member agrees on) is
+# exposed only as a suffixed lane ``"{role}-{member.name}"``, never through
+# the plain role name.  A plain role name is exposed only when every
+# candidate member's fingerprint agrees with the reference; on any
+# disagreement with no local reference to arbitrate, NO member is exposed
+# plain — every one of them is suffixed, so a plain-role request 404s rather
+# than silently picking a side.
+
+MESH_MEMBER_HEADER = "X-Lobes-Mesh-Member"
+
+
+def suffixed_lane_name(role: str, member: str) -> str:
+    """The wire name for one member's disagreeing lane of *role*."""
+    return f"{role}-{member}"
+
+
+@dataclass(frozen=True)
+class SuffixedLane:
+    """One member's role, exposed only under its suffixed name."""
+
+    name: str  # "{role}-{member}"
+    role: str
+    member: str
+    origin: str
+
+
+@dataclass(frozen=True)
+class RolePlacement:
+    """Where one role's mesh candidates land: the plain pool, or suffixed.
+
+    ``plain_origins`` are usable for the bare role name (merged into the
+    existing replica-pool / mesh-forward machinery exactly as before);
+    ``suffixed`` lists every member whose fingerprint disagreed with the
+    reference, each addressable only by its own suffixed name.
+    """
+
+    role: str
+    plain_origins: tuple[str, ...]
+    suffixed: tuple[SuffixedLane, ...]
+
+    def suffixed_names(self) -> tuple[str, ...]:
+        return tuple(lane.name for lane in self.suffixed)
+
+    def origin_for_suffixed(self, name: str) -> str | None:
+        for lane in self.suffixed:
+            if lane.name == name:
+                return lane.origin
+        return None
+
+
+def _role_fingerprint(
+    ann: "Announcement",
+    role: str,
+) -> "ReplicaFingerprint | None":
+    """The replica-shaped Fingerprint a member announced for *role*, if any."""
+    info = ann.roles.get(role)
+    if info is None:
+        return None
+    return _wire_fingerprint_to_replica(info.fingerprint)
+
+
+def compute_role_placement(
+    snapshot: RoutingSnapshot,
+    role: str,
+    *,
+    local_fingerprint: "ReplicaFingerprint | None" = None,
+) -> RolePlacement:
+    """Split *role*'s verified mesh members into plain vs. suffixed lanes.
+
+    Parameters
+    ----------
+    snapshot:
+        The current routing snapshot (verified members + their announcements).
+    role:
+        The role name being placed (e.g. ``"cortex"``).
+    local_fingerprint:
+        This box's OWN fingerprint for *role* when it hosts it locally
+        (``None`` when this box does not host the role at all — the
+        peers-agree-with-each-other fallback applies).
+    """
+    from lobes.gateway._replicas import compare_fingerprints
+
+    ann_by_origin = dict(snapshot.announcements)
+
+    candidates: list[tuple[str, str, "ReplicaFingerprint | None"]] = []
+    for member in snapshot.members:
+        if role not in member.verified_roles:
+            continue
+        ann = ann_by_origin.get(member.origin)
+        fp = _role_fingerprint(ann, role) if ann is not None else None
+        candidates.append((member.name, member.origin, fp))
+
+    if not candidates:
+        return RolePlacement(role=role, plain_origins=(), suffixed=())
+
+    # Deterministic ordering (by member name) so the reference member and the
+    # emitted suffixed order never depend on roster/dict iteration order.
+    candidates.sort(key=lambda c: c[0])
+
+    if local_fingerprint is not None:
+        reference = local_fingerprint
+    else:
+        # No local hosting: the reference is only trustworthy when every
+        # candidate agrees with the FIRST one — otherwise there is no
+        # authority to arbitrate and nobody is exposed plain (see module
+        # docstring above).
+        reference = candidates[0][2]
+        all_agree = all(compare_fingerprints(reference, fp)[0] for _n, _o, fp in candidates)
+        if not all_agree:
+            suffixed = tuple(
+                SuffixedLane(
+                    name=suffixed_lane_name(role, name),
+                    role=role,
+                    member=name,
+                    origin=origin,
+                )
+                for name, origin, _fp in candidates
+            )
+            return RolePlacement(role=role, plain_origins=(), suffixed=suffixed)
+
+    plain: list[str] = []
+    suffixed_list: list[SuffixedLane] = []
+    for name, origin, fp in candidates:
+        compatible, _reason = compare_fingerprints(reference, fp)
+        if compatible:
+            plain.append(origin)
+        else:
+            suffixed_list.append(
+                SuffixedLane(
+                    name=suffixed_lane_name(role, name),
+                    role=role,
+                    member=name,
+                    origin=origin,
+                )
+            )
+
+    return RolePlacement(role=role, plain_origins=tuple(plain), suffixed=tuple(suffixed_list))
+
+
+def find_suffixed_lane(
+    snapshot: RoutingSnapshot | None,
+    requested: str,
+    roles: "tuple[str, ...] | list[str]",
+    *,
+    local_fingerprints: "Mapping[str, ReplicaFingerprint | None] | None" = None,
+) -> SuffixedLane | None:
+    """Resolve a raw requested name (e.g. ``"cortex-thor"``) to a suffixed lane.
+
+    Tries every role the requested name could plausibly be suffixing (a
+    ``"{role}-"`` prefix match), computing that role's placement and checking
+    whether *requested* is one of its suffixed names. Returns ``None`` when
+    *snapshot* is ``None`` or no role's placement contains *requested*.
+    """
+    if snapshot is None:
+        return None
+    local_fingerprints = local_fingerprints or {}
+    for role in roles:
+        prefix = role + "-"
+        if not requested.startswith(prefix):
+            continue
+        placement = compute_role_placement(
+            snapshot, role, local_fingerprint=local_fingerprints.get(role)
+        )
+        for lane in placement.suffixed:
+            if lane.name == requested:
+                return lane
+    return None
+
+
+def exposed_role_names(
+    snapshot: RoutingSnapshot | None,
+    origin: str,
+) -> tuple[str, ...]:
+    """Role names *origin* currently exposes — plain or suffixed (t8 follow-up).
+
+    For every role *origin* is verified for, this names it as the PLAIN role
+    (e.g. ``"cortex"``) when it agrees with that role's placement reference,
+    or as its own suffixed lane (e.g. ``"cortex-thor"``) when it disagrees.
+    A role announced ``private`` never appears here in the first place: it
+    was already stripped from the stored :class:`~lobes.gateway._mesh_wire.Announcement`
+    at the wire boundary (``Announcement.public()``, applied on receipt), so
+    it is never in ``verified_roles`` to begin with — this function excludes
+    nothing extra.
+
+    No ``local_fingerprint`` is passed to :func:`compute_role_placement` here
+    deliberately: this is a roster-wide listing (``GET /mesh/roster``), not a
+    per-request dispatch with one box's own hosting fingerprint in hand — the
+    peers-agree-with-each-other reference is the only one this view has.
+    """
+    if snapshot is None:
+        return ()
+    member = next((m for m in snapshot.members if m.origin == origin), None)
+    if member is None:
+        return ()
+    names: list[str] = []
+    for role in member.verified_roles:
+        placement = compute_role_placement(snapshot, role)
+        if origin in placement.plain_origins:
+            names.append(role)
+        else:
+            lane = placement_origin_lane(placement, origin)
+            if lane is not None:
+                names.append(lane.name)
+    return tuple(names)
+
+
+def placement_origin_lane(placement: RolePlacement, origin: str) -> SuffixedLane | None:
+    """The :class:`SuffixedLane` in *placement* served by *origin*, if any."""
+    for lane in placement.suffixed:
+        if lane.origin == origin:
+            return lane
+    return None
