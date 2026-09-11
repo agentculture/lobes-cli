@@ -20,6 +20,21 @@ leftover local-cortex tuning the previous captures preserved — this capture
 no longer claims those specific numbers describe the live box, only what a
 fresh render of today's templates produces for a dropped role's
 documentation fields. Nothing about the **measured** state below changed.
+**Re-captured again** (t14, env peer family retirement): `docker-compose.yml`
+lost its `*_PEER_ORIGIN(S)`/`*_PEER_PROXY`/`*_PEER_API_KEY(S)` gateway
+passthrough lines — `lobes.gateway._config.build_config` no longer reads any
+of them, so a deployed value under one of those names is now silently inert
+regardless of whether the compose file still carries the line. Same "no
+reachable Thor, no capture CLI verb" method as the previous re-capture: the
+packaged template's `docker-compose.yml` was copied in verbatim and its
+digest recomputed. `docker-compose.shape.yml`/`docker-compose.override.yml`
+and every other file are untouched, and the `[env]` table is unaffected (it
+never carried a `*_PEER_*` entry — those are operator-declared, never
+profile-rendered). The paragraph below describing `PRIMARY_PEER_ORIGIN` +
+`PRIMARY_PEER_PROXY` forwarding `model=cortex` to a Spark peer is historical
+narrative of how this box reached cortex before the mesh-brain join
+replaced that mechanism (see CLAUDE.md's "Live as of 2026-09-11" paragraph)
+— it is not re-asserted as current operator guidance by this capture.
 
 It hosts **`worker`** — `nvidia/Qwen3.6-35B-A3B-NVFP4` at the full native
 262144 window, `gpu_mem_util=0.45`, fp8 KV cache, `max_num_seqs=1`, and DFlash

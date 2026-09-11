@@ -61,7 +61,7 @@ WORKER_SPECULATIVE_CONFIG = "\"'--speculative-config={\\\"method\\\": \\\"dflash
 "Dockerfile.vllm-gemma4" = "sha256:a12f2cfdb57c4e1c6495dadf1344d00eeca25eb64546a7a9432760a5311271b1"
 "docker-compose.override.yml" = "sha256:4493642380185ef1f675fbbcfdb0e4b26e1319a17e47cff60781cd32520c5f91"
 "docker-compose.shape.yml" = "sha256:3685cbbc9724a453a2019a7c51e55ab5b8edd0fa136ec4558bc536a7575f3c0a"
-"docker-compose.yml" = "sha256:526649f11ac0d88dea63640da3b7227872ffc9e280ef2f106ef4bc31cc430794"
+"docker-compose.yml" = "sha256:7dfc17f2cddce7ece8256610ea238bbf7e42a00abcea23c451335940c88b9a8d"
 "mg-logwrap.sh" = "sha256:fd9dfb7d30cee5d8e3045201ecb9c99ee3b1e82c5d397a1b993c99f0006e0ee0"
 "qwen3_reranker.jinja" = "sha256:e1ee98e69aab7b2da366edf1c50efcef37e34b4a0c50fb816336213e68d9047a"
 "qwen3_thinking_tool_parser.py" = "sha256:22a030552d033b897316ca2d0aa75ccac53dc955fe9ddd6c614b75c684338130"
