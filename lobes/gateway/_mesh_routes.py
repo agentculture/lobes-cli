@@ -383,8 +383,32 @@ class MeshRoutes:
 
         # Finding 5: pass None for capacity (roles data is in the wire format, not capacity param).
         # Also finding 5: handle MeshNameConflict → 409.
+        # Item A (t9): Roster.announce() can now raise MeshFlapping for a
+        # name churning through more than _FLAPPING_THRESHOLD new
+        # registrations inside one hold-out window — held out with reason
+        # "mesh_flapping" (429, retryable) rather than propagating as an
+        # unhandled 500.
+        from lobes.gateway._mesh_roster import MeshFlapping
+
         try:
             self.roster.announce(name, origin, None, now=roster_now)
+        except MeshFlapping as exc:
+            return (
+                429,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Connection", "close"),
+                ],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": str(exc),
+                            "type": "mesh_flapping",
+                            "name": name,
+                        }
+                    }
+                ).encode(),
+            )
         except Exception as exc:
             if "conflict" in str(exc).lower() or "already held" in str(exc).lower():
                 # Drop any stored announcement from an origin that no longer
@@ -487,15 +511,14 @@ class MeshRoutes:
                 roles = (
                     list(exposed_role_names(snapshot, rec.origin)) if snapshot is not None else []
                 )
-                # The flapping mechanism (Roster._flap_count/_FLAPPING_THRESHOLD)
-                # is roster-wide, not per-member — there is no per-name hold-out
-                # state to read, so every listed member reports the SAME signal:
-                # whether this roster is currently in a flapping hold at all.
-                # `announce()` (the only path `/mesh/announce` drives) never
-                # touches this counter — only the unwired `Roster.join()` does
-                # — so this is honestly `False` on every deployment today, and
-                # becomes accurate the moment `join()` is wired to an endpoint.
-                flapping = bool(getattr(self.roster, "_flap_count", 0) >= _FLAPPING_THRESHOLD)
+                # Item A (t9): the flapping signal is now PER-MEMBER —
+                # Roster.announce() (the only path `/mesh/announce` drives)
+                # tracks each name's own flap count, so a churning member
+                # reports `flapping` for ITSELF without holding out every
+                # other name in the roster the way the old roster-wide
+                # counter did.
+                flap_count = self.roster._flap_counts.get(mname, 0)  # noqa: SLF001
+                flapping = flap_count >= _FLAPPING_THRESHOLD
                 unverified_reason = (
                     member_info.unverified_reason if member_info is not None else None
                 )
