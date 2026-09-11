@@ -21,6 +21,7 @@ audio lanes have always used (issue #129) — for BOTH facts, keeping the
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 from lobes.gateway import _readiness as R
@@ -179,11 +180,14 @@ def test_peer_specs_carry_the_role_name_a_peers_capabilities_is_keyed_by() -> No
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": "some/cortex",
         "MULTIMODAL_FEASIBLE": "false",
-        "MULTIMODAL_PEER_ORIGIN": _ORIGIN,
-        "MULTIMODAL_PEER_PROXY": "true",
         "MULTIMODAL_SERVED_NAME": "some/senses",
     }
     table, _ = build_config(env)
+    # Retired (t14): MULTIMODAL_PEER_ORIGIN/MULTIMODAL_PEER_PROXY no longer
+    # populate table.peer_origins/peer_proxied — set them directly instead.
+    table = dataclasses.replace(
+        table, peer_origins={"multimodal": _ORIGIN}, peer_proxied=frozenset({"multimodal"})
+    )
     specs = peer_specs_from_table(table, env)
     assert specs["multimodal"].role == "senses"
     assert specs["multimodal"].role_name() == "senses"
@@ -204,16 +208,25 @@ def _proxied_associate_env() -> dict[str, str]:
         "PRIMARY_SERVED_NAME": "some/cortex",
         "PRIMARY_MAX_MODEL_LEN": "262144",
         "ASSOCIATE_FEASIBLE": "false",
-        "ASSOCIATE_PEER_ORIGIN": _ORIGIN,
-        "ASSOCIATE_PEER_PROXY": "true",
         "ASSOCIATE_SERVED_NAME": "associate",
         "ASSOCIATE_BASE_URL": "http://vllm-associate:8000",
     }
 
 
+def _build_proxied_associate(env: dict[str, str]):
+    """``build_config(env)``, with the retired ASSOCIATE_PEER_ORIGIN/
+    ASSOCIATE_PEER_PROXY env knobs (t14) re-applied as direct RoutingTable
+    fields — the table shape every capabilities_payload call below needs."""
+    table, cfg = build_config(env)
+    table = dataclasses.replace(
+        table, peer_origins={"associate": _ORIGIN}, peer_proxied=frozenset({"associate"})
+    )
+    return table, cfg
+
+
 def test_capabilities_advertises_the_peers_context_for_a_proxied_role() -> None:
     env = _proxied_associate_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_proxied_associate(env)
     payload = capabilities_payload(
         table,
         cfg,
@@ -233,7 +246,7 @@ def test_capabilities_advertises_the_peers_context_for_a_proxied_role() -> None:
 
 def test_a_peer_that_said_nothing_keeps_the_local_answer() -> None:
     env = _proxied_associate_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_proxied_associate(env)
     with_none = capabilities_payload(
         table, cfg, env, backend_ready={"associate": True}, peer_context={"associate": None}
     )
@@ -245,7 +258,7 @@ def test_a_hosted_role_never_takes_a_peers_context() -> None:
     """Only a role in ``peer_proxied`` reads the peer channel — a box that
     hosts a lane always computes that lane's context from its own .env."""
     env = _proxied_associate_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_proxied_associate(env)
     payload = capabilities_payload(
         table,
         cfg,
