@@ -1452,6 +1452,62 @@ def annotate_replicas(
     return payload
 
 
+def annotate_mesh_naming(
+    payload: dict[str, dict],
+    mesh_snapshot: "object | None",
+    *,
+    local_fingerprints: Mapping[str, ReplicaState] | None = None,
+) -> dict[str, dict]:
+    """Add the additive per-role ``member``/``suffixed_lanes`` keys (t8, #237).
+
+    Sibling of :func:`annotate_peer_referrals`/:func:`annotate_replicas` —
+    same "mutate in place, no-op with nothing to annotate" discipline, so a
+    non-mesh deployment (``mesh_snapshot is None``, every pre-t8 caller)
+    keeps a byte-identical payload.
+
+    Consumed by the CLI's ``lobes capabilities`` renderer (wire contract,
+    task t10): ``member`` names the ONE member currently serving this box's
+    plain pool answer for the role when this box does not host it locally
+    but a mesh member does (mirrors the existing ``hosted_by``/proxied
+    shape); ``suffixed_lanes`` lists every ``"{role}-{member}"`` name a
+    fingerprint disagreement exposed for the role, so an operator can see —
+    and address — a disagreeing member even when the plain role name itself
+    is not currently placeable.
+
+    ``local_fingerprints`` is an optional per-ROLE mapping to this box's own
+    served :class:`~lobes.gateway._replicas.Fingerprint` (or replica state
+    carrying one) — when a role is hosted locally, that is the reference
+    :func:`~lobes.gateway._mesh_routing.compute_role_placement` compares
+    every mesh member against. Omitted (the common local-fingerprint-less
+    case) simply falls back to the peers-agree-with-each-other rule.
+    """
+    if mesh_snapshot is None:
+        return payload
+
+    from lobes.gateway._mesh_routing import compute_role_placement
+
+    local_fingerprints = local_fingerprints or {}
+    for role, entry in payload.items():
+        if not isinstance(entry, dict):
+            continue
+        local_fp = local_fingerprints.get(role)
+        if hasattr(local_fp, "fingerprint"):
+            local_fp = local_fp.fingerprint
+        placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+        if placement.suffixed:
+            entry["suffixed_lanes"] = list(placement.suffixed_names())
+        if placement.plain_origins and not entry.get("member"):
+            # Name the member only when THIS box does not itself serve the
+            # plain pool answer — a locally-hosted role stays self-served.
+            served_locally = bool(entry.get("loaded")) or local_fp is not None
+            if not served_locally:
+                for m in getattr(mesh_snapshot, "members", ()):
+                    if m.origin in placement.plain_origins:
+                        entry["member"] = m.name
+                        break
+    return payload
+
+
 def role_registry_from_env(
     env: Mapping[str, str] | None = None,
     *,

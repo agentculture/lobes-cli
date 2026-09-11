@@ -8,6 +8,11 @@ End-points
 * ``GET  /mesh/roster``   – Bearer-join-key member listing
 * ``POST /mesh/approve``  – Bearer-join-key approval
 * ``POST /mesh/revoke``   – Bearer-join-key revocation
+* ``POST /mesh/reannounce`` – Bearer-join-key immediate local re-announce
+  (t8): triggered by a readiness-cache health transition or by
+  ``lobes switch``/``lobes up``, so a fingerprint/health change reaches
+  peers within one probe refresh instead of waiting for the next
+  heartbeat.
 
 Heartbeat
 ---------
@@ -100,6 +105,19 @@ class MeshRoutes:
         self._announcements: dict[str, Announcement] = {}
         self._verify_event = threading.Event()
         self._holder: SnapshotHolder | None = None
+        # Rebuild hook for POST /mesh/reannounce (t8): a callable that returns
+        # a fresh Announcement reflecting this box's CURRENT state (fingerprint
+        # / readiness), so an immediate re-announce after `lobes switch`/`up`
+        # or a health transition carries the new data, not the stale one from
+        # start-up.  `None` (the default) falls back to re-broadcasting the
+        # last-known announcement unchanged — still an immediate wake of the
+        # heartbeat loop, just with no new data to send.
+        self._announcement_builder = None
+
+    def set_announcement_builder(self, builder) -> None:
+        """Wire the callable :meth:`reannounce` uses to rebuild fresh data."""
+        with self._lock:
+            self._announcement_builder = builder
 
     @classmethod
     def build(
@@ -587,6 +605,64 @@ class MeshRoutes:
             json.dumps({"status": "revoked", "name": name}).encode(),
         )
 
+    def reannounce(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
+        """POST /mesh/reannounce – authenticated, LOCAL-only immediate re-broadcast.
+
+        Triggered by this box's own readiness-cache health transitions and by
+        ``lobes switch``/``lobes up`` (t8): whenever this box's own served
+        fingerprint or health changes, callers hit this endpoint so peers
+        reflect the change within one probe refresh instead of waiting for
+        the next scheduled heartbeat. Gated on the same Bearer join key as
+        every other authenticated mesh route — it is a local operator/CLI
+        call, never something a remote peer needs to invoke.
+        """
+        if not self._check_key(getattr(handler, "headers", {})):
+            return (
+                401,
+                [
+                    ("Content-Type", "application/json"),
+                    ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
+                ],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Invalid API key.",
+                            "type": "invalid_api_key",
+                            "code": "invalid_api_key",
+                        }
+                    }
+                ).encode(),
+            )
+
+        with self._lock:
+            builder = self._announcement_builder
+            current = self._announcement
+
+        fresh: Announcement | None = None
+        if builder is not None:
+            try:
+                fresh = builder()
+            except Exception:  # nosec B110 — a broken builder must not wedge reannounce
+                fresh = None
+
+        announcement = fresh if fresh is not None else current
+        if announcement is None:
+            # Nothing has ever been announced from this box yet — nothing to
+            # re-broadcast, but this is not an error condition.
+            return (
+                200,
+                [("Content-Type", "application/json")],
+                json.dumps({"status": "no-op", "reason": "no announcement yet"}).encode(),
+            )
+
+        reannounce_now(self, announcement)
+        return (
+            200,
+            [("Content-Type", "application/json")],
+            json.dumps({"status": "reannounced", "name": announcement.name}).encode(),
+        )
+
 
 # --- route registry --------------------------------------------------------
 
@@ -597,6 +673,7 @@ _MESH_ROUTES: dict[tuple[str, str], str] = {
     ("GET", "/mesh/roster"): "roster_list",
     ("POST", "/mesh/approve"): "approve",
     ("POST", "/mesh/revoke"): "revoke",
+    ("POST", "/mesh/reannounce"): "reannounce",
 }
 
 
