@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T13:36:28Z",
+  "updated": "2026-09-11T14:21:21Z",
   "deviations": [
     {
       "id": "d1",
@@ -39,6 +39,19 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "Review leg harness: Qwen Code on the cortex lane in analyze-only (plan) approval mode replaces ask-colleague review for the d2 experiment's cortex review leg; same reviewer prompt, feedback and instructions only.",
+      "task_ref": "t6",
+      "reason": "Operator decision 2026-09-11 mid-experiment: keep one harness (Qwen Code) across build, review and fix legs.",
+      "affects": [
+        "t6"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],
