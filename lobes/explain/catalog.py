@@ -412,9 +412,9 @@ ledger only restricts on top of that. Every mesh-forwarded answer carries
 `X-Lobes-Mesh-Member: <name>`; a single-hop guard still refuses (`508
 proxy_loop`) a request that would re-proxy. See `lobes explain mesh` and
 `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`
-— including its honest **Implementation status** note: the code has not
-fully cut over yet (deviation d6), and the mesh is DECLARED/UNVALIDATED
-(#108) until a cutover transcript lands.
+— including its honest **Implementation status** note: the code-level
+removal of the retired peer family is done (t14), and the mesh is
+DECLARED/UNVALIDATED (#108) until a cutover transcript lands.
 
 ## Retired: proxy-lobes and replica pools (the per-pair peer family)
 
@@ -423,10 +423,10 @@ hand-typed, per-role peer channel — one declared origin, one proxy flag, one
 outbound key per role — and a role this box ALSO HOSTS could pool with N
 compatible peer replicas via a plural form of the same channel (issue #199,
 VALIDATED live 2026-08-25 for `cortex` only on the Spark+Thor NVFP4 pair).
-Both stages are RETIRED as the documented operator contract — declare the
-mesh instead — but as of this release the gateway still parses and uses
-this family (see the mesh join's Implementation status note above), so an
-existing deployment wired the old way keeps working exactly as documented in
+Both stages are RETIRED, both as the documented operator contract and in the
+code (t14) — declare the mesh instead; a leftover key in an existing
+deployment's `.env` is now silently inert (`lobes doctor`'s
+`peer_family_retired` finding catches it). Full mechanism detail is kept in
 `docs/gateway-fleet.md`'s Retired section (proxy-lobes' pairwise credential
 model, the single-hop guard, `X-Lobes-Proxied-By`, and the replica pool's
 fingerprint-compatibility and capacity-relative selection detail all live
@@ -979,9 +979,9 @@ a persisted approval ledger (`lobes mesh approve <name> [--for <duration>]` /
 read-only roster view. See `lobes explain mesh` and
 `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`
 for the full contract, including the honest **Implementation status**
-caveat: the code has not fully cut over to it yet (deviation d6), and every
-mesh behaviour is DECLARED/UNVALIDATED (#108) until a cutover transcript
-lands.
+caveat: the code-level removal of the retired peer family is done (t14),
+and every mesh behaviour is DECLARED/UNVALIDATED (#108) until a cutover
+transcript lands.
 
 ## Retired: honest referral and replica pools (the per-pair peer family)
 
@@ -994,11 +994,10 @@ opt-in to actually forward on the caller's behalf
 the awake/asleep(referral)/proxy states above — not a fourth one
 (`<PREFIX>_PEER_ORIGINS`/`<PREFIX>_PEER_API_KEYS`, VALIDATED live 2026-08-25
 for `cortex` only on the Spark+Thor NVFP4 pair — see `lobes explain
-gateway`'s "Replica pools" section). This family is RETIRED as the
-documented operator contract — declare the mesh instead — but as of this
-release the gateway still parses and uses it (see the Implementation status
-note above), so an existing deployment wired the old way keeps working
-exactly as before. See `docs/deployment-shapes.md`'s Retired section and
+gateway`'s "Replica pools" section). This family is RETIRED, both as the
+documented operator contract and in the code (t14) — declare the mesh
+instead; a leftover key in an existing deployment's `.env` is now silently
+inert. See `docs/deployment-shapes.md`'s Retired section and
 `docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`.
 
 ## The mesh-brain end-state (issue #112)
@@ -1504,14 +1503,14 @@ Rotating `LOBES_MESH_KEY` is a FLEET-WIDE RESTART, not a per-pair credential
 swap — every member gets the same new value, then every member's gateway
 restarts. See `docs/secret-rotation.md#mesh-join-key`.
 
-## Implementation status (deviation d6)
+## Implementation status
 
 The contract above is what this repo's docs, `lobes explain`, and `lobes
-doctor` now hold operators to. As of this release the CODE has not fully cut
-over: the gateway still parses the retired peer family and the replica-pool
-dispatch path still reads it as its peer source, pending a follow-on task
-that swaps the source to the mesh roster and deletes the retired parsing.
-**No mesh behaviour above has been live-validated** — every one of it is
+doctor` now hold operators to. The code-level removal of the retired peer
+family is done (t14): the gateway no longer parses any of the retired peer
+keys, and the replica-pool dispatch path reads the mesh roster as its
+candidate source instead. **No mesh behaviour above has been
+live-validated** — every one of it is
 DECLARED/UNVALIDATED (#108) until an acceptance transcript for the actual
 join/heartbeat/approve/verify/pool/auto-proxy cutover lands under
 `docs/evidence/`.

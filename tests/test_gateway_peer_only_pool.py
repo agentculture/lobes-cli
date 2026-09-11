@@ -40,6 +40,7 @@ snapshot, an injected ``urlopen`` — so nothing here opens a socket.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -74,16 +75,17 @@ _HIGH_PRESSURE = {"swap_used_percent": 90.0, "iowait_percent": 90.0}
 
 
 def _orin_env(**over) -> dict[str, str]:
-    """The deployed Orin's shape: cortex dropped, both peers declared."""
+    """The deployed Orin's shape: cortex dropped — the wiring half only.
+
+    Retired (t14): the env peer family this used to declare (singular +
+    plural, both peers) is gone from ``build_config``. The peer/replica
+    declaration itself is now a ``RoutingTable``-field concern — see
+    :func:`_orin_kwargs`, applied via :func:`_build`/:func:`_build_config`.
+    """
     env = {
         "PRIMARY_URL": _ORIN_LOCAL,
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
         "PRIMARY_FEASIBLE": "false",
-        "PRIMARY_PEER_ORIGIN": _SPARK,
-        "PRIMARY_PEER_PROXY": "true",
-        "PRIMARY_PEER_API_KEY": _SPARK_KEY,
-        "PRIMARY_PEER_ORIGINS": f"{_SPARK},{_THOR}",
-        "PRIMARY_PEER_API_KEYS": f"{_SPARK_KEY},{_THOR_KEY}",
         "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         "MULTIMODAL_SERVED_NAME": _SENSES_ID,
     }
@@ -91,8 +93,30 @@ def _orin_env(**over) -> dict[str, str]:
     return env
 
 
-def _build(env):
+def _orin_kwargs(**over) -> dict:
+    """The default Orin ``RoutingTable`` field overrides: cortex ("primary")
+    dropped, both the Spark and the Thor declared as its replica pool, the
+    Spark also the singular referral/proxy peer."""
+    kw = {
+        "peer_origins": {"primary": _SPARK},
+        "peer_proxied": frozenset({"primary"}),
+        "peer_api_keys": {"primary": _SPARK_KEY},
+        "replica_origins": {"primary": (_SPARK, _THOR)},
+        "replica_api_keys": {"primary": (_SPARK_KEY, _THOR_KEY)},
+    }
+    kw.update(over)
+    return kw
+
+
+def _build_config(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
+
+
+def _build(env, **table_kwargs):
+    table, cfg = _build_config(env, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -329,14 +353,11 @@ def test_a_peer_that_never_answered_keeps_its_own_reason() -> None:
 def test_a_hosted_cache_still_compares_against_its_own_lane() -> None:
     # The local-lane path is untouched: with a lane present, nothing defers and
     # no peer is ever stamped as the reference.
-    table, _cfg = build_config(
-        {
-            "PRIMARY_URL": _ORIN_LOCAL,
-            "PRIMARY_SERVED_NAME": _CORTEX_ID,
-            "PRIMARY_PEER_ORIGIN": _SPARK,
-            "PRIMARY_PEER_ORIGINS": _SPARK,
-            "PRIMARY_PEER_API_KEYS": _SPARK_KEY,
-        }
+    table, _cfg = _build_config(
+        {"PRIMARY_URL": _ORIN_LOCAL, "PRIMARY_SERVED_NAME": _CORTEX_ID},
+        peer_origins={"primary": _SPARK},
+        replica_origins={"primary": (_SPARK,)},
+        replica_api_keys={"primary": (_SPARK_KEY,)},
     )
     caches = S.build_replica_caches(table, urlopen=lambda *_a, **_k: (200, b"{}"), start=False)
     assert caches["primary"].current()[0].local is True
@@ -349,7 +370,7 @@ def test_a_hosted_cache_still_compares_against_its_own_lane() -> None:
 
 
 def test_a_dropped_role_with_declared_replicas_gets_a_lane_less_cache() -> None:
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
     caches = S.build_replica_caches(table, urlopen=lambda *_a, **_k: (200, b"{}"), start=False)
     assert "primary" in caches
     assert all(not s.local for s in caches["primary"].current())
@@ -357,15 +378,13 @@ def test_a_dropped_role_with_declared_replicas_gets_a_lane_less_cache() -> None:
 
 
 def test_a_dropped_role_with_no_declared_replicas_is_still_skipped() -> None:
-    table, _cfg = build_config(
-        _orin_env(
-            PRIMARY_PEER_ORIGINS="",
-            PRIMARY_PEER_API_KEYS="",
-            MULTIMODAL_PEER_ORIGIN=_SPARK,
-            MULTIMODAL_PEER_ORIGINS=_SPARK,
-            MULTIMODAL_PEER_API_KEYS=_SPARK_KEY,
-            MULTIMODAL_FEASIBLE="false",
-        )
+    table, _cfg = _build_config(
+        _orin_env(MULTIMODAL_FEASIBLE="false"),
+        peer_origins={"multimodal": _SPARK},
+        peer_proxied=frozenset(),
+        peer_api_keys={},
+        replica_origins={"multimodal": (_SPARK,)},
+        replica_api_keys={"multimodal": (_SPARK_KEY,)},
     )
     caches = S.build_replica_caches(table, urlopen=lambda *_a, **_k: (200, b"{}"), start=False)
     assert "primary" not in caches
@@ -384,13 +403,13 @@ def test_an_unreachable_peer_never_stops_the_gateway_binding() -> None:
     def refusing(*_a, **_k):
         raise OSError("connection refused")
 
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
     caches = S.build_replica_caches(table, urlopen=refusing, start=False)
     assert not any(s.ready for s in caches["primary"].current())
 
 
 def test_a_cache_whose_refresh_explodes_does_not_abort_the_boot(monkeypatch) -> None:
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
 
     def exploding_refresh(self):
         raise RuntimeError("probe pass blew up")
@@ -406,7 +425,7 @@ def test_a_cache_whose_refresh_explodes_does_not_abort_the_boot(monkeypatch) -> 
 
 
 def test_a_dropped_pooled_role_is_placed_on_the_least_loaded_peer() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -421,7 +440,7 @@ def test_a_dropped_pooled_role_is_placed_on_the_least_loaded_peer() -> None:
 
 
 def test_the_busier_peer_is_chosen_when_the_load_flips() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -434,7 +453,7 @@ def test_the_busier_peer_is_chosen_when_the_load_flips() -> None:
 
 
 def test_the_raw_served_id_takes_the_same_path_as_the_alias() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, _calls = _post(
         table,
         cfg,
@@ -446,7 +465,7 @@ def test_the_raw_served_id_takes_the_same_path_as_the_alias() -> None:
 
 
 def test_nothing_selectable_falls_through_to_the_singular_forward() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -465,7 +484,7 @@ def test_nothing_selectable_falls_through_to_the_singular_forward() -> None:
 
 
 def test_no_snapshot_at_all_is_the_pre_change_path() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(table, cfg, specs, _body("cortex"), replica_snapshot=None)
     assert _header(resp, S.PROXIED_BY_HEADER) == _SPARK
     assert _header(resp, S.ROUTE_REASON_HEADER) is None
@@ -473,7 +492,8 @@ def test_no_snapshot_at_all_is_the_pre_change_path() -> None:
 
 def test_without_a_singular_origin_the_404_is_unchanged() -> None:
     table, cfg, specs = _build(
-        _orin_env(PRIMARY_PEER_ORIGIN="", PRIMARY_PEER_PROXY="false", PRIMARY_PEER_API_KEY="")
+        _orin_env(),
+        **_orin_kwargs(peer_origins={}, peer_proxied=frozenset(), peer_api_keys={}),
     )
     resp, calls = _post(
         table,
@@ -488,7 +508,7 @@ def test_without_a_singular_origin_the_404_is_unchanged() -> None:
 
 
 def test_a_marked_arrival_still_answers_508_and_never_places() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -503,7 +523,7 @@ def test_a_marked_arrival_still_answers_508_and_never_places() -> None:
 
 
 def test_a_role_this_box_hosts_is_untouched_by_the_peer_only_branch() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -525,13 +545,15 @@ def test_the_pool_is_generic_across_prefixes_not_special_cased_to_cortex() -> No
         "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         "MULTIMODAL_SERVED_NAME": _SENSES_ID,
         "MULTIMODAL_FEASIBLE": "false",
-        "MULTIMODAL_PEER_ORIGIN": _SPARK,
-        "MULTIMODAL_PEER_PROXY": "true",
-        "MULTIMODAL_PEER_API_KEY": _SPARK_KEY,
-        "MULTIMODAL_PEER_ORIGINS": f"{_SPARK},{_THOR}",
-        "MULTIMODAL_PEER_API_KEYS": f"{_SPARK_KEY},{_THOR_KEY}",
     }
-    table, cfg, specs = _build(env)
+    table, cfg, specs = _build(
+        env,
+        peer_origins={"multimodal": _SPARK},
+        peer_proxied=frozenset({"multimodal"}),
+        peer_api_keys={"multimodal": _SPARK_KEY},
+        replica_origins={"multimodal": (_SPARK, _THOR)},
+        replica_api_keys={"multimodal": (_SPARK_KEY, _THOR_KEY)},
+    )
     resp, calls = _post(
         table,
         cfg,
@@ -554,7 +576,7 @@ def _auth(call):
 
 
 def test_each_replica_gets_its_own_declared_key() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     _resp, calls = _post(
         table,
         cfg,
@@ -569,7 +591,10 @@ def test_the_singular_key_is_inherited_when_no_plural_slots_are_declared() -> No
     # c19/h16: the exact upgrade path of a box already forwarding on the
     # singular pair. Without inheritance this forward carries no Authorization
     # and the peer — which runs an inbound gate — answers 401.
-    table, cfg, specs = _build(_orin_env(PRIMARY_PEER_ORIGINS=_SPARK, PRIMARY_PEER_API_KEYS=""))
+    table, cfg, specs = _build(
+        _orin_env(),
+        **_orin_kwargs(replica_origins={"primary": (_SPARK,)}, replica_api_keys={"primary": ("",)}),
+    )
     _resp, calls = _post(
         table, cfg, specs, _body("cortex"), replica_snapshot=_snapshot(_state(_SPARK))
     )
@@ -577,13 +602,13 @@ def test_the_singular_key_is_inherited_when_no_plural_slots_are_declared() -> No
 
 
 def test_a_replica_that_is_not_the_singular_peer_never_borrows_its_key() -> None:
-    table, _cfg = build_config(_orin_env(PRIMARY_PEER_API_KEYS=","))
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs(replica_api_keys={"primary": ("", "")}))
     assert S._replica_api_key(table, "primary", _SPARK) == _SPARK_KEY
     assert S._replica_api_key(table, "primary", _THOR) == ""
 
 
 def test_the_callers_own_authorization_never_reaches_a_peer() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     _resp, calls = _post(
         table,
         cfg,
@@ -601,7 +626,7 @@ def test_the_callers_own_authorization_never_reaches_a_peer() -> None:
 
 
 def test_local_pressure_never_sheds_a_peer_only_pooled_request() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -621,7 +646,7 @@ def test_local_pressure_never_sheds_a_peer_only_pooled_request() -> None:
 
 
 def test_a_pooled_dropped_role_is_listed_in_v1_models() -> None:
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
     pooled = S.pooled_backends(table, _snapshot(_state(_SPARK), _state(_THOR)))
     assert pooled == frozenset({"primary"})
     payload = list_models_payload(
@@ -631,7 +656,7 @@ def test_a_pooled_dropped_role_is_listed_in_v1_models() -> None:
 
 
 def test_the_listing_disappears_when_every_replica_goes_unready() -> None:
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
     pooled = S.pooled_backends(
         table, _snapshot(_state(_SPARK, ready=False), _state(_THOR, ready=False))
     )
@@ -643,7 +668,7 @@ def test_the_listing_disappears_when_every_replica_goes_unready() -> None:
 
 
 def test_an_incompatible_replica_set_is_not_pooled_and_not_listed() -> None:
-    table, _cfg = build_config(_orin_env())
+    table, _cfg = _build_config(_orin_env(), **_orin_kwargs())
     assert (
         S.pooled_backends(
             table, _snapshot(_state(_SPARK, compatible=False), _state(_THOR, compatible=False))
@@ -653,8 +678,9 @@ def test_an_incompatible_replica_set_is_not_pooled_and_not_listed() -> None:
 
 
 def test_a_referral_only_deployment_lists_nothing_new() -> None:
-    table, _cfg = build_config(
-        _orin_env(PRIMARY_PEER_ORIGINS="", PRIMARY_PEER_API_KEYS="", PRIMARY_PEER_PROXY="false")
+    table, _cfg = _build_config(
+        _orin_env(),
+        **_orin_kwargs(replica_origins={}, replica_api_keys={}, peer_proxied=frozenset()),
     )
     assert S.pooled_backends(table, _snapshot(_state(_SPARK))) == frozenset()
     before = list_models_payload(table, {"multimodal": True}, None)
@@ -665,7 +691,7 @@ def test_a_referral_only_deployment_lists_nothing_new() -> None:
 def test_placement_and_listing_agree_on_the_same_snapshot() -> None:
     # h15: one source of truth. Whatever the predicate says is pooled is
     # exactly what gets placed — asserted over both verdicts of the predicate.
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     for snapshot, expect_pooled in (
         (_snapshot(_state(_SPARK), _state(_THOR)), True),
         (_snapshot(_state(_SPARK, ready=False), _state(_THOR, ready=False)), False),
@@ -682,8 +708,9 @@ def test_placement_and_listing_agree_on_the_same_snapshot() -> None:
 
 
 def test_plural_origins_without_the_singular_one_refuse_to_arm() -> None:
-    table, _cfg = build_config(
-        _orin_env(PRIMARY_PEER_ORIGIN="", PRIMARY_PEER_PROXY="false", PRIMARY_PEER_API_KEY="")
+    table, _cfg = _build_config(
+        _orin_env(),
+        **_orin_kwargs(peer_origins={}, peer_proxied=frozenset(), peer_api_keys={}),
     )
     with pytest.raises(ReplicaConfigError) as excinfo:
         S.build_replica_caches(table, urlopen=lambda *_a, **_k: (200, b"{}"), start=False)
@@ -695,14 +722,14 @@ def test_a_hosted_pool_needs_no_singular_origin() -> None:
     # The #199 case: the Spark pools cortex while HOSTING it and publishes no
     # referral at all. Demanding a singular origin there would refuse every
     # pool that shipped before this feature existed.
-    table, _cfg = build_config(
+    table, _cfg = _build_config(
         {
             "PRIMARY_URL": _ORIN_LOCAL,
             "PRIMARY_SERVED_NAME": _CORTEX_ID,
-            "PRIMARY_PEER_ORIGINS": _THOR,
-            "PRIMARY_PEER_API_KEYS": _THOR_KEY,
             "GATEWAY_SELF_ORIGIN": _SPARK,
-        }
+        },
+        replica_origins={"primary": (_THOR,)},
+        replica_api_keys={"primary": (_THOR_KEY,)},
     )
     caches = S.build_replica_caches(table, urlopen=lambda *_a, **_k: (200, b"{}"), start=False)
     assert "primary" in caches
@@ -714,7 +741,7 @@ def test_a_hosted_pool_needs_no_singular_origin() -> None:
 
 
 def test_ready_is_true_when_any_compatible_replica_is_ready() -> None:
-    table, cfg = build_config(_orin_env())
+    table, cfg = _build_config(_orin_env(), **_orin_kwargs())
     payload = S.capabilities_payload(
         table,
         cfg,
@@ -727,7 +754,7 @@ def test_ready_is_true_when_any_compatible_replica_is_ready() -> None:
 
 
 def test_ready_is_false_when_no_compatible_replica_is_ready() -> None:
-    table, cfg = build_config(_orin_env())
+    table, cfg = _build_config(_orin_env(), **_orin_kwargs())
     payload = S.capabilities_payload(
         table,
         cfg,
@@ -741,7 +768,7 @@ def test_ready_is_false_when_no_compatible_replica_is_ready() -> None:
 
 
 def test_context_is_the_agreed_window_not_the_catalog_ceiling() -> None:
-    table, cfg = build_config(_orin_env())
+    table, cfg = _build_config(_orin_env(), **_orin_kwargs())
     payload = S.capabilities_payload(
         table,
         cfg,
@@ -774,7 +801,7 @@ def test_concurrent_placements_spread_across_replicas() -> None:
     self-correct between probes — and a peer-only pool needs it more than a
     hosted one, having no local replica to absorb the tie.
     """
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     cache = _peer_only_cache({_SPARK: _peer_payload(), _THOR: _peer_payload()})
     cache.refresh()
     caches = {"primary": cache}
@@ -810,7 +837,7 @@ def test_concurrent_placements_spread_across_replicas() -> None:
 
 
 def test_a_released_dispatch_stops_counting_against_its_replica() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     cache = _peer_only_cache({_SPARK: _peer_payload(), _THOR: _peer_payload()})
     cache.refresh()
     caches = {"primary": cache}
@@ -894,7 +921,7 @@ def test_a_full_pool_falls_through_and_says_so() -> None:
     not pooled by the predicate at all, and its response stays byte-identical
     to the pre-pool contract (asserted separately below).
     """
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     full = _snapshot(
         _state(_SPARK, running=2, weight=2.0, calibrated=True),
         _state(_THOR, running=2, weight=2.0, calibrated=True),
@@ -907,7 +934,7 @@ def test_a_full_pool_falls_through_and_says_so() -> None:
 
 
 def test_an_unready_pool_falls_through_with_no_marker_at_all() -> None:
-    table, cfg, specs = _build(_orin_env())
+    table, cfg, specs = _build(_orin_env(), **_orin_kwargs())
     resp, _calls = _post(
         table,
         cfg,
@@ -927,8 +954,8 @@ def test_a_pooled_but_unproxied_role_is_still_listed() -> None:
     breaking the one-predicate promise. The served id is now resolved the
     same way `peer_specs_from_table` resolves it, independently of the knob.
     """
-    env = _orin_env(PRIMARY_PEER_PROXY="false")
-    table, _cfg = build_config(env)
+    env = _orin_env()
+    table, _cfg = _build_config(env, **_orin_kwargs(peer_proxied=frozenset()))
     assert "primary" not in table.peer_proxied  # the knob really is off
     pooled = S.pooled_backends(table, _snapshot(_state(_SPARK), _state(_THOR)))
     assert pooled == frozenset({"primary"}), "placement still treats it as pooled"

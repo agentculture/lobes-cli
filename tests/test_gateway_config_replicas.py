@@ -1,29 +1,26 @@
-"""cortex-replica-pool CONFIG channels: plural peers + self-origin (t2, #199).
+"""cortex-replica-pool CONFIG channels: self-origin + lane fingerprints (t2,
+#199) — the plural peer family retired (t14).
 
-This task adds the *config layer only* for the plural replica-pool family —
-parsing ``<PREFIX>_PEER_ORIGINS`` / ``<PREFIX>_PEER_API_KEYS`` (comma-
-separated, positional) plus ``GATEWAY_SELF_ORIGIN`` and per-backend lane
-fingerprint knobs into new :class:`~lobes.gateway._routing.RoutingTable`
-fields. NO selection/dialing/consistency-checking behaviour lands here —
-that is later cortex-replica-pool work. The existing SCALAR peer channels
-(``PEER_ORIGIN_ENV`` / ``PEER_PROXY_ENV`` / ``PEER_API_KEY_ENV``) and
-``order_backends`` are untouched by this task.
+The plural replica-pool env family this module used to pin —
+``<PREFIX>_PEER_ORIGINS`` / ``<PREFIX>_PEER_API_KEYS`` (comma-separated,
+positional), parsed into :class:`~lobes.gateway._routing.RoutingTable`'s
+``replica_origins``/``replica_api_keys`` fields — is GONE (t14): t13 made
+the mesh ``RoutingSnapshot`` the pool candidate source, so
+:func:`~lobes.gateway._config.build_config` no longer reads either env var.
+``PEER_ORIGINS_ENV``/``PEER_API_KEYS_ENV`` and the ``ReplicaConfigError``
+raise for a positional length mismatch are deleted along with that parsing.
+What survives here, unaffected by the retirement:
 
-Contract pinned below:
-
-* ``replica_origins`` is comma-separated, each item stripped and
-  trailing-slash-trimmed; empty items are dropped; an absent/blank key
-  yields no entry.
-* ``replica_api_keys`` is comma-separated and POSITIONAL against
-  ``replica_origins`` for the same name — an empty slot is legal (no key
-  for that replica), but a list whose length disagrees with its origins
-  list (shorter OR longer) raises :class:`~lobes.gateway._config.
-  ReplicaConfigError` naming the backend.
-* ``self_origin`` comes from ``GATEWAY_SELF_ORIGIN`` only — never derived.
-* Lane fingerprints are read per backend name from
+* ``self_origin`` from ``GATEWAY_SELF_ORIGIN`` only — never derived.
+* Lane fingerprints, read per backend name from
   ``<PREFIX>_{QUANTIZATION,KV_CACHE_DTYPE,REASONING_PARSER,TOOL_CALL_PARSER,
   SPECULATIVE_CONFIG}``; only SET knobs appear.
+* The capacity + kill-switch env knobs (``MAX_ACTIVE_ENV`` /
+  ``CAPACITY_KILL_SWITCH_ENV``) — a completely separate channel from the
+  peer family, explicitly kept per the operator instruction ("keep
+  ReplicaCache/select_replica/capacity clamp; remove only the env SOURCE").
 * A no-new-knobs env yields a table equal (==) to today's.
+* The retired plural knobs are now INERT — setting them does nothing.
 """
 
 from __future__ import annotations
@@ -36,10 +33,7 @@ from lobes.gateway._config import (
     FEASIBLE_ENV,
     LANE_FINGERPRINT_SUFFIXES,
     MAX_ACTIVE_ENV,
-    PEER_API_KEYS_ENV,
-    PEER_ORIGINS_ENV,
     CapacityConfigError,
-    ReplicaConfigError,
     ServerConfig,
     build_config,
 )
@@ -60,138 +54,36 @@ def _base_env(**over: str) -> dict[str, str]:
 
 
 # ============================================================================
-# The env channels: one <PREFIX>_<KNOB> convention, all nine backend names
+# Retired: the plural replica-pool env family is now inert
 # ============================================================================
 
 
-def test_peer_origins_env_mirrors_feasible_env_prefixes() -> None:
-    assert set(PEER_ORIGINS_ENV) == set(FEASIBLE_ENV)
-    assert PEER_ORIGINS_ENV == {
-        "primary": "PRIMARY_PEER_ORIGINS",
-        "multimodal": "MULTIMODAL_PEER_ORIGINS",
-        "muse": "MUSE_PEER_ORIGINS",
-        "worker": "WORKER_PEER_ORIGINS",
-        "associate": "ASSOCIATE_PEER_ORIGINS",
-        "hand": "HAND_PEER_ORIGINS",
-        "embed": "EMBED_PEER_ORIGINS",
-        "rerank": "RERANK_PEER_ORIGINS",
-        "stt": "STT_PEER_ORIGINS",
-        "tts": "TTS_PEER_ORIGINS",
-    }
-
-
-def test_peer_api_keys_env_mirrors_feasible_env_prefixes() -> None:
-    assert set(PEER_API_KEYS_ENV) == set(FEASIBLE_ENV)
-    assert PEER_API_KEYS_ENV == {
-        "primary": "PRIMARY_PEER_API_KEYS",
-        "multimodal": "MULTIMODAL_PEER_API_KEYS",
-        "muse": "MUSE_PEER_API_KEYS",
-        "worker": "WORKER_PEER_API_KEYS",
-        "associate": "ASSOCIATE_PEER_API_KEYS",
-        "hand": "HAND_PEER_API_KEYS",
-        "embed": "EMBED_PEER_API_KEYS",
-        "rerank": "RERANK_PEER_API_KEYS",
-        "stt": "STT_PEER_API_KEYS",
-        "tts": "TTS_PEER_API_KEYS",
-    }
-
-
-# ============================================================================
-# replica_origins: comma-separated, stripped, trailing-slash-trimmed
-# ============================================================================
-
-
-def test_replica_origins_parsed_comma_separated() -> None:
+def test_replica_origins_env_knob_is_now_inert() -> None:
     table, _cfg = build_config(_base_env(PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}"))
-    assert dict(table.replica_origins) == {"primary": (_ORIGIN_A, _ORIGIN_B)}
-
-
-def test_replica_origins_stripped_and_trailing_slash_trimmed() -> None:
-    table, _cfg = build_config(_base_env(PRIMARY_PEER_ORIGINS=" http://a:8000/ , http://b:8000// "))
-    assert dict(table.replica_origins) == {"primary": ("http://a:8000", "http://b:8000")}
-
-
-def test_replica_origins_empty_items_dropped() -> None:
-    table, _cfg = build_config(_base_env(PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},,{_ORIGIN_B},"))
-    assert dict(table.replica_origins) == {"primary": (_ORIGIN_A, _ORIGIN_B)}
-
-
-def test_replica_origins_absent_key_yields_no_entry() -> None:
-    table, _cfg = build_config(_base_env())
     assert dict(table.replica_origins) == {}
 
 
-def test_replica_origins_blank_key_yields_no_entry() -> None:
-    table, _cfg = build_config(_base_env(PRIMARY_PEER_ORIGINS="   "))
-    assert dict(table.replica_origins) == {}
-
-
-# ============================================================================
-# replica_api_keys: comma-separated, POSITIONAL, empty slot legal
-# ============================================================================
-
-
-def test_replica_api_keys_positional_with_trailing_empty_slot() -> None:
+def test_replica_api_keys_env_knob_is_now_inert() -> None:
     table, _cfg = build_config(
         _base_env(
             PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}",
-            PRIMARY_PEER_API_KEYS="k1,",
+            PRIMARY_PEER_API_KEYS="k1,k2",
         )
     )
-    assert dict(table.replica_api_keys) == {"primary": ("k1", "")}
-
-
-def test_replica_api_keys_bare_blank_value_yields_one_empty_slot_per_origin() -> None:
-    table, _cfg = build_config(
-        _base_env(
-            PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}",
-            PRIMARY_PEER_API_KEYS="",
-        )
-    )
-    assert dict(table.replica_api_keys) == {"primary": ("", "")}
-
-
-def test_replica_api_keys_without_origins_is_inert() -> None:
-    table, _cfg = build_config(_base_env(PRIMARY_PEER_API_KEYS="k1,k2"))
     assert dict(table.replica_api_keys) == {}
 
 
-def test_replica_api_keys_shorter_list_raises_naming_prefix() -> None:
+def test_mismatched_replica_api_keys_length_no_longer_raises() -> None:
+    # Pre-t14 this was a hard ReplicaConfigError (positional length
+    # mismatch); with the env parsing gone there is nothing left to
+    # mismatch — build_config simply ignores both keys.
     env = _base_env(
         PRIMARY_PEER_ORIGINS=f"{_ORIGIN_A},{_ORIGIN_B}",
         PRIMARY_PEER_API_KEYS="k1",
     )
-    with pytest.raises(ReplicaConfigError, match="PRIMARY"):
-        build_config(env)
-
-
-def test_replica_api_keys_longer_list_raises_naming_prefix() -> None:
-    env = _base_env(
-        PRIMARY_PEER_ORIGINS=_ORIGIN_A,
-        PRIMARY_PEER_API_KEYS="k1,k2",
-    )
-    with pytest.raises(ReplicaConfigError, match="PRIMARY"):
-        build_config(env)
-
-
-def test_replica_api_keys_stripped_not_transformed() -> None:
-    table, _cfg = build_config(
-        _base_env(
-            PRIMARY_PEER_ORIGINS=_ORIGIN_A,
-            PRIMARY_PEER_API_KEYS="  MiXeD-Case-Key==  ",
-        )
-    )
-    assert dict(table.replica_api_keys) == {"primary": ("MiXeD-Case-Key==",)}
-
-
-def test_replica_api_key_values_never_appear_in_repr_or_str() -> None:
-    secret = "sk-replica-secret-do-not-print"  # nosec B105 — test fixture, not a credential
-    table, _cfg = build_config(
-        _base_env(PRIMARY_PEER_ORIGINS=_ORIGIN_A, PRIMARY_PEER_API_KEYS=secret)
-    )
-    assert dict(table.replica_api_keys) == {"primary": (secret,)}
-    for text in (repr(table), str(table)):
-        assert secret not in text
+    table, _cfg = build_config(env)
+    assert dict(table.replica_origins) == {}
+    assert dict(table.replica_api_keys) == {}
 
 
 # ============================================================================

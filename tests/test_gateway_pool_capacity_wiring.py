@@ -37,6 +37,7 @@ is touched.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -66,16 +67,31 @@ def _env(**over) -> dict[str, str]:
 
 
 def _pool_env(**over) -> dict[str, str]:
-    return _env(
-        PRIMARY_PEER_ORIGINS=_PEER_ORIGIN,
-        PRIMARY_PEER_API_KEYS="",
-        GATEWAY_SELF_ORIGIN=_SELF_ORIGIN,
-        **over,
-    )
+    """The wiring half. Retired (t14): the replica-pool declaration itself
+    (Thor as a peer replica, blank key) is a RoutingTable-field concern now —
+    see :func:`_pool_kwargs`, applied via :func:`_build`/:func:`_build_config`.
+    """
+    return _env(GATEWAY_SELF_ORIGIN=_SELF_ORIGIN, **over)
 
 
-def _build(env):
+def _pool_kwargs(**over) -> dict:
+    kw = {
+        "replica_origins": {"primary": (_PEER_ORIGIN,)},
+        "replica_api_keys": {"primary": ("",)},
+    }
+    kw.update(over)
+    return kw
+
+
+def _build_config(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
+
+
+def _build(env, **table_kwargs):
+    table, cfg = _build_config(env, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -317,7 +333,7 @@ def test_published_capacity_is_the_one_a_peers_replica_cache_ingests() -> None:
 
 
 def test_local_dispatch_is_counted_and_released() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_PEER_ORIGIN, running=5))
     resp, _ = _post(table, cfg, specs, snapshot=snapshot, counter=counter)
@@ -332,7 +348,7 @@ def test_local_dispatch_is_counted_and_released() -> None:
 
 
 def test_forwarded_dispatch_is_counted_against_the_peer() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=5),
@@ -347,7 +363,7 @@ def test_forwarded_dispatch_is_counted_against_the_peer() -> None:
 def test_a_retry_releases_the_failed_replica_before_dispatching_the_next() -> None:
     """The classic leak site: A refuses pre-dispatch, B serves. A must not stay
     counted, or the box that merely failed once looks loaded forever."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=5),
@@ -372,7 +388,7 @@ def test_a_retry_releases_the_failed_replica_before_dispatching_the_next() -> No
 def test_an_exhausted_pool_leaves_nothing_counted() -> None:
     """Every replica fails pre-dispatch → the 503. No release call site is
     reached by a response, so the failure path itself must release."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True),
@@ -388,7 +404,7 @@ def test_an_exhausted_pool_leaves_nothing_counted() -> None:
 def test_an_error_response_from_a_replica_releases_immediately() -> None:
     """A peer's own 4xx is an ANSWER, relayed with no upstream body to stream
     (the relay is buffered) — either way the counter must not survive it."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=5),
@@ -425,7 +441,7 @@ def test_a_marked_arrival_is_counted_as_local_work_and_released() -> None:
     local replica. The work is counted; no placement is invented (the answer
     still carries ``sole-ready`` and no ``X-Lobes-Served-By``).
     """
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_PEER_ORIGIN))
     resp, _ = _post(
@@ -446,7 +462,7 @@ def test_a_marked_arrival_is_counted_as_local_work_and_released() -> None:
 def test_a_marked_arrival_is_counted_against_the_local_engine_in_the_snapshot() -> None:
     """The consequence F5 names: while a forwarded arrival is executing, this
     box's OWN next selection must see the local replica as loaded."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     cache = _live_cache(capacity=2)
     caches = {"primary": cache}
     resp, _ = _post(
@@ -468,7 +484,7 @@ def test_a_fallthrough_with_nothing_selectable_counts_the_local_dial() -> None:
     """The other uncounted local execution: every replica is FULL, so nothing
     is selectable and ``d5`` says dial the local owner anyway (vLLM queues it)
     rather than shed. That request is executing locally too."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     counter = _RecordingCounter()
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=2.0, running=2),
@@ -540,7 +556,7 @@ def test_a_burst_against_two_idle_replicas_distributes_across_both() -> None:
     """Four arrivals, ONE probe pass, no refresh in between. Without the
     in-flight fold every one of them reads the same idle snapshot and lands on
     the same replica."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     cache = _live_cache(capacity=2)
     caches = {"primary": cache}
     snapshot = S.replica_snapshot_provider(caches)
@@ -572,7 +588,7 @@ def test_dispatch_counter_for_an_unknown_backend_is_a_harmless_no_op() -> None:
 
 
 def test_build_replica_caches_seeds_the_local_lane_from_declared_capacity() -> None:
-    table, _cfg = build_config(_pool_env(PRIMARY_MAX_ACTIVE="8"))
+    table, _cfg = _build_config(_pool_env(PRIMARY_MAX_ACTIVE="8"), **_pool_kwargs())
     caches = S.build_replica_caches(
         table,
         urlopen=lambda url, _t, _k: (200, b"{}"),
@@ -584,7 +600,7 @@ def test_build_replica_caches_seeds_the_local_lane_from_declared_capacity() -> N
 
 
 def test_build_replica_caches_honours_the_capacity_kill_switch_for_peers() -> None:
-    table, _cfg = build_config(_pool_env())
+    table, _cfg = _build_config(_pool_env(), **_pool_kwargs())
     caches = S.build_replica_caches(
         table,
         urlopen=lambda url, _t, _k: (200, b"{}"),
@@ -602,7 +618,7 @@ def test_build_replica_caches_honours_the_capacity_kill_switch_for_peers() -> No
 
 
 def test_a_pooled_local_answer_reports_the_capacity_and_utilisation_used() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=1, weight=8.0),
         _state(_PEER_ORIGIN, running=6, weight=8.0),
@@ -620,7 +636,7 @@ def test_a_pooled_local_answer_reports_the_capacity_and_utilisation_used() -> No
 
 
 def test_a_pooled_forwarded_answer_reports_the_peers_numbers() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=6, weight=8.0),
         _state(_PEER_ORIGIN, running=2, weight=4.0),
@@ -636,7 +652,7 @@ def test_a_pooled_forwarded_answer_reports_the_peers_numbers() -> None:
 
 
 def test_an_uncalibrated_placement_says_so_rather_than_claiming_one_slot() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=1),
         _state(_PEER_ORIGIN, running=6),
@@ -659,7 +675,7 @@ def test_an_unpooled_answer_carries_no_route_load_header() -> None:
 def test_a_peers_route_load_header_is_not_relayed_alongside_ours() -> None:
     """A pooled peer stamps its OWN load marker; relayed verbatim a caller
     would see two. The forwarder's verdict is the honest one."""
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=6, weight=8.0),
         _state(_PEER_ORIGIN, running=2, weight=4.0),

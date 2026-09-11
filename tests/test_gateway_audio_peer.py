@@ -11,6 +11,7 @@ per-endpoint, and forward through the same data-plane machinery.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -27,23 +28,39 @@ _TRANSCRIBE = "/v1/audio/transcriptions"
 
 
 def _audio_env(**over) -> dict:
-    """A Spark-shaped fleet env: audio overlay wired, tts declared off +
-    proxied to the Thor (the live ask), stt served locally."""
+    """A Spark-shaped fleet env: audio overlay wired, tts declared off — the
+    wiring half only. The proxy declaration itself (Thor as the peer, live
+    ask) is a RoutingTable-field concern now — see :func:`_audio_kwargs`,
+    applied via :func:`_build`."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP",
         "AUDIO_URL": "http://realtime:8080",
         "TTS_FEASIBLE": "false",
-        "TTS_PEER_ORIGIN": _THOR_ORIGIN,
-        "TTS_PEER_PROXY": "true",
-        "TTS_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
 
 
-def _build(env):
+def _audio_kwargs(**over) -> dict:
+    kw = {
+        "peer_origins": {"tts": _THOR_ORIGIN},
+        "peer_proxied": frozenset({"tts"}),
+        "peer_api_keys": {"tts": _PEER_KEY},
+    }
+    kw.update(over)
+    return kw
+
+
+def _build_config(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
+
+
+def _build(env, **table_kwargs):
+    table, cfg = _build_config(env, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -106,7 +123,7 @@ def test_audio_role_for_path_maps_the_two_lanes() -> None:
 
 
 def test_tts_declared_off_and_proxied_arms_exactly_like_a_core_role() -> None:
-    table, _cfg, specs = _build(_audio_env())
+    table, _cfg, specs = _build(_audio_env(), **_audio_kwargs())
     assert "tts" in table.infeasible
     assert "stt" not in table.infeasible
     assert table.peer_origins["tts"] == _THOR_ORIGIN
@@ -116,9 +133,7 @@ def test_tts_declared_off_and_proxied_arms_exactly_like_a_core_role() -> None:
 
 
 def test_origin_without_knob_stays_referral_only_for_audio() -> None:
-    env = _audio_env()
-    del env["TTS_PEER_PROXY"]
-    table, _cfg, specs = _build(env)
+    table, _cfg, specs = _build(_audio_env(), **_audio_kwargs(peer_proxied=frozenset()))
     assert "tts" in table.infeasible
     assert table.peer_proxied == frozenset()
     assert specs == {}
@@ -126,8 +141,9 @@ def test_origin_without_knob_stays_referral_only_for_audio() -> None:
 
 def test_knob_on_a_feasible_audio_lane_is_inert() -> None:
     # tts NOT declared off → the local overlay serves it; the knob is ignored.
-    env = _audio_env(TTS_FEASIBLE="")
-    table, _cfg, _specs = _build(env)
+    table, _cfg, _specs = _build(
+        _audio_env(TTS_FEASIBLE=""), **_audio_kwargs(peer_proxied=frozenset())
+    )
     assert "tts" not in table.infeasible
     assert table.peer_proxied == frozenset()
 
@@ -148,7 +164,7 @@ def test_no_audio_env_is_byte_identical_default() -> None:
 
 def test_speech_forwards_to_peer_while_transcriptions_stay_local() -> None:
     # The all-or-nothing violation, fixed: tts-remote + stt-local in ONE deployment.
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     resp, calls = _audio_request(table, cfg, specs, _SPEECH)
     assert calls[0].backend.base_url == _THOR_ORIGIN
     assert dict(resp.headers).get(S.PROXIED_BY_HEADER) == _THOR_ORIGIN
@@ -159,7 +175,7 @@ def test_speech_forwards_to_peer_while_transcriptions_stay_local() -> None:
 
 
 def test_forwarded_body_is_verbatim_no_model_rewrite() -> None:
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     body = b'{"model":"tts-1","input":"hello","voice":"alloy"}'
     _resp, calls = _audio_request(table, cfg, specs, _SPEECH, body=body)
     assert calls[0].body == body  # path-routed lane: never rewritten
@@ -167,7 +183,7 @@ def test_forwarded_body_is_verbatim_no_model_rewrite() -> None:
 
 def test_callers_credential_never_reaches_the_audio_peer() -> None:
     # The credential-leak violation, fixed: strip inbound, inject pairwise.
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     _resp, calls = _audio_request(
         table, cfg, specs, _SPEECH, headers=[("Authorization", "Bearer caller-secret")]
     )
@@ -179,7 +195,7 @@ def test_callers_credential_never_reaches_the_audio_peer() -> None:
 
 def test_marked_audio_arrival_refused_508_zero_outbound() -> None:
     # The no-loop-guard violation, fixed: single hop, refused with no dial.
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     resp, calls = _audio_request(table, cfg, specs, _SPEECH, headers=[(S.PROXIED_HEADER, "tts")])
     assert resp.status == 508
     assert json.loads(resp.body)["error"]["code"] == "proxy_loop"
@@ -187,15 +203,13 @@ def test_marked_audio_arrival_refused_508_zero_outbound() -> None:
 
 
 def test_outbound_audio_forward_carries_single_hop_marker() -> None:
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     _resp, calls = _audio_request(table, cfg, specs, _SPEECH)
     assert (S.PROXIED_HEADER, "tts") in calls[0].headers
 
 
 def test_declared_off_unproxied_lane_404s_role_infeasible_with_referral() -> None:
-    env = _audio_env()
-    del env["TTS_PEER_PROXY"]
-    table, cfg, specs = _build(env)
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs(peer_proxied=frozenset()))
     resp, calls = _audio_request(table, cfg, specs, _SPEECH)
     assert resp.status == 404
     error = json.loads(resp.body)["error"]
@@ -205,7 +219,7 @@ def test_declared_off_unproxied_lane_404s_role_infeasible_with_referral() -> Non
 
 
 def test_peer_down_yields_retryable_503_with_attribution() -> None:
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     opener, _calls = _opener(outcome=S.UpstreamError("connection refused"))
     resp = S.handle_audio_request(
         table, cfg, specs, _SPEECH, [], b"{}", opener, audio_ready_probe=lambda: True
@@ -217,7 +231,7 @@ def test_peer_down_yields_retryable_503_with_attribution() -> None:
 def test_other_audio_paths_keep_the_legacy_namespace_route() -> None:
     # An /v1/audio/* path outside the two role lanes stays on AUDIO_URL even
     # when tts is proxied — byte-identical to pre-#129 behaviour.
-    table, cfg, specs = _build(_audio_env())
+    table, cfg, specs = _build(_audio_env(), **_audio_kwargs())
     resp, calls = _audio_request(table, cfg, specs, "/v1/audio/translations")
     assert calls[0].backend.base_url == cfg.audio_url
 
@@ -228,7 +242,7 @@ def test_other_audio_paths_keep_the_legacy_namespace_route() -> None:
 
 
 def test_capabilities_annotate_proxied_tts_and_local_stt() -> None:
-    table, cfg, _specs = _build(_audio_env())
+    table, cfg, _specs = _build(_audio_env(), **_audio_kwargs())
     registry = build_role_registry(table, cfg, peer_ready={"tts": True})
     payload = {
         role: {"feasible": info.feasible, "ready": info.ready} for role, info in registry.items()
@@ -246,7 +260,7 @@ def test_capabilities_annotate_proxied_tts_and_local_stt() -> None:
 
 
 def test_proxied_tts_without_peer_signal_is_honestly_not_ready() -> None:
-    table, cfg, _specs = _build(_audio_env())
+    table, cfg, _specs = _build(_audio_env(), **_audio_kwargs())
     registry = build_role_registry(table, cfg)  # no peer_ready supplied
     assert registry["tts"].ready is False
     assert registry["tts"].loaded is False
@@ -310,14 +324,12 @@ def test_audio_peer_probe_accepts_flat_role_payloads_and_never_raises() -> None:
 
 def test_endpoints_reflect_per_lane_serving() -> None:
     # tts proxied + stt local → both lanes advertised.
-    table, cfg, _specs = _build(_audio_env())
+    table, cfg, _specs = _build(_audio_env(), **_audio_kwargs())
     eps = S._endpoints_for(table, bool(cfg.audio_url))
     assert "POST /v1/audio/speech" in eps
     assert "POST /v1/audio/transcriptions" in eps
     # tts declared off, NOT proxied → speech not advertised (it 404s).
-    env = _audio_env()
-    del env["TTS_PEER_PROXY"]
-    table, cfg, _specs = _build(env)
+    table, cfg, _specs = _build(_audio_env(), **_audio_kwargs(peer_proxied=frozenset()))
     eps = S._endpoints_for(table, bool(cfg.audio_url))
     assert "POST /v1/audio/speech" not in eps
     assert "POST /v1/audio/transcriptions" in eps
@@ -328,7 +340,7 @@ def test_v1_models_never_lists_audio_sidecar_ids() -> None:
     # as requestable `model` values even while proxied-and-ready.
     from lobes.gateway._routing import list_models_payload
 
-    table, _cfg, specs = _build(_audio_env())
+    table, _cfg, specs = _build(_audio_env(), **_audio_kwargs())
     peer_served = {
         name: spec.served_name for name, spec in specs.items() if name not in ("stt", "tts")
     }

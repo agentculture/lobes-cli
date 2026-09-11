@@ -42,6 +42,7 @@ injected snapshot/``urlopen`` — so nothing here opens a socket.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -97,25 +98,40 @@ def _base_env(**over) -> dict[str, str]:
 
 
 def _pool_env(**over) -> dict[str, str]:
-    env = {
-        "PRIMARY_PEER_ORIGINS": _THOR_ORIGIN,
-        "PRIMARY_PEER_API_KEYS": _THOR_KEY,
-        "GATEWAY_SELF_ORIGIN": _SPARK_ORIGIN,
-    }
+    """The wiring half of a cortex replica pool. Retired (t14): the pool
+    declaration itself (Thor as a peer replica) is a RoutingTable-field
+    concern now — see :func:`_pool_kwargs`, applied via :func:`_build`."""
+    env = {"GATEWAY_SELF_ORIGIN": _SPARK_ORIGIN}
     env.update(over)
     return _base_env(**env)
 
 
+def _pool_kwargs(
+    *, origins: tuple[str, ...] = (_THOR_ORIGIN,), keys: tuple[str, ...] = (_THOR_KEY,)
+) -> dict:
+    return {
+        "replica_origins": {"primary": tuple(origins)},
+        "replica_api_keys": {"primary": tuple(keys)},
+    }
+
+
 def _two_peer_env(**over) -> dict[str, str]:
-    return _pool_env(
-        PRIMARY_PEER_ORIGINS=f"{_THOR_ORIGIN},{_ORIN_ORIGIN}",
-        PRIMARY_PEER_API_KEYS=f"{_THOR_KEY},{_ORIN_KEY}",
-        **over,
-    )
+    return _pool_env(**over)
 
 
-def _build(env):
+def _two_peer_kwargs() -> dict:
+    return _pool_kwargs(origins=(_THOR_ORIGIN, _ORIN_ORIGIN), keys=(_THOR_KEY, _ORIN_KEY))
+
+
+def _build_config(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
+
+
+def _build(env, **table_kwargs):
+    table, cfg = _build_config(env, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -248,7 +264,7 @@ def _header(resp, name: str):
 
 @pytest.mark.parametrize("requested", ["cortex", "main", "hard"])
 def test_busy_with_a_selectable_peer_forwards(requested) -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table, cfg, specs, _body(requested), pressure=_HIGH_PRESSURE, replica_snapshot=snapshot
@@ -272,7 +288,7 @@ def test_busy_forward_is_placed_by_the_raw_served_id_too() -> None:
     # The raw id is not a tier alias, so it never reaches the pressure branch —
     # this pins that it is nevertheless pooled and forwarded off a busy local
     # replica, which is the shape every deployed consumer actually sends (c31).
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table, cfg, specs, _body(_CORTEX_ID), pressure=_HIGH_PRESSURE, replica_snapshot=snapshot
@@ -285,7 +301,7 @@ def test_busy_forward_is_placed_by_the_raw_served_id_too() -> None:
 def test_busy_with_no_selectable_peer_keeps_the_pre_pool_429() -> None:
     # The byte-for-byte comparison the plan asks for: the pooled 429 and the
     # UNPOOLED 429 differ by exactly one header — the honest route reason.
-    pooled_table, cfg, specs = _build(_pool_env())
+    pooled_table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     plain_table, plain_cfg, plain_specs = _build(_base_env())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN, ready=False)
@@ -316,7 +332,7 @@ def test_busy_with_no_selectable_peer_keeps_the_pre_pool_429() -> None:
 def test_busy_with_an_incompatible_peer_is_not_forwarded() -> None:
     # A declared replica whose live fingerprint does not match is listed, never
     # pooled (spec c13/h11) — so it cannot absorb a shed either.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN, compatible=False)
     )
@@ -336,7 +352,7 @@ def test_busy_peer_that_is_itself_busy_is_still_forwarded_to() -> None:
     # (t3 decoupled candidacy from it, this test is that decision's pool-side
     # face). The peer stays a candidate; what protects it is its OWN engine
     # state — its capacity gate here and its own policy when the forward lands.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN, busy=True))
     resp, calls = _post(
         table, cfg, specs, _body("cortex"), pressure=_HIGH_PRESSURE, replica_snapshot=snapshot
@@ -352,7 +368,7 @@ def test_a_busy_peer_whose_engine_is_full_is_not_forwarded_to() -> None:
     # saturated box attractive?" — no. A peer carrying the same pressure flag
     # but whose CALIBRATED engine is at capacity is unselectable on the honest
     # signal, so the shed stands and no socket leaves the box.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, busy=True),
         _state(_THOR_ORIGIN, busy=True, weight=4.0, running=3, waiting=1),
@@ -367,7 +383,7 @@ def test_a_busy_peer_whose_engine_is_full_is_not_forwarded_to() -> None:
 def test_override_serves_locally_and_never_forwards() -> None:
     # X-Lobes-Override forces the requested tier despite pressure; it must not
     # become a licence to forward. With the local replica idle it wins outright.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -392,7 +408,8 @@ def test_hand_is_the_servable_floor_under_pressure_and_never_forwards() -> None:
     table, cfg, specs = _build(
         _pool_env(
             HAND_BASE_URL="http://vllm-hand:8000", HAND_SERVED_NAME="LiquidAI/LFM2.5-1.2B-Instruct"
-        )
+        ),
+        **_pool_kwargs(),
     )
     resp, calls = _post(
         table,
@@ -410,7 +427,7 @@ def test_hand_is_the_servable_floor_under_pressure_and_never_forwards() -> None:
 def test_infeasible_role_still_404s_before_the_busy_forward() -> None:
     # The hardware feasibility gate outranks pressure AND the pool: a dropped
     # role is an absolute fact, not a load condition.
-    table, cfg, specs = _build(_pool_env(PRIMARY_FEASIBLE="false"))
+    table, cfg, specs = _build(_pool_env(PRIMARY_FEASIBLE="false"), **_pool_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -434,7 +451,7 @@ def test_both_boxes_busy_produces_exactly_one_forward_and_one_429() -> None:
     # verdict under ITS policy (#85) and rides straight back — the forwarder
     # neither retries it locally (which pressure just forbade) nor forwards it
     # onward (which would be the ping-pong c35/h27 rules out).
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, busy=True),
         _state(_THOR_ORIGIN, running=0),
@@ -458,7 +475,7 @@ def test_both_boxes_busy_produces_exactly_one_forward_and_one_429() -> None:
 
 
 def test_a_peers_4xx_is_relayed_and_never_retried() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=9),
         _state(_THOR_ORIGIN, running=0),
@@ -476,7 +493,7 @@ def test_a_marked_arrival_under_local_pressure_gets_the_local_429() -> None:
     # Single hop (c4/h4): a request a peer already forwarded is served HERE or
     # refused. Under local pressure that means THIS box's 429 — the receiver
     # applying its own policy — with zero outbound sockets.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -494,7 +511,7 @@ def test_a_marked_arrival_under_local_pressure_gets_the_local_429() -> None:
 
 
 def test_a_marked_arrival_is_served_locally_when_not_busy() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, running=9), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -548,7 +565,7 @@ def test_a_marked_arrival_is_served_locally_when_not_busy() -> None:
 def test_iowait_only_pressure_serves_a_pooled_request_locally() -> None:
     # d1, criterion 1: the poisoned-iowait Spark with an idle engine. Before
     # d1 this was a 429 (or a pointless forward); now the box serves it itself.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -571,7 +588,7 @@ def test_iowait_only_pressure_serves_a_marked_pooled_arrival() -> None:
     # already forwarded lands on box B, whose only complaint is a host iowait
     # reading. Serving it HERE is the whole point of the forward — and the
     # single-hop rule is untouched (zero outbound sockets, `sole-ready`).
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -593,7 +610,7 @@ def test_swap_thrash_still_sheds_a_marked_pooled_arrival() -> None:
     # d1, criterion 2: the line, from the other side. Identical request to the
     # one above, iowait at ZERO and swap over the threshold — a genuinely
     # thrashing box still refuses, and still never re-forwards.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
     resp, calls = _post(
         table,
@@ -622,7 +639,7 @@ def test_a_full_fleet_queues_locally_under_iowait_only() -> None:
     # owner, where the engine's own queue holds it — the pre-pool behaviour,
     # honestly marked `none`. The full contract is in
     # tests/test_gateway_pool_saturation.py.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=4.0, running=4),
         _state(_THOR_ORIGIN, weight=4.0, running=2, waiting=2),
@@ -653,7 +670,7 @@ def test_a_full_local_engine_forwards_to_a_peer_with_headroom() -> None:
     # instead of `local-busy-forwarded`. `local-busy-forwarded` still names a
     # genuine local pressure verdict; see
     # test_swap_pressure_still_forwards_with_local_busy_forwarded.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, weight=4.0, running=4),
         _state(_THOR_ORIGIN, weight=4.0, running=1),
@@ -677,7 +694,7 @@ def test_an_uncalibrated_local_engine_is_never_full() -> None:
     # "no capacity published", never "a measured capacity of one slot". A box
     # that has not been calibrated must not start refusing pooled work the
     # moment it has a single request in flight.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, running=7), _state(_THOR_ORIGIN, running=9))
     resp, calls = _post(
         table,
@@ -708,7 +725,7 @@ def test_a_pooled_role_with_no_snapshot_still_sheds_on_iowait() -> None:
     # The same rule from the other direction: declared peers but no snapshot
     # provider injected (the pre-pool call shape) is NOT a pooled request, so
     # the carve-out must not fire off the declaration alone.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     resp, calls = _post(table, cfg, specs, _body("cortex"), pressure=_IOWAIT_ONLY_PRESSURE)
     assert resp.status == 429
     assert calls == []
@@ -720,7 +737,8 @@ def test_hand_is_still_the_floor_under_iowait_only_pressure() -> None:
     table, cfg, specs = _build(
         _pool_env(
             HAND_BASE_URL="http://vllm-hand:8000", HAND_SERVED_NAME="LiquidAI/LFM2.5-1.2B-Instruct"
-        )
+        ),
+        **_pool_kwargs(),
     )
     for pressure in (_IOWAIT_ONLY_PRESSURE, _SWAP_ONLY_PRESSURE, _HIGH_PRESSURE):
         resp, calls = _post(
@@ -741,7 +759,7 @@ def test_hand_is_still_the_floor_under_iowait_only_pressure() -> None:
 def test_an_infeasible_role_still_404s_under_iowait_only_pressure() -> None:
     # The feasibility gate outranks every load condition, d1's carve-out
     # included: it runs before the pressure verdict is even computed.
-    table, cfg, specs = _build(_pool_env(PRIMARY_FEASIBLE="false"))
+    table, cfg, specs = _build(_pool_env(PRIMARY_FEASIBLE="false"), **_pool_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -761,7 +779,7 @@ def test_an_infeasible_role_still_404s_under_iowait_only_pressure() -> None:
 
 
 def test_first_replica_refuses_then_the_next_is_tried_once() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=9),
         _state(_THOR_ORIGIN, running=0),
@@ -781,7 +799,7 @@ def test_first_replica_refuses_then_the_next_is_tried_once() -> None:
     "failure", [S.UpstreamError("timed out"), 500, 503], ids=["timeout", "500", "503"]
 )
 def test_every_pre_dispatch_failure_class_retries(failure) -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=9),
         _state(_THOR_ORIGIN, running=0),
@@ -799,7 +817,7 @@ def test_the_local_replica_is_an_ordinary_retry_candidate() -> None:
     # The local owner is dialed first (idle ⇒ locality wins) and, when it
     # refuses PRE-DISPATCH, the pool tries the peer rather than 503ing — a
     # single-owner deployment's one shot becomes a real second chance.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN, running=1))
     opener, calls = _scripted_opener({_LOCAL_URL: S.UpstreamError("connection refused")})
     resp, _ = _post(
@@ -812,7 +830,7 @@ def test_the_local_replica_is_an_ordinary_retry_candidate() -> None:
 
 
 def test_no_replica_is_dispatched_to_twice() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True),
         _state(_THOR_ORIGIN),
@@ -832,7 +850,7 @@ def test_no_replica_is_dispatched_to_twice() -> None:
 
 
 def test_all_replicas_down_503s_and_lists_every_attempt() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True),
         _state(_THOR_ORIGIN),
@@ -863,7 +881,7 @@ def test_all_replicas_down_503s_and_lists_every_attempt() -> None:
 def test_all_replicas_down_under_pressure_503s_not_429s() -> None:
     # "429 when nothing is FREE, 503 when nothing is UP" — the two are
     # different facts and the caller is told which one it hit.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True, busy=True), _state(_THOR_ORIGIN))
     opener, calls = _scripted_opener({_THOR_ORIGIN: S.UpstreamError("connection refused")})
     resp, _ = _post(
@@ -882,7 +900,7 @@ def test_all_replicas_down_under_pressure_503s_not_429s() -> None:
 
 
 def test_a_2xx_that_drops_mid_stream_is_never_retried() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=9),
         _state(_THOR_ORIGIN, running=0),
@@ -904,7 +922,7 @@ def test_a_2xx_that_drops_mid_stream_is_never_retried() -> None:
 
 
 def test_a_peer_404_is_terminal_and_never_retried() -> None:
-    table, cfg, specs = _build(_two_peer_env())
+    table, cfg, specs = _build(_two_peer_env(), **_two_peer_kwargs())
     snapshot = _snapshot(
         _state(_LOCAL_URL, local=True, running=9),
         _state(_THOR_ORIGIN, running=0),
@@ -931,7 +949,7 @@ def test_unpooled_owner_down_keeps_the_pre_pool_503() -> None:
 
 
 def test_a_single_successful_attempt_carries_no_attempts_header() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_LOCAL_URL, local=True), _state(_THOR_ORIGIN))
     resp, calls = _post(table, cfg, specs, _body(_CORTEX_ID), replica_snapshot=snapshot)
     assert resp.status == 200
@@ -1036,12 +1054,13 @@ def test_no_pool_deployment_builds_no_caches() -> None:
 
 
 def test_build_replica_caches_refreshes_before_returning() -> None:
-    table, _cfg = build_config(
+    table, _cfg = _build_config(
         _pool_env(
             PRIMARY_QUANTIZATION="compressed-tensors",
             PRIMARY_KV_CACHE_DTYPE="fp8",
             PRIMARY_TOOL_CALL_PARSER="qwen3_coder",
-        )
+        ),
+        **_pool_kwargs(),
     )
     urlopen, seen = _fake_urlopen()
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
@@ -1074,7 +1093,7 @@ def test_build_replica_caches_refreshes_before_returning() -> None:
 
 
 def test_a_dropped_lane_gets_no_cache() -> None:
-    table, _cfg = build_config(_pool_env(MULTIMODAL_FEASIBLE="false"))
+    table, _cfg = _build_config(_pool_env(MULTIMODAL_FEASIBLE="false"), **_pool_kwargs())
     urlopen, _seen = _fake_urlopen()
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
     assert "multimodal" not in caches
@@ -1089,7 +1108,7 @@ def test_an_incompatible_peer_in_a_live_snapshot_sheds_the_forward() -> None:
     # the COMPATIBILITY gate is what sheds — asserted below so the name and
     # the mechanism cannot drift apart again. Under d1 a busy-but-compatible
     # peer IS forwarded to; that case is the test immediately following.
-    table, cfg = build_config(_pool_env())
+    table, cfg = _build_config(_pool_env(), **_pool_kwargs())
     specs = S.peer_specs_from_table(table, _pool_env())
     urlopen, _seen = _fake_urlopen(peer_busy=True)
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
@@ -1114,7 +1133,7 @@ def test_a_busy_but_compatible_peer_in_a_live_snapshot_is_forwarded_to() -> None
     # and under d1 a peer's host-level pressure verdict no longer removes it
     # from the pool, so the shed becomes a forward.
     env = _pool_env(PRIMARY_QUANTIZATION="compressed-tensors")
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_pool_kwargs())
     specs = S.peer_specs_from_table(table, env)
     urlopen, _seen = _fake_urlopen(peer_busy=True)
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
@@ -1134,7 +1153,7 @@ def test_a_busy_but_compatible_peer_in_a_live_snapshot_is_forwarded_to() -> None
 
 def test_capabilities_payload_carries_live_replicas_on_a_pooled_box() -> None:
     env = _pool_env(PRIMARY_QUANTIZATION="compressed-tensors", PRIMARY_KV_CACHE_DTYPE="fp8")
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_pool_kwargs())
     urlopen, _seen = _fake_urlopen(peer_running=3)
     caches = S.build_replica_caches(table, urlopen=urlopen, start=False)
     payload = S.capabilities_payload(
@@ -1175,7 +1194,7 @@ def test_capabilities_payload_has_no_replicas_key_without_a_pool() -> None:
 
 def test_serve_refreshes_and_wires_the_replica_caches_before_binding(monkeypatch) -> None:
     env = _pool_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_pool_kwargs())
     order: list[str] = []
     stub_cache = SimpleNamespace(current=lambda: (), stop=lambda: order.append("stop"))
 

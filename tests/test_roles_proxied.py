@@ -69,9 +69,11 @@ def _table(
     )
 
 
-def _spark_lobe_env(*, proxy: bool = False, peers: bool = True, **over) -> dict[str, str]:
-    """A rendered spark-lobe-like env: cortex + pooling hosted, senses DROPPED,
-    optionally referred-to and/or proxied to a declared peer (Thor)."""
+def _spark_lobe_env(**over) -> dict[str, str]:
+    """A rendered spark-lobe-like env: cortex + pooling hosted, senses
+    DROPPED — the wiring half only. The referral/proxy declaration itself is
+    a RoutingTable-field concern now — see :func:`_spark_lobe_kwargs`,
+    applied via :func:`_build_config`."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
@@ -81,12 +83,24 @@ def _spark_lobe_env(*, proxy: bool = False, peers: bool = True, **over) -> dict[
         "RERANK_URL": "http://vllm-rerank:8000",
         "RERANK_SERVED_NAME": _RERANK_ID,
     }
-    if peers:
-        env["MULTIMODAL_PEER_ORIGIN"] = _THOR_ORIGIN
-    if proxy:
-        env["MULTIMODAL_PEER_PROXY"] = "true"
     env.update(over)
     return env
+
+
+def _spark_lobe_kwargs(*, proxy: bool = False, peers: bool = True) -> dict:
+    kw: dict = {}
+    if peers:
+        kw["peer_origins"] = {"multimodal": _THOR_ORIGIN}
+    if proxy:
+        kw["peer_proxied"] = frozenset({"multimodal"})
+    return kw
+
+
+def _build_config(env, **table_kwargs):
+    table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
 
 
 def _pre_proxy_annotate(payload: dict[str, dict], table: RoutingTable) -> dict[str, dict]:
@@ -241,7 +255,7 @@ def test_origin_never_derived_normalized_when_proxied() -> None:
 
 
 def test_proxied_role_ready_is_false_via_build_role_registry() -> None:
-    table, cfg = build_config(_spark_lobe_env(proxy=True))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(proxy=True))
     registry = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL)
     assert registry["senses"].ready is False
     assert registry["senses"].loaded is False  # spark-lobe drops the container too
@@ -252,7 +266,7 @@ def test_proxied_role_ready_stays_false_even_with_a_stray_live_true_signal() -> 
     # resurrect ready=True for a proxied role: feasible=False clamps it,
     # exactly as it already clamps a referral-only dropped role. Nothing here
     # invents a "proxied, therefore trust the signal" exception.
-    table, cfg = build_config(_spark_lobe_env(proxy=True))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(proxy=True))
     registry = build_role_registry(
         table, cfg, gateway_url=_GATEWAY_URL, backend_ready={"multimodal": True}
     )
@@ -261,7 +275,7 @@ def test_proxied_role_ready_stays_false_even_with_a_stray_live_true_signal() -> 
 
 
 def test_proxied_capabilities_payload_never_claims_ready() -> None:
-    table, cfg = build_config(_spark_lobe_env(proxy=True))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(proxy=True))
     registry = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL)
     payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
     annotate_peer_referrals(payload, table)
@@ -277,7 +291,7 @@ def test_proxied_capabilities_payload_never_claims_ready() -> None:
 def test_no_peer_config_payload_matches_pre_proxy_oracle() -> None:
     """No peer config at all — build the payload two ways (the real function
     under test, and the frozen pre-t5 oracle) and assert equality."""
-    table, cfg = build_config(_spark_lobe_env(peers=False, proxy=False))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(peers=False, proxy=False))
     registry = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL)
     base = {role: dataclasses.asdict(registry[role]) for role in ROLES}
 
@@ -292,7 +306,7 @@ def test_referral_only_payload_matches_pre_proxy_oracle() -> None:
     """A peer origin declared but PEER_PROXY not armed — the exact issue #112
     referral-only contract must render identically to the pre-t5 oracle (the
     proxied branch never fires when peer_proxied is empty)."""
-    table, cfg = build_config(_spark_lobe_env(peers=True, proxy=False))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(peers=True, proxy=False))
     assert table.peer_proxied == frozenset()  # sanity: the knob really is off
     registry = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL)
     base = {role: dataclasses.asdict(registry[role]) for role in ROLES}
@@ -319,7 +333,7 @@ def test_empty_peer_proxied_is_the_default_on_a_bare_table() -> None:
 
 
 def test_only_the_proxied_backend_role_carries_the_marker_in_full_payload() -> None:
-    table, cfg = build_config(_spark_lobe_env(proxy=True))
+    table, cfg = _build_config(_spark_lobe_env(), **_spark_lobe_kwargs(proxy=True))
     registry = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL)
     payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
     annotate_peer_referrals(payload, table)

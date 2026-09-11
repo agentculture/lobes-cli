@@ -51,6 +51,7 @@ tests/test_gateway_proxy.py's referral-404 test).
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import http.client
 import io
 import json
@@ -286,13 +287,27 @@ def _recording_handler(base_handler: type, log: list) -> type:
 
 
 def _spawn_gateway(
-    env: dict[str, str], *, log: list | None = None, pressure=None
+    env: dict[str, str],
+    *,
+    log: list | None = None,
+    pressure=None,
+    table_kwargs: dict | None = None,
 ) -> SimpleNamespace:
     """A REAL gateway: build_config → peer specs → a real ReadinessCache
     (``start=False``; tests seed it deterministically via ``refresh()``) → the
     real handler dispatch on a real ``ThreadingHTTPServer``. Nothing is
-    monkeypatched — ``open_upstream`` opens genuine sockets."""
+    monkeypatched — ``open_upstream`` opens genuine sockets.
+
+    ``table_kwargs`` (t14): the retired env peer family
+    (``<PREFIX>_PEER_ORIGIN``/``_PEER_PROXY``/``_PEER_API_KEY``/
+    ``_PEER_ORIGINS``/``_PEER_API_KEYS``) no longer reaches ``build_config``
+    at all — a caller that used to declare a peer/replica pool through
+    ``env`` now passes the equivalent ``RoutingTable`` fields here instead,
+    applied via ``dataclasses.replace`` after the table is built.
+    """
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
     specs = S.peer_specs_from_table(table, env)
     cache = ReadinessCache.from_backends(
         table.backends, peer_specs=tuple(specs.values()), start=False
@@ -346,12 +361,16 @@ def _two_gateways(peer_env_extra: dict[str, str] | None = None):
         "RERANK_SERVED_NAME": _RERANK_ID,
         "MULTIMODAL_SERVED_NAME": _SENSES_ID,
         "MULTIMODAL_FEASIBLE": "false",
-        "MULTIMODAL_PEER_ORIGIN": peer.base,
-        "MULTIMODAL_PEER_PROXY": "true",
-        "MULTIMODAL_PEER_API_KEY": _PEER_KEY,
         "GATEWAY_API_KEY": _CALLER_KEY,
     }
-    box = _spawn_gateway(spark_env)
+    box = _spawn_gateway(
+        spark_env,
+        table_kwargs={
+            "peer_origins": {"multimodal": peer.base},
+            "peer_proxied": frozenset({"multimodal"}),
+            "peer_api_keys": {"multimodal": _PEER_KEY},
+        },
+    )
     box.cache.refresh()  # probes the local backends AND the live peer
 
     world = SimpleNamespace(
@@ -1128,9 +1147,8 @@ def test_golden_role_infeasible_404_bytes_referral_only() -> None:
         "PRIMARY_URL": backend.base,
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
         "MULTIMODAL_FEASIBLE": "false",
-        "MULTIMODAL_PEER_ORIGIN": _REFERRAL_ORIGIN,
     }
-    gw = _spawn_gateway(env)
+    gw = _spawn_gateway(env, table_kwargs={"peer_origins": {"multimodal": _REFERRAL_ORIGIN}})
     try:
         gw.cache.refresh()
         err = _expect_error(
@@ -1219,8 +1237,10 @@ def _reserve_gateway() -> tuple[ThreadingHTTPServer, str]:
 
 
 def _pool_env(backend_base: str, self_origin: str, peers: Sequence[str]) -> dict[str, str]:
-    """One box's `.env`: hosts cortex locally, declares every other box as a
-    replica of the SAME role, with an empty (no-inbound-gate) key slot each."""
+    """One box's `.env`: hosts cortex locally — the wiring half only. The
+    replica declaration itself (every other box as a replica of the SAME
+    role, t14) is a RoutingTable-field concern now — see
+    :func:`_pool_table_kwargs`, threaded through :func:`_wire_gateway`."""
     return {
         "PRIMARY_URL": backend_base,
         "PRIMARY_SERVED_NAME": _POOL_CORTEX_ID,
@@ -1229,8 +1249,16 @@ def _pool_env(backend_base: str, self_origin: str, peers: Sequence[str]) -> dict
         # disqualify every peer — the pool would silently never form.
         "PRIMARY_QUANTIZATION": _POOL_QUANTIZATION,
         "GATEWAY_SELF_ORIGIN": self_origin,
-        "PRIMARY_PEER_ORIGINS": ",".join(peers),
-        "PRIMARY_PEER_API_KEYS": ",".join("" for _ in peers),
+    }
+
+
+def _pool_table_kwargs(peers: Sequence[str]) -> dict:
+    """The RoutingTable fields ``PRIMARY_PEER_ORIGINS``/``PRIMARY_PEER_API_KEYS``
+    used to populate (t14): every other box as a replica of the SAME role,
+    with an empty (no-inbound-gate) key slot each."""
+    return {
+        "replica_origins": {"primary": tuple(peers)},
+        "replica_api_keys": {"primary": tuple("" for _ in peers)},
     }
 
 
@@ -1250,7 +1278,9 @@ def _bind_handler(box) -> None:
     )
 
 
-def _wire_gateway(httpd, base: str, env: dict[str, str], log: list):
+def _wire_gateway(
+    httpd, base: str, env: dict[str, str], log: list, table_kwargs: dict | None = None
+):
     """Serve an already-bound gateway with the pool DORMANT (no caches yet).
 
     Two phases, deliberately: :func:`S.build_replica_caches` probes every
@@ -1259,8 +1289,13 @@ def _wire_gateway(httpd, base: str, env: dict[str, str], log: list):
     before every box is answering would stall each box for the full 3 s probe
     timeout. Serving first, then attaching the caches (:func:`_attach_replicas`)
     keeps the harness fast AND keeps the probes real.
+
+    ``table_kwargs`` (t14): the retired ``PRIMARY_PEER_ORIGINS``/
+    ``PRIMARY_PEER_API_KEYS`` env vars — see :func:`_pool_table_kwargs`.
     """
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
     specs = S.peer_specs_from_table(table, env)
     box = SimpleNamespace(
         httpd=httpd,
@@ -1366,13 +1401,20 @@ def _n_gateways(n: int = 2, pool_env=None):
     boxes = []
     try:
         for index, (httpd, base) in enumerate(reserved):
-            env = _pool_env(
-                backends[index].base,
-                origins[index],
-                [o for j, o in enumerate(origins) if j != index],
-            )
-            env.update(overrides[index])
-            boxes.append(_wire_gateway(httpd, base, env, []))
+            peers = [o for j, o in enumerate(origins) if j != index]
+            env = _pool_env(backends[index].base, origins[index], peers)
+            override = dict(overrides[index])
+            # Retired (t14): PRIMARY_PEER_API_KEYS/PRIMARY_PEER_ORIGINS no
+            # longer reach build_config — a caller overriding the replica
+            # pool's keys (e.g. a per-box pairwise credential) passes them
+            # the same way here, but they resolve to table_kwargs instead of
+            # an env line.
+            keys_override = override.pop("PRIMARY_PEER_API_KEYS", None)
+            table_kwargs = _pool_table_kwargs(peers)
+            if keys_override is not None:
+                table_kwargs["replica_api_keys"] = {"primary": tuple(keys_override.split(","))}
+            env.update(override)
+            boxes.append(_wire_gateway(httpd, base, env, [], table_kwargs=table_kwargs))
         for box in boxes:
             _attach_replicas(box)
         pool = _Pool(boxes, backends)

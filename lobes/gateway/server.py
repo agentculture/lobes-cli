@@ -43,12 +43,14 @@ outbound header forwarding to local backends is unchanged.
 
 **The proxy data plane** (proxy-lobes t6, issues #115/#127) is the third lobe
 state — awake (hosted) / asleep (referral-only 404) / **PROXY**: a dropped
-role whose operator armed ``<PREFIX>_PEER_PROXY`` (``table.peer_proxied``) is
-answered by FORWARDING the request to the operator-declared peer origin,
-replacing the referral 404 for exactly those names and nothing else. See the
-"proxy data plane" section below for the loop guard, the pairwise-credential
-swap, the failure modes, and why proxied requests bypass the LOCAL pressure
-policy.
+role opted in to proxying (``table.peer_proxied``) is answered by FORWARDING
+the request to the declared peer origin, replacing the referral 404 for
+exactly those names and nothing else. See the "proxy data plane" section
+below for the loop guard, the pairwise-credential swap, the failure modes,
+and why proxied requests bypass the LOCAL pressure policy. Retired (t14): the
+env peer family that used to populate ``table.peer_proxied`` is gone — the
+mesh RoutingSnapshot (t13) is the candidate source now — so this field is
+always empty in practice; the mechanics below are unchanged and dormant.
 """
 
 from __future__ import annotations
@@ -738,8 +740,10 @@ def _role_infeasible_body(
     :func:`lobes.gateway._routing.infeasible_owner`.
 
     ``peer_origin`` is the opt-in honest referral (mesh-brain t3, issue
-    #112): the OPERATOR-DECLARED origin of the peer box that hosts this role
-    (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`). When set, the message
+    #112): the origin of the peer box that hosts this role, now sourced from
+    a verified mesh member rather than the retired env peer family (t14; the
+    per-backend ``<PREFIX>_PEER_ORIGIN`` var that used to populate this no
+    longer exists — see ``lobes.gateway._config``'s "Retired" comment). When set, the message
     names it and a machine-readable ``hosted_by`` key is added — a referral
     for the CALLER to dial directly; a REFERRAL-ONLY gateway never forwards
     the request there (data-plane forwarding exists only for names the
@@ -797,8 +801,9 @@ def _busy_body(requested_tier: str) -> bytes:
 # --- the proxy data plane: follow the referral (proxy-lobes t6, #115/#127) --
 
 # The THIRD lobe state — awake / asleep / PROXY. A role this box dropped
-# (``table.infeasible``) whose operator declared a peer origin AND armed the
-# ``<PREFIX>_PEER_PROXY`` knob (``table.peer_proxied``, t1) is answered by
+# (``table.infeasible``) that is opted in to proxying (``table.peer_proxied``,
+# t1 — RETIRED SOURCE, t14: this used to be armed by a per-backend env knob;
+# the mesh RoutingSnapshot is the candidate/forward source now) is answered by
 # FORWARDING the request to that peer instead of the referral 404. The forward
 # reuses the existing relay machinery unchanged (a synthetic Backend whose
 # base_url is the operator-declared origin → open_upstream → buffered JSON or
@@ -945,14 +950,19 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
 # fallback lobes.roles uses to NAME an unwired role's model.
 #
-# MUST stay in step with :data:`lobes.gateway._config.PEER_PROXY_ENV`: a role
-# the config layer can proxy but that resolves NO served name here is dropped
-# by :func:`peer_specs_from_table` at its ``if not served_name`` guard, so the
-# proxy goes silently inert — no peer probe, no ``/v1/models`` entry, no
+# Unlike the retired PEER_ORIGIN/PEER_PROXY/PEER_API_KEY family (t14), this
+# dict and :data:`_PEER_SERVED_NAME_ENV` above are NOT retired: they still
+# resolve a served id for a mesh-pooled role's ``/v1/models`` advertisement
+# (see :func:`pooled_backends`'s mesh branch and its call site around
+# ``_peer_served_name`` below), independent of any env-declared peer. A role
+# that resolves NO served name here is dropped by :func:`peer_specs_from_table`
+# at its ``if not served_name`` guard, so the (now-dormant, env-only) proxy
+# path goes silently inert — no peer probe, no ``/v1/models`` entry, no
 # :func:`_proxied_owner` match. That is exactly how ``worker`` shipped in
-# 0.54.6: wired through _config.py's three peer dicts but missing from these
-# two, so ``WORKER_PEER_PROXY=true`` did nothing on a box that only REACHES
-# worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve off).
+# 0.54.6: wired through _config.py's three (now-deleted) peer dicts but
+# missing from these two, so its proxy knob did nothing on a box that only
+# REACHES worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve
+# off).
 # ``stt``/``tts`` are proxyable too but resolve via _peer_served_name's
 # fixed-sidecar early return, not these tables.
 # tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name
@@ -1019,10 +1029,13 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
 # the pool branch further down. That one may forward a role this box HOSTS
 # because a peer replica is better placed; this one places a role this box
 # hosts NOWHERE, across the replicas that do. It has to run BEFORE the
-# referral/proxy branch, because that branch forwards to the SINGULAR
-# `<PREFIX>_PEER_ORIGIN` and would consume every request before any placement
-# could happen — the exact behaviour measured on the Orin on 2026-08-30,
-# where all traffic pinned to one of two equally-good peers.
+# referral/proxy branch, because that branch forwards to a single declared
+# peer origin and would consume every request before any placement could
+# happen — the exact behaviour measured on the Orin on 2026-08-30, where all
+# traffic pinned to one of two equally-good peers. (Historical: at the time
+# that was the SINGULAR ``<PREFIX>_PEER_ORIGIN`` env family; t14 retired that
+# family — the origin now comes from the mesh RoutingSnapshot instead, and
+# the ordering requirement is unchanged.)
 #
 # It keeps every guard the singular branch has:
 #
@@ -1616,7 +1629,34 @@ def _strip_peer_pool_markers(headers: list[tuple[str, str]]) -> list[tuple[str, 
     return [(k, v) for k, v in headers if k.lower() not in _PEER_POOL_MARKERS]
 
 
-def _feasibility_response(table: RoutingTable, requested: str | None) -> GatewayResponse | None:
+def _mesh_referral_origin(mesh_snapshot: "RoutingSnapshot | None", backend_name: str) -> str | None:
+    """The origin of a verified mesh member hosting ``backend_name``, or ``None``.
+
+    The referral 404's honesty source (t14): the retired env peer family
+    (``table.peer_origins``, always empty now — see the "Retired" comment on
+    :data:`lobes.gateway._config.NEVER_PROXIED_BACKENDS`) used to be the only
+    way ``hosted_by`` was ever populated. The mesh RoutingSnapshot (t13) is
+    the replacement source — when at least one mesh member has VERIFIED this
+    role (its own ``/capabilities`` fingerprint agrees with every other
+    member that also verifies it, :func:`~lobes.gateway._mesh_routing.
+    compute_role_placement`'s ``plain_origins``), the first such origin is
+    the referral; with no mesh, or no verified member, ``None`` — the
+    pre-mesh, pre-referral body, byte for byte.
+    """
+    if mesh_snapshot is None:
+        return None
+    from lobes.roles import BACKEND_ROLE
+
+    role = BACKEND_ROLE.get(backend_name, backend_name)
+    placement = compute_role_placement(mesh_snapshot, role)
+    return placement.plain_origins[0] if placement.plain_origins else None
+
+
+def _feasibility_response(
+    table: RoutingTable,
+    requested: str | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
+) -> GatewayResponse | None:
     """404 ``role_infeasible`` iff ``requested``'s owning backend is declared
     hardware-infeasible by this deployment's per-machine profile (task t6);
     ``None`` when there is no such gate to apply. Shared by both the
@@ -1627,20 +1667,24 @@ def _feasibility_response(table: RoutingTable, requested: str | None) -> Gateway
     infeasible_name = infeasible_owner(table, requested)
     if infeasible_name is None:
         return None
-    # Opt-in honest referral (mesh-brain t3): when the operator declared the
-    # peer that hosts this role (table.peer_origins), the 404 names it — as an
-    # ANNOTATION only. The request is still answered HERE, terminally; a
-    # referral-only role is never forwarded (the proxy data plane, t6, only
-    # fires for names in table.peer_proxied, which handle_post routes to
-    # _proxy_to_peer BEFORE this gate — so every 404 built here stays
-    # byte-identical to the pre-proxy contract). No declaration → the
-    # pre-referral body, byte for byte.
+    # Opt-in honest referral (mesh-brain t3): when a peer hosts this role,
+    # the 404 names it — as an ANNOTATION only. The request is still
+    # answered HERE, terminally; a referral-only role is never forwarded
+    # (the proxy data plane, t6, only fires for names in
+    # ``table.peer_proxied``, which handle_post routes to _proxy_to_peer
+    # BEFORE this gate — so every 404 built here stays byte-identical to the
+    # pre-proxy contract). The env peer family that used to be the only
+    # source of this origin is retired (t14; ``table.peer_origins`` is
+    # always empty now) — the mesh RoutingSnapshot (t13) is the source
+    # instead, via :func:`_mesh_referral_origin`. No declaration and no
+    # verified mesh member → the pre-referral body, byte for byte.
+    peer_origin = table.peer_origins.get(infeasible_name) or _mesh_referral_origin(
+        mesh_snapshot, infeasible_name
+    )
     return GatewayResponse(
         status=404,
         headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-        body=_role_infeasible_body(
-            requested, infeasible_name, table.peer_origins.get(infeasible_name)
-        ),
+        body=_role_infeasible_body(requested, infeasible_name, peer_origin),
     )
 
 
@@ -1755,7 +1799,7 @@ def _resolve_tier(
     The ``shed_signal`` naming which fact justified a shed is available from
     the same verdict for t5 to surface on a trace.
     """
-    early = _feasibility_response(table, requested)
+    early = _feasibility_response(table, requested, mesh_snapshot)
     if early is not None:
         return early, None, [], False
 
@@ -1789,7 +1833,9 @@ def _resolve_tier(
 
 
 def _resolve_plain_model(
-    table: RoutingTable, requested: str | None
+    table: RoutingTable,
+    requested: str | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> tuple[GatewayResponse | None, str | None]:
     """The non-tier branch of :func:`handle_post`: unknown-id 404 (h23), then
     the hardware feasibility gate, then the resolved served name.
@@ -1804,7 +1850,7 @@ def _resolve_plain_model(
             body=_model_not_found_body(requested),
         )
         return response, None
-    early = _feasibility_response(table, requested)
+    early = _feasibility_response(table, requested, mesh_snapshot)
     if early is not None:
         return early, None
     return None, resolve_model(table, requested)
@@ -2797,7 +2843,7 @@ def _resolve_served_or_early(
     # runs AFTER the unknown-model check (a genuinely never-advertised id
     # still gets model_not_found, not role_infeasible) but BEFORE
     # resolving/dialing a backend.
-    early, served = _resolve_plain_model(table, requested)
+    early, served = _resolve_plain_model(table, requested, mesh_snapshot)
     return early, served, tier_headers, local_busy
 
 
@@ -3372,6 +3418,7 @@ def handle_audio_request(
     open_upstream: OpenUpstream,
     *,
     audio_ready_probe: Callable[[], bool | None] | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> GatewayResponse:
     """Route one ``/v1/audio/*`` POST — per-ROLE since issue #129.
 
@@ -3407,10 +3454,11 @@ def handle_audio_request(
             rewrite=False,  # path-routed lane: multipart/TTS JSON verbatim
         )
     if role is not None and role in table.infeasible:
+        peer_origin = table.peer_origins.get(role) or _mesh_referral_origin(mesh_snapshot, role)
         return GatewayResponse(
             status=404,
             headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-            body=_role_infeasible_body(role, role, table.peer_origins.get(role)),
+            body=_role_infeasible_body(role, role, peer_origin),
         )
     audio_ready = audio_ready_probe() if audio_ready_probe is not None else None
     return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
@@ -4496,6 +4544,7 @@ class _Handler(BaseHTTPRequestHandler):
                 audio_ready_probe=lambda: (
                     probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
                 ),
+                mesh_snapshot=mesh_snapshot,
             )
         else:
             # Read pressure from the cache (O(1), never samples here) and the
@@ -4741,12 +4790,13 @@ def _check_pool_arming(table: RoutingTable) -> None:
         return
     # Deferred import: _config imports nothing from here, but the error type
     # belongs to the config layer that owns every other pool parse failure.
-    from lobes.gateway._config import PEER_ORIGINS_ENV, ReplicaConfigError
+    # Retired (t14): PEER_ORIGINS_ENV (the dict this used to look the exact
+    # env var name up in) is gone along with the rest of the env peer
+    # family — the names below are spelled out directly instead.
+    from lobes.gateway._config import ReplicaConfigError
 
     names = ", ".join(
-        f"{PEER_ORIGINS_ENV.get(name, name.upper() + '_PEER_ORIGINS')} without "
-        f"{name.upper()}_PEER_ORIGIN"
-        for name in missing
+        f"{name.upper()}_PEER_ORIGINS without {name.upper()}_PEER_ORIGIN" for name in missing
     )
     raise ReplicaConfigError(
         f"{names} — the plural replica channel is an addition to the singular "

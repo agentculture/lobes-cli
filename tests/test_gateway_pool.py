@@ -16,7 +16,7 @@ Contract under test (the plan's t7 acceptance criteria, verbatim):
     selection, forward target and markers for the same snapshot — every
     deployed consumer pins the raw id (the 2026-07-31 audit), so an
     alias-only pool would never see a real caller (spec c31/h23);
-(b) with no ``*_PEER_ORIGINS`` declared, every response is byte-identical
+(b) with no declared replica pool, every response is byte-identical
     to the pre-pool release — no new headers on any path, success or error
     (spec c1/h1);
 (c) an inbound ``X-Lobes-Proxied`` request is served by the LOCAL replica
@@ -33,10 +33,23 @@ Contract under test (the plan's t7 acceptance criteria, verbatim):
 (f) ``X-Lobes-Affinity`` reaches :func:`select_replica` and travels to the
     peer on a forward; absent, selection is purely availability-driven
     (spec c24/h16).
+
+Retired (t14): the env peer family (``<PREFIX>_PEER_ORIGINS``/
+``_PEER_API_KEYS``/``_PEER_ORIGIN``/``_PEER_PROXY``/``_PEER_API_KEY``) this
+module used to declare a pool/proxy through is gone from
+:func:`lobes.gateway._config.build_config` — the mesh ``RoutingSnapshot``
+(t13) is the candidate source now. Every fixture below builds its
+:class:`~lobes.gateway._routing.RoutingTable` directly (:func:`_build`,
+:func:`_pool_kwargs`, :func:`_dropped_pool_kwargs`) — no ``*_PEER_*`` env key
+is set anywhere in this file — since the mechanics under test
+(``ReplicaCache``/``select_replica``/the single-hop 508 guard/the pairwise
+bearer swap) are driven by the ``RoutingTable`` fields themselves, not by how
+they were populated.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -90,31 +103,38 @@ def _base_env(**over) -> dict[str, str]:
 
 
 def _pool_env(**over) -> dict[str, str]:
-    """The Spark with a cortex replica pool: hosts cortex AND declares the
-    Thor as a peer replica of the SAME role, with that peer's inbound key."""
-    env = {
-        "PRIMARY_PEER_ORIGINS": _THOR_ORIGIN,
-        "PRIMARY_PEER_API_KEYS": _THOR_KEY,
-        "GATEWAY_SELF_ORIGIN": _SPARK_ORIGIN,
-    }
+    """The Spark, cortex hosted locally — the wiring half of a cortex
+    replica pool. The pool itself (the Thor as a peer replica of the SAME
+    role, with that peer's inbound key) is a RoutingTable-field concern now
+    (see :func:`_pool_kwargs`), not an env one — the retired
+    ``<PREFIX>_PEER_ORIGINS``/``_PEER_API_KEYS`` knobs are gone."""
+    env = {"GATEWAY_SELF_ORIGIN": _SPARK_ORIGIN}
     env.update(over)
     return _base_env(**env)
 
 
+def _pool_kwargs(
+    *, origins: tuple[str, ...] = (_THOR_ORIGIN,), keys: tuple[str, ...] = (_THOR_KEY,)
+) -> dict:
+    """The ``RoutingTable`` field overrides for a cortex replica pool of
+    ``origins``, with ``keys`` positional against them (see
+    :class:`~lobes.gateway._routing.RoutingTable.replica_api_keys`)."""
+    return {
+        "replica_origins": {"primary": tuple(origins)},
+        "replica_api_keys": {"primary": tuple(keys)},
+    }
+
+
 def _dropped_pool_env(**over) -> dict[str, str]:
-    """A box that does NOT host cortex (thor-lobe shape) but declares both the
-    singular proxy peer and a replica pool. The singular proxy branch owns
-    this request — there is no local replica to serve a marked arrival, so the
-    508 ``proxy_loop`` refusal must survive the pool landing (spec c4/h4)."""
+    """A box that does NOT host cortex (thor-lobe shape) — the wiring half.
+    The singular proxy peer + replica pool (see :func:`_dropped_pool_kwargs`)
+    are RoutingTable-field concerns now. The singular proxy branch owns this
+    request — there is no local replica to serve a marked arrival, so the 508
+    ``proxy_loop`` refusal must survive the pool landing (spec c4/h4)."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
         "PRIMARY_FEASIBLE": "false",
-        "PRIMARY_PEER_ORIGIN": _SPARK_ORIGIN,
-        "PRIMARY_PEER_PROXY": "true",
-        "PRIMARY_PEER_API_KEY": _THOR_KEY,
-        "PRIMARY_PEER_ORIGINS": _SPARK_ORIGIN,
-        "PRIMARY_PEER_API_KEYS": _THOR_KEY,
         "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         "MULTIMODAL_SERVED_NAME": _SENSES_ID,
     }
@@ -122,8 +142,20 @@ def _dropped_pool_env(**over) -> dict[str, str]:
     return env
 
 
-def _build(env):
+def _dropped_pool_kwargs() -> dict:
+    return {
+        "peer_origins": {"primary": _SPARK_ORIGIN},
+        "peer_proxied": frozenset({"primary"}),
+        "peer_api_keys": {"primary": _THOR_KEY},
+        "replica_origins": {"primary": (_SPARK_ORIGIN,)},
+        "replica_api_keys": {"primary": (_THOR_KEY,)},
+    }
+
+
+def _build(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -307,7 +339,7 @@ def test_no_pool_owner_down_503_unchanged() -> None:
 
 @pytest.mark.parametrize("model", ["cortex", _CORTEX_ID])
 def test_alias_and_raw_id_forward_to_the_same_replica(model) -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=5),
         _state(_THOR_ORIGIN),
@@ -325,7 +357,7 @@ def test_alias_and_raw_id_forward_to_the_same_replica(model) -> None:
 
 
 def test_alias_and_raw_id_produce_identical_markers() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=5),
         _state(_THOR_ORIGIN),
@@ -348,7 +380,7 @@ def test_alias_and_raw_id_produce_identical_markers() -> None:
 
 
 def test_local_answer_carries_self_origin_and_reason() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True),
         _state(_THOR_ORIGIN, running=9),
@@ -365,7 +397,7 @@ def test_local_answer_carries_self_origin_and_reason() -> None:
 def test_local_answer_without_declared_self_origin_says_local() -> None:
     # GATEWAY_SELF_ORIGIN is operator-typed and never derived (#92) — an
     # undeclared box must say something honest rather than invent a hostname.
-    table, cfg, specs = _build(_pool_env(GATEWAY_SELF_ORIGIN=""))
+    table, cfg, specs = _build(_pool_env(GATEWAY_SELF_ORIGIN=""), **_pool_kwargs())
     assert table.self_origin == ""
     snapshot = _snapshot(_state("http://vllm-primary:8000", local=True))
     resp, _ = _post(table, cfg, specs, _body(_CORTEX_ID), replica_snapshot=snapshot)
@@ -378,7 +410,7 @@ def test_local_answer_carries_mesh_member_when_mesh_armed(monkeypatch) -> None:
     serving member."""
     monkeypatch.setenv("LOBES_MESH_KEY", "shared-secret")
     monkeypatch.setenv("LOBES_MESH_NAME", "spark")
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True),
         _state(_THOR_ORIGIN, running=9),
@@ -390,7 +422,7 @@ def test_local_answer_carries_mesh_member_when_mesh_armed(monkeypatch) -> None:
 def test_local_answer_has_no_mesh_member_when_mesh_disabled(monkeypatch) -> None:
     monkeypatch.delenv("LOBES_MESH_KEY", raising=False)
     monkeypatch.delenv("LOBES_MESH_NAME", raising=False)
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True),
         _state(_THOR_ORIGIN, running=9),
@@ -400,7 +432,7 @@ def test_local_answer_has_no_mesh_member_when_mesh_disabled(monkeypatch) -> None
 
 
 def test_forwarded_answer_keeps_proxied_by_and_adds_reason() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=4),
         _state(_THOR_ORIGIN),
@@ -415,7 +447,7 @@ def test_forwarded_answer_keeps_proxied_by_and_adds_reason() -> None:
 
 
 def test_forward_swaps_the_caller_credential_for_the_replica_key() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=4),
         _state(_THOR_ORIGIN),
@@ -436,10 +468,8 @@ def test_forward_swaps_the_caller_credential_for_the_replica_key() -> None:
 
 def test_replica_key_is_positional_per_origin() -> None:
     table, cfg, specs = _build(
-        _pool_env(
-            PRIMARY_PEER_ORIGINS=f"{_THOR_ORIGIN},{_ORIN_ORIGIN}",
-            PRIMARY_PEER_API_KEYS=f"{_THOR_KEY},{_ORIN_KEY}",
-        )
+        _pool_env(),
+        **_pool_kwargs(origins=(_THOR_ORIGIN, _ORIN_ORIGIN), keys=(_THOR_KEY, _ORIN_KEY)),
     )
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=9),
@@ -455,7 +485,7 @@ def test_replica_key_is_positional_per_origin() -> None:
 def test_empty_replica_key_slot_sends_no_authorization() -> None:
     # h29: an EMPTY slot is legal and means "this peer has no inbound gate"
     # (the Thor sets no GATEWAY_API_KEY today) — never a blank Bearer.
-    table, cfg, specs = _build(_pool_env(PRIMARY_PEER_API_KEYS=""))
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs(keys=("",)))
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=4),
         _state(_THOR_ORIGIN),
@@ -477,7 +507,7 @@ def test_empty_replica_key_slot_sends_no_authorization() -> None:
 
 
 def test_marked_arrival_is_served_locally_with_zero_outbound_forwards() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     # The snapshot STRONGLY prefers the peer (local saturated) — and is ignored.
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=99),
@@ -500,7 +530,7 @@ def test_marked_arrival_is_served_locally_with_zero_outbound_forwards() -> None:
 
 
 def test_marked_arrival_with_no_local_replica_still_508s() -> None:
-    table, cfg, specs = _build(_dropped_pool_env())
+    table, cfg, specs = _build(_dropped_pool_env(), **_dropped_pool_kwargs())
     snapshot = _snapshot(_state(_SPARK_ORIGIN))
     resp, calls = _post(
         table,
@@ -528,7 +558,7 @@ def test_affinity_header_reaches_select_replica_and_the_peer(monkeypatch) -> Non
         return Selection(_THOR_ORIGIN, False, REASON_AFFINITY)
 
     monkeypatch.setattr(S, "select_replica", spy)
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True),
         _state(_THOR_ORIGIN),
@@ -558,7 +588,7 @@ def test_absent_or_blank_affinity_reaches_select_replica_as_none(monkeypatch, va
         return Selection(None, False, REASON_NONE)
 
     monkeypatch.setattr(S, "select_replica", spy)
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state("http://vllm-primary:8000", local=True))
     headers = [] if value is None else [(S.AFFINITY_HEADER, value)]
     _post(table, cfg, specs, _body(_CORTEX_ID), headers=headers, replica_snapshot=snapshot)
@@ -574,7 +604,7 @@ def test_no_selectable_replica_falls_through_to_local_dispatch() -> None:
     # t7 leaves the 429/503 semantics of "nothing anywhere" to t8; the honest
     # t7 behaviour is the pre-pool one — dial the local owner — with the
     # reason marker saying `none` rather than claiming a selection happened.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, compatible=False),
         _state(_THOR_ORIGIN, ready=False),
@@ -588,7 +618,7 @@ def test_no_selectable_replica_falls_through_to_local_dispatch() -> None:
 
 
 def test_empty_snapshot_falls_through_to_local_dispatch() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     resp, calls = _post(table, cfg, specs, _body(_CORTEX_ID), replica_snapshot=lambda _name: ())
     assert resp.status == 200
     assert calls[0].backend.base_url == "http://vllm-primary:8000"
@@ -598,7 +628,7 @@ def test_empty_snapshot_falls_through_to_local_dispatch() -> None:
 def test_unpooled_role_in_a_pooled_deployment_is_unmarked() -> None:
     # Only the role with a declared replica set takes the pool path: a senses
     # request on the same box stays byte-identical to the pre-pool contract.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     resp, calls = _post(
         table,
         cfg,
@@ -623,7 +653,7 @@ def test_pressure_shed_is_forwarded_once_a_pool_is_declared() -> None:
     # replica declared, #85's shed becomes a forward (spec c7/h6). The 429 is
     # now reserved for "no replica anywhere is available" — proven in
     # tests/test_gateway_pool_pressure.py, which owns the full t8 contract.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, busy=True),
         _state(_THOR_ORIGIN),
@@ -665,7 +695,7 @@ def test_pressure_shed_on_an_unpooled_role_still_429s() -> None:
 
 
 def test_forwarded_streaming_answer_relays_through_the_byte_tunnel() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=4),
         _state(_THOR_ORIGIN),
@@ -693,10 +723,8 @@ def test_mid_stream_drop_is_not_replayed_on_another_replica() -> None:
     # to that replica, so a truncated stream ends honestly rather than being
     # re-issued (which would double-charge the model and duplicate tokens).
     table, cfg, specs = _build(
-        _pool_env(
-            PRIMARY_PEER_ORIGINS=f"{_THOR_ORIGIN},{_ORIN_ORIGIN}",
-            PRIMARY_PEER_API_KEYS=f"{_THOR_KEY},{_ORIN_KEY}",
-        )
+        _pool_env(),
+        **_pool_kwargs(origins=(_THOR_ORIGIN, _ORIN_ORIGIN), keys=(_THOR_KEY, _ORIN_KEY)),
     )
     snapshot = _snapshot(
         _state("http://vllm-primary:8000", local=True, running=9),
@@ -724,7 +752,7 @@ def test_mid_stream_drop_is_not_replayed_on_another_replica() -> None:
 
 
 def test_unknown_model_still_404s_before_the_pool() -> None:
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     snapshot = _snapshot(_state(_THOR_ORIGIN))
     resp, calls = _post(
         table, cfg, specs, _body("nobody/never-advertised"), replica_snapshot=snapshot
@@ -738,7 +766,7 @@ def test_unknown_model_still_404s_before_the_pool() -> None:
 def test_pool_does_not_apply_to_audio_paths() -> None:
     # /v1/audio/* is path-routed through handle_audio_request, which never
     # consults the pool — the plural family is a GENERATE-lane concern in v1.
-    table, cfg, specs = _build(_pool_env())
+    table, cfg, specs = _build(_pool_env(), **_pool_kwargs())
     opener, calls = _opener()
     resp = S.handle_audio_request(table, cfg, specs, "/v1/audio/speech", [], b"{}", opener)
     assert _header(resp, S.ROUTE_REASON_HEADER) is None

@@ -23,10 +23,11 @@ automatically. Three derivation sources:
 
   1. Every module-level ``*_ENV`` constant — a ``str`` contributes its own
      value, a ``dict`` contributes all of its values. This covers
-     ``FEASIBLE_ENV``, ``PEER_ORIGIN_ENV``, ``PEER_PROXY_ENV``,
-     ``PEER_API_KEY_ENV``, ``PEER_ORIGINS_ENV``, ``PEER_API_KEYS_ENV``,
-     ``MAX_ACTIVE_ENV``, ``CAPACITY_KILL_SWITCH_ENV``, ``HAND_LORA_MODULES_ENV``
-     and anything added beside them later.
+     ``FEASIBLE_ENV``, ``MAX_ACTIVE_ENV``, ``CAPACITY_KILL_SWITCH_ENV``,
+     ``HAND_LORA_MODULES_ENV`` and anything added beside them later.
+     (Retired, t14: ``PEER_ORIGIN_ENV``/``PEER_PROXY_ENV``/``PEER_API_KEY_ENV``/
+     ``PEER_ORIGINS_ENV``/``PEER_API_KEYS_ENV`` used to contribute here too —
+     those dicts are deleted along with the env peer family they parsed.)
   2. The lane-fingerprint cross-product ``<PREFIX>_<SUFFIX>`` the config builds
      at runtime from ``FEASIBLE_ENV`` × ``LANE_FINGERPRINT_SUFFIXES`` — those
      keys exist only as an f-string, so no constant names them.
@@ -129,8 +130,11 @@ class TestGatewayEnvPassthroughGuard:
         """A derivation that silently produced nothing would pass everything."""
         keys = _config_env_keys()
         assert len(keys) > 100
-        # One representative from each derivation source.
-        assert "PRIMARY_PEER_ORIGINS" in keys  # dict *_ENV constant
+        # One representative from each derivation source. PRIMARY_PEER_ORIGINS
+        # was the dict *_ENV constant example pre-t14 (PEER_ORIGINS_ENV);
+        # that dict is retired along with the rest of the env peer family —
+        # MAX_ACTIVE_ENV is the survives-t14 dict *_ENV constant instead.
+        assert "PRIMARY_MAX_ACTIVE" in keys  # dict *_ENV constant
         assert "GATEWAY_CAPACITY_KILL_SWITCH" in keys  # scalar *_ENV constant
         assert "PRIMARY_SPECULATIVE_CONFIG" in keys  # fingerprint cross-product
         assert "GATEWAY_FORCE_STRICT_TOOLS" in keys  # literal-only key

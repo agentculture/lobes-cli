@@ -27,9 +27,17 @@ mesh-brain t3 is asserted in full:
 3. **requests** — EVERY alias that maps to the dropped role (its role-identity
    name, its capability tier, and the back-compat synonym — derived from
    :data:`lobes.catalog.TIER_ROLE`, never hand-listed) 404s ``role_infeasible``
-   without dialing any backend; and with peer origins declared
-   (``<PREFIX>_PEER_ORIGIN``, mesh-brain t3) the 404 body carries the referral
-   (``hosted_by``) naming the RIGHT peer per role.
+   without dialing any backend. RETIRED (t14): the operator-declared
+   ``<PREFIX>_PEER_ORIGIN`` env knob this used to check no longer feeds the
+   referral at all — ``build_config`` never populates ``table.peer_origins``
+   from it any more, and the two ``peers=True`` cells below now assert the
+   knob is INERT (no ``hosted_by`` anywhere) rather than that it works. The
+   mesh RoutingSnapshot (t13) is the referral source now — see
+   ``tests/test_peer_referral.py`` for that mechanism, proven directly
+   against ``S._feasibility_response``/``S._mesh_referral_origin`` rather
+   than through this whole-shape-env matrix (a verified mesh member is
+   PLACED by the peer-only pool before a referral 404 is ever built, so no
+   cell here can observe a mesh referral end to end through ``handle_post``).
 
 The per-shape suites that predate this matrix (``tests/test_dropped_lobe_honesty.py``
 for spark-lobe/thor-lobe, ``tests/test_peer_referral.py`` for spark-lobe's
@@ -68,7 +76,7 @@ import pytest
 
 from lobes.catalog import TIER_ROLE
 from lobes.gateway import server as S
-from lobes.gateway._config import FEASIBLE_ENV, PEER_ORIGIN_ENV, build_config
+from lobes.gateway._config import FEASIBLE_ENV, build_config
 from lobes.gateway._routing import list_models_payload
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.schema import ROLES as CORE_ROLES
@@ -272,8 +280,18 @@ def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
     and stays unwired — the realistic "the container is simply not on this box"
     shape (the primary is the exception: ``build_config`` wires it
     unconditionally, so a dropped cortex is wired-but-infeasible, exactly as on
-    a real thor-lobe/orin-small box). ``peers=True`` adds the opt-in mesh-brain
-    t3 referral config: one distinct ``<PREFIX>_PEER_ORIGIN`` per dropped role.
+    a real thor-lobe/orin-small box).
+
+    ``peers=True`` used to add the opt-in mesh-brain t3 referral config — one
+    distinct ``<PREFIX>_PEER_ORIGIN`` per dropped role. That env channel is
+    RETIRED (t14): ``build_config`` no longer reads it at all (the mesh
+    RoutingSnapshot, t13, is the referral source now — see
+    ``tests/test_peer_referral.py`` for that mechanism, unit-tested directly
+    against ``S._feasibility_response``/``S._mesh_referral_origin`` rather
+    than through this matrix's whole-shape env). ``peers`` is kept as a
+    parameter, still setting the (now-inert) knob, so the two tests below can
+    prove the retirement — that the knob does nothing — without duplicating
+    ``_gateway_env`` for that one purpose.
     """
     env: dict[str, str] = {
         # build_config wires the primary unconditionally; give it its real id
@@ -296,7 +314,7 @@ def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
             if role not in OPT_IN_CORE_ROLES:
                 env[FEASIBLE_ENV[backend]] = "false"
             if peers:
-                env[PEER_ORIGIN_ENV[backend]] = _peer_origin(role)
+                env[f"{backend.upper()}_PEER_ORIGIN"] = _peer_origin(role)
     if shape.hosts_role("minor"):
         env["MINOR_BASE_URL"] = "http://vllm-minor:8000"
         env["MINOR_SERVED_NAME"] = _MINOR_ID
@@ -409,34 +427,44 @@ def test_cell_every_alias_404s_role_infeasible_dialing_nothing(
 
 
 @pytest.mark.parametrize("shape_name,role,alias", ALIAS_CELLS, ids=_ALIAS_CELL_IDS)
-def test_cell_404_carries_the_right_peer_referral_when_declared(
+def test_cell_404_ignores_the_retired_peer_origin_env_knob(
     shape_name: str, role: str, alias: str
 ) -> None:
-    # Each dropped role gets a DISTINCT declared peer — on orin-small (two
-    # drops) this also proves the referral is per-backend, never mixed up.
+    # Retired (t14): the <PREFIX>_PEER_ORIGIN env knob this cell used to
+    # declare is no longer read by build_config at all — the 404 stays
+    # byte-identical to the no-peer-config case (test_cell_every_alias_404s_
+    # role_infeasible_dialing_nothing above), never a referral. The mesh
+    # RoutingSnapshot (t13) is the referral source now — see
+    # tests/test_peer_referral.py for that mechanism, unit-tested against
+    # S._feasibility_response/S._mesh_referral_origin directly (a verified
+    # mesh member for a dropped role is PLACED by the peer-only pool before
+    # a referral 404 is ever built, so no shape-matrix cell here can observe
+    # the mesh referral end to end through handle_post).
     table, cfg = build_config(_gateway_env(resolve_shape(shape_name), peers=True))
     resp, calls = _post(table, cfg, alias)
     assert resp.status == 404
-    assert calls == []  # the referral is an ANSWER, never a forward (no proxy)
+    assert calls == []
     body = json.loads(resp.body)
     assert body["error"]["type"] == "role_infeasible"
-    assert body["error"]["hosted_by"] == _peer_origin(role)
-    assert _peer_origin(role) in body["error"]["message"]
+    assert "hosted_by" not in body["error"]
 
 
 @pytest.mark.parametrize("shape_name,role", CELLS, ids=_CELL_IDS)
-def test_cell_capabilities_carry_the_right_peer_referral_when_declared(
+def test_cell_capabilities_ignores_the_retired_peer_origin_env_knob(
     shape_name: str, role: str
 ) -> None:
+    # Retired (t14): /capabilities' own hosted_by annotation
+    # (lobes.roles.annotate_peer_referrals) still reads only
+    # table.peer_origins, which build_config never populates any more — so
+    # the (now-inert) env knob leaves the payload exactly as if it were
+    # never set, on every cell.
     shape = resolve_shape(shape_name)
     env = _gateway_env(shape, peers=True)
     table, cfg = build_config(env)
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    assert payload[role]["hosted_by"] == _peer_origin(role)
+    assert "hosted_by" not in payload[role]
     assert payload[role]["feasible"] is False
     for hosted in ROLES:
-        if hosted in CORE_ROLES and not shape.hosts_role(hosted):
-            continue
         assert "hosted_by" not in payload[hosted], hosted
 
 
@@ -530,8 +558,9 @@ def test_orin_small_unspecified_model_404s_the_infeasible_default_honestly() -> 
     so a request with NO model field 404s ``role_infeasible`` — honest, and by
     design: silently answering the default identity with the 4B minor would be
     exactly the #91/#92 "answered by a model you did not ask for" violation.
-    With peers declared the 404 carries cortex's referral, so the caller knows
-    where the brain's default lane actually lives."""
+    The retired PEER_ORIGIN env knob (t14) no longer carries a referral —
+    build_config never reads it — so the 404 stays referral-free even when it
+    is declared."""
     table, cfg = build_config(_gateway_env(resolve_shape("orin-small"), peers=True))
     opener, calls = _opener()
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b"{}", opener)
@@ -539,7 +568,7 @@ def test_orin_small_unspecified_model_404s_the_infeasible_default_honestly() -> 
     assert calls == []
     body = json.loads(resp.body)
     assert body["error"]["type"] == "role_infeasible"
-    assert body["error"]["hosted_by"] == _peer_origin("cortex")
+    assert "hosted_by" not in body["error"]
 
 
 # ============================================================================
@@ -572,7 +601,10 @@ def test_cell_end_to_end_over_real_http(shape_name: str, role: str, monkeypatch)
         with urllib.request.urlopen(base + "/capabilities", timeout=5) as r:
             payload = json.load(r)
         assert payload[role]["feasible"] is False
-        assert payload[role]["hosted_by"] == _peer_origin(role)
+        # Retired (t14): the declared PEER_ORIGIN env knob no longer feeds
+        # either honesty surface — build_config never populates
+        # table.peer_origins from it any more.
+        assert "hosted_by" not in payload[role]
 
         with urllib.request.urlopen(base + "/v1/models", timeout=5) as r:
             ids = {e["id"] for e in json.load(r)["data"]}
@@ -589,7 +621,7 @@ def test_cell_end_to_end_over_real_http(shape_name: str, role: str, monkeypatch)
         assert exc.value.code == 404
         body = json.loads(exc.value.read())
         assert body["error"]["type"] == "role_infeasible"
-        assert body["error"]["hosted_by"] == _peer_origin(role)
+        assert "hosted_by" not in body["error"]
         assert outbound == []  # answered locally, never forwarded (issue #115)
     finally:
         httpd.shutdown()

@@ -249,27 +249,23 @@ class TestGatewayWiresWorker:
             "WORKER_SERVED_NAME",
             "WORKER_MAX_MODEL_LEN",
             "WORKER_FEASIBLE",
-            "WORKER_PEER_ORIGIN",
-            "WORKER_PEER_PROXY",
-            "WORKER_PEER_API_KEY",
         ):
             assert k in keys, f"gateway environment must pass through {k}"
+        # Retired (t14): WORKER_PEER_ORIGIN/_PEER_PROXY/_PEER_API_KEY are gone
+        # from the compose template along with the parsing that ever read
+        # them — nothing left to check their passthrough for.
 
-    def test_gateway_environment_passes_hand_peer_keys(self) -> None:
-        # hand rides the same feasibility/peer channels since 2026-08-20 (the
-        # d1 reversal of NEVER_PROXIED_BACKENDS) — the gateway container must
-        # actually RECEIVE the knobs or the reversal is inert in deployments
-        # (qodo PR #190 finding 2).
+    def test_gateway_environment_passes_hand_feasible(self) -> None:
+        # hand rides the same feasibility channel as every other role since
+        # 2026-08-20 (the d1 reversal of NEVER_PROXIED_BACKENDS) — the
+        # gateway container must actually RECEIVE the knob or the reversal
+        # is inert in deployments (qodo PR #190 finding 2). Retired (t14):
+        # HAND_PEER_ORIGIN/_PEER_PROXY/_PEER_API_KEY, which this test also
+        # used to check, are gone along with the rest of the env peer family.
         svc = _load_fleet()["services"]["gateway"]
         env: list[str] = svc["environment"]
         keys = {e.split("=", 1)[0] for e in env if "=" in e}
-        for k in (
-            "HAND_FEASIBLE",
-            "HAND_PEER_ORIGIN",
-            "HAND_PEER_PROXY",
-            "HAND_PEER_API_KEY",
-        ):
-            assert k in keys, f"gateway environment must pass {k}"
+        assert "HAND_FEASIBLE" in keys, "gateway environment must pass HAND_FEASIBLE"
 
 
 class TestEnvExampleDocumentsWorkerKnobs:
@@ -295,11 +291,11 @@ class TestEnvExampleDocumentsWorkerKnobs:
             "WORKER_IMAGE",
             "WORKER_SPECULATIVE_CONFIG",
             "WORKER_REASONING_PARSER",
-            "WORKER_PEER_ORIGIN",
-            "WORKER_PEER_PROXY",
-            "WORKER_PEER_API_KEY",
         ):
             assert knob in text, f"env.example must document {knob}"
+        # Retired (t14): WORKER_PEER_ORIGIN/_PEER_PROXY/_PEER_API_KEY, which
+        # this test also used to require documented, are gone from
+        # env.example along with the rest of the env peer family.
 
 
 def _compose_config(env_extra: dict[str, str]) -> str:

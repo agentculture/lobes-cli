@@ -1,11 +1,22 @@
 """The proxy data plane — follow the referral (proxy-lobes t6, issues #115/#127).
 
 The THIRD lobe state: awake (hosted) / asleep (referral-only 404) / **PROXY** —
-a dropped role whose operator armed ``<PREFIX>_PEER_PROXY`` is answered by
-FORWARDING the request to the operator-declared peer origin, instead of the
-referral 404. Everything here drives :func:`lobes.gateway.server.handle_post`'s
-pure seam (an injected ``open_upstream``, no sockets) plus a loopback
-integration at the end, mirroring tests/test_gateway_server.py conventions.
+a dropped role opted in to proxying (``table.peer_proxied``) is answered by
+FORWARDING the request to its declared peer origin, instead of the referral
+404. Everything here drives :func:`lobes.gateway.server.handle_post`'s pure
+seam (an injected ``open_upstream``, no sockets) plus a loopback integration
+at the end, mirroring tests/test_gateway_server.py conventions.
+
+Retired (t14): the env peer family (``<PREFIX>_PEER_ORIGIN``/``_PEER_PROXY``/
+``_PEER_API_KEY``) this module used to declare a proxy through is gone from
+:func:`lobes.gateway._config.build_config` — the mesh ``RoutingSnapshot``
+(t13) is the forwarding candidate source now. Every fixture below builds its
+:class:`~lobes.gateway._routing.RoutingTable` directly (:func:`_build`,
+:func:`_spark_kwargs`/:func:`_thor_kwargs`/:func:`_worker_dropped_kwargs`/
+:func:`_worker_unwired_kwargs`) — no ``*_PEER_*`` env key is set anywhere in
+this file — since the mechanics under test (the bearer-key swap, the
+single-hop 508 guard, the peer-down 503, the referral precedence) are driven
+by the ``RoutingTable`` fields themselves, not by how they were populated.
 
 Contract under test (the plan's acceptance criteria, verbatim):
 
@@ -36,6 +47,7 @@ probe or honestly not-ready — never hardcoded true).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 import urllib.error
@@ -46,7 +58,7 @@ from types import SimpleNamespace
 import pytest
 
 from lobes.gateway import server as S
-from lobes.gateway._config import build_config
+from lobes.gateway._config import FEASIBLE_ENV, NEVER_PROXIED_BACKENDS, build_config
 from lobes.gateway._routing import Backend, RoutingTable, list_models_payload
 from lobes.roles import build_role_registry
 
@@ -76,8 +88,10 @@ _NO_PRESSURE = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
 
 
 def _spark_env(**over) -> dict[str, str]:
-    """spark-lobe + proxy: cortex/pooling hosted, senses DROPPED (unwired) and
-    proxied to the Thor peer with a pairwise outbound key."""
+    """spark-lobe + proxy: cortex/pooling hosted, senses DROPPED — the wiring
+    half only. The proxy declaration itself (Thor as the peer, with a
+    pairwise outbound key) is a RoutingTable-field concern now — see
+    :func:`_spark_kwargs`, applied via :func:`_build`."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
@@ -86,24 +100,29 @@ def _spark_env(**over) -> dict[str, str]:
         "RERANK_URL": "http://vllm-rerank:8000",
         "RERANK_SERVED_NAME": _RERANK_ID,
         "MULTIMODAL_FEASIBLE": "false",
-        "MULTIMODAL_PEER_ORIGIN": _THOR_ORIGIN,
-        "MULTIMODAL_PEER_PROXY": "true",
-        "MULTIMODAL_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
 
 
+def _spark_kwargs(**over) -> dict:
+    kw = {
+        "peer_origins": {"multimodal": _THOR_ORIGIN},
+        "peer_proxied": frozenset({"multimodal"}),
+        "peer_api_keys": {"multimodal": _PEER_KEY},
+    }
+    kw.update(over)
+    return kw
+
+
 def _thor_env(**over) -> dict[str, str]:
     """thor-lobe + proxy: senses/pooling hosted, cortex DROPPED (the primary is
-    unconditionally WIRED but infeasible) and proxied to the Spark peer."""
+    unconditionally WIRED but infeasible) — the wiring half only. See
+    :func:`_thor_kwargs` for the proxy declaration (Spark as the peer)."""
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
         "PRIMARY_FEASIBLE": "false",
-        "PRIMARY_PEER_ORIGIN": _SPARK_ORIGIN,
-        "PRIMARY_PEER_PROXY": "true",
-        "PRIMARY_PEER_API_KEY": _PEER_KEY,
         "MULTIMODAL_BASE_URL": "http://vllm-multimodal:8000",
         "MULTIMODAL_SERVED_NAME": _SENSES_ID,
         "EMBED_URL": "http://vllm-embed:8000",
@@ -115,12 +134,22 @@ def _thor_env(**over) -> dict[str, str]:
     return env
 
 
+def _thor_kwargs(**over) -> dict:
+    kw = {
+        "peer_origins": {"primary": _SPARK_ORIGIN},
+        "peer_proxied": frozenset({"primary"}),
+        "peer_api_keys": {"primary": _PEER_KEY},
+    }
+    kw.update(over)
+    return kw
+
+
 def _worker_dropped_env(**over) -> dict[str, str]:
     """A box that WIRES the opt-in worker gear (thor-worker-lobe plan, t3)
     but has since dropped it to a peer — mirrors thor-lobe's own
-    wired-but-infeasible primary shape (:func:`_thor_env`). Wiring the
-    backend (rather than leaving it unwired) means the peer's served id
-    resolves off the WIRED ``Backend.served_name`` in
+    wired-but-infeasible primary shape (:func:`_thor_env`) — the wiring half
+    only. Wiring the backend (rather than leaving it unwired) means the
+    peer's served id resolves off the WIRED ``Backend.served_name`` in
     :func:`lobes.gateway.server._peer_served_name` — the same path
     thor-lobe's primary uses — so this proves the generic data-plane proxy
     machinery already carries a NEW backend name end to end from the
@@ -131,24 +160,31 @@ def _worker_dropped_env(**over) -> dict[str, str]:
         "WORKER_BASE_URL": "http://vllm-worker:8000",
         "WORKER_SERVED_NAME": _WORKER_ID,
         "WORKER_FEASIBLE": "false",
-        "WORKER_PEER_ORIGIN": _SPARK_ORIGIN,
-        "WORKER_PEER_PROXY": "true",
-        "WORKER_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
 
 
+def _worker_dropped_kwargs(**over) -> dict:
+    kw = {
+        "peer_origins": {"worker": _SPARK_ORIGIN},
+        "peer_proxied": frozenset({"worker"}),
+        "peer_api_keys": {"worker": _PEER_KEY},
+    }
+    kw.update(over)
+    return kw
+
+
 def _worker_unwired_env(**over) -> dict[str, str]:
     """The REAL spark-lobe/machine-as-brain shape for a proxied ``worker``:
-    the gear is **never wired here at all**.
+    the gear is **never wired here at all** — the wiring half only.
 
     ``worker`` is an OPT-IN core role (``shapes.OPT_IN_CORE_ROLES``), so only
     an explicit worker-hosting shape (``thor-worker``) renders
-    ``WORKER_BASE_URL``. A box that merely *reaches* worker on a peer — the
-    Spark declaring ``WORKER_PEER_ORIGIN`` + ``WORKER_PEER_PROXY`` — has no
-    ``WORKER_BASE_URL`` and therefore no :class:`Backend` in the table. That
-    drops :func:`lobes.gateway.server._peer_served_name` past its step-1
+    ``WORKER_BASE_URL``. A box that merely *reaches* worker on a peer (see
+    :func:`_worker_unwired_kwargs`) has no ``WORKER_BASE_URL`` and therefore
+    no :class:`Backend` in the table. That drops
+    :func:`lobes.gateway.server._peer_served_name` past its step-1
     wired-backend branch and onto the env/catalog fallbacks, which is exactly
     the path :func:`_worker_dropped_env` deliberately avoids by wiring the
     backend. Both shapes must resolve a served id; only this one exercises
@@ -156,16 +192,30 @@ def _worker_unwired_env(**over) -> dict[str, str]:
     env = {
         "PRIMARY_URL": "http://vllm-primary:8000",
         "PRIMARY_SERVED_NAME": _CORTEX_ID,
-        "WORKER_PEER_ORIGIN": _THOR_ORIGIN,
-        "WORKER_PEER_PROXY": "true",
-        "WORKER_PEER_API_KEY": _PEER_KEY,
     }
     env.update(over)
     return env
 
 
-def _build(env):
+def _worker_unwired_kwargs(**over) -> dict:
+    kw = {
+        "peer_origins": {"worker": _THOR_ORIGIN},
+        "peer_proxied": frozenset({"worker"}),
+        "peer_api_keys": {"worker": _PEER_KEY},
+    }
+    kw.update(over)
+    return kw
+
+
+def _build_config(env, **table_kwargs):
     table, cfg = build_config(env)
+    if table_kwargs:
+        table = dataclasses.replace(table, **table_kwargs)
+    return table, cfg
+
+
+def _build(env, **table_kwargs):
+    table, cfg = _build_config(env, **table_kwargs)
     return table, cfg, S.peer_specs_from_table(table, env)
 
 
@@ -237,7 +287,7 @@ def test_peer_specs_unwired_role_served_name_from_env() -> None:
     # deployment env still declares what the role serves: <PREFIX>_SERVED_NAME
     # is the honest source for the id this box forwards/advertises.
     env = _spark_env(MULTIMODAL_SERVED_NAME="custom/gemma-tuned")
-    table, _cfg, specs = _build(env)
+    table, _cfg, specs = _build(env, **_spark_kwargs())
     assert set(specs) == {"multimodal"}
     spec = specs["multimodal"]
     assert spec.origin == _THOR_ORIGIN
@@ -248,14 +298,14 @@ def test_peer_specs_unwired_role_served_name_from_env() -> None:
 def test_peer_specs_unwired_role_served_name_falls_back_to_catalog() -> None:
     # No <PREFIX>_SERVED_NAME either → the catalog canonical id for the role
     # (the same source lobes.roles uses to NAME an unwired role's model).
-    table, _cfg, specs = _build(_spark_env())
+    table, _cfg, specs = _build(_spark_env(), **_spark_kwargs())
     assert specs["multimodal"].served_name == _SENSES_ID
 
 
 def test_peer_specs_wired_but_infeasible_role_uses_backend_served_name() -> None:
     # thor-lobe: the primary is unconditionally wired, so the WIRED backend's
     # served_name outranks env/catalog (it is what the table itself declares).
-    table, _cfg, specs = _build(_thor_env())
+    table, _cfg, specs = _build(_thor_env(), **_thor_kwargs())
     assert set(specs) == {"primary"}
     assert specs["primary"].served_name == _CORTEX_ID
     assert specs["primary"].origin == _SPARK_ORIGIN
@@ -263,9 +313,7 @@ def test_peer_specs_wired_but_infeasible_role_uses_backend_served_name() -> None
 
 def test_peer_specs_empty_without_proxy_config() -> None:
     # Referral-only (origin, no knob) and no-peer deployments build ZERO specs.
-    env = _spark_env()
-    del env["MULTIMODAL_PEER_PROXY"]
-    table, _cfg, specs = _build(env)
+    table, _cfg, specs = _build(_spark_env(), **_spark_kwargs(peer_proxied=frozenset()))
     assert specs == {}
     table, _cfg = build_config({"PRIMARY_SERVED_NAME": _CORTEX_ID})
     assert S.peer_specs_from_table(table, {}) == {}
@@ -273,7 +321,7 @@ def test_peer_specs_empty_without_proxy_config() -> None:
 
 def test_peer_specs_key_never_in_repr() -> None:
     # PeerSpec.api_key is repr=False; the mapping's repr must not leak it either.
-    _table, _cfg, specs = _build(_spark_env())
+    _table, _cfg, specs = _build(_spark_env(), **_spark_kwargs())
     assert _PEER_KEY not in repr(specs)
     assert _PEER_KEY not in str(specs)
 
@@ -288,7 +336,7 @@ def test_proxied_request_forwards_to_peer_origin(alias: str) -> None:
     # Every alias of the dropped+proxied role — role identity, capability tier,
     # back-compat synonym, AND the concrete served id (unwired, so the id is
     # not in the table — it resolves via the peer spec) — forwards.
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     body = json.dumps({"model": alias, "messages": []}).encode()
     resp, calls = _post(table, cfg, specs, body)
     assert len(calls) == 1
@@ -302,7 +350,7 @@ def test_proxied_request_forwards_to_peer_origin(alias: str) -> None:
 
 
 def test_proxied_response_carries_proxied_by_header_verbatim() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _calls = _post(table, cfg, specs, b'{"model":"senses"}')
     assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _THOR_ORIGIN
 
@@ -310,7 +358,7 @@ def test_proxied_response_carries_proxied_by_header_verbatim() -> None:
 def test_proxied_sse_stream_relays_unchanged() -> None:
     chunks = [b'data: {"delta":1}\n\n', b"data: [DONE]\n\n"]
     opener, calls = _opener(200, chunks=list(chunks))
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     body = json.dumps({"model": "senses", "stream": True}).encode()
     resp, _ = _post(table, cfg, specs, body, opener=opener, calls=calls)
     assert resp.status == 200
@@ -327,7 +375,7 @@ def test_proxied_sse_stream_relays_unchanged() -> None:
 
 def test_thor_proxied_cortex_aliases_forward() -> None:
     # The mirror shape: cortex dropped (wired-but-infeasible) on thor-lobe.
-    table, cfg, specs = _build(_thor_env())
+    table, cfg, specs = _build(_thor_env(), **_thor_kwargs())
     for alias in ("cortex", "main", "hard", _CORTEX_ID):
         resp, calls = _post(table, cfg, specs, json.dumps({"model": alias}).encode())
         assert resp.status == 200, alias
@@ -340,7 +388,7 @@ def test_unspecified_model_routing_to_proxied_default_forwards() -> None:
     # An UNSPECIFIED model routes to default_model (thor-lobe: the dropped
     # cortex) — with the proxy armed that default now forwards instead of
     # 404ing role_infeasible.
-    table, cfg, specs = _build(_thor_env())
+    table, cfg, specs = _build(_thor_env(), **_thor_kwargs())
     resp, calls = _post(table, cfg, specs, b"{}")
     assert resp.status == 200
     assert len(calls) == 1
@@ -356,7 +404,7 @@ def test_unspecified_model_routing_to_proxied_default_forwards() -> None:
 
 
 def test_worker_proxied_request_forwards_to_peer_origin() -> None:
-    table, cfg, specs = _build(_worker_dropped_env())
+    table, cfg, specs = _build(_worker_dropped_env(), **_worker_dropped_kwargs())
     assert "worker" in table.peer_proxied
     for alias in ("worker", _WORKER_ID):
         body = json.dumps({"model": alias, "messages": []}).encode()
@@ -371,7 +419,7 @@ def test_worker_proxied_request_forwards_to_peer_origin() -> None:
 
 
 def test_worker_outbound_carries_peer_key_and_never_callers_token() -> None:
-    table, cfg, specs = _build(_worker_dropped_env())
+    table, cfg, specs = _build(_worker_dropped_env(), **_worker_dropped_kwargs())
     inbound = [("Authorization", f"Bearer {_CALLER_TOKEN}")]
     _resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
     auth_values = [v for k, v in calls[0].headers if k.lower() == "authorization"]
@@ -387,7 +435,10 @@ def test_worker_hosted_locally_is_unaffected_by_stray_peer_config() -> None:
     # data-plane confirmation).
     env = _worker_dropped_env()
     del env["WORKER_FEASIBLE"]
-    table, cfg, specs = _build(env)
+    # worker is hosted here now — the retired env peer family's gating rule
+    # (a proxy knob on a locally-feasible role is ignored) is reproduced by
+    # hand: peer_proxied stays empty even though a peer is still declared.
+    table, cfg, specs = _build(env, **_worker_dropped_kwargs(peer_proxied=frozenset()))
     assert table.peer_proxied == frozenset()
     resp, calls = _post(table, cfg, specs, b'{"model":"worker"}')
     assert resp.status == 200
@@ -397,7 +448,7 @@ def test_worker_hosted_locally_is_unaffected_by_stray_peer_config() -> None:
 
 
 def test_worker_marked_request_that_would_reproxy_is_refused() -> None:
-    table, cfg, specs = _build(_worker_dropped_env())
+    table, cfg, specs = _build(_worker_dropped_env(), **_worker_dropped_kwargs())
     inbound = [(S.PROXIED_HEADER, "primary")]
     resp, calls = _post(table, cfg, specs, b'{"model":"worker"}', headers=inbound)
     assert calls == []
@@ -423,7 +474,7 @@ def test_peer_specs_unwired_worker_served_name_from_env() -> None:
     # <PREFIX>_SERVED_NAME is the operator's declaration of what the dropped
     # role serves; it must be honoured for worker as it is for multimodal.
     env = _worker_unwired_env(WORKER_SERVED_NAME="custom/worker-tuned")
-    _table, _cfg, specs = _build(env)
+    _table, _cfg, specs = _build(env, **_worker_unwired_kwargs())
     assert set(specs) == {"worker"}
     assert specs["worker"].served_name == "custom/worker-tuned"
     assert specs["worker"].origin == _THOR_ORIGIN
@@ -433,14 +484,14 @@ def test_peer_specs_unwired_worker_served_name_from_env() -> None:
 def test_peer_specs_unwired_worker_falls_back_to_catalog() -> None:
     # No WORKER_SERVED_NAME either → the catalog canonical id for role_hint
     # "worker" (nvidia/Qwen3.6-35B-A3B-NVFP4), mirroring the multimodal case.
-    _table, _cfg, specs = _build(_worker_unwired_env())
+    _table, _cfg, specs = _build(_worker_unwired_env(), **_worker_unwired_kwargs())
     assert set(specs) == {"worker"}
     assert specs["worker"].served_name == _WORKER_ID
 
 
 def test_unwired_worker_proxied_request_forwards_to_peer_origin() -> None:
     # The data-plane consequence: without a spec, handle_post never proxies.
-    table, cfg, specs = _build(_worker_unwired_env())
+    table, cfg, specs = _build(_worker_unwired_env(), **_worker_unwired_kwargs())
     assert "worker" in table.peer_proxied
     for alias in ("worker", _WORKER_ID):
         body = json.dumps({"model": alias, "messages": []}).encode()
@@ -456,22 +507,17 @@ def test_every_proxyable_role_resolves_a_served_name() -> None:
     """CONTRACT: every role the config layer can proxy must resolve an id.
 
     The regression guard for the whole class of bug, not just worker: adding
-    a role to ``_config.PEER_PROXY_ENV`` without also teaching
-    ``server._PEER_SERVED_NAME_ENV`` / ``_PEER_ROLE_HINT`` about it yields a
-    silently inert proxy. Fail here rather than in production.
+    a role to the proxyable set (FEASIBLE_ENV minus NEVER_PROXIED_BACKENDS —
+    the set the retired ``PEER_PROXY_ENV`` used to name, t14) without also
+    teaching ``server._PEER_SERVED_NAME_ENV`` / ``_PEER_ROLE_HINT`` about it
+    yields a silently inert proxy. Fail here rather than in production.
+    _peer_served_name resolves off the WIRED backend, the ``<PREFIX>_SERVED_
+    NAME`` env, or the catalog hint — none of which is the retired peer-origin
+    family, so no ``RoutingTable`` peer field needs to be set at all here.
     """
-    from lobes.gateway._config import PEER_API_KEY_ENV, PEER_ORIGIN_ENV, PEER_PROXY_ENV
-
-    unresolved = []
-    for role in sorted(PEER_PROXY_ENV):
-        env = {
-            PEER_ORIGIN_ENV[role]: _THOR_ORIGIN,
-            PEER_PROXY_ENV[role]: "true",
-            PEER_API_KEY_ENV[role]: _PEER_KEY,
-        }
-        table, _cfg = build_config(env)
-        if S._peer_served_name(table, role, env) == "":
-            unresolved.append(role)
+    proxyable_roles = sorted(set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS)
+    table, _cfg = build_config({})
+    unresolved = [role for role in proxyable_roles if S._peer_served_name(table, role, {}) == ""]
     assert unresolved == [], (
         f"proxyable roles that resolve NO served name: {unresolved} — "
         "add them to server._PEER_SERVED_NAME_ENV and _PEER_ROLE_HINT "
@@ -485,7 +531,7 @@ def test_every_proxyable_role_resolves_a_served_name() -> None:
 
 
 def test_outbound_carries_peer_key_and_never_callers_token() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     inbound = [
         ("Authorization", f"Bearer {_CALLER_TOKEN}"),
         ("Content-Type", "application/json"),
@@ -503,9 +549,7 @@ def test_outbound_carries_peer_key_and_never_callers_token() -> None:
 
 
 def test_outbound_has_no_authorization_when_no_pairwise_key() -> None:
-    env = _spark_env()
-    del env["MULTIMODAL_PEER_API_KEY"]
-    table, cfg, specs = _build(env)
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs(peer_api_keys={}))
     inbound = [("Authorization", f"Bearer {_CALLER_TOKEN}")]
     _resp, calls = _post(table, cfg, specs, b'{"model":"senses"}', headers=inbound)
     auth_values = [v for k, v in calls[0].headers if k.lower() == "authorization"]
@@ -513,7 +557,7 @@ def test_outbound_has_no_authorization_when_no_pairwise_key() -> None:
 
 
 def test_outbound_carries_single_hop_marker() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     _resp, calls = _post(table, cfg, specs, b'{"model":"senses"}')
     marker = [v for k, v in calls[0].headers if k.lower() == S.PROXIED_HEADER.lower()]
     assert marker == ["multimodal"]  # the proxied role's backend name — no origin, no key
@@ -525,7 +569,7 @@ def test_outbound_carries_single_hop_marker() -> None:
 
 
 def test_marked_request_that_would_reproxy_is_refused_zero_outbound() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     inbound = [(S.PROXIED_HEADER, "primary")]  # already crossed one hop elsewhere
     resp, calls = _post(table, cfg, specs, b'{"model":"senses"}', headers=inbound)
     assert calls == []  # NO outbound attempt
@@ -544,7 +588,7 @@ def test_marked_request_that_would_reproxy_is_refused_zero_outbound() -> None:
 
 
 def test_marker_header_is_case_insensitive() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, calls = _post(
         table, cfg, specs, b'{"model":"senses"}', headers=[("x-lobes-proxied", "primary")]
     )
@@ -555,7 +599,7 @@ def test_marker_header_is_case_insensitive() -> None:
 def test_marked_request_for_locally_served_role_processes_normally() -> None:
     # An arriving marked request whose role IS hosted here never touches the
     # proxy branch: it forwards to the local backend exactly as before.
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     inbound = [(S.PROXIED_HEADER, "multimodal")]
     resp, calls = _post(table, cfg, specs, b'{"model":"cortex"}', headers=inbound)
     assert resp.status == 200
@@ -571,7 +615,7 @@ def test_marked_request_for_locally_served_role_processes_normally() -> None:
 
 def test_peer_connect_refused_yields_503_with_retry_after() -> None:
     opener, calls = _opener(S.UpstreamError("peer:multimodal: connection refused"))
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert len(calls) == 1  # tried the peer once — no second hop, no fallback (#91)
     assert resp.status == 503
@@ -587,7 +631,7 @@ def test_peer_connect_refused_yields_503_with_retry_after() -> None:
 
 def test_peer_5xx_yields_503_backend_unavailable() -> None:
     opener, calls = _opener(502)
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert len(calls) == 1
     assert resp.status == 503
@@ -600,7 +644,7 @@ def test_proxied_request_bypasses_local_pressure_shed() -> None:
     # but a PROXIED one must forward regardless: the peer's own gateway applies
     # its own pressure policy on arrival, and shedding here too would
     # double-gate the role on the WRONG box's load.
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, calls = _post(table, cfg, specs, b'{"model":"senses"}', pressure=_HIGH_PRESSURE)
     assert resp.status == 200  # forwarded, not shed
     assert len(calls) == 1
@@ -628,7 +672,7 @@ def test_peer_role_infeasible_is_terminal_and_names_the_peer() -> None:
         }
     ).encode()
     opener, calls = _opener(404, body=peer_404)
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert len(calls) == 1  # never a second attempt / another hop
     assert resp.status == 404
@@ -650,7 +694,7 @@ def test_peer_plain_404_is_relayed_verbatim() -> None:
         {"error": {"message": "The model `x` does not exist.", "type": "model_not_found"}}
     ).encode()
     opener, calls = _opener(404, body=peer_404)
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert resp.status == 404
     assert json.loads(resp.body)["error"]["type"] == "model_not_found"  # untouched
@@ -660,7 +704,7 @@ def test_peer_plain_404_is_relayed_verbatim() -> None:
 def test_peer_other_4xx_relayed_like_single_owner_rules() -> None:
     # e.g. the peer's own pressure shed (429) rides back to the caller verbatim.
     opener, calls = _opener(429, body=b'{"error":{"type":"server_busy"}}')
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     resp, _ = _post(table, cfg, specs, b'{"model":"senses"}', opener=opener, calls=calls)
     assert resp.status == 429
     assert dict(resp.headers)[S.PROXIED_BY_HEADER] == _THOR_ORIGIN
@@ -674,10 +718,8 @@ def test_peer_other_4xx_relayed_like_single_owner_rules() -> None:
 def test_non_proxied_infeasible_role_keeps_byte_identical_referral_404() -> None:
     # Referral-only (origin declared, knob NOT armed): the exact pre-proxy 404,
     # byte for byte — proven against the same request with no peer_specs wired.
-    env = _spark_env()
-    del env["MULTIMODAL_PEER_PROXY"]
-    table, cfg = build_config(env)
-    specs = S.peer_specs_from_table(table, env)
+    table, cfg = _build_config(_spark_env(), **_spark_kwargs(peer_proxied=frozenset()))
+    specs = S.peer_specs_from_table(table, _spark_env())
     assert specs == {}  # sanity: nothing is proxied
     for alias in ("senses", "multimodal", "normal"):
         body = json.dumps({"model": alias}).encode()
@@ -698,7 +740,9 @@ def test_unknown_model_still_404s_model_not_found_never_proxied() -> None:
     # anywhere (not wired, not an alias, not the proxied role's served id) is a
     # model_not_found 404 — never silently forwarded to the peer under the
     # default model's identity.
-    table, cfg, specs = _build(_thor_env())  # default_model routes to the PROXIED cortex
+    table, cfg, specs = _build(
+        _thor_env(), **_thor_kwargs()
+    )  # default_model routes to the PROXIED cortex
     resp, calls = _post(table, cfg, specs, b'{"model":"never-advertised-id"}')
     assert calls == []
     assert resp.status == 404
@@ -706,7 +750,7 @@ def test_unknown_model_still_404s_model_not_found_never_proxied() -> None:
 
 
 def test_locally_served_response_never_carries_proxied_by() -> None:
-    table, cfg, specs = _build(_spark_env())
+    table, cfg, specs = _build(_spark_env(), **_spark_kwargs())
     for model in ("cortex", "main", _CORTEX_ID, _EMBED_ID):
         resp, calls = _post(table, cfg, specs, json.dumps({"model": model}).encode())
         assert resp.status == 200, model
@@ -719,7 +763,7 @@ def test_handle_post_without_peer_specs_is_pre_proxy_behaviour() -> None:
     # A caller that never passes peer_specs (every pre-t6 call site, and any
     # deployment with no proxy config) gets the referral 404 even for a name
     # the TABLE marks proxied — the data plane only exists once specs are wired.
-    table, cfg = build_config(_spark_env())
+    table, cfg = _build_config(_spark_env(), **_spark_kwargs())
     assert "multimodal" in table.peer_proxied  # the table itself is armed
     opener, calls = _opener()
     resp = S.handle_post(table, cfg, "/v1/chat/completions", [], b'{"model":"senses"}', opener)
@@ -740,7 +784,7 @@ def _ready(**over):
 
 
 def test_v1_models_lists_proxied_id_iff_peer_ready_true() -> None:
-    table, _cfg, specs = _build(_spark_env())
+    table, _cfg, specs = _build(_spark_env(), **_spark_kwargs())
     peer_served = {name: spec.served_name for name, spec in specs.items()}
     # Peer verified up (the probe checked its /v1/models lists the id) → listed.
     ids = {
@@ -763,7 +807,7 @@ def test_v1_models_no_ready_snapshot_never_lists_proxied_id() -> None:
     # ready=None (no live cache — the offline path) lists every wired local
     # backend, but a proxied id needs an affirmative LIVE peer signal: without
     # one it is never advertised (h2 — no hardcoded reachability claims).
-    table, _cfg, specs = _build(_spark_env())
+    table, _cfg, specs = _build(_spark_env(), **_spark_kwargs())
     peer_served = {name: spec.served_name for name, spec in specs.items()}
     payload = list_models_payload(table, None, peer_served)
     ids = {m["id"] for m in payload["data"]}
@@ -774,15 +818,13 @@ def test_v1_models_no_ready_snapshot_never_lists_proxied_id() -> None:
 def test_v1_models_ignores_peer_served_for_non_proxied_names() -> None:
     # Belt and braces: peer_served entries for names NOT in table.peer_proxied
     # are never listed — the routing table's opt-in is the only gate.
-    env = _spark_env()
-    del env["MULTIMODAL_PEER_PROXY"]  # referral-only now
-    table, _cfg = build_config(env)
+    table, _cfg = _build_config(_spark_env(), **_spark_kwargs(peer_proxied=frozenset()))
     payload = list_models_payload(table, _ready(multimodal=True), {"multimodal": _SENSES_ID})
     assert _SENSES_ID not in {m["id"] for m in payload["data"]}
 
 
 def test_v1_models_without_peer_served_is_unchanged() -> None:
-    table, _cfg, _specs = _build(_spark_env())
+    table, _cfg, _specs = _build(_spark_env(), **_spark_kwargs())
     baseline = list_models_payload(table, _ready())
     assert baseline == list_models_payload(table, _ready(), None)
     assert {m["id"] for m in baseline["data"]} == {_CORTEX_ID, _EMBED_ID, _RERANK_ID}
@@ -795,7 +837,7 @@ def test_v1_models_without_peer_served_is_unchanged() -> None:
 
 def test_capabilities_proxied_ready_follows_peer_signal() -> None:
     env = _spark_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_spark_kwargs())
     for signal, expected in ((True, True), (False, False), (None, False)):
         payload = S.capabilities_payload(
             table,
@@ -815,7 +857,7 @@ def test_capabilities_proxied_ready_false_without_live_signal() -> None:
     # No backend_ready at all (the offline/CLI path): honestly not-ready,
     # never hardcoded true (h2).
     env = _spark_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_spark_kwargs())
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     assert payload["senses"]["ready"] is False
     assert payload["senses"]["proxied"] is True
@@ -825,8 +867,7 @@ def test_capabilities_referral_only_ready_stays_clamped_false() -> None:
     # The non-proxied path is byte-identical: a referral-only dropped role's
     # ready stays clamped False even with a stray live True signal (the t5 pin).
     env = _spark_env()
-    del env["MULTIMODAL_PEER_PROXY"]
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_spark_kwargs(peer_proxied=frozenset()))
     payload = S.capabilities_payload(
         table, cfg, env=env, gateway_url=_GATEWAY_URL, backend_ready=_ready(multimodal=True)
     )
@@ -838,14 +879,12 @@ def test_build_role_registry_peer_ready_channel_is_scoped_to_proxied_names() -> 
     # The NEW peer_ready channel (the live proxied-path probe) flips ready only
     # for a PROXIED role; backend_ready (the LOCAL probe channel) still never
     # does — the two signals stay distinct, as t5's clamp docstring demanded.
-    table, cfg = build_config(_spark_env())
+    table, cfg = _build_config(_spark_env(), **_spark_kwargs())
     reg = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL, peer_ready={"multimodal": True})
     assert reg["senses"].ready is True
     assert reg["senses"].feasible is False  # unchanged hardware fact
     # peer_ready never resurrects a non-proxied role.
-    env = _spark_env()
-    del env["MULTIMODAL_PEER_PROXY"]
-    table, cfg = build_config(env)
+    table, cfg = _build_config(_spark_env(), **_spark_kwargs(peer_proxied=frozenset()))
     reg = build_role_registry(table, cfg, gateway_url=_GATEWAY_URL, peer_ready={"multimodal": True})
     assert reg["senses"].ready is False
 
@@ -857,7 +896,7 @@ def test_build_role_registry_peer_ready_channel_is_scoped_to_proxied_names() -> 
 
 def test_serve_wires_peer_specs_into_cache_and_handler(monkeypatch) -> None:
     env = _spark_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_spark_kwargs())
     expected_specs = S.peer_specs_from_table(table)  # serve() reads os.environ
 
     recorded: dict = {}
@@ -892,7 +931,7 @@ def test_serve_wires_peer_specs_into_cache_and_handler(monkeypatch) -> None:
 @pytest.fixture
 def proxy_gateway(monkeypatch):
     env = _spark_env()
-    table, cfg = build_config(env)
+    table, cfg = _build_config(env, **_spark_kwargs())
     specs = S.peer_specs_from_table(table, env)
     opened: list = []
 
