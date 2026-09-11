@@ -205,6 +205,7 @@ class Roster:
         clock: Callable[[], float] | None = None,
         ledger_path: str | None = None,
         capacity_max: float = CAPACITY_CLAMP_MAX,
+        missed_max: int | None = None,
     ) -> None:
         self._clock = clock or (lambda: 0.0)
         self._roster = {}
@@ -213,8 +214,17 @@ class Roster:
         self._flap_count: int = 0
         self._flap_time: float = 0.0  # clock value of the most recent flap detection
         self._capacity_max: float = capacity_max
+        # Finding 10: inject missed_max; None → fall back to module-level env default.
+        self._missed_max_override: int | None = missed_max
 
     # -- public API (Roster) ------------------------------------------------
+
+    def now(self) -> float:
+        """Return the roster's current clock value.
+
+        Used to convert duration-based expiry to the roster's clock domain.
+        """
+        return self._clock()
 
     def announce(
         self, name: str, origin: str, capacity: object, *, now: float | None = None
@@ -245,9 +255,14 @@ class Roster:
         dropped: int = 0
         to_remove: list[str] = []
 
+        # Finding 10: use injected missed_max when available, else env default.
+        local_missed_max = (
+            self._missed_max_override if self._missed_max_override is not None else _MISSED_MAX
+        )
+
         for name, member in self._roster.items():
             member.missed += 1
-            if member.missed >= _MISSED_MAX:
+            if member.missed >= local_missed_max:
                 to_remove.append(name)
 
         for name in to_remove:

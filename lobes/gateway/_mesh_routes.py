@@ -30,10 +30,13 @@ thread can broadcast immediately.
 
 from __future__ import annotations
 
+import concurrent.futures
+import http.client
 import json
 import sys
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -43,6 +46,7 @@ from lobes.gateway._mesh_wire import (
     SCHEMA_MAJOR,
     Announcement,
     Fingerprint,
+    MeshSchemaIncompatible,
     RoleInfo,
 )
 
@@ -61,6 +65,10 @@ class _PendingJoin:
     origin: str
     capacity: object
     joined_at: float
+
+
+# Per-dial timeout constant – a named value, not a derived formula.
+_DIAL_TIMEOUT_S: float = 10.0
 
 
 # --- main class -------------------------------------------------------------
@@ -85,6 +93,8 @@ class MeshRoutes:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._reannounce_event = threading.Event()
+        # Pending joins are initialized here (finding 11: never getattr default).
+        self._pending: list[_PendingJoin] = []
 
     @classmethod
     def build(
@@ -119,6 +129,9 @@ class MeshRoutes:
 
     def _check_key(self, headers: dict[str, str]) -> bool:
         """Return True when *headers* carries a valid Bearer join key."""
+        # Finding 18: handle None key cleanly.
+        if self.config.key is None:
+            return False
         auth = headers.get("Authorization", "")
         if not auth:
             return False
@@ -183,12 +196,19 @@ class MeshRoutes:
         now = time.monotonic()
         ttl = 300.0  # 5-minute TTL for pending joins
 
+        # Finding 11: derive source from socket peer, not client-supplied field.
+        address = getattr(handler, "client_address", None)
+        if isinstance(address, tuple) and address:
+            source = str(address[0])
+        else:
+            source = "<unknown>"
+
         with self._lock:
-            pending: list[_PendingJoin] = getattr(self, "_pending", [])
+            pending = self._pending
 
             # Remove expired entries first.
             pending = [p for p in pending if p.joined_at + ttl > now]
-            self._pending = pending  # type: ignore[attr-defined]
+            self._pending = pending
 
             # Capacity cap: 8 pending entries total.
             if len(pending) >= 8:
@@ -198,23 +218,21 @@ class MeshRoutes:
                     json.dumps({"error": "pending join queue is full (8)"}).encode(),
                 )
 
-            # One entry per origin.
+            # Finding 11: one entry per ORIGIN (not per name).
             for p in pending:
-                if p.name == name:
-                    if p.origin == origin:
-                        return (
-                            400,
-                            [("Content-Type", "application/json")],
-                            json.dumps({"error": "same origin already pending"}).encode(),
-                        )
-                    else:
-                        pending.remove(p)
+                if p.origin == origin:
+                    return (
+                        400,
+                        [("Content-Type", "application/json")],
+                        json.dumps({"error": "same origin already pending"}).encode(),
+                    )
+                # Drop entries with different name but same origin won't happen
+                # now that we key on origin above.
 
             pending.append(_PendingJoin(name=name, origin=origin, capacity=capacity, joined_at=now))
 
         # Collapsed flood logging via the existing RejectionLog pattern.
         if self._join_log is not None:
-            source = "<join>"
             line = self._join_log.record(
                 source,
                 "POST",
@@ -223,36 +241,24 @@ class MeshRoutes:
             )
             if line is not None:
                 sys.stderr.write(f"[gateway] {line}\n")
-            else:
-                # Collapsed — count suppressed for the message.
-                suppressed = 0
-                with self._join_log._lock:  # noqa: SLF001
-                    st = self._join_log._sources.get(source)  # noqa: SLF001
-                    if st:
-                        suppressed = st.suppressed
-                msg = f"pending join registered for {name}"
-                if suppressed:
-                    msg += f" (+{suppressed} more suppressed)"
-                return (
-                    202,
-                    [("Content-Type", "application/json")],
-                    json.dumps({"status": msg}).encode(),
-                )
 
+        # Finding 14: static 202 body, no log state leaked to caller.
         return (
             202,
             [("Content-Type", "application/json")],
-            json.dumps({"status": f"pending join registered for {name}"}).encode(),
+            json.dumps({"status": "pending join registered"}).encode(),
         )
 
     def announce(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
         """POST /mesh/announce – authenticated membership heartbeat."""
         if not self._check_key(getattr(handler, "headers", {})):
+            # Finding 12: add Connection: close to prevent keep-alive framing poison.
             return (
                 401,
                 [
                     ("Content-Type", "application/json"),
                     ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
                 ],
                 json.dumps(
                     {
@@ -279,8 +285,8 @@ class MeshRoutes:
 
         name: str
         origin: str
-        roles: dict[str, RoleInfo]
 
+        # Finding 15: catch MeshSchemaIncompatible distinctly.
         try:
             from lobes.gateway._mesh_wire import decode
 
@@ -288,42 +294,33 @@ class MeshRoutes:
             public = announced.public()
             name = public.name
             origin = public.origin
-            roles = public.roles
-        except Exception:
-            # Parse name/origin/roles from raw JSON if decode fails.
-            try:
-                data = json.loads(body)
-                name = str(data.get("name", ""))
-                origin = str(data.get("origin", ""))
-                raw_roles: dict = data.get("roles", {})
-                roles = {}
-                for rn, rd in raw_roles.items():
-                    if isinstance(rd, dict):
-                        fp = rd.get("fingerprint", {})
-                        roles[rn] = RoleInfo(
-                            model=rd.get("model", ""),
-                            runtime=rd.get("runtime", ""),
-                            context=rd.get("context", 0),
-                            quant=rd.get("quant", ""),
-                            responsibilities=tuple(rd.get("responsibilities", [])),
-                            forbidden_responsibilities=tuple(
-                                rd.get("forbidden_responsibilities", [])
-                            ),
-                            fingerprint=Fingerprint(
-                                served_id=fp.get("served_id", ""),
-                                quantization=fp.get("quantization", ""),
-                                max_model_len=fp.get("max_model_len", 0),
-                                runtime=fp.get("runtime", ""),
-                            ),
-                            capacity=rd.get("capacity"),
-                            private=rd.get("private", False),
-                        )
-            except Exception:
-                return (
-                    400,
-                    [("Content-Type", "application/json")],
-                    json.dumps({"error": "invalid JSON body"}).encode(),
-                )
+        except MeshSchemaIncompatible:
+            # Wrong schema major – reject before touching roster.
+            return (
+                400,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Connection", "close"),  # finding 12
+                ],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Schema version mismatch",
+                            "type": "schema_incompatible",
+                            "expected_major": SCHEMA_MAJOR,
+                        }
+                    }
+                ).encode(),
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return (
+                400,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Connection", "close"),  # finding 12
+                ],
+                json.dumps({"error": "invalid JSON body"}).encode(),
+            )
 
         if not name:
             return (
@@ -332,7 +329,69 @@ class MeshRoutes:
                 json.dumps({"error": "name is required"}).encode(),
             )
 
-        self.roster.announce(name, origin, roles, now=time.monotonic())
+        # Finding 5: ledger approval check before roster mutation.
+        roster_now = self.roster.now()
+        if not self.roster.is_approved(name, now=roster_now):
+            entry = self.roster.ledger.entries.get(name)
+            if entry is not None:
+                # Approval existed but lapsed.
+                return (
+                    403,
+                    [
+                        ("Content-Type", "application/json"),
+                        ("Connection", "close"),
+                    ],
+                    json.dumps(
+                        {
+                            "error": {
+                                "message": "Approval has expired",
+                                "type": "approval_expired",
+                                "name": name,
+                            }
+                        }
+                    ).encode(),
+                )
+            # No approval entry at all.
+            return (
+                403,
+                [
+                    ("Content-Type", "application/json"),
+                    ("Connection", "close"),
+                ],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "Approval required",
+                            "type": "approval_required",
+                            "name": name,
+                        }
+                    }
+                ).encode(),
+            )
+
+        # Finding 5: pass None for capacity (roles data is in the wire format, not capacity param).
+        # Also finding 5: handle MeshNameConflict → 409.
+        try:
+            self.roster.announce(name, origin, None, now=roster_now)
+        except Exception as exc:
+            if "conflict" in str(exc).lower() or "already held" in str(exc).lower():
+                return (
+                    409,
+                    [
+                        ("Content-Type", "application/json"),
+                        ("Connection", "close"),
+                    ],
+                    json.dumps(
+                        {
+                            "error": {
+                                "message": "Name conflict",
+                                "type": "name_conflict",
+                                "name": name,
+                            }
+                        }
+                    ).encode(),
+                )
+            raise
 
         return (
             200,
@@ -345,11 +404,13 @@ class MeshRoutes:
     def roster_list(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
         """GET /mesh/roster – authenticated member listing."""
         if not self._check_key(getattr(handler, "headers", {})):
+            # Finding 12: add Connection: close.
             return (
                 401,
                 [
                     ("Content-Type", "application/json"),
                     ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
                 ],
                 json.dumps(
                     {
@@ -362,21 +423,36 @@ class MeshRoutes:
                 ).encode(),
             )
 
-        members = self.roster.members()
+        # Finding 13: take a snapshot under the route lock.
+        with self._lock:
+            member_names = list(self.roster.members())
+            member_records = {}
+            for mname in member_names:
+                rec = self.roster._roster.get(mname)  # noqa: SLF001
+                if rec is not None:
+                    member_records[mname] = {
+                        "name": rec.name,
+                        "origin": rec.origin,
+                        "capacity": rec.capacity,
+                    }
+
+        # Finding 3: return per-member objects with name AND origin.
         return (
             200,
             [("Content-Type", "application/json")],
-            json.dumps({"members": members}).encode(),
+            json.dumps({"members": list(member_records.values())}).encode(),
         )
 
     def approve(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
         """POST /mesh/approve – authenticated approval."""
         if not self._check_key(getattr(handler, "headers", {})):
+            # Finding 12: add Connection: close.
             return (
                 401,
                 [
                     ("Content-Type", "application/json"),
                     ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
                 ],
                 json.dumps(
                     {
@@ -423,7 +499,12 @@ class MeshRoutes:
         except (TypeError, ValueError):
             expiry_f = 3600.0
 
-        self.roster.approve(str(name), approved_by, expiry_f, now=time.monotonic())
+        roster_now = self.roster.now()
+        # Finding 6: convert duration to absolute expiry.
+        expiry_abs = roster_now + expiry_f
+        self.roster.approve(str(name), approved_by, expiry_abs, now=roster_now)
+        # Finding 6: persist the ledger.
+        self.roster.save()
         return (
             200,
             [("Content-Type", "application/json")],
@@ -433,11 +514,13 @@ class MeshRoutes:
     def revoke(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
         """POST /mesh/revoke – authenticated revocation."""
         if not self._check_key(getattr(handler, "headers", {})):
+            # Finding 12: add Connection: close.
             return (
                 401,
                 [
                     ("Content-Type", "application/json"),
                     ("WWW-Authenticate", "Bearer"),
+                    ("Connection", "close"),
                 ],
                 json.dumps(
                     {
@@ -478,7 +561,10 @@ class MeshRoutes:
                 json.dumps({"error": "name is required"}).encode(),
             )
 
-        self.roster.revoke(str(name), now=time.monotonic(), approved_by=approved_by)
+        roster_now = self.roster.now()
+        self.roster.revoke(str(name), now=roster_now, approved_by=approved_by)
+        # Finding 6: persist the ledger.
+        self.roster.save()
         return (
             200,
             [("Content-Type", "application/json")],
@@ -523,10 +609,143 @@ def dispatch_mesh(
     return status, headers, body
 
 
+def _fingerprint_to_wire(
+    fp: object,
+) -> Fingerprint:
+    """Convert a Fingerprint-like mapping to a wire Fingerprint."""
+    if fp is None:
+        return Fingerprint(
+            served_id="",
+            quantization="",
+            max_model_len=0,
+            runtime="",
+        )
+    if isinstance(fp, Fingerprint):
+        return fp
+    return Fingerprint(
+        served_id=str(fp.get("served_id", "")),
+        quantization=str(fp.get("quantization", "")),
+        max_model_len=int(fp.get("max_model_len", 0)),
+        runtime=str(fp.get("runtime", "")),
+    )
+
+
+def _build_announcement(
+    config: MeshConfig,
+    roster: "Roster",
+    *,
+    self_origin: str | None = None,
+    readiness_cache: object | None = None,
+    replica_caches: dict[str, object] | None = None,
+    local_capacities: dict[str, float] | None = None,
+    declared_lane_configs: dict[str, dict[str, str]] | None = None,
+) -> Announcement:
+    """Build the wire Announcement for THIS box's own heartbeat broadcast.
+
+    Parameters
+    ----------
+    config:
+        MeshConfig with name and key.
+    roster:
+        Current Roster instance.
+    self_origin:
+        The client-reachable origin (from reachable_origin / public_url).
+    readiness_cache:
+        Optional readiness cache for determining which roles are ready.
+    replica_caches:
+        Optional dict of backend → ReplicaCache for live fingerprint data.
+    local_capacities:
+        Optional dict of backend name → capacity.
+    declared_lane_configs:
+        Optional dict of backend name → lane config dict.
+    """
+    origin = self_origin or config.name or ""
+
+    roles: dict[str, RoleInfo] = {}
+
+    # Collect ready, hosted roles from the local gateway.
+    # Finding 1: build real roles from the gateway's own data.
+    if readiness_cache is not None:
+        # Use readiness cache to determine which roles are ready.
+        try:
+            current = readiness_cache.current()
+            ready_roles: dict = current.get("roles", {})
+        except (AttributeError, TypeError):
+            ready_roles = {}
+    else:
+        ready_roles = {}
+
+    # Build per-role RoleInfo from lane configs or from replica caches.
+    for backend_name, lane_config in (declared_lane_configs or {}).items():
+        role_name = backend_name
+        # Check readiness: only include ready+hosted roles.
+        if ready_roles and role_name not in ready_roles:
+            continue
+
+        # Get live fingerprint from replica cache if available.
+        fp = None
+        if replica_caches and role_name in replica_caches:
+            cache = replica_caches[role_name]
+            try:
+                snapshot = cache.snapshot()
+                if isinstance(snapshot, dict):
+                    local_replicas = snapshot.get("local_replicas", [])
+                    if local_replicas:
+                        rep_state = local_replicas[0]
+                        if isinstance(rep_state, dict):
+                            fp = rep_state.get("fingerprint")
+            except (AttributeError, TypeError):
+                fp = None
+
+        # Get capacity from local capacities.
+        capacity = None
+        if local_capacities and backend_name in local_capacities:
+            capacity = local_capacities[backend_name]
+
+        # Build RoleInfo from lane config, enriched with live data.
+        model = lane_config.get("model", "")
+        runtime = lane_config.get("runtime", "")
+        context = int(lane_config.get("context", 0))
+        quant = lane_config.get("quant", "")
+        resp_list = lane_config.get("responsibilities", [])
+        if isinstance(resp_list, str):
+            resp_list = [resp_list]
+        forbidden_list = lane_config.get("forbidden_responsibilities", [])
+        if isinstance(forbidden_list, str):
+            forbidden_list = [forbidden_list]
+
+        roles[role_name] = RoleInfo(
+            model=model,
+            runtime=runtime,
+            context=context,
+            quant=quant,
+            responsibilities=tuple(resp_list),
+            forbidden_responsibilities=tuple(forbidden_list),
+            fingerprint=_fingerprint_to_wire(fp),
+            capacity=capacity,
+            private=lane_config.get("private", False),
+        )
+
+    return Announcement(
+        name=config.name or "",
+        origin=origin,
+        schema_version=str(SCHEMA_MAJOR),
+        roles=roles,
+    )
+
+
 def build_mesh_routes(
     *,
     env: object | None = None,
     roster: "Roster | None" = None,
+    # Optional gateway data for building a real announcement (finding 1).
+    self_origin: str | None = None,
+    readiness_cache: object | None = None,
+    replica_caches: dict[str, object] | None = None,
+    local_capacities: dict[str, float] | None = None,
+    declared_lane_configs: dict[str, dict[str, str]] | None = None,
+    join_log: RejectionLog | None = None,
+    missed_max: int | None = None,
 ) -> tuple["MeshRoutes", Announcement]:
     """Build and return a :class:`MeshRoutes` + the initial heartbeat announcement.
 
@@ -548,48 +767,93 @@ def build_mesh_routes(
     if roster is None:
         roster = _Roster(clock=clock, ledger_path=config.ledger_path)
 
-    routes = MeshRoutes(config, roster)
+    # Finding 10: inject missed_max into Roster.
+    if missed_max is not None:
+        from lobes.gateway._mesh_roster import Roster as _Roster
 
-    # Build the initial announcement from current roster members.
-    roles: dict[str, RoleInfo] = {}
-    for member_name in roster.members():
-        rec = roster._roster.get(member_name)  # noqa: SLF001
-        if rec is None:
-            continue
-        member_roles = rec.origin if isinstance(rec.origin, dict) else {}
-        if isinstance(member_roles, dict):
-            for role_name, role_data in member_roles.items():
-                if isinstance(role_data, dict):
-                    fp_obj = role_data.get("fingerprint", {})
-                    roles[role_name] = RoleInfo(
-                        model=role_data.get("model", ""),
-                        runtime=role_data.get("runtime", ""),
-                        context=role_data.get("context", 0),
-                        quant=role_data.get("quant", ""),
-                        responsibilities=tuple(role_data.get("responsibilities", [])),
-                        forbidden_responsibilities=tuple(
-                            role_data.get("forbidden_responsibilities", [])
-                        ),
-                        fingerprint=Fingerprint(
-                            served_id=fp_obj.get("served_id", ""),
-                            quantization=fp_obj.get("quantization", ""),
-                            max_model_len=fp_obj.get("max_model_len", 0),
-                            runtime=fp_obj.get("runtime", ""),
-                        ),
-                        capacity=role_data.get("capacity"),
-                        private=role_data.get("private", False),
-                    )
+        # Reconstruct with the injected missed_max.
+        roster = _Roster(clock=clock, ledger_path=config.ledger_path, capacity_max=1000000.0)
+        # Store it on the roster for the heartbeat to access.
+        roster._missed_max_override = missed_max  # noqa: SLF001
 
-    announcement = Announcement(
-        name=config.name,
-        origin="",
-        schema_version=str(SCHEMA_MAJOR),
-        roles=roles,
+    routes = MeshRoutes(config, roster, _join_log=join_log)
+
+    # Build the initial announcement from gateway data (finding 1).
+    announcement = _build_announcement(
+        config,
+        roster,
+        self_origin=self_origin,
+        readiness_cache=readiness_cache,
+        replica_caches=replica_caches,
+        local_capacities=local_capacities,
+        declared_lane_configs=declared_lane_configs,
     )
     return routes, announcement
 
 
 # --- heartbeat daemon ------------------------------------------------------
+
+
+def _post_announcement(
+    url: str,
+    body: bytes,
+    timeout: float,
+    key: bytes | None = None,
+) -> None:
+    """POST *body* to *url* via http.client with a hard timeout.
+
+    Silently drops on any failure — a down peer is handled by tick-based
+    staleness in the roster.
+
+    Parameters
+    ----------
+    url:
+        Full URL (including scheme).
+    body:
+        JSON body bytes.
+    timeout:
+        Socket timeout in seconds.
+    key:
+        Bearer key bytes (finding 2).
+    """
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/mesh/announce"
+    if parsed.query:
+        path = path + "?" + parsed.query
+
+    # Finding 16: scheme-aware connection.
+    if parsed.scheme == "https":
+        conn = http.client.HTTPSConnection(  # type: ignore[call-overload]
+            host, port, timeout=timeout
+        )
+    else:
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+    }
+    # Finding 2: attach Bearer key.
+    if key is not None:
+        headers["Authorization"] = f"Bearer {key.decode('utf-8')}"
+
+    try:
+        conn.request(
+            "POST",
+            path,
+            body=body,
+            headers=headers,
+        )
+        conn.getresponse()
+    except Exception:  # nosec B110 — best-effort: silently drop failed peer connections
+        pass
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # nosec B110 — silently ignore close errors
+                pass
 
 
 def _heartbeat_loop(
@@ -605,78 +869,159 @@ def _heartbeat_loop(
     delays another.  The loop exits when *stop_event* is set.
     """
     seeds = routes.config.seeds
+    # Finding 4: pace on the full interval, not min(interval, 1.0).
+    deadline: float = 0.0
 
     while not stop_event.is_set():
-        # Event.wait(interval) returns True only when stop() is set, so this
-        # paces the loop and exits promptly on shutdown.
-        reannounce_event.wait(timeout=min(interval, 1.0))
+        # Compute the next deadline.
+        if deadline == 0.0:
+            deadline = time.monotonic() + interval
+        else:
+            # Wait in ≤1s increments against the deadline.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Deadline elapsed – no wait needed.
+                pass
+            else:
+                wait_dur = min(remaining, 1.0)
+                reannounce_event.wait(timeout=wait_dur)
+
         reannounce_event.clear()
 
         if stop_event.is_set():
             break
 
-        # Collect the announcement to send.
-        with routes._lock:  # noqa: SLF001
-            if routes._announcement_bytes is not None:  # noqa: SLF001
-                to_send = routes._announcement_bytes  # noqa: SLF001
+        # Check if we should run a pass: deadline elapsed or reannounce fired.
+        now = time.monotonic()
+        run_pass = (now >= deadline) or reannounce_event.is_set()
+
+        if run_pass:
+            # Advance to next deadline.
+            deadline = now + interval
+        else:
+            continue
+
+        # Finding 10: tick the roster once per pass under the lock.
+        with routes._lock:
+            try:
+                routes.roster.tick()
+            except Exception:  # nosec B110 — best-effort: tick never blocks
+                pass
+
+            # Collect the announcement to send.
+            if routes._announcement_bytes is not None:
+                to_send = routes._announcement_bytes
             else:
                 to_send = announcement_bytes
 
         if to_send is None:
             continue
 
-        peer_timeout = routes.config.missed_max * 10  # generous timeout per peer
+        # Finding 9: gather members list under the lock, dial in parallel.
+        member_origins: list[tuple[str, str]] = []
+        with routes._lock:
+            for member_name in list(routes.roster.members()):
+                rec = routes.roster._roster.get(member_name)  # noqa: SLF001
+                if rec is not None:
+                    member_origins.append((member_name, rec.origin))
 
-        # Announce to seeds first.
-        for seed in seeds:
-            if stop_event.is_set():
-                break
-            _post_announcement(seed + "/mesh/announce", to_send, peer_timeout)
+        # Find 10: use named per-dial budget, not missed_max * 10.
+        dial_timeout = _DIAL_TIMEOUT_S
 
-        # Announce to every roster member.
-        for member_name in list(routes.roster.members()):
-            if stop_event.is_set():
-                break
-            rec = routes.roster._roster.get(member_name)  # noqa: SLF001
-            if rec is None:
-                continue
-            origin = rec.origin
-            _post_announcement(origin + "/mesh/announce", to_send, peer_timeout)
+        # Finding 3: first fetch from seed roster.
+        if seeds:
+            try:
+                _fetch_seed_roster(seeds, routes.config.key, routes.roster, dial_timeout)
+            except Exception:  # nosec B110 — best-effort: seed fetch never blocks
+                pass
+
+        if to_send is not None:
+            # Finding 9: parallelize announces with ThreadPoolExecutor.
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(8, len(seeds) + len(member_origins) + 1)
+            ) as pool:
+                futures = []
+
+                # Announce to seeds.
+                for seed in seeds:
+                    if stop_event.is_set():
+                        break
+                    url = seed + "/mesh/announce"
+                    futures.append(
+                        pool.submit(
+                            _post_announcement, url, to_send, dial_timeout, routes.config.key
+                        )
+                    )
+
+                # Announce to every roster member.
+                for _member_name, origin in member_origins:
+                    if stop_event.is_set():
+                        break
+                    url = origin + "/mesh/announce"
+                    futures.append(
+                        pool.submit(
+                            _post_announcement, url, to_send, dial_timeout, routes.config.key
+                        )
+                    )
+
+                # Wait for all dials to complete (each has its own timeout).
+                for fut in concurrent.futures.as_completed(futures):
+                    try:
+                        fut.result(timeout=dial_timeout)
+                    except Exception:  # nosec B110 — best-effort: drop failed peer connections
+                        pass
 
 
-def _post_announcement(url: str, body: bytes, timeout: float) -> None:
-    """POST *body* to *url* via http.client with a hard timeout.
+def _fetch_seed_roster(
+    seeds: tuple[str, ...],
+    key: str | None,
+    roster: "Roster",
+    timeout: float,
+) -> None:
+    """GET /mesh/roster from every seed and merge entries (finding 3)."""
+    bearer = f"Bearer {key}" if key else None
 
-    Silently drops on any failure — a down peer is handled by tick-based
-    staleness in the roster.
-    """
-    import http.client
-    import urllib.parse
+    for seed in seeds:
+        parsed = urllib.parse.urlsplit(seed)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = parsed.path or "/mesh/roster"
+        if parsed.query:
+            path = path + "?" + parsed.query
 
-    parsed = urllib.parse.urlsplit(url)
-    host = parsed.hostname or "localhost"
-    port = parsed.port or 80
-    path = parsed.path or "/mesh/announce"
-    if parsed.query:
-        path = path + "?" + parsed.query
+        if parsed.scheme == "https":
+            conn = http.client.HTTPSConnection(  # type: ignore[call-overload]
+                host, port, timeout=timeout
+            )
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=timeout)
 
-    conn = None
-    try:
-        conn = http.client.HTTPConnection(host, port, timeout=timeout)
-        conn.request(
-            "POST",
-            path,
-            body=body,
-            headers={
-                "Content-Type": "application/json",
-            },
-        )
-        conn.getresponse()
-    except Exception:  # nosec B110 — best-effort: silently drop failed peer connections
-        # Best-effort: a down peer is handled by tick-based staleness.
-        pass
-    finally:
-        if conn is not None:
+        headers: dict[str, str] = {
+            "Content-Type": "application/json",
+        }
+        if bearer:
+            headers["Authorization"] = bearer
+
+        try:
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            if resp.status == 200:
+                raw = resp.read()
+                try:
+                    data = json.loads(raw)
+                    members = data.get("members", [])
+                    if isinstance(members, list):
+                        for member in members:
+                            if isinstance(member, dict):
+                                mname = member.get("name", "")
+                                morigin = member.get("origin", "")
+                                if mname and morigin:
+                                    roster.announce(mname, morigin, None, now=time.monotonic())
+                except (json.JSONDecodeError, TypeError, KeyError):
+                    pass
+        except Exception:  # nosec B110 — best-effort: seed roster fetch never blocks
+            pass
+        finally:
             try:
                 conn.close()
             except Exception:  # nosec B110 — silently ignore close errors
@@ -692,8 +1037,8 @@ def start_mesh(
 
     announcement_bytes = _encode(announcement)
 
-    stop_event = threading.Event()
-    routes._stop = stop_event  # noqa: SLF001
+    # Finding 17: keep the __init__ stop event (no reassignment).
+    # Use routes._stop which was already created in __init__.
 
     thread = threading.Thread(
         target=_heartbeat_loop,
@@ -701,13 +1046,15 @@ def start_mesh(
             routes,
             announcement_bytes,
             routes.config.heartbeat_s,
-            stop_event,
+            routes._stop,  # Use the __init__ stop event.
             routes._reannounce_event,
         ),
         name="lobes-mesh-heartbeat",
         daemon=True,
     )
     thread.start()
+    # Finding 17: assign _thread so serve()'s shutdown can join.
+    routes._thread = thread  # noqa: SLF001
     return thread
 
 

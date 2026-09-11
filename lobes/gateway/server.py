@@ -3372,6 +3372,9 @@ class _Handler(BaseHTTPRequestHandler):
     # handler and in the unit suites — every rejection then logs plainly,
     # exactly as it did before this existed.
     rejection_log: RejectionLog | None = None
+    # Mesh routes (t6, #237). `None` when mesh is disabled — same treatment as
+    # other optional per-server state below.
+    mesh_routes: MeshRoutes | None = None
     # The proxied roles' peer specs (proxy-lobes t6, #115/#127), keyed by
     # backend name — built once by peer_specs_from_table and shared with the
     # ReadinessCache's peer-probe thread (see serve). None/empty → the proxy
@@ -3516,6 +3519,15 @@ class _Handler(BaseHTTPRequestHandler):
                 status, headers, body = result
                 self._send_simple(status, headers, body)
                 return
+            # Finding 20: mesh enabled but unknown mesh route → 404, not fall-through.
+            self._send_simple(
+                404,
+                [("Content-Type", "application/json")],
+                json.dumps(
+                    {"error": {"message": f"not found: {route}", "type": "not_found"}}
+                ).encode(),
+            )
+            return
         # Inbound auth (opt-in, #127): the GET /v1/* namespace is DATA PLANE —
         # the model listings are part of the OpenAI surface callers script
         # against. /health, /capabilities and /status stay KEYLESS by design
@@ -3784,6 +3796,20 @@ class _Handler(BaseHTTPRequestHandler):
                 status, headers, body = result
                 self._send_simple(status, headers, body)
                 return
+            # Finding 20: mesh enabled but unknown mesh route → 405, not fall-through.
+            self._send_simple(
+                405,
+                [("Content-Type", "application/json")],
+                json.dumps(
+                    {
+                        "error": {
+                            "message": f"method not allowed: {self.command} {route}",
+                            "type": "method_not_allowed",
+                        }
+                    }
+                ).encode(),
+            )
+            return
         # Inbound auth (opt-in, #127): EVERY POST route is data plane — each
         # one is a forward to a backend (chat/completions, completions,
         # embeddings, rerank, score, audio/*). The gate runs before the body
@@ -4352,9 +4378,21 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # disabled (no key) every /mesh/* path falls through to the 404 below.
     mesh_routes: MeshRoutes | None = None
     if _build_mesh_config().enabled:
-        mesh_routes, announcement = _build_mesh_routes()
-        # Start the heartbeat daemon thread after the server is bound so
-        # the announcement payload can include members already in the roster.
+        # Finding 1: build a real announcement from gateway data.
+        # Finding 7: wire the RejectionLog for flood collapse.
+        join_log = RejectionLog()
+        mesh_routes, announcement = _build_mesh_routes(
+            self_origin=cfg.reachable_origin,
+            readiness_cache=readiness_cache,
+            replica_caches=replica_caches,
+            local_capacities=cfg.local_capacities,
+            declared_lane_configs={
+                b.name: declared_lane_config(b.lane_fingerprints) for b in table.backends
+            },
+            join_log=join_log,
+            missed_max=_build_mesh_config().missed_max,
+        )
+        # Start the heartbeat daemon thread after the server is bound.
         _start_mesh(mesh_routes, announcement)
     httpd = ThreadingHTTPServer(
         (cfg.host, cfg.port),

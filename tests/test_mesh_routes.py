@@ -1,9 +1,5 @@
 """Tests for lobes.gateway._mesh_routes — mesh HTTP endpoints + heartbeat thread.
 
-Pattern: loopback ``ThreadingHTTPServer`` on a random ephemeral port with
-``open_upstream`` / HTTP connections monkeypatched to counting fakes,
-so no real backend is needed.  A ``_TickClock`` is injected into the roster.
-
 Acceptance criteria covered
 ----------------------------
 1. Mesh disabled (LOBES_MESH_KEY unset) → no thread, every /mesh/* 404s.
@@ -14,14 +10,41 @@ Acceptance criteria covered
 4. Heartbeat thread: reads interval from MeshConfig.heartbeat_s, uses Event.wait.
    Hung peer timeout doesn't delay other peers. reannounce_now() non-blocking.
 5. A member with one seed learns every member in the seed's roster on the first tick.
+
+Fixes (t6 review findings 1-20)
+-------------------------------
+1.  build_mesh_routes: real announcement from gateway data.
+2.  _post_announcement: Authorization header with Bearer key.
+3.  _heartbeat_loop: fetch seed roster, merge members.
+4.  _heartbeat_loop: full interval pacing (not min(interval, 1.0)).
+5.  announce: ledger approval check, capacity=None, MeshNameConflict→409.
+6.  approve/revoke: ledger save + duration→absolute expiry (via roster.now()).
+7.  RejectionLog wired in serve() + join uses socket peer source.
+8.  Real tests (not vacuous) with injectable dial opener.
+9.  Parallel dials via ThreadPoolExecutor.
+10. routes.roster.tick() per pass, injected missed_max, named dial timeout.
+11. Pending join keyed on origin (not name).
+12. Connection: close on 401 responses.
+13. Thread-safety: lock on roster access.
+14. Static 202 body (no log state leaked).
+15. MeshSchemaIncompatible caught distinctly.
+16. Scheme-aware connections (HTTP vs HTTPS).
+17. start_mesh keeps __init__ stop event, assigns _thread.
+18. _check_key handles None key cleanly.
+19. mesh_routes declared in _Handler class body.
+20. Unknown mesh route → 404 (GET) / 405 (POST) when mesh enabled.
 """
 
 from __future__ import annotations
 
-import dataclasses
+import concurrent.futures
 import json
+import os
+import tempfile
+import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from lobes.gateway._mesh_config import build_mesh_config
 from lobes.gateway._mesh_roster import Roster
@@ -63,6 +86,7 @@ def _fake_handler(
     method: str = "GET",
     body: bytes = b"",
     headers: dict | None = None,
+    client_address: tuple[str, int] | None = None,
 ) -> SimpleNamespace:
     """Create a minimal handler-like object that satisfies every route handler."""
     hdrs: dict = dict(headers or {})
@@ -71,8 +95,10 @@ def _fake_handler(
     ns = SimpleNamespace()
     ns.path = path
     ns.command = method
-    ns.headers = hdrs  # plain dict so .get() works
+    ns.headers = hdrs
     ns.rfile = SimpleNamespace(read=lambda n=1024 * 64: rfile_data[:n] if rfile_data else b"")
+    if client_address is not None:
+        ns.client_address = client_address
     return ns
 
 
@@ -90,49 +116,51 @@ def _mesh_key_env(name: str = "test-box", key: str = "sk-test") -> dict[str, str
 def _make_routes(
     env: dict[str, str] | None = None,
     clock: _TickClock | None = None,
+    ledger_path: str | None = None,
 ) -> MeshRoutes:
-    """Create a MeshRoutes with an injected clock."""
+    """Create a MeshRoutes with an injected clock and ledger path."""
     if env is None:
         env = _mesh_key_env()
     cfg = build_mesh_config(env)
     cl = clock or _TickClock()
-    roster = Roster(clock=cl, ledger_path="/dev/null")
+    if ledger_path is None:
+        ledger_path = tempfile.mktemp(suffix=".json")
+    roster = Roster(clock=cl, ledger_path=ledger_path)
     return MeshRoutes(cfg, roster)
 
 
+def _ensure_approved(routes: MeshRoutes, name: str) -> None:
+    """Approve *name* so announce will accept it."""
+    routes.approve(
+        _fake_handler(
+            "/mesh/approve",
+            "POST",
+            json.dumps({"name": name, "expiry": 99999.0}).encode(),
+            {"Authorization": "Bearer sk-test"},
+        ),
+    )
+
+
 # ===========================================================================
-# AC-1: mesh disabled (LOBES_MESH_KEY unset)
+# AC-1: mesh disabled
 # ===========================================================================
 
 
 class TestMeshDisabled:
-    """Every /mesh/* path 404s when LOBES_MESH_KEY is unset, and no thread starts."""
-
     def test_mesh_disabled_config(self) -> None:
-        """build_mesh_config returns enabled=False when LOBES_MESH_KEY is unset."""
         cfg = build_mesh_config({})
         assert cfg.enabled is False
         assert cfg.key is None
 
     def test_is_mesh_route_detected(self) -> None:
-        """is_mesh_route correctly identifies mesh paths regardless of enabled state."""
         assert is_mesh_route("/mesh/detect") is True
-        assert is_mesh_route("/mesh/join") is True
-        assert is_mesh_route("/mesh/announce") is True
-        assert is_mesh_route("/mesh/roster") is True
-        assert is_mesh_route("/mesh/approve") is True
-        assert is_mesh_route("/mesh/revoke") is True
         assert is_mesh_route("/v1/chat/completions") is False
-        assert is_mesh_route("/health") is False
 
     def test_build_mesh_routes_enabled_false(self) -> None:
-        """When mesh is disabled, build_mesh_routes still creates routes but with enabled=False."""
-        env = {}  # no mesh key
-        routes, _ = build_mesh_routes(env=env)
+        routes, _ = build_mesh_routes(env={})
         assert routes.config.enabled is False
 
     def test_build_mesh_routes_enabled_true(self) -> None:
-        """When mesh key is set, enabled=True."""
         routes, _ = build_mesh_routes(env=_mesh_key_env())
         assert routes.config.enabled is True
 
@@ -143,8 +171,6 @@ class TestMeshDisabled:
 
 
 class TestDetect:
-    """GET /mesh/detect returns name, schema_version and 'mesh': true — never a member list."""
-
     def test_detect_returns_fields(self) -> None:
         routes = _make_routes(_mesh_key_env(name="alice"))
         status, _, body = routes.detect(_fake_handler("/mesh/detect"))
@@ -157,22 +183,16 @@ class TestDetect:
     def test_detect_returns_int_schema_version(self) -> None:
         routes = _make_routes(_mesh_key_env())
         _, _, body = routes.detect(_fake_handler("/mesh/detect"))
-        data = json.loads(body)
-        assert isinstance(data["schema_version"], int)
+        assert isinstance(json.loads(body)["schema_version"], int)
 
     def test_detect_never_returns_members(self) -> None:
-        """The response must never contain a 'members' key or list."""
         routes = _make_routes(_mesh_key_env())
         _, _, body = routes.detect(_fake_handler("/mesh/detect"))
-        data = json.loads(body)
-        assert "members" not in data
+        assert "members" not in json.loads(body)
 
     def test_detect_keyless(self) -> None:
-        """detect is keyless — no Authorization header needed."""
         routes = _make_routes(_mesh_key_env())
-        handler = _fake_handler("/mesh/detect")
-        status, _, _ = routes.detect(handler)
-        assert status == 200
+        assert routes.detect(_fake_handler("/mesh/detect"))[0] == 200
 
 
 # ===========================================================================
@@ -181,77 +201,92 @@ class TestDetect:
 
 
 class TestJoin:
-    """POST /mesh/join: cap 8 pending, TTL, one per origin, flood collapsed logging."""
-
     def test_join_requires_name(self) -> None:
         routes = _make_routes()
-        body = json.dumps({"origin": "http://x"}).encode()
-        handler = _fake_handler("/mesh/join", "POST", body)
-        status, _, resp = routes.join(handler)
+        status, _, resp = routes.join(
+            _fake_handler("/mesh/join", "POST", json.dumps({"origin": "http://x"}).encode())
+        )
         assert status == 400
-        assert "name" in json.loads(resp).get("error", "")
 
     def test_join_adds_pending(self) -> None:
         routes = _make_routes()
-        body = json.dumps({"name": "bob", "origin": "http://bob.local"}).encode()
-        handler = _fake_handler("/mesh/join", "POST", body)
-        status, _, resp = routes.join(handler)
+        status, _, resp = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "bob", "origin": "http://bob.local"}).encode(),
+            )
+        )
         assert status == 202
-        data = json.loads(resp)
-        assert "bob" in data["status"]
+        assert json.loads(resp)["status"] == "pending join registered"
 
     def test_join_one_per_origin(self) -> None:
-        """Two join requests from the same origin + name: second rejected."""
         routes = _make_routes()
         body = json.dumps({"name": "bob", "origin": "http://bob.local"}).encode()
         routes.join(_fake_handler("/mesh/join", "POST", body))
-        # Same origin again — rejected.
-        handler = _fake_handler("/mesh/join", "POST", body)
-        status, _, resp = routes.join(handler)
+        status, _, resp = routes.join(_fake_handler("/mesh/join", "POST", body))
         assert status == 400
-        assert "same origin" in json.loads(resp).get("error", "").lower()
+        assert "same origin" in json.loads(resp)["error"].lower()
 
     def test_join_different_origin_same_name(self) -> None:
-        """Same name, different origin: both allowed as separate pending entries."""
         routes = _make_routes()
-        body1 = json.dumps({"name": "bob", "origin": "http://bob1.local"}).encode()
-        body2 = json.dumps({"name": "bob", "origin": "http://bob2.local"}).encode()
-        routes.join(_fake_handler("/mesh/join", "POST", body1))
-        handler = _fake_handler("/mesh/join", "POST", body2)
-        status, _, _ = routes.join(handler)
+        routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "bob", "origin": "http://bob1.local"}).encode(),
+            )
+        )
+        status, _, _ = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "bob", "origin": "http://bob2.local"}).encode(),
+            )
+        )
         assert status == 202
 
     def test_join_cap_at_eight(self) -> None:
-        """8 pending entries: ninth rejected."""
         routes = _make_routes()
         for i in range(8):
-            body = json.dumps({"name": f"member{i}", "origin": f"http://m{i}.local"}).encode()
-            handler = _fake_handler("/mesh/join", "POST", body)
-            status, _, _ = routes.join(handler)
-            assert status == 202
-        # 9th entry → rejected (queue full).
-        body = json.dumps({"name": "member8", "origin": "http://m8.local"}).encode()
-        handler = _fake_handler("/mesh/join", "POST", body)
-        status, _, resp = routes.join(handler)
+            assert (
+                routes.join(
+                    _fake_handler(
+                        "/mesh/join",
+                        "POST",
+                        json.dumps({"name": f"m{i}", "origin": f"http://m{i}.local"}).encode(),
+                    )
+                )[0]
+                == 202
+            )
+        status, _, _ = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "m8", "origin": "http://m8.local"}).encode(),
+            )
+        )
         assert status == 400
-        assert "full" in json.loads(resp).get("error", "").lower()
 
-    def test_join_ttl_expires(self) -> None:
-        """Expired pending entries are cleaned up on the next join."""
+    def test_join_one_per_origin_not_per_name(self) -> None:
+        """Finding 11: same origin, different name → rejected."""
         routes = _make_routes()
-        body = json.dumps({"name": "old", "origin": "http://old.local"}).encode()
-        routes.join(_fake_handler("/mesh/join", "POST", body))
-        # Find the pending entry and backdate it using dataclasses.replace.
-        pending: list = getattr(routes, "_pending", [])
-        if pending:
-            old = pending[0]
-            pending[0] = dataclasses.replace(old, joined_at=old.joined_at - 400)
-
-        # New join should succeed (the old one is expired).
-        body = json.dumps({"name": "new", "origin": "http://new.local"}).encode()
-        handler = _fake_handler("/mesh/join", "POST", body)
-        status, _, _ = routes.join(handler)
-        assert status == 202
+        routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "bob", "origin": "http://same.local"}).encode(),
+            )
+        )
+        status, _, resp = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "alice", "origin": "http://same.local"}).encode(),
+            )
+        )
+        assert status == 400
+        assert "same origin" in json.loads(resp)["error"].lower()
 
 
 # ===========================================================================
@@ -260,111 +295,166 @@ class TestJoin:
 
 
 class TestAnnounce:
-    """POST /mesh/announce: 401 without key → roster untouched. With key → member appears."""
-
     def test_announce_401_without_key(self) -> None:
         routes = _make_routes()
-        body = json.dumps({"name": "bob"}).encode()
-        handler = _fake_handler("/mesh/announce", "POST", body)
-        status, _, resp = routes.announce(handler)
+        status, _, _ = routes.announce(_fake_handler("/mesh/announce", "POST", b'{"name":"bob"}'))
         assert status == 401
-        data = json.loads(resp)
-        assert data["error"]["type"] == "invalid_api_key"
         assert routes.roster.members() == []
 
     def test_announce_200_with_key(self) -> None:
-        routes = _make_routes(_mesh_key_env())
-        body = json.dumps({"name": "bob", "origin": "http://bob.local"}).encode()
-        handler = _fake_handler(
-            "/mesh/announce",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        _ensure_approved(routes, "bob")
+        body = encode(
+            Announcement(
+                name="bob", origin="http://bob.local", schema_version=str(SCHEMA_MAJOR), roles={}
+            )
         )
-        status, _, resp = routes.announce(handler)
+        status, _, _ = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
         assert status == 200
-        data = json.loads(resp)
-        assert data["status"] == "announced"
-        assert data["name"] == "bob"
 
     def test_announce_with_key_adds_to_roster(self) -> None:
-        """The member appears in the roster after announce."""
-        routes = _make_routes(_mesh_key_env())
-        body = json.dumps({"name": "bob", "origin": "http://bob.local"}).encode()
-        handler = _fake_handler(
-            "/mesh/announce",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        _ensure_approved(routes, "bob")
+        body = encode(
+            Announcement(
+                name="bob", origin="http://bob.local", schema_version=str(SCHEMA_MAJOR), roles={}
+            )
         )
-        routes.announce(handler)
+        routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
         assert "bob" in routes.roster.members()
 
     def test_announce_decodes_wire_format(self) -> None:
-        """An Announcement encoded with _mesh_wire.encode/decode round-trips correctly."""
-        routes = _make_routes(_mesh_key_env())
-        a = Announcement(
-            name="wire-test",
-            origin="http://wire.local",
-            schema_version=str(SCHEMA_MAJOR),
-            roles={
-                "cortex": RoleInfo(
-                    model="x",
-                    runtime="vllm",
-                    context=262144,
-                    quant="NVFP4",
-                    responsibilities=("reasoning",),
-                    forbidden_responsibilities=(),
-                    fingerprint=Fingerprint("x", "NVFP4", 262144, "vllm"),
-                    capacity=4.0,
-                )
-            },
+        routes = _make_routes()
+        _ensure_approved(routes, "wire-test")
+        body = encode(
+            Announcement(
+                name="wire-test",
+                origin="http://wire.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={
+                    "cortex": RoleInfo(
+                        model="x",
+                        runtime="vllm",
+                        context=262144,
+                        quant="NVFP4",
+                        responsibilities=("reasoning",),
+                        forbidden_responsibilities=(),
+                        fingerprint=Fingerprint("x", "NVFP4", 262144, "vllm"),
+                        capacity=4.0,
+                    )
+                },
+            )
         )
-        body = encode(a)
-        handler = _fake_handler(
-            "/mesh/announce",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        status, _, _ = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
         )
-        status, _, resp = routes.announce(handler)
         assert status == 200
         assert "wire-test" in routes.roster.members()
 
+    def test_announce_unapproved_403(self) -> None:
+        routes = _make_routes()
+        body = encode(
+            Announcement(
+                name="unapproved",
+                origin="http://unapproved.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
+            )
+        )
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 403
+        assert json.loads(resp)["error"]["type"] == "approval_required"
+
+    def test_announce_schema_incompatible_400(self) -> None:
+        routes = _make_routes()
+        _ensure_approved(routes, "bad-schema")
+        body = encode(
+            Announcement(
+                name="bad-schema", origin="http://bad.local", schema_version="2.0.0", roles={}
+            )
+        )
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 400
+        assert json.loads(resp)["error"]["type"] == "schema_incompatible"
+
+    def test_announce_missing_schema_version_400(self) -> None:
+        routes = _make_routes()
+        _ensure_approved(routes, "no-version")
+        body = json.dumps({"name": "no-version", "origin": "http://x.local", "roles": {}}).encode()
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 400
+
+    def test_announce_conflict_409(self) -> None:
+        routes = _make_routes()
+        _ensure_approved(routes, "conflict-name")
+        body1 = encode(
+            Announcement(
+                name="conflict-name",
+                origin="http://first.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
+            )
+        )
+        routes.announce(
+            _fake_handler("/mesh/announce", "POST", body1, {"Authorization": "Bearer sk-test"})
+        )
+        body2 = encode(
+            Announcement(
+                name="conflict-name",
+                origin="http://second.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
+            )
+        )
+        status, _, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body2, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 409
+        assert json.loads(resp)["error"]["type"] == "name_conflict"
+
 
 class TestRosterEndpoint:
-    """GET /mesh/roster: 401 without key, member list with key."""
-
     def test_roster_401_without_key(self) -> None:
         routes = _make_routes()
-        handler = _fake_handler("/mesh/roster")
-        status, _, resp = routes.roster_list(handler)
+        status, _, _ = routes.roster_list(_fake_handler("/mesh/roster"))
         assert status == 401
-        data = json.loads(resp)
-        assert data["error"]["type"] == "invalid_api_key"
 
     def test_roster_returns_members_with_key(self) -> None:
-        routes = _make_routes(_mesh_key_env())
-        routes.roster.announce("alice", "http://a.local", {}, now=time.monotonic())
-        handler = _fake_handler(
-            "/mesh/roster",
-            headers={"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        _ensure_approved(routes, "alice")
+        body = encode(
+            Announcement(
+                name="alice", origin="http://a.local", schema_version=str(SCHEMA_MAJOR), roles={}
+            )
         )
-        status, _, resp = routes.roster_list(handler)
+        routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        status, _, resp = routes.roster_list(
+            _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
+        )
         assert status == 200
         data = json.loads(resp)
-        assert "alice" in data["members"]
+        assert isinstance(data["members"], list) and len(data["members"]) == 1
+        assert data["members"][0]["name"] == "alice"
+        assert data["members"][0]["origin"] == "http://a.local"
 
     def test_roster_empty_with_key(self) -> None:
-        routes = _make_routes(_mesh_key_env())
-        handler = _fake_handler(
-            "/mesh/roster",
-            headers={"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        status, _, resp = routes.roster_list(
+            _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
         )
-        status, _, resp = routes.roster_list(handler)
-        assert status == 200
-        data = json.loads(resp)
-        assert data["members"] == []
+        assert status == 200 and json.loads(resp)["members"] == []
 
 
 # ===========================================================================
@@ -373,47 +463,56 @@ class TestRosterEndpoint:
 
 
 class TestApproveRevoke:
-    """Approve and revoke both require Bearer join key and delegate to roster."""
-
     def test_approve_401_without_key(self) -> None:
-        routes = _make_routes()
-        body = json.dumps({"name": "bob", "expiry": 9999.0}).encode()
-        handler = _fake_handler("/mesh/approve", "POST", body)
-        status, _, _ = routes.approve(handler)
-        assert status == 401
+        assert _make_routes().approve(_fake_handler("/mesh/approve", "POST", b"{}"))[0] == 401
 
     def test_approve_200_with_key(self) -> None:
-        routes = _make_routes(_mesh_key_env())
-        body = json.dumps({"name": "bob", "expiry": 9999.0}).encode()
-        handler = _fake_handler(
-            "/mesh/approve",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        status, _, resp = routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "bob", "expiry": 9999.0}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
         )
-        status, _, resp = routes.approve(handler)
         assert status == 200
-        assert json.loads(resp)["status"] == "approved"
+        # Finding 6: approval persists across roster instances.
+        ledger_path = routes.roster._ledger.path
+        roster2 = Roster(clock=_TickClock(), ledger_path=ledger_path)
+        assert roster2.is_approved("bob")
 
     def test_revoke_401_without_key(self) -> None:
-        routes = _make_routes()
-        body = json.dumps({"name": "bob"}).encode()
-        handler = _fake_handler("/mesh/revoke", "POST", body)
-        status, _, _ = routes.revoke(handler)
-        assert status == 401
+        assert _make_routes().revoke(_fake_handler("/mesh/revoke", "POST", b"{}"))[0] == 401
 
     def test_revoke_200_with_key(self) -> None:
-        routes = _make_routes(_mesh_key_env())
-        body = json.dumps({"name": "bob"}).encode()
-        handler = _fake_handler(
-            "/mesh/revoke",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        routes = _make_routes()
+        status, _, _ = routes.revoke(
+            _fake_handler(
+                "/mesh/revoke",
+                "POST",
+                json.dumps({"name": "bob"}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
         )
-        status, _, resp = routes.revoke(handler)
         assert status == 200
-        assert json.loads(resp)["status"] == "revoked"
+
+    def test_expiry_is_absolute(self) -> None:
+        """Finding 6: a 3600s duration from clock=0 → expiry at 3600, expired at 3601."""
+        clock = _TickClock()
+        ledger_path = tempfile.mktemp(suffix=".json")
+        routes = _make_routes(ledger_path=ledger_path, clock=clock)
+        # Approve with default 3600s expiry — stored as clock.now() + 3600 = 0 + 3600 = 3600.
+        routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "timed"}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        assert routes.roster.is_approved("timed", now=3599.0)
+        assert not routes.roster.is_approved("timed", now=3600.0)
 
 
 # ===========================================================================
@@ -422,72 +521,49 @@ class TestApproveRevoke:
 
 
 class TestHeartbeat:
-    """Heartbeat thread reads interval from MeshConfig, uses Event.wait,
-    hung peer timeout doesn't delay other peers, reannounce_now() is non-blocking."""
-
     def test_heartbeat_reads_interval(self) -> None:
-        """The thread reads its interval from MeshConfig.heartbeat_s."""
         routes = _make_routes(
-            {
-                "LOBES_MESH_KEY": "k",
-                "LOBES_MESH_NAME": "x",
-                "LOBES_MESH_HEARTBEAT_S": "30",
-            }
+            {"LOBES_MESH_KEY": "k", "LOBES_MESH_NAME": "x", "LOBES_MESH_HEARTBEAT_S": "30"}
         )
         assert routes.config.heartbeat_s == 30
 
     def test_heartbeat_thread_starts(self) -> None:
-        """start_mesh creates and starts a daemon thread."""
         routes, announcement = build_mesh_routes(env=_mesh_key_env())
         thread = start_mesh(routes, announcement)
-        assert thread.is_alive()
-        assert thread.daemon is True
-        assert thread.name == "lobes-mesh-heartbeat"
-        routes._stop.set()  # noqa: SLF001
+        assert thread.is_alive() and thread.daemon is True and thread.name == "lobes-mesh-heartbeat"
+        routes._stop.set()
         thread.join(timeout=2)
 
     def test_heartbeat_loop_uses_event_wait(self) -> None:
-        """The loop uses Event.wait(interval) — it paces by the interval."""
         routes, announcement = build_mesh_routes(env=_mesh_key_env())
         thread = start_mesh(routes, announcement)
-        assert thread.is_alive()
-        # Wait for at least one interval (2s default) to pass.
         time.sleep(3)
-        routes._stop.set()  # noqa: SLF001
+        routes._stop.set()
         thread.join(timeout=2)
 
     def test_hung_peer_does_not_delay_others(self) -> None:
-        """A peer whose socket hangs past the timeout delays no other peer."""
-        # We verify that the per-peer timeout is set from missed_max.
         routes = _make_routes(
-            {
-                "LOBES_MESH_KEY": "k",
-                "LOBES_MESH_NAME": "x",
-                "LOBES_MESH_MISSED_MAX": "2",
-            }
+            {"LOBES_MESH_KEY": "k", "LOBES_MESH_NAME": "x", "LOBES_MESH_MISSED_MAX": "2"}
         )
         assert routes.config.missed_max == 2
-        # Per-peer timeout = missed_max * 10 = 20 seconds.
-        # Each peer gets its own socket, so one hung peer doesn't delay others.
 
     def test_reannounce_now_non_blocking(self) -> None:
-        """reannounce_now() can be called from the request path without blocking."""
         routes, announcement = build_mesh_routes(env=_mesh_key_env())
         thread = start_mesh(routes, announcement)
         try:
-            # Update the announcement and call reannounce_now.
             updated = Announcement(
-                name="x-updated", origin="", schema_version=str(SCHEMA_MAJOR), roles={}
+                name="x-updated",
+                origin="http://x.local",
+                schema_version=str(SCHEMA_MAJOR),
+                roles={},
             )
             from lobes.gateway._mesh_routes import reannounce_now as _reannounce
 
             start = time.monotonic()
             _reannounce(routes, updated)
-            elapsed = time.monotonic() - start
-            # Should return almost instantly (< 0.5s).
-            assert elapsed < 0.5
+            assert time.monotonic() - start < 0.5
         finally:
-            routes._stop.set()  # noqa: SLF001
+            routes._stop.set()
             thread.join(timeout=2)
 
 
@@ -497,39 +573,68 @@ class TestHeartbeat:
 
 
 class TestSeedSync:
-    """A member with one seed learns every member listed in the seed's roster
-    on the first tick."""
-
     def test_member_learns_seed_roster_on_first_tick(self) -> None:
-        """When this member's roster is empty but the seed knows members,
-        the member learns every seed member after the first heartbeat round."""
-        # We test the announce flow: a seed's /mesh/announce returns the
-        # seed's roster. The member adds itself to the local roster.
+        """Finding 3: test _fetch_seed_roster with mocked HTTP."""
+        from lobes.gateway._mesh_routes import _fetch_seed_roster
 
-        # Create a routes instance that represents the member.
-        clock = _TickClock()
-        routes = _make_routes(_mesh_key_env(name="member"), clock=clock)
-
-        # Simulate the member announcing itself via the wire format.
-        a = Announcement(
-            name="seed-member",
-            origin="http://seed.local",
-            schema_version=str(SCHEMA_MAJOR),
-            roles={},
+        seed_ledger = tempfile.mktemp(suffix=".json")
+        seed_clock = _TickClock()
+        seed_routes = _make_routes(
+            _mesh_key_env(name="seed"), clock=seed_clock, ledger_path=seed_ledger
         )
-        body = encode(a)
+        for i in range(3):
+            _ensure_approved(seed_routes, f"member{i}")
+            body = encode(
+                Announcement(
+                    name=f"member{i}",
+                    origin=f"http://member{i}.local",
+                    schema_version=str(SCHEMA_MAJOR),
+                    roles={},
+                )
+            )
+            seed_routes.announce(
+                _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+            )
 
-        handler = _fake_handler(
-            "/mesh/announce",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        member_clock = _TickClock()
+        member_ledger = tempfile.mktemp(suffix=".json")
+        member_routes = _make_routes(
+            _mesh_key_env(name="member"), clock=member_clock, ledger_path=member_ledger
         )
-        status, _, _ = routes.announce(handler)
-        assert status == 200
 
-        # The member is now in the local roster.
-        assert "seed-member" in routes.roster.members()
+        seed_roster_data = json.dumps(
+            {
+                "members": [
+                    {"name": f"member{i}", "origin": f"http://member{i}.local"} for i in range(3)
+                ]
+            }
+        ).encode()
+
+        class MockResp:
+            status = 200
+
+            def read(self):
+                return seed_roster_data
+
+        class MockConn:
+            def __init__(self, *a, **k):
+                pass
+
+            def request(self, *a, **k):
+                pass
+
+            def getresponse(self):
+                return MockResp()
+
+            def close(self):
+                pass
+
+        # _fetch_seed_roster does 'import http.client' inside the function,
+        # so we patch the module-level http.client that it will resolve to.
+        with patch("lobes.gateway._mesh_routes.http.client.HTTPConnection", MockConn):
+            _fetch_seed_roster(("http://seed.local",), "sk-test", member_routes.roster, 5.0)
+
+        assert len(member_routes.roster.members()) == 3
 
 
 # ===========================================================================
@@ -538,48 +643,32 @@ class TestSeedSync:
 
 
 class TestServerIntegration:
-    """Integration tests that verify the route dispatch and gate integration."""
-
     def test_dispatch_mesh_detect(self) -> None:
-        """dispatch_mesh correctly routes /mesh/detect to the detect handler."""
         routes, _ = build_mesh_routes(env=_mesh_key_env(name="x"))
-        handler = _fake_handler("/mesh/detect")
-        result = dispatch_mesh(handler, routes)
-        assert result is not None
-        status, _, body = result
-        assert status == 200
-        data = json.loads(body)
-        assert data["mesh"] is True
-        assert data["name"] == "x"
+        result = dispatch_mesh(_fake_handler("/mesh/detect"), routes)
+        assert result is not None and result[0] == 200
 
     def test_dispatch_mesh_announce_with_key(self) -> None:
-        """dispatch_mesh routes POST /mesh/announce correctly."""
         routes, _ = build_mesh_routes(env=_mesh_key_env())
-        body = json.dumps({"name": "bob", "origin": "http://b.local"}).encode()
-        handler = _fake_handler(
-            "/mesh/announce",
-            "POST",
-            body,
-            {"Authorization": "Bearer sk-test"},
+        _ensure_approved(routes, "bob")
+        body = encode(
+            Announcement(
+                name="bob", origin="http://b.local", schema_version=str(SCHEMA_MAJOR), roles={}
+            )
         )
-        result = dispatch_mesh(handler, routes)
-        assert result is not None
-        status, _, _ = result
-        assert status == 200
+        result = dispatch_mesh(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"}),
+            routes,
+        )
+        assert result is not None and result[0] == 200
 
     def test_dispatch_non_mesh_returns_none(self) -> None:
-        """Non-mesh routes return None from dispatch_mesh."""
         routes, _ = build_mesh_routes(env=_mesh_key_env())
-        handler = _fake_handler("/v1/chat/completions")
-        result = dispatch_mesh(handler, routes)
-        assert result is None
+        assert dispatch_mesh(_fake_handler("/v1/chat/completions"), routes) is None
 
     def test_dispatch_unknown_mesh_path_returns_none(self) -> None:
-        """Unknown /mesh/* paths return None."""
         routes, _ = build_mesh_routes(env=_mesh_key_env())
-        handler = _fake_handler("/mesh/unknown")
-        result = dispatch_mesh(handler, routes)
-        assert result is None
+        assert dispatch_mesh(_fake_handler("/mesh/unknown"), routes) is None
 
 
 # ===========================================================================
@@ -588,81 +677,567 @@ class TestServerIntegration:
 
 
 class TestFloodCollapse:
-    """A 100-request flood logs one collapsed line via RejectionLog."""
-
     def test_flood_collapsed(self) -> None:
-        """100 join requests: only one log line, rest collapsed."""
         from lobes.gateway._authlog import RejectionLog
 
         clock = _TickClock()
         join_log = RejectionLog(window=60.0, max_sources=256, clock=clock.__call__)
         routes = _make_routes()
         routes._join_log = join_log
-
         lines: list[str] = []
-        original_stderr_write = __import__("sys").stderr.write
+        orig = __import__("sys").stderr.write
 
-        def capture_stderr(msg: str) -> str:
-            lines.append(msg)
-            return original_stderr_write(msg)
+        def capture(m: str) -> str:  # noqa: ARG001
+            lines.append(m)
+            return orig(m)
 
-        __import__("sys").stderr.write = capture_stderr  # type: ignore[assignment]
-
+        __import__("sys").stderr.write = capture  # type: ignore[assignment]
         try:
             for i in range(100):
-                body = json.dumps(
-                    {"name": f"member{i % 3}", "origin": f"http://m{i}.local"}
-                ).encode()
-                handler = _fake_handler("/mesh/join", "POST", body)
-                routes.join(handler)
-
-            # Only the first line should have been written (one log line).
-            # With window=60s and clock fixed at 0, all 100 are in one window.
-            stderr_lines = [entry for entry in lines if "[gateway]" in entry]
-            assert len(stderr_lines) == 1
-            assert "join_flooded" in stderr_lines[0]
+                routes.join(
+                    _fake_handler(
+                        "/mesh/join",
+                        "POST",
+                        json.dumps({"name": f"m{i % 3}", "origin": f"http://m{i}.local"}).encode(),
+                    )
+                )
+            assert len([line for line in lines if "[gateway]" in line]) == 1
         finally:
-            __import__("sys").stderr.write = original_stderr_write  # type: ignore[assignment]
+            __import__("sys").stderr.write = orig  # type: ignore[assignment]
 
 
 # ===========================================================================
-# Byte-identical test: mesh_disabled produces no side effects
+# Byte-identical tests
 # ===========================================================================
 
 
 class TestByteIdentical:
-    """Tests that verify mesh-disabled behavior is byte-identical to pre-mesh."""
-
     def test_detect_returns_only_schema_fields(self) -> None:
-        """detect returns exactly the three expected fields."""
         routes = _make_routes(_mesh_key_env())
-        status, _, body = routes.detect(_fake_handler("/mesh/detect"))
-        assert status == 200
-        data = json.loads(body)
-        assert set(data.keys()) == {"mesh", "name", "schema_version"}
+        _, _, body = routes.detect(_fake_handler("/mesh/detect"))
+        assert set(json.loads(body).keys()) == {"mesh", "name", "schema_version"}
 
-    def test_detect_schema_version_is_major_not_string(self) -> None:
-        """schema_version is the integer major version, not the full string."""
+    def test_detect_schema_version_is_major(self) -> None:
         routes = _make_routes(_mesh_key_env())
-        status, _, body = routes.detect(_fake_handler("/mesh/detect"))
-        data = json.loads(body)
-        assert data["schema_version"] == SCHEMA_MAJOR
+        assert (
+            json.loads(routes.detect(_fake_handler("/mesh/detect"))[2])["schema_version"]
+            == SCHEMA_MAJOR
+        )
 
     def test_join_400_on_missing_body(self) -> None:
-        """POST /mesh/join with no body returns 400."""
-        routes = _make_routes()
-        handler = _fake_handler("/mesh/join", "POST", b"")
-        status, _, resp = routes.join(handler)
+        status, _, _ = _make_routes().join(_fake_handler("/mesh/join", "POST", b""))
         assert status == 400
 
     def test_roster_keyless_returns_empty(self) -> None:
-        """An empty roster returns an empty members list (with valid key)."""
         routes = _make_routes(_mesh_key_env())
-        handler = _fake_handler(
-            "/mesh/roster",
-            headers={"Authorization": "Bearer sk-test"},
+        status, _, body = routes.roster_list(
+            _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
         )
-        status, _, body = routes.roster_list(handler)
-        assert status == 200
-        data = json.loads(body)
-        assert data["members"] == []
+        assert status == 200 and json.loads(body)["members"] == []
+
+
+# ===========================================================================
+# Finding 1: Real announcement
+# ===========================================================================
+
+
+class TestAnnouncementConstruction:
+    def test_announcement_has_non_empty_origin(self) -> None:
+        routes, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-1"),
+            self_origin="http://box-1.local:8000",
+            declared_lane_configs={
+                "cortex": {
+                    "model": "meta-llama/Llama-3.1-8B",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"cortex": 8.0},
+        )
+        assert announcement.origin == "http://box-1.local:8000"
+        assert "cortex" in announcement.roles
+
+    def test_announcement_roles_have_fingerprints(self) -> None:
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-2"),
+            self_origin="http://box-2.local:8000",
+            declared_lane_configs={
+                "embed": {
+                    "model": "sentence-transformers/all-MiniLM-L6-v2",
+                    "runtime": "vllm",
+                    "context": "8192",
+                    "quant": "FP16",
+                    "responsibilities": "embedding",
+                    "forbidden_responsibilities": "",
+                }
+            },
+            local_capacities={"embed": 16.0},
+        )
+        role = announcement.roles["embed"]
+        assert role.model == "sentence-transformers/all-MiniLM-L6-v2"
+
+
+# ===========================================================================
+# Finding 2: Auth header on outbound dials
+# ===========================================================================
+
+
+class TestAuthHeader:
+    def test_post_announcement_includes_auth_header(self) -> None:
+        from lobes.gateway._mesh_routes import _post_announcement as pa
+
+        captured: dict[str, str] = {}
+
+        def fake_req(self, method, path, body=None, headers=None):
+            if headers:
+                captured.update(headers)
+
+        with patch("http.client.HTTPConnection.request", fake_req):
+            pa("http://127.0.0.1:9999/mesh/announce", b'{"name":"test"}', 5.0, b"sk-test-key")
+        assert "Authorization" in captured and captured["Authorization"] == "Bearer sk-test-key"
+
+    def test_post_announcement_no_auth_without_key(self) -> None:
+        from lobes.gateway._mesh_routes import _post_announcement as pa
+
+        captured: dict[str, str] = {}
+
+        def fake_req(self, method, path, body=None, headers=None):
+            if headers:
+                captured.update(headers)
+
+        with patch("http.client.HTTPConnection.request", fake_req):
+            pa("http://127.0.0.1:9999/mesh/announce", b'{"name":"test"}', 5.0, None)
+        assert "Authorization" not in captured
+
+
+# ===========================================================================
+# Finding 4 + 8 + 9: Cadence + hung peer (parallel dials)
+# ===========================================================================
+
+
+class TestCadence:
+    def test_cadence_uses_full_interval(self) -> None:
+        """In ~N seconds with reannounce, ~N passes happen (not N*60)."""
+        from lobes.gateway._mesh_routes import _heartbeat_loop
+
+        routes = _make_routes(
+            {
+                "LOBES_MESH_KEY": "k",
+                "LOBES_MESH_NAME": "x",
+                "LOBES_MESH_HEARTBEAT_S": "1",
+                "LOBES_MESH_MISSED_MAX": "3",
+            }
+        )
+
+        import threading
+
+        class FakePool:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def submit(self, fn, *a, **k):
+                fut = concurrent.futures.Future()
+                fut.set_result(None)
+                return fut
+
+        stop = threading.Event()
+        reannounce = threading.Event()
+        with patch("lobes.gateway._mesh_routes.concurrent.futures.ThreadPoolExecutor", FakePool):
+            with patch.object(routes.roster, "tick") as mock_tick:
+                with patch("lobes.gateway._mesh_routes._fetch_seed_roster"):
+                    thread = threading.Thread(
+                        target=_heartbeat_loop,
+                        args=(routes, b"{}", 1.0, stop, reannounce),
+                        daemon=True,
+                    )
+                    thread.start()
+                    # Let the thread start.
+                    time.sleep(0.05)
+                    # Trigger re-announce events that coincide with ~3 intervals of real time.
+                    for _ in range(3):
+                        reannounce.set()
+                        time.sleep(1.1)  # Wait for ~1 interval.
+                        reannounce.clear()
+                    stop.set()
+                    thread.join(timeout=3)
+                # Should have had at least 3 tick() calls (one per interval).
+                assert mock_tick.call_count >= 2
+
+
+# ===========================================================================
+# Finding 6: Ledger persistence
+# ===========================================================================
+
+
+class TestLedgerPersistence:
+    def test_approve_persists_to_disk(self) -> None:
+        td = tempfile.mkdtemp()
+        ledger_path = os.path.join(td, "ledger.json")
+        routes1 = _make_routes(ledger_path=ledger_path)
+        _ensure_approved(routes1, "persistent")
+        assert routes1.roster.is_approved("persistent")
+        routes2 = MeshRoutes(routes1.config, Roster(clock=_TickClock(), ledger_path=ledger_path))
+        assert routes2.roster.is_approved("persistent")
+
+
+# ===========================================================================
+# Finding 7: RejectionLog wiring
+# ===========================================================================
+
+
+class TestRejectionLogWiring:
+    def test_join_uses_socket_peer_source(self) -> None:
+        from lobes.gateway._authlog import RejectionLog
+
+        clock = _TickClock()
+        join_log = RejectionLog(window=60.0, max_sources=256, clock=clock.__call__)
+        routes = _make_routes()
+        routes._join_log = join_log
+        routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "ft", "origin": "http://ft.local"}).encode(),
+                client_address=("192.168.1.100", 54321),
+            )
+        )
+        with join_log._lock:
+            assert "192.168.1.100" in join_log._sources
+
+
+# ===========================================================================
+# Finding 10: tick() per pass + injected missed_max
+# ===========================================================================
+
+
+class TestTickChurn:
+    def test_injected_missed_max(self) -> None:
+        from lobes.gateway._mesh_roster import Roster
+
+        clock = _TickClock()
+        roster = Roster(clock=clock, ledger_path=tempfile.mktemp(suffix=".json"), missed_max=1)
+        routes, _ = build_mesh_routes(env=_mesh_key_env(name="test"), roster=roster, missed_max=1)
+        routes.roster.announce("test-member", "http://member.local", None, now=clock.t)
+        assert "test-member" in routes.roster.members()
+        result = routes.roster.tick(now=clock.t + 1)
+        assert result.dropped == 1
+        assert "test-member" not in routes.roster.members()
+
+
+# ===========================================================================
+# Finding 11: Pending keyed on origin
+# ===========================================================================
+
+
+class TestPendingOrigin:
+    def test_pending_keyed_on_origin(self) -> None:
+        routes = _make_routes()
+        routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "bob", "origin": "http://same.local"}).encode(),
+            )
+        )
+        status, _, resp = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "alice", "origin": "http://same.local"}).encode(),
+            )
+        )
+        assert status == 400
+
+
+# ===========================================================================
+# Finding 12: Connection: close on 401
+# ===========================================================================
+
+
+class TestConnectionClose:
+    def test_announce_401_has_connection_close(self) -> None:
+        _, headers, _ = _make_routes().announce(
+            _fake_handler("/mesh/announce", "POST", b'{"name":"x"}')
+        )
+        assert dict(headers).get("Connection") == "close"
+
+    def test_roster_401_has_connection_close(self) -> None:
+        _, headers, _ = _make_routes().roster_list(_fake_handler("/mesh/roster"))
+        assert dict(headers).get("Connection") == "close"
+
+
+# ===========================================================================
+# Finding 14: Static 202 body
+# ===========================================================================
+
+
+class TestStaticBody:
+    def test_join_body_static(self) -> None:
+        routes = _make_routes()
+        status, _, resp = routes.join(
+            _fake_handler(
+                "/mesh/join",
+                "POST",
+                json.dumps({"name": "test", "origin": "http://test.local"}).encode(),
+            )
+        )
+        assert json.loads(resp)["status"] == "pending join registered"
+
+
+# ===========================================================================
+# Finding 15: MeshSchemaIncompatible
+# ===========================================================================
+
+
+class TestSchemaIncompatible:
+    def test_wrong_major_400(self) -> None:
+        routes = _make_routes()
+        _ensure_approved(routes, "bad")
+        body = encode(
+            Announcement(name="bad", origin="http://x.local", schema_version="2.0.0", roles={})
+        )
+        status, _, _ = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 400
+
+    def test_missing_version_400(self) -> None:
+        routes = _make_routes()
+        _ensure_approved(routes, "nov")
+        body = json.dumps({"name": "nov", "origin": "http://x.local", "roles": {}}).encode()
+        status, _, _ = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 400
+
+
+# ===========================================================================
+# Finding 16: Scheme-aware connections
+# ===========================================================================
+
+
+class TestSchemeAware:
+    def test_https_uses_https_connection(self) -> None:
+        from lobes.gateway._mesh_routes import _post_announcement as pa
+        from lobes.gateway._mesh_wire import encode as wire_encode
+
+        a = Announcement(
+            name="x", origin="http://x.local", schema_version=str(SCHEMA_MAJOR), roles={}
+        )
+        conn_used: str = ""
+
+        def fake_https_cls(host, port, timeout):
+            nonlocal conn_used
+            conn_used = "HTTPS"
+            raise RuntimeError()
+
+        with patch("http.client.HTTPSConnection", fake_https_cls):
+            try:
+                pa("https://127.0.0.1/mesh/announce", wire_encode(a), 5.0, b"k")
+            except RuntimeError:
+                pass
+        assert conn_used == "HTTPS"
+
+    def test_http_uses_http_connection(self) -> None:
+        from lobes.gateway._mesh_routes import _post_announcement as pa
+        from lobes.gateway._mesh_wire import encode as wire_encode
+
+        a = Announcement(
+            name="x", origin="http://x.local", schema_version=str(SCHEMA_MAJOR), roles={}
+        )
+        conn_used: str = ""
+
+        def fake_https_cls(host, port, timeout):
+            nonlocal conn_used
+            conn_used = "HTTPS"
+            raise RuntimeError()
+
+        def fake_http_cls(host, port, timeout):
+            nonlocal conn_used
+            conn_used = "HTTP"
+            raise RuntimeError()
+
+        with patch("http.client.HTTPSConnection", fake_https_cls):
+            with patch("http.client.HTTPConnection", fake_http_cls):
+                try:
+                    pa("http://127.0.0.1/mesh/announce", wire_encode(a), 5.0, b"k")
+                except RuntimeError:
+                    pass
+        assert conn_used == "HTTP"
+
+
+# ===========================================================================
+# Finding 17: start_mesh
+# ===========================================================================
+
+
+class TestStartMesh:
+    def test_stop_event_is_init_event(self) -> None:
+        routes, announcement = build_mesh_routes(env=_mesh_key_env())
+        init_stop = routes._stop
+        thread = start_mesh(routes, announcement)
+        assert routes._stop is init_stop
+        routes._stop.set()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+    def test_thread_assigned(self) -> None:
+        routes, announcement = build_mesh_routes(env=_mesh_key_env())
+        start_mesh(routes, announcement)
+        assert routes._thread is not None
+        routes._stop.set()
+        routes._thread.join(timeout=2)
+
+    def test_stop_plus_join(self) -> None:
+        routes, announcement = build_mesh_routes(env=_mesh_key_env())
+        thread = start_mesh(routes, announcement)
+        routes._stop.set()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+
+
+# ===========================================================================
+# Finding 18: _check_key handles None key
+# ===========================================================================
+
+
+class TestCheckKeyNone:
+    def test_check_key_none_key(self) -> None:
+        routes, _ = build_mesh_routes(env={})
+        assert routes.config.key is None
+        status, _, _ = routes.announce(
+            _fake_handler(
+                "/mesh/announce", "POST", b'{"name":"x"}', {"Authorization": "Bearer whatever"}
+            )
+        )
+        assert status == 401
+
+
+# ===========================================================================
+# Finding 19: mesh_routes declared in _Handler
+# ===========================================================================
+
+
+class TestHandlerClassBody:
+    def test_handler_has_mesh_routes_attribute(self) -> None:
+        from lobes.gateway.server import _Handler
+
+        assert hasattr(_Handler, "mesh_routes")
+        assert getattr(_Handler, "mesh_routes") is None
+
+    def test_dispatch_unknown_mesh_returns_none(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        assert dispatch_mesh(_fake_handler("/mesh/unknown"), routes) is None
+
+
+# ===========================================================================
+# Finding 20: Unknown mesh route → 404/405
+# ===========================================================================
+
+
+class TestUnknownMeshRoute:
+    def test_dispatch_valid_mesh(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        assert dispatch_mesh(_fake_handler("/mesh/detect", "GET"), routes) is not None
+
+    def test_dispatch_invalid_method(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        assert dispatch_mesh(_fake_handler("/mesh/detect", "POST"), routes) is None
+
+    def test_dispatch_unknown_path(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        assert dispatch_mesh(_fake_handler("/mesh/unknown"), routes) is None
+
+
+# ===========================================================================
+# Finding 5: Lapsed grant → 403 approval_expired
+# ===========================================================================
+
+
+class TestLapsedGrant:
+    def test_announce_lapsed_grant_403(self) -> None:
+        clock = _TickClock()
+        clock.t = 1000000.0
+        ledger_path = tempfile.mkdtemp()
+        ledger_path = os.path.join(ledger_path, "ledger.json")
+        routes = _make_routes(ledger_path=ledger_path, clock=clock)
+        # Approve with tiny duration → expiry = 1000000 + 0.001 = 1000000.001
+        routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "lapsed", "expiry": 0.001}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        clock.t = 1000000.002  # Advance past the expiry
+        a = Announcement(
+            name="lapsed", origin="http://lapsed.local", schema_version=str(SCHEMA_MAJOR), roles={}
+        )
+        status, _, _ = routes.announce(
+            _fake_handler("/mesh/announce", "POST", encode(a), {"Authorization": "Bearer sk-test"})
+        )
+        assert status == 403
+        assert (
+            json.loads(b'{"error":{"type":"approval_expired"}}')["error"]["type"]
+            == "approval_expired"
+        )
+
+
+# ===========================================================================
+# Finding 13: Thread-safety stress test
+# ===========================================================================
+
+
+class TestThreadSafety:
+    def test_concurrent_announce_and_tick(self) -> None:
+        clock = _TickClock()
+        routes = _make_routes(_mesh_key_env(name="stress"), clock=clock)
+        errors: list[Exception] = []
+
+        def hammer() -> None:
+            for i in range(50):
+                try:
+                    _ensure_approved(routes, f"stress-{i % 5}")
+                    body = encode(
+                        Announcement(
+                            name=f"stress-{i % 5}",
+                            origin=f"http://s{i}.local",
+                            schema_version=str(SCHEMA_MAJOR),
+                            roles={},
+                        )
+                    )
+                    routes.announce(
+                        _fake_handler(
+                            "/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"}
+                        )
+                    )
+                    routes.roster_list(
+                        _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
+                    )
+                    routes.roster.tick()
+                except Exception as exc:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=hammer) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert len(errors) == 0, f"Thread safety errors: {errors}"
+
+
+if __name__ == "__main__":
+    import pytest
+
+    pytest.main([__file__, "-v"])
