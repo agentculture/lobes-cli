@@ -267,7 +267,11 @@ class TestEnvExampleDocumentsMesh:
     def _mesh_section(self) -> str:
         text = _ENV_EXAMPLE.read_text(encoding="utf-8")
         start = text.index("Mesh join")
-        return text[start : text.index("# --- Honest referral to peer boxes")]
+        # Retired (t14): "# --- Honest referral to peer boxes" used to mark
+        # the end of the mesh section; that block is deleted along with the
+        # rest of the env peer family. The retirement note that replaced it
+        # is the new end-of-section marker.
+        return text[start : text.index("# --- Retired: honest referral")]
 
     def test_every_mesh_key_is_documented(self) -> None:
         section = self._mesh_section()

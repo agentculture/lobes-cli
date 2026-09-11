@@ -231,16 +231,14 @@ class TestAssociateLaneIsWiredToTheRoleSystem:
         env: list[str] = svc.get("environment", [])
         keys = {e.split("=", 1)[0] for e in env if "=" in e}
         # The wiring key plus every channel the other nine role prefixes carry.
+        # Retired (t14): ASSOCIATE_PEER_ORIGIN(S)/_PEER_PROXY/_PEER_API_KEY(S),
+        # which this test also used to require, are gone from the compose
+        # template along with the rest of the env peer family.
         for key in (
             "ASSOCIATE_BASE_URL",
             "ASSOCIATE_SERVED_NAME",
             "ASSOCIATE_FEASIBLE",
             "ASSOCIATE_MAX_MODEL_LEN",
-            "ASSOCIATE_PEER_ORIGIN",
-            "ASSOCIATE_PEER_PROXY",
-            "ASSOCIATE_PEER_API_KEY",
-            "ASSOCIATE_PEER_ORIGINS",
-            "ASSOCIATE_PEER_API_KEYS",
         ):
             assert key in keys, f"gateway must pass {key} through"
 

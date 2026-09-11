@@ -700,19 +700,14 @@ this file has hit before).
 **Rotating the join key is a fleet-wide restart**, not a per-pair credential
 swap — see [`docs/secret-rotation.md`](secret-rotation.md#mesh-join-key).
 
-> **Implementation status (deviation d6 in the mesh-brain-join plan).** The
-> paragraphs above describe the CONTRACT this repo's docs, `lobes explain`,
-> and `lobes doctor` now hold operators to — the retired `<PREFIX>_PEER_*`
-> family below is no longer the documented way to wire cross-box reachability.
-> As of this branch, however, the **code has not fully moved onto it**: the
-> gateway still parses the retired singular and plural peer-origin,
-> peer-proxy, and peer-api-key keys (see the Retired section below for their
-> exact spelling), and the replica-pool dispatch path still
-> reads those keys as its peer source rather than the mesh roster. A
-> follow-on task is scheduled to swap that source to the roster and delete
-> the retired parsing outright. Until it lands, a deployment can still be
-> wired the old way even though no doc recommends it anymore. **No mesh
-> behaviour described above has been live-validated** — every one of it is
+> **Implementation status.** The code-level removal of the retired
+> `<PREFIX>_PEER_*` family is done (t14): `lobes.gateway._config.build_config`
+> no longer parses any of the singular or plural peer-origin, peer-proxy, or
+> peer-api-key keys, and the replica-pool dispatch path reads the mesh
+> roster as its candidate source instead. Only `lobes doctor`'s
+> `peer_family_retired` finding still knows the retired key names, for
+> catching a leftover value in an operator's `.env`. **No mesh behaviour
+> described above has been live-validated** — every one of it is
 > DECLARED/UNVALIDATED (the #108 rule) until an acceptance transcript for the
 > actual join/heartbeat/approve/verify/pool/auto-proxy cutover lands under
 > `docs/evidence/`. Treat this section as the target contract, not a report
@@ -736,13 +731,10 @@ per the note above.
 
 **Operators: do not declare new `<PREFIX>_PEER_ORIGIN`/`_PEER_ORIGINS`/
 `_PEER_PROXY`/`_PEER_API_KEY`/`_PEER_API_KEYS` values.** Declare the mesh
-(`LOBES_MESH_KEY`/`LOBES_MESH_NAME`/`LOBES_MESH_SEEDS`) instead. `lobes
-doctor`'s `peer_family_retired` finding flags a deployment that still sets
-one of these keys. As of this branch the gateway still parses them (see the
-Implementation status note above), so an existing deployment that already
-declared them keeps working exactly as documented below until the follow-on
-code-removal task lands — this is a documentation-contract retirement, not
-yet a code deletion.
+(`LOBES_MESH_KEY`/`LOBES_MESH_NAME`/`LOBES_MESH_SEEDS`) instead. The gateway
+no longer parses any of these keys at all (t14) — a leftover value in an
+existing deployment's `.env` is silently inert, and `lobes doctor`'s
+`peer_family_retired` finding is what flags it.
 
 The full mechanism detail (kept for the reasons above) follows.
 

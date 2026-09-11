@@ -755,15 +755,13 @@ is a fleet-wide restart**, not a per-pair credential swap — see
 `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`,
 `docs/deployment-shapes.md`, and `lobes explain mesh`.
 
-> **Implementation status (deviation d6).** The paragraph above is the
-> CONTRACT — the retired peer family below is no longer the documented way
-> to wire cross-box reachability. As of this branch the CODE has not fully
-> cut over: the gateway still parses the retired peer keys and the
-> replica-pool dispatch still reads them as its peer source, pending a
-> follow-on task that swaps the source to the mesh roster and deletes the
-> retired parsing. **No mesh behaviour above has been live-validated** —
-> every one of it is DECLARED/UNVALIDATED (the #108 rule) until an
-> acceptance transcript for the actual cutover lands under `docs/evidence/`.
+> **Implementation status.** The code-level removal of the retired peer
+> family is done (t14): the gateway no longer parses any of the retired
+> peer keys, and the replica-pool dispatch path reads the mesh roster as its
+> candidate source instead. **No mesh behaviour above has been
+> live-validated** — every one of it is DECLARED/UNVALIDATED (the #108 rule)
+> until an acceptance transcript for the actual cutover lands under
+> `docs/evidence/`.
 
 **Retired: the operator-typed peer family (proxy-lobes, the cortex replica
 pool, and peer-only pools).** Before the mesh-brain join (above), cross-box
@@ -783,12 +781,10 @@ Orin against the Spark and Thor**
 **THROUGHPUT BENEFIT DISPROVEN on that heterogeneous pair** (51% slower at 4
 concurrent, 3.5% slower at 8, because the pool balances by queue depth while
 the two replicas differ 4.4× in raw speed — do not claim a throughput
-benefit for a heterogeneous pair). This entire family is **RETIRED as the
-documented operator contract** — declare the mesh instead — but as of this
-branch the gateway still parses and uses it (see the Implementation status
-note above), so an existing deployment wired the old way keeps working
-exactly as measured above until the follow-on code-removal task lands. Full
-mechanism detail, every marker header, and the complete measured numbers
+benefit for a heterogeneous pair). This entire family is **RETIRED, both as
+the documented operator contract and in the code** (t14) — declare the
+mesh instead; a leftover key in an existing deployment's `.env` is now
+silently inert. Full mechanism detail, every marker header, and the complete measured numbers
 live in `docs/gateway-fleet.md`'s Retired section (kept there, not deleted,
 for their measured numbers and because the mesh generalizes the same
 design).

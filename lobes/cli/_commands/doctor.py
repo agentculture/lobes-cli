@@ -284,20 +284,16 @@ _GATEWAY_ROLE_PREFIXES: tuple[str, ...] = tuple(
 )
 
 # Per-role env suffixes the gateway service is expected to pass through:
-# FEASIBLE (the existing shape/feasibility flag), the singular "refer to one
-# peer" pair (PEER_ORIGIN/PEER_API_KEY, issue #112/#115/#127), and the
-# plural "pool of replicas" pair (PEER_ORIGINS/PEER_API_KEYS, issue #199).
-# PEER_PROXY is a boolean opt-in knob, not a peer identity, but it rides the
-# exact same per-role channel and is just as silently inert if the gateway
-# container never receives it — included for the same reason.
-_GATEWAY_PEER_SUFFIXES: tuple[str, ...] = (
-    "FEASIBLE",
-    "PEER_ORIGIN",
-    "PEER_ORIGINS",
-    "PEER_PROXY",
-    "PEER_API_KEY",
-    "PEER_API_KEYS",
-)
+# FEASIBLE (the shape/feasibility flag). Retired (t14): this used to also
+# cover the singular "refer to one peer" pair (PEER_ORIGIN/PEER_API_KEY,
+# issue #112/#115/#127), the plural "pool of replicas" pair (PEER_ORIGINS/
+# PEER_API_KEYS, issue #199), and the PEER_PROXY opt-in knob — all deleted
+# from build_config's parsing and the compose template's passthrough alike,
+# so there is nothing left to check the passthrough of. A leftover
+# `<PREFIX>_PEER_*` key in a deployment's `.env` is caught by
+# `_peer_family_retired_check` below instead, never by this passthrough
+# guard.
+_GATEWAY_PEER_SUFFIXES: tuple[str, ...] = ("FEASIBLE",)
 
 # The declared lane fingerprint (issue #199): the same five knobs a role's
 # own vLLM service is started with, mirrored to the gateway so GET

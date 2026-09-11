@@ -209,7 +209,13 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (./mesh:/home/gateway/mesh), and the LOBES_MESH_LEDGER_PATH passthrough
     # gained a default (/home/gateway/mesh/ledger.json). LOBES_MESH_DIR is
     # also added to the passthrough. See tests/test_mesh_templates.py.
-    "gateway": "db68c8b451ce8be1d845b3c2e75968cd01d4f4bc9d774ff69e7324132325a37b",
+    #
+    # Recomputed for t14 (env peer family retirement): `gateway` LOST the
+    # <PREFIX>_PEER_ORIGIN/_PEER_PROXY/_PEER_API_KEY and the plural
+    # <PREFIX>_PEER_ORIGINS/_PEER_API_KEYS passthrough lines for all ten role
+    # prefixes — build_config no longer reads any of them. `gateway` is again
+    # the ONLY service that moved.
+    "gateway": "d7c052144f00e8c69702251ff71542bed53286a9f534cd752be9d3511180bece",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
