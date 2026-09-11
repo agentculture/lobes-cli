@@ -372,6 +372,33 @@ def test_local_answer_without_declared_self_origin_says_local() -> None:
     assert _header(resp, S.SERVED_BY_HEADER) == "local"
 
 
+def test_local_answer_carries_mesh_member_when_mesh_armed(monkeypatch) -> None:
+    """Item B (t9): a LOCALLY-served pooled answer also names this box's own
+    mesh member, not just forwarded answers — every mesh answer names its
+    serving member."""
+    monkeypatch.setenv("LOBES_MESH_KEY", "shared-secret")
+    monkeypatch.setenv("LOBES_MESH_NAME", "spark")
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(
+        _state("http://vllm-primary:8000", local=True),
+        _state(_THOR_ORIGIN, running=9),
+    )
+    resp, _ = _post(table, cfg, specs, _body(_CORTEX_ID), replica_snapshot=snapshot)
+    assert _header(resp, S.MESH_MEMBER_HEADER) == "spark"
+
+
+def test_local_answer_has_no_mesh_member_when_mesh_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("LOBES_MESH_KEY", raising=False)
+    monkeypatch.delenv("LOBES_MESH_NAME", raising=False)
+    table, cfg, specs = _build(_pool_env())
+    snapshot = _snapshot(
+        _state("http://vllm-primary:8000", local=True),
+        _state(_THOR_ORIGIN, running=9),
+    )
+    resp, _ = _post(table, cfg, specs, _body(_CORTEX_ID), replica_snapshot=snapshot)
+    assert _header(resp, S.MESH_MEMBER_HEADER) is None
+
+
 def test_forwarded_answer_keeps_proxied_by_and_adds_reason() -> None:
     table, cfg, specs = _build(_pool_env())
     snapshot = _snapshot(

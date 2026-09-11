@@ -139,7 +139,10 @@ def trigger_reannounce(port: int, env: dict[str, str]) -> None:
     best-effort: any failure to reach the local gateway (not yet up, wrong
     port, a transient error) is swallowed exactly like the heartbeat loop's
     own peer dials — a switch/up that already succeeded must never fail
-    because this hint could not be delivered.
+    because this hint could not be delivered. The caller is not left in the
+    dark, though (item D, t9): a failed delivery prints one stderr line
+    naming the reason, so a silently-not-reannounced mesh member is visible
+    without failing the command it rode in on.
     """
     key = _mesh_key(env)
     if not key:
@@ -149,8 +152,8 @@ def trigger_reannounce(port: int, env: dict[str, str]) -> None:
         _post_json(
             f"http://localhost:{port}", "/mesh/reannounce", {}, headers, _GATEWAY_TIMEOUT_SECONDS
         )
-    except (urllib.error.URLError, OSError, ValueError):
-        pass
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        emit_diagnostic(f"mesh: reannounce not delivered ({exc})")
 
 
 def _parse_duration_seconds(raw: str) -> float:
