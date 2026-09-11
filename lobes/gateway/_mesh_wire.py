@@ -4,14 +4,18 @@ Pure dataclasses + JSON, stdlib only, no I/O.
 
 Wire contract (JSON)
 --------------------
-* ``Announcement`` carries ``name``, ``origin``, ``schema_version``,
-  ``roles`` (``{role -> RoleInfo}``), ``fingerprint``, ``capacity`` and
-  ``private`` (default ``False`` — the announcement-level flag, kept for
-  future use).
+* ``Announcement`` carries ONLY ``name``, ``origin``, ``schema_version`` and
+  ``roles`` (``{role -> RoleInfo}``).
 * ``RoleInfo`` mirrors the catalog :class:`~lobes.roles.RoleInfo` vocabulary
-  and adds a ``private`` flag so callers can mark a role so it never leaves
-  the box.  Every field in the payload has a home in the role registry — no
-  parallel field vocabulary.
+  (model / runtime / context / quant / responsibilities /
+  forbidden_responsibilities) and adds the per-role-lane ``fingerprint`` and
+  ``capacity`` — the fingerprint and the capacity belong to each ROLE LANE,
+  not to the announcement: a member serves several lanes (e.g. cortex on
+  vLLM NVFP4 at 262144 and embed on a different model), and the pool/suffix
+  logic compares fingerprints PER ROLE.  ``capacity=None`` means the lane is
+  uncalibrated.  A ``private`` flag lets callers mark a role so it never
+  leaves the box.  Every shared field in the payload has a home in the role
+  registry — no parallel field vocabulary.
 
 Fingerprint
 -----------
@@ -37,6 +41,16 @@ from typing import Any
 
 from lobes.gateway._replicas import DISQUALIFYING_FIELDS
 
+
+class MeshSchemaIncompatible(ValueError):
+    """Schema-version mismatch between mesh nodes.
+
+    The message always includes both the **expected** major version and the
+    **actual** major version so the operator can tell them apart without a
+    traceback.
+    """
+
+
 # Current wire schema major version.  Bump whenever the Announcement or
 # RoleInfo schema is **not** forward-compatible (extra fields are ignored, so
 # additive changes do NOT require a bump).
@@ -49,7 +63,7 @@ SCHEMA_MAJOR: int = 1
 
 @dataclass(frozen=True)
 class Fingerprint:
-    """Serving fingerprint for one replica — mirrors DISQUALIFYING_FIELDS.
+    """Serving fingerprint for one role lane — mirrors DISQUALIFYING_FIELDS.
 
     Field order matches ``_replicas.DISQUALIFYING_FIELDS`` so the two stay in
     lock-step without an assertion.
@@ -62,22 +76,28 @@ class Fingerprint:
 
 
 # Runtime guard — the Fingerprint field order must stay in lock-step with the
-# replica pool so fingerprint comparison cannot silently diverge.  The test
-# suite also checks this, but a module-load assertion catches breakage before
-# any test runs.
-_Fingerprint__FIELD_ORDER: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(Fingerprint))
-assert (
-    _Fingerprint__FIELD_ORDER == DISQUALIFYING_FIELDS
-), f"Fingerprint fields {_Fingerprint__FIELD_ORDER} != DISQUALIFYING_FIELDS {DISQUALIFYING_FIELDS}"
+# replica pool so per-role fingerprint comparison cannot silently diverge.
+# The test suite also checks this, but a module-load check catches breakage
+# before any test runs.
+_FINGERPRINT_FIELDS: tuple[str, ...] = tuple(f.name for f in dataclasses.fields(Fingerprint))
+if _FINGERPRINT_FIELDS != DISQUALIFYING_FIELDS:
+    raise RuntimeError(
+        f"Fingerprint fields {_FINGERPRINT_FIELDS} != "
+        f"DISQUALIFYING_FIELDS {DISQUALIFYING_FIELDS}"
+    )
 
 
 @dataclass(frozen=True)
 class RoleInfo:
-    """Per-role metadata on the wire.
+    """Per-role metadata on the wire — one entry per ROLE LANE.
 
-    Mirrors :class:`~lobes.roles.RoleInfo` so every field in the payload has a
-    home in the role registry — no parallel field vocabulary.  The
-    ``private`` flag, when ``True``, causes the role to be dropped by
+    Mirrors :class:`~lobes.roles.RoleInfo` so every shared field in the
+    payload has a home in the role registry — no parallel field vocabulary.
+    The ``fingerprint`` and ``capacity`` belong to the lane itself, not to
+    the announcement: a member serves several lanes (cortex on vLLM NVFP4 at
+    262144 and embed on a different model) and the pool/suffix logic compares
+    fingerprints PER ROLE.  ``capacity=None`` means the lane is uncalibrated.
+    The ``private`` flag, when ``True``, causes the role to be dropped by
     :meth:`Announcement.public`.
     """
 
@@ -87,12 +107,18 @@ class RoleInfo:
     quant: str  # quantization label
     responsibilities: tuple[str, ...]
     forbidden_responsibilities: tuple[str, ...]
+    fingerprint: Fingerprint  # what this role's lane serves (per-lane, not per-announcement)
+    capacity: float | None = None  # max active requests for this lane; None = uncalibrated
     private: bool = False  # when True this role never leaves the box
 
 
 @dataclass(frozen=True)
 class Announcement:
     """A versioned announcement that flows between mesh nodes.
+
+    Carries only identity + roles: ``name``, ``origin``, ``schema_version``
+    and ``roles`` — the fingerprint and the capacity live on each role lane
+    (see :class:`RoleInfo`), not here.
 
     ``public()`` returns a new instance with every role whose ``private`` flag
     is ``True`` dropped — the announcement never leaves the box.
@@ -102,9 +128,6 @@ class Announcement:
     origin: str
     schema_version: str
     roles: dict[str, RoleInfo]  # role -> metadata
-    fingerprint: Fingerprint  # what this replica serves
-    capacity: float  # max active requests for this replica
-    private: bool = False  # legacy / announcement-level flag
 
     def public(self) -> Announcement:
         """Return a new Announcement with all private roles dropped.
@@ -128,9 +151,6 @@ def encode(a: Announcement) -> bytes:
         "origin": a.origin,
         "schema_version": a.schema_version,
         "roles": {name: dataclasses.asdict(info) for name, info in a.roles.items()},
-        "fingerprint": dataclasses.asdict(a.fingerprint),
-        "capacity": a.capacity,
-        "private": a.private,
     }
     return json.dumps(obj).encode("utf-8")
 
@@ -140,7 +160,9 @@ def decode(data: bytes) -> Announcement:
 
     Raises :exc:`MeshSchemaIncompatible` when the major schema version in the
     payload does not match :data:`SCHEMA_MAJOR`.  Unknown JSON fields are
-    silently ignored (forward-compatible).
+    silently ignored (forward-compatible) — including the announcement-level
+    ``fingerprint`` / ``capacity`` / ``private`` fields the wire carried
+    before the per-role-lane reshape.
     """
     obj = json.loads(data)
 
@@ -152,16 +174,15 @@ def decode(data: bytes) -> Announcement:
             f"expected major {SCHEMA_MAJOR}, cannot parse schema version"
         ) from exc
     if major != SCHEMA_MAJOR:
-        actual_major = obj.get("schema_version", "<?>")
-        if isinstance(actual_major, str) and "." in actual_major:
-            label = actual_major
-        else:
-            label = str(actual_major)
-        raise MeshSchemaIncompatible(f"schema version {SCHEMA_MAJOR} expected, got {label}")
+        raise MeshSchemaIncompatible(
+            f"schema version {SCHEMA_MAJOR} expected, got {obj.get('schema_version', '<?>')}"
+        )
 
-    # --- role info --------------------------------------------------------
+    # --- role info (per-lane fingerprint + capacity) ----------------------
     roles: dict[str, RoleInfo] = {}
     for role_name, role_obj in obj.get("roles", {}).items():
+        fp_obj = role_obj["fingerprint"]
+        capacity = role_obj.get("capacity")
         roles[role_name] = RoleInfo(
             model=role_obj["model"],
             runtime=role_obj["runtime"],
@@ -169,40 +190,19 @@ def decode(data: bytes) -> Announcement:
             quant=role_obj["quant"],
             responsibilities=tuple(role_obj["responsibilities"]),
             forbidden_responsibilities=tuple(role_obj["forbidden_responsibilities"]),
+            fingerprint=Fingerprint(
+                served_id=fp_obj["served_id"],
+                quantization=fp_obj["quantization"],
+                max_model_len=fp_obj["max_model_len"],
+                runtime=fp_obj["runtime"],
+            ),
+            capacity=float(capacity) if capacity is not None else None,
             private=bool(role_obj.get("private", False)),
         )
-
-    # --- fingerprint ------------------------------------------------------
-    fp_obj = obj["fingerprint"]
-    fingerprint = Fingerprint(
-        served_id=fp_obj["served_id"],
-        quantization=fp_obj["quantization"],
-        max_model_len=fp_obj["max_model_len"],
-        runtime=fp_obj["runtime"],
-    )
 
     return Announcement(
         name=obj["name"],
         origin=obj["origin"],
         schema_version=obj["schema_version"],
         roles=roles,
-        fingerprint=fingerprint,
-        capacity=float(obj["capacity"]),
-        private=bool(obj.get("private", False)),
     )
-
-
-# ---------------------------------------------------------------------------
-# Custom exception
-# ---------------------------------------------------------------------------
-
-
-class MeshSchemaIncompatible(ValueError):
-    """Schema-version mismatch between mesh nodes.
-
-    The message always includes both the **expected** major version and the
-    **actual** major version so the operator can tell them apart without a
-    traceback.
-    """
-
-    pass
