@@ -82,6 +82,7 @@ from lobes.gateway._mesh_routes import (
     dispatch_mesh,
 )
 from lobes.gateway._mesh_routes import is_mesh_route as _is_mesh_route
+from lobes.gateway._mesh_routes import require_self_origin as _require_self_origin
 from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
@@ -4382,7 +4383,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         # Finding 7: wire the RejectionLog for flood collapse.
         join_log = RejectionLog()
         mesh_routes, announcement = _build_mesh_routes(
-            self_origin=cfg.reachable_origin,
+            self_origin=_require_self_origin(cfg.self_origin),
             readiness_cache=readiness_cache,
             replica_caches=replica_caches,
             local_capacities=cfg.local_capacities,

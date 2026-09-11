@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from lobes.gateway._authlog import RejectionLog
-from lobes.gateway._mesh_config import MeshConfig, build_mesh_config
+from lobes.gateway._mesh_config import MeshConfig, MeshConfigError, build_mesh_config
 from lobes.gateway._mesh_wire import (
     SCHEMA_MAJOR,
     Announcement,
@@ -642,7 +642,7 @@ def _build_announcement(
     declared_lane_configs:
         Optional dict of backend name → lane config dict.
     """
-    origin = self_origin or config.name or ""
+    origin = self_origin or ""  # never a name: an origin is a URL an operator typed (#92)
 
     roles: dict[str, RoleInfo] = {}
 
@@ -775,6 +775,23 @@ def build_mesh_routes(
 
 
 # --- heartbeat daemon ------------------------------------------------------
+
+
+def require_self_origin(self_origin: str | None) -> str:
+    """Return the operator-typed self origin, or refuse to start the mesh.
+
+    The announced origin is the URL peers dial back; it is GATEWAY_SELF_ORIGIN,
+    typed once by the operator, never a name or a guessed URL (#92). A mesh
+    with the join key set but no self origin is a misconfiguration named at
+    startup rather than a member that announces an unreachable address.
+    """
+    origin = (self_origin or "").strip()
+    if not origin:
+        raise MeshConfigError(
+            "LOBES_MESH_KEY is set but GATEWAY_SELF_ORIGIN is empty — the mesh "
+            "announces this box by that URL; set it to the origin peers dial."
+        )
+    return origin
 
 
 def _post_announcement(

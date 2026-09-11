@@ -46,6 +46,8 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from lobes.gateway._mesh_config import build_mesh_config
 from lobes.gateway._mesh_roster import Roster
 from lobes.gateway._mesh_routes import (
@@ -1297,7 +1299,17 @@ class TestThreadSafety:
         assert len(errors) == 0, f"Thread safety errors: {errors}"
 
 
-if __name__ == "__main__":
-    import pytest
+class TestRequireSelfOrigin:
+    """The announced origin is GATEWAY_SELF_ORIGIN or nothing — never a name."""
 
-    pytest.main([__file__, "-v"])
+    def test_empty_self_origin_refuses_to_start(self):
+        from lobes.gateway._mesh_config import MeshConfigError
+        from lobes.gateway._mesh_routes import require_self_origin
+
+        with pytest.raises(MeshConfigError, match="GATEWAY_SELF_ORIGIN"):
+            require_self_origin("")
+
+    def test_typed_self_origin_passes_through(self):
+        from lobes.gateway._mesh_routes import require_self_origin
+
+        assert require_self_origin("http://spark.tail:8001/") == "http://spark.tail:8001/"
