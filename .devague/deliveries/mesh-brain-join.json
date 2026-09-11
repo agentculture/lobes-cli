@@ -1,0 +1,29 @@
+{
+  "plan_slug": "mesh-brain-join",
+  "schema_version": 2,
+  "created": "2026-09-11T13:20:04Z",
+  "updated": "2026-09-11T13:20:04Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Workforce backend switch after wave 1: tasks t6-t11 run on Claude Sonnet subagents (Agent tool, model sonnet) instead of the gate-2 pairings (pi+associate exploration, qwen-code on worker/cortex). t1-t5 stay on the original pairings (t4/t5 still running). t12 stays in-house.",
+      "task_ref": "t6",
+      "reason": "Operator decision 2026-09-11 after observing wave-1 pace and output quality: qwen-code on cortex took >70 min per task before its first edit, and pi+associate headless runs returned summaries instead of maps twice.",
+      "affects": [
+        "t6",
+        "t7",
+        "t8",
+        "t9",
+        "t10",
+        "t11"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

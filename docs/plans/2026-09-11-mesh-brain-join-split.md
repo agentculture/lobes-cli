@@ -23,12 +23,12 @@ Edit the Owner/Model columns before approving gate 2 — the default Model is a 
 | `t3` | qwen-code (worker lane) | worker |
 | `t4` | qwen-code (cortex lane) | unsloth/Qwen3.8-27B-NVFP4 |
 | `t5` | qwen-code (cortex lane) | unsloth/Qwen3.8-27B-NVFP4 |
-| `t6` | pi explore (associate, Orin) -> qwen-code (cortex lane) | associate + unsloth/Qwen3.8-27B-NVFP4 |
-| `t7` | pi explore (associate) -> qwen-code (cortex lane) | associate + unsloth/Qwen3.8-27B-NVFP4 |
-| `t10` | qwen-code (worker lane) | worker |
-| `t8` | pi explore (associate) -> qwen-code (cortex lane) | associate + unsloth/Qwen3.8-27B-NVFP4 |
-| `t9` | pi explore (associate) -> qwen-code (cortex lane) | associate + unsloth/Qwen3.8-27B-NVFP4 |
-| `t11` | qwen-code (worker lane) | worker |
+| `t6` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t7` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t10` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t8` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t9` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
+| `t11` | Claude Sonnet subagent (deviation d1: backend switch after wave 1) | sonnet |
 | `t12` | main agent (Claude) in-house: live ssh cutover with downtime | claude-fable-5-1 |
 
 ## Wave 1
