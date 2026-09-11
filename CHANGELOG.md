@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.75.1] - 2026-09-11
+
+### Fixed
+
+- SonarCloud findings on this PR's new code (#244). `tests/test_worker_recipe_knobs.py` carried a **real test defect**, not just a style nit (S5778): `_sample(knob)` was evaluated *inside* the `pytest.raises` block, so had it ever raised, the test would have passed for the wrong reason - the call is now hoisted out. Also `_INT_OR_NONE` / `_BOOL_OR_NONE` constants in `lobes/profiles/schema.py` (S1192), matching the `_STR_OR_NONE` convention that file already established one line above the table; a unified assertion argument order in the same test file (S3415); and a composite assertion split in `tests/test_catalog.py` so a failure names which key was present (S9073).
+- One reported finding needed no change: the duplicated catalog doc literal is already down to 2 occurrences, below S1192's threshold of 3, since the nvidia entry was re-pointed at its own per-model doc.
+
 ## [0.75.0] - 2026-09-11
 
 ### Added
