@@ -68,6 +68,7 @@ from pathlib import Path
 
 from lobes import roles
 from lobes.cli import _runtime_ops
+from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.profiles.shape_render import GATEWAY_SERVICE
@@ -326,6 +327,15 @@ def cmd_up(args: argparse.Namespace) -> int:
             _env.read_env(deploy_dir / _compose.ENV_FILE, _compose.LOG_DIR_ENV) or None,
         )
     _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), command)
+    # Mesh-brain-join (t8 follow-up): starting or stopping a role changes what
+    # this box serves, so peers should learn it within one probe refresh
+    # rather than waiting for the next scheduled heartbeat. No-op when
+    # LOBES_MESH_KEY is unset; best-effort (never fails an already-successful
+    # up/down).
+    trigger_reannounce(
+        _runtime_ops.resolve_port(args, deploy_dir / _compose.ENV_FILE),
+        _env.read_env_file(deploy_dir / _compose.ENV_FILE),
+    )
     result = {
         ("started" if action == "up" else "stopped"): True,
         "target": target,

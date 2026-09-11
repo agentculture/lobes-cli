@@ -124,6 +124,35 @@ def _key_headers(env: dict[str, str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
+def trigger_reannounce(port: int, env: dict[str, str]) -> None:
+    """POST ``/mesh/reannounce`` to THIS box's own gateway (t8 follow-up).
+
+    Called by ``lobes switch``/``lobes up`` after a successful ``--apply``:
+    a fingerprint or health change on this box should reach mesh peers
+    within one probe refresh, not wait for the next scheduled heartbeat
+    (:func:`lobes.gateway._mesh_routes.reannounce_now`). Reuses the same
+    key/header helpers ``lobes mesh status`` uses, so the two surfaces can
+    never disagree about how the join key is read.
+
+    A no-op — no request, no error — when ``LOBES_MESH_KEY`` is unset in
+    the deployment ``.env`` (mesh disabled/unwired). When it IS set, this is
+    best-effort: any failure to reach the local gateway (not yet up, wrong
+    port, a transient error) is swallowed exactly like the heartbeat loop's
+    own peer dials — a switch/up that already succeeded must never fail
+    because this hint could not be delivered.
+    """
+    key = _mesh_key(env)
+    if not key:
+        return
+    headers = _key_headers(env)
+    try:
+        _post_json(
+            f"http://localhost:{port}", "/mesh/reannounce", {}, headers, _GATEWAY_TIMEOUT_SECONDS
+        )
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+
+
 def _parse_duration_seconds(raw: str) -> float:
     """Parse ``--for`` as seconds: a bare number, or ``<number><s|m|h|d>``.
 

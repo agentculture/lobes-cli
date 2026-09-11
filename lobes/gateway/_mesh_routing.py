@@ -652,3 +652,48 @@ def find_suffixed_lane(
             if lane.name == requested:
                 return lane
     return None
+
+
+def exposed_role_names(
+    snapshot: RoutingSnapshot | None,
+    origin: str,
+) -> tuple[str, ...]:
+    """Role names *origin* currently exposes — plain or suffixed (t8 follow-up).
+
+    For every role *origin* is verified for, this names it as the PLAIN role
+    (e.g. ``"cortex"``) when it agrees with that role's placement reference,
+    or as its own suffixed lane (e.g. ``"cortex-thor"``) when it disagrees.
+    A role announced ``private`` never appears here in the first place: it
+    was already stripped from the stored :class:`~lobes.gateway._mesh_wire.Announcement`
+    at the wire boundary (``Announcement.public()``, applied on receipt), so
+    it is never in ``verified_roles`` to begin with — this function excludes
+    nothing extra.
+
+    No ``local_fingerprint`` is passed to :func:`compute_role_placement` here
+    deliberately: this is a roster-wide listing (``GET /mesh/roster``), not a
+    per-request dispatch with one box's own hosting fingerprint in hand — the
+    peers-agree-with-each-other reference is the only one this view has.
+    """
+    if snapshot is None:
+        return ()
+    member = next((m for m in snapshot.members if m.origin == origin), None)
+    if member is None:
+        return ()
+    names: list[str] = []
+    for role in member.verified_roles:
+        placement = compute_role_placement(snapshot, role)
+        if origin in placement.plain_origins:
+            names.append(role)
+        else:
+            lane = placement_origin_lane(placement, origin)
+            if lane is not None:
+                names.append(lane.name)
+    return tuple(names)
+
+
+def placement_origin_lane(placement: RolePlacement, origin: str) -> SuffixedLane | None:
+    """The :class:`SuffixedLane` in *placement* served by *origin*, if any."""
+    for lane in placement.suffixed:
+        if lane.origin == origin:
+            return lane
+    return None

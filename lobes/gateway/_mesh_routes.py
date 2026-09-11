@@ -447,17 +447,59 @@ class MeshRoutes:
             )
 
         # Finding 13: take a snapshot under the route lock.
+        # t8 follow-up (c27/h1, c46/h37): the CLI's `lobes mesh status` reads
+        # last_seen_age / expiry / verified / flapping / roles per member —
+        # all additive, all sourced from state this box already holds (the
+        # Roster, its Ledger, and the mesh routing snapshot), never new
+        # tracking. See lobes.gateway._mesh_routing.exposed_role_names for
+        # the roles column (suffixed names included, private roles excluded
+        # because they were never in a stored announcement to begin with).
+        from lobes.gateway._mesh_roster import _FLAPPING_THRESHOLD
+        from lobes.gateway._mesh_routing import exposed_role_names
+
         with self._lock:
+            now = self.roster.now()
+            snapshot = None
+            if self._holder is not None:
+                view = self._holder.current()
+                if view is not None:
+                    snapshot = view.snapshot
             member_names = list(self.roster.members())
             member_records = {}
             for mname in member_names:
                 rec = self.roster._roster.get(mname)  # noqa: SLF001
-                if rec is not None:
-                    member_records[mname] = {
-                        "name": rec.name,
-                        "origin": rec.origin,
-                        "capacity": rec.capacity,
-                    }
+                if rec is None:
+                    continue
+                entry = self.roster.ledger.entries.get(mname)
+                expiry = entry.expiry if entry is not None else None
+                member_info = None
+                if snapshot is not None:
+                    member_info = next(
+                        (m for m in snapshot.members if m.origin == rec.origin), None
+                    )
+                verified = bool(member_info.verified_roles) if member_info is not None else False
+                roles = (
+                    list(exposed_role_names(snapshot, rec.origin)) if snapshot is not None else []
+                )
+                # The flapping mechanism (Roster._flap_count/_FLAPPING_THRESHOLD)
+                # is roster-wide, not per-member — there is no per-name hold-out
+                # state to read, so every listed member reports the SAME signal:
+                # whether this roster is currently in a flapping hold at all.
+                # `announce()` (the only path `/mesh/announce` drives) never
+                # touches this counter — only the unwired `Roster.join()` does
+                # — so this is honestly `False` on every deployment today, and
+                # becomes accurate the moment `join()` is wired to an endpoint.
+                flapping = bool(getattr(self.roster, "_flap_count", 0) >= _FLAPPING_THRESHOLD)
+                member_records[mname] = {
+                    "name": rec.name,
+                    "origin": rec.origin,
+                    "capacity": rec.capacity,
+                    "last_seen_age": max(0.0, now - rec.last_seen),
+                    "expiry": expiry,
+                    "verified": verified,
+                    "flapping": flapping,
+                    "roles": roles,
+                }
 
         # Finding 3: return per-member objects with name AND origin.
         return (

@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 from lobes.gateway._mesh_routing import (
@@ -551,3 +553,140 @@ def test_compare_fingerprints_sanity_used_by_placement():
     compatible, reason = compare_fingerprints(a, b)
     assert compatible is False
     assert "quantization" in reason
+
+
+# ---------------------------------------------------------------------------
+# t8 follow-up (c27/h1, c46/h37): GET /mesh/roster field population
+# ---------------------------------------------------------------------------
+
+
+def test_roster_list_populates_fields_after_announce_verify(monkeypatch):
+    """A fake member announce -> verify -> roster read shows populated fields."""
+    fp = _wiring_fp(served_id="unsloth/Qwen3.8-27B-NVFP4", quantization="NVFP4")
+    join_key = "sk-mesh-join-key"
+
+    member = _FakeMemberGateway()
+    member.start(0)
+    try:
+        port = member._server.server_address[1]
+        origin = f"http://127.0.0.1:{port}"
+        member.set_capabilities(
+            {
+                "cortex": {
+                    "fingerprint": {
+                        "served_id": fp.served_id,
+                        "quantization": fp.quantization,
+                        "max_model_len": fp.max_model_len,
+                        "runtime": fp.runtime,
+                    },
+                    "ready": True,
+                },
+            }
+        )
+
+        from lobes.gateway._mesh_config import build_mesh_config
+        from lobes.gateway._mesh_roster import Roster
+        from lobes.gateway._mesh_routes import MeshRoutes, verify_members
+        from lobes.gateway._mesh_routing import SnapshotHolder
+
+        mesh_cfg = build_mesh_config(
+            {
+                "LOBES_MESH_KEY": join_key,
+                "LOBES_MESH_NAME": "me",
+                "LOBES_MESH_SEEDS": "",
+                "LOBES_MESH_HEARTBEAT_S": "60",
+                "LOBES_MESH_MISSED_MAX": "3",
+            }
+        )
+        roster = Roster()
+        routes = MeshRoutes(mesh_cfg, roster)
+        routes.roster.announce("nameA", origin, 4.0)
+        from tests.test_mesh_routing_wiring import _ann
+
+        routes._announcements[origin] = _ann(
+            "nameA", origin, {"cortex": _wiring_role("cortex", fingerprint=fp)}
+        )
+        # Ledger: approve nameA so `expiry` is populated (not None).
+        roster.approve("nameA", "operator", roster.now() + 3600.0)
+
+        holder = SnapshotHolder(roster)
+        routes._holder = holder
+        verify_members(routes, holder, join_key=join_key, timeout=2.0)
+
+        status, _headers, body = routes.roster_list(
+            _fake_handler("/mesh/roster", "GET", headers={"Authorization": f"Bearer {join_key}"})
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert len(payload["members"]) == 1
+        row = payload["members"][0]
+        assert row["name"] == "nameA"
+        assert row["origin"] == origin
+        assert isinstance(row["last_seen_age"], (int, float))
+        assert row["last_seen_age"] >= 0.0
+        assert row["expiry"] == pytest.approx(roster.now() + 3600.0)
+        assert row["verified"] is True
+        assert row["flapping"] is False
+        assert row["roles"] == ["cortex"]
+    finally:
+        member.stop()
+
+
+def test_roster_list_expiry_none_and_unverified_without_ledger_entry():
+    from lobes.gateway._mesh_config import build_mesh_config
+    from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routes import MeshRoutes
+    from lobes.gateway._mesh_routing import SnapshotHolder
+
+    mesh_cfg = build_mesh_config(
+        {"LOBES_MESH_KEY": "sk-test", "LOBES_MESH_NAME": "me", "LOBES_MESH_SEEDS": ""}
+    )
+    roster = Roster()
+    routes = MeshRoutes(mesh_cfg, roster)
+    routes.roster.announce("nameB", "http://b", 1.0)
+    routes._holder = SnapshotHolder(roster)  # never populated -> no snapshot yet
+
+    status, _headers, body = routes.roster_list(
+        _fake_handler("/mesh/roster", "GET", headers={"Authorization": "Bearer sk-test"})
+    )
+    assert status == 200
+    row = json.loads(body)["members"][0]
+    assert row["expiry"] is None  # no ledger entry
+    assert row["verified"] is False  # no snapshot yet
+    assert row["flapping"] is False
+    assert row["roles"] == []
+
+
+def test_mesh_status_cli_renders_the_populated_roster_row(capsys):
+    """lobes mesh status renders the real (non-golden-fixture) roster shape."""
+    from lobes.cli._commands.mesh import _render_roster_table
+
+    members = [
+        {
+            "name": "nameA",
+            "origin": "http://a",
+            "capacity": 4.0,
+            "last_seen_age": 12.0,
+            "expiry": 3599.0,
+            "verified": True,
+            "flapping": False,
+            "roles": ["cortex"],
+        },
+        {
+            "name": "nameB",
+            "origin": "http://b",
+            "capacity": 4.0,
+            "last_seen_age": 5.0,
+            "expiry": None,
+            "verified": False,
+            "flapping": False,
+            "roles": [],
+        },
+    ]
+    out = _render_roster_table(members)
+    assert "nameA" in out and "nameB" in out
+    assert "12s" in out
+    assert "3599s" in out
+    assert "verified" in out
+    assert "unverified" in out
+    assert "cortex" in out
