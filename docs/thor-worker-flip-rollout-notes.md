@@ -54,12 +54,12 @@ nightly on sm_110 is the first thing the flip's live spike must answer.
 Consequences named in the task brief, restated here so they travel with the
 audit:
 
-- every raw-id request for `unsloth/Qwen3.8-27B-NVFP4` that dials the Thor's
+* every raw-id request for `unsloth/Qwen3.8-27B-NVFP4` that dials the Thor's
   gateway 404s the instant the swap lands;
-- the validated Spark+Thor `cortex` replica pool
+* the validated Spark+Thor `cortex` replica pool
   (`docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt`)
   collapses to single-owner (Spark only);
-- the Orin's peer-only `cortex` pool drops from two replicas to one (the
+* the Orin's peer-only `cortex` pool drops from two replicas to one (the
   Spark) — see `docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt`.
 
 ## Audit method
@@ -205,10 +205,12 @@ external raw-id pinner for the `worker` swap. This flip's target id
 older, more deeply wired id — the 2026-08-19 cortex promotion — and this
 audit found real, live pins:
 
-- **`agentculture/colleague`, `colleague/config_defaults.py:27`**:
-  ```python
-  _DEFAULT_MODEL = "unsloth/Qwen3.8-27B-NVFP4"
-  ```
+* **`agentculture/colleague`, `colleague/config_defaults.py:27`**:
+
+    ```python
+    _DEFAULT_MODEL = "unsloth/Qwen3.8-27B-NVFP4"
+    ```
+
   This is the exact field `docs/qwen38-rollout-notes.md` already flagged
   as "the field that *did* break on the cortex swap" for the
   `Qwen3.6-27B-NVFP4 -> Qwen3.8-27B-NVFP4` promotion. It is unrelated to
@@ -218,21 +220,25 @@ audit found real, live pins:
   box's own mesh state, so `_DEFAULT_MODEL` itself does **not** need to
   change for this flip — only clients that were specifically discovering
   Thor's copy do).
-- **`agentculture/culture-nodes`, `deploy/prod/pi-developer.json.template:4-5`**:
-  ```json
-  "model": "unsloth/Qwen3.8-27B-NVFP4",
-  "model_endpoint": "http://thor:8000/v1",
-  ```
+* **`agentculture/culture-nodes`, `deploy/prod/pi-developer.json.template:4-5`**:
+
+    ```json
+    "model": "unsloth/Qwen3.8-27B-NVFP4",
+    "model_endpoint": "http://thor:8000/v1",
+    ```
+
   This is a **Thor-specific** deployment template (`model_endpoint` is
   hardcoded to `http://thor:8000/v1`, not a role-discovered address) — a
   live prod artifact that pins BOTH the raw id and the Thor gateway
   address together. This one is unambiguously in scope for this flip: it
   will 404 the instant Thor stops serving `unsloth/Qwen3.8-27B-NVFP4`,
   regardless of what the Spark still serves.
-- **`agentculture/culture-nodes`, `deploy/prod/cutover.sh:161`**:
-  ```bash
-  MODEL=${CUTOVER_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
-  ```
+* **`agentculture/culture-nodes`, `deploy/prod/cutover.sh:161`**:
+
+    ```bash
+    MODEL=${CUTOVER_MODEL:-unsloth/Qwen3.8-27B-NVFP4}
+    ```
+
   A prod cutover script default, same repo, same risk as the template
   above — check whether its default is scoped to the Thor endpoint before
   the flip.
@@ -258,15 +264,15 @@ report.
 
 ## Operational notes
 
-- **The swap has not happened yet.** As of 2026-09-10, `~/.lobes/.env` on
+* **The swap has not happened yet.** As of 2026-09-10, `~/.lobes/.env` on
   this box still reads `PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4` and
   `WORKER_FEASIBLE=false`.
-- **This note does not edit any of the above.** Per task scope, this is
+* **This note does not edit any of the above.** Per task scope, this is
   audit + note only — `culture.yaml`, `~/.qwen/settings.json`,
   `~/.bashrc`, and the external repos above are each a separate operator
   follow-up, timed to land the same day as the flip (the lesson repeated
   verbatim from both precedent notes).
-- **Re-run the audit close to the actual flip date.** GitHub code search
+* **Re-run the audit close to the actual flip date.** GitHub code search
   has indexing lag and this snapshot may miss anything added to the mesh
   between now and the live boot.
 
@@ -301,16 +307,16 @@ the task's own instruction:
 
 ## See also
 
-- `docs/worker-lightning-rollout-notes.md` — the precedent this note is
+* `docs/worker-lightning-rollout-notes.md` — the precedent this note is
   modeled on (same shape, `worker`'s prior id swap).
-- `docs/qwen38-rollout-notes.md` — the original cortex-swap audit; this
+* `docs/qwen38-rollout-notes.md` — the original cortex-swap audit; this
   note extends its finding (`colleague/config_defaults.py`'s
   `_DEFAULT_MODEL`) with two newly-found `culture-nodes` prod pins.
-- `docs/model-switch-playbook.md` §2 — the general playbook both audits
+* `docs/model-switch-playbook.md` §2 — the general playbook both audits
   follow.
-- `docs/qwen3.6-35b-a3b-nvfp4.md` — the per-model doc extended (see below)
+* `docs/qwen3.6-35b-a3b-nvfp4.md` — the per-model doc extended (see below)
   with the re-run recipe for `unsloth/Qwen3.6-35B-A3B-NVFP4` reclaiming the
   Thor `worker` seat.
-- `docs/evidence/2026-07-31-accept-worker-thor.txt`,
+* `docs/evidence/2026-07-31-accept-worker-thor.txt`,
   `docs/evidence/2026-08-20-baseline-worker-qwen35b-thor.txt` — the two
   transcripts this checkpoint's Thor history is built from.

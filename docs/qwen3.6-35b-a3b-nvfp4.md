@@ -290,17 +290,15 @@ unquantized MoE"* on `marlin`, under both `--quantization modelopt` and
 
 Two things have changed since, and neither is proof either way:
 
-* the engine moved from 0.19/0.21 to the pinned `8bd082` nightly
+- the engine moved from 0.19/0.21 to the pinned `8bd082` nightly
   (`0.26.1rc1.dev942`), which is four minor versions of NVFP4-MoE loader work
   later; and
-* the HF repo itself was **re-uploaded 2026-08-29**, so the export on the hub
+- the HF repo itself was **re-uploaded 2026-08-29**, so the export on the hub
   today is not necessarily the one that failed in May.
 
 The spike therefore has to actually run. If it fails the same way, that is a
 publishable result and the fallback recipe below is the answer — not a reason
 to quietly substitute a different checkpoint.
-
-
 
 ## `unsloth/Qwen3.6-35B-A3B-NVFP4` re-taking Thor's `worker` seat — the FALLBACK recipe
 
@@ -310,7 +308,7 @@ to quietly substitute a different checkpoint.
 > it was measured on THAT export. It is kept because if the `nvidia/` target
 > above fails to load on sm_110, this is the known-good recipe to fall back
 > to.
-
+>
 > **Status: UNMEASURED for this specific re-run.** A flip is proposed that
 > stops Thor's `cortex` (`unsloth/Qwen3.8-27B-NVFP4`) and re-promotes this
 > checkpoint back into Thor's `worker` seat — reversing the demotion above.
@@ -433,6 +431,7 @@ shape-file warning applies here: usable concurrency saturates near width
 `lobes/profiles/builtin_shapes/thor-worker.toml`'s own warning block).
 
 **What is genuinely NOT YET MEASURED for a re-run today:**
+
 - plain (non-MTP) decode throughput on the current fleet-default nightly
   digest (`8bd082...`) — only the MTP-on path was tried on that digest, and
   it crashed;

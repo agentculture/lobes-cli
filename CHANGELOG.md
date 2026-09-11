@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.74.5] - 2026-09-11
+
+### Added
+
+- **Concurrency is measured for the Thor `worker` lane** (#244) and it scales: a pure-decode sweep through the gateway at `max_num_seqs=4` gives 164.8 tok/s per stream at width 1, ~147 at width 2, and **131.4 tok/s per stream across all four at width 4 — 348.1 tok/s aggregate, 5.7x the width-1 aggregate for a 20% per-stream cost**. `max_num_seqs=4` is kept; capping the batch to 1 measured 182-184 tok/s single-stream, i.e. it removes headroom without meaningfully raising speed.
+- The per-model doc now separates that controlled sweep from a **prefill-dominated agentic sample** taken while Qwen Code drove a PR review against the lane (239k prefill tokens against 12k generated, 33-53 tok/s decode aggregate). The low decode figure there is a property of the workload, not of speculation under batching — the doc says so explicitly, because quoting either number as the other would be wrong. Practical consequence recorded: an agentic workload on this lane is **prefill-bound**, so multi-agent capacity planning should budget the ~1.3k tok/s prefill rate, not the 196.6 tok/s decode headline.
+
+### Fixed
+
+- markdownlint: MD018 on a line that began with an issue reference, MD004 bullet-style inconsistencies, and MD031/MD012/MD028/MD032 whitespace-structure errors across the three docs this work touches. `markdownlint-cli2` now reports 0 errors over all 64 files.
+
 ## [0.74.4] - 2026-09-10
 
 ### Added

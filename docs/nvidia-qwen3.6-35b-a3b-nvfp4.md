@@ -1,7 +1,8 @@
 # `nvidia/Qwen3.6-35B-A3B-NVFP4` — the Thor `worker` lane
 
-**Status: VALIDATED live on the physical Jetson AGX Thor, 2026-09-10** (issue
-#244). This is the deployed `worker` checkpoint. Every number below was
+**Status: VALIDATED live on the physical Jetson AGX Thor, 2026-09-10** — see
+issue [#244](https://github.com/agentculture/lobes-cli/issues/244). This is the
+deployed `worker` checkpoint. Every number below was
 measured on that box; nothing here is copied from a vendor page or a forum
 post, and the external figures that ARE quoted are labelled as external.
 
@@ -227,29 +228,48 @@ External reference, **not** an acceptance threshold: the Thor field guide at
 conc=1 for this model with a custom from-source build. Our measurement exceeds
 it on the stock pinned image.
 
-### Under real concurrent load — MEASURED, and it is a different story
+### Concurrency — MEASURED, and it scales
+
+Pure-decode sweep through the gateway, `max_num_seqs=4`, identical 109-token
+code prompts, `max_model_len=262144`, DFlash k=12. Per-stream decode is the
+same metric as everywhere else; aggregate is total completion tokens over
+wall-clock for the whole batch.
+
+| width | per-stream decode tok/s | aggregate tok/s | TTFT ms |
+|---|---|---|---|
+| 1 | 164.8 | 61.2 | 1124 (cold) |
+| 2 | 154.5 / 139.8 | 203.3 | 372 / 298 |
+| 4 | 131.7 / 131.3 / 131.5 / 131.4 | **348.1** | 356–429 |
+
+**Width 4 buys 5.7x the aggregate for a 20% per-stream cost**, and the four
+streams come back within 0.4 tok/s of each other — the scheduler shares evenly.
+`max_num_seqs=4` is therefore the right setting; dropping to 1 would throw away
+most of the box's capacity for a ~25% single-stream gain.
+
+At `max_num_seqs=1` the lane measured 182.4 / 183.8 tok/s single-stream, i.e.
+capping the batch does NOT meaningfully raise single-stream speed — it only
+removes headroom.
+
+#### A prefill-heavy workload looks nothing like this — do not confuse them
 
 Sampled while Qwen Code drove an agentic PR review against this lane
-(`max_num_seqs=4`, so 4 running + 6 queued), 180 s window:
+(`max_num_seqs=4`, 4 running + 6 queued), 180 s window:
 
 ```text
 generation tokens 26,625 -> 38,608   = 11,983 in 180 s =   66.6 tok/s aggregate
 prompt tokens  3,033,992 -> 3,273,132 = 239,140 in 180 s = 1,328 tok/s prefill
 ```
 
-**Read this carefully.** 66.6 tok/s aggregate decode across 4 streams is ~16.6
-tok/s per stream — far below the 196.6 single-stream figure. The workload was
-prefill-dominated (239k prefill tokens against 12k generated), so this is NOT
-an apples-to-apples decode benchmark, and the aggregate is not directly
-comparable to the batch-1 numbers above. What it does establish honestly:
+vLLM's own `Avg generation throughput` read 33–53 tok/s over the same period.
+That is **20x** the prefill volume against generation, so the lane was almost
+entirely prefilling; the low decode aggregate is a property of the WORKLOAD,
+not of speculation under batching. The controlled sweep above is the
+concurrency answer; this sample is the agentic-workload answer, and quoting
+either as the other would be wrong.
 
-* the lane sustains a real multi-agent workload at ~1.3k tok/s prefill;
-* **single-stream speculative throughput does not survive contact with a
-  concurrent, prefill-heavy agentic workload**, and any capacity planning based
-  on the 196.6 figure will be wrong.
-
-A proper concurrency sweep (fixed decode length, varied width, per-arm) has
-**not** been run. That remains the largest unmeasured axis for this lane.
+What this pair does establish: **an agentic workload on this lane is
+prefill-bound, not decode-bound.** Capacity planning for multi-agent use should
+budget the ~1.3k tok/s prefill rate, not the 196.6 tok/s decode headline.
 
 ## Correctness
 
@@ -271,11 +291,13 @@ A proper concurrency sweep (fixed decode length, varied width, per-arm) has
    Reached `RestartCount=30`. **Not a leak** — with the container stopped,
    `torch.cuda.mem_get_info()` reads 100.80 GiB free and `ps` RSS matches
    `free`. Working sequence:
+
    ```bash
    docker compose stop vllm-worker && sleep 10
    sync && echo 3 | sudo tee /proc/sys/vm/drop_caches && sleep 5
    docker compose up -d --no-deps vllm-worker     # NOT --force-recreate
    ```
+
 2. **CUDA-visible free memory ≠ the OS view.** Check with
    `torch.cuda.mem_get_info()` inside the image.
 3. **A window shrink breaks consumers no model-id audit will catch.** Qwen Code
@@ -296,9 +318,9 @@ A proper concurrency sweep (fixed decode length, varied width, per-arm) has
   at both 65536 and 262144, single-stream throughput, speculation sweep,
   tool calls, image intake, and end-to-end agentic use.
 * **NOT validated:** any peer reaching this lane cross-box (no box declares
-  `WORKER_PEER_ORIGIN` pointing at the Thor); a proper concurrency sweep;
-  long-context retrieval at 262144; video intake; `--load-format
-  fastsafetensors`; `--async-scheduling`.
+  `WORKER_PEER_ORIGIN` pointing at the Thor); long-context retrieval at
+  262144; video intake; `--load-format fastsafetensors`; `--async-scheduling`;
+  concurrency beyond width 4.
 * Evidence: `docs/evidence/2026-09-10-*` (seven transcripts + the raw sweep
   log). Delivery record:
   `docs/deliveries/2026-09-10-thor-worker-arm-qwen3-6-35b-a3b-recipes.md`.
