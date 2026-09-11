@@ -292,9 +292,15 @@ def test_dropped_role_404s_role_infeasible_and_refers_the_declared_peer() -> Non
     # Until t7's auto-wired mesh proxy replaces the hand-typed referral, the
     # dropped role's honest answer is the 404 with hosted_by — nothing local
     # is ever dialed, and the mesh layer (t7) is what follows the referral.
+    # Retired (t14): PRIMARY_PEER_ORIGIN no longer populates table.peer_origins
+    # — set it directly instead.
+    import dataclasses
+
     env = _gateway_only_env("spark")
-    env["PRIMARY_PEER_ORIGIN"] = "http://cortex-peer.local:8001"
     table, cfg = build_config(env)
+    table = dataclasses.replace(
+        table, peer_origins={"primary": "http://cortex-peer.local:8001"}
+    )
     opener, calls = _opener()
     resp = S.handle_post(
         table, cfg, "/v1/chat/completions", [], json.dumps({"model": "cortex"}).encode(), opener
