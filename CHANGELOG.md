@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Evidence `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`: the #227 reranker judge-prompt template rolled out to the Jetson AGX Thor (distractors 0.21–0.87 -> all 0.000, relevant 0.995–1.000, `instruction` now honoured, byte-identical to the Spark's #227 scores; 43.2 -> 47.3 ms median on sm_110's eager/TRITON lane), including the first boot's unified-memory race and its clean restart; and the Thor's `senses` -> Orin proxy withdrawn (the Orin does not host it), so `model=senses` 404s `role_infeasible` with no `hosted_by`.
+- Evidence `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`: the #227 reranker judge-prompt template rolled out to the Jetson AGX Thor (distractors 0.21–0.87 -> 0.000 at 3 dp (raw ~1e-5, strictly positive), relevant 0.995–1.000, `instruction` now honoured, identical to the Spark's #227 scores at the probe's 3-dp precision; 43.2 -> 47.3 ms median on sm_110's eager/TRITON lane), including the first boot's unified-memory race and its clean restart; and the Thor's `senses` -> Orin proxy withdrawn (the Orin does not host it), so `model=senses` 404s `role_infeasible` with no `hosted_by`.
 
 ### Changed
 

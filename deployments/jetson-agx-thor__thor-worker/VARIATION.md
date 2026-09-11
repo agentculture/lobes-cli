@@ -40,7 +40,8 @@ are absent by construction. Declare them yourself after restoring.
 > Measured live on 2026-09-11:
 > `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`
 > covers the state captured here. The templated reranker went from 0.21–0.87
-> distractor scores to all 0.000, and the `instruction` field is now honoured
+> distractor scores to 0.000 at three decimals (raw values are about 1e-5 and
+> strictly positive), and the `instruction` field is now honoured
 > (43.2 → 47.3 ms median). `senses` now 404s honestly, and the
 > cortex/worker/embedder proxy paths show no regression.
 > `docs/evidence/2026-09-10-accept-thor-worker-flip.txt` covers the flip
@@ -80,9 +81,13 @@ It is captured verbatim rather than regenerated, which is the entire point of
 a lock: the bytes that produced the measurements, not the bytes a current
 render would produce.
 
-**`.env` is NOT captured**, not even by digest. Every `[files]` entry must
-exist in this directory for `--from-lock` to accept the lock, and a deployed
-`.env` can never be committed. The restorable settings live in `[env]`. The
+**`.env` is NOT captured**, not even by digest. `lobes init --from-lock`
+refuses any `.env`-family name in `[files]` outright (`_check_restorable_name`
+in `lobes/cli/_commands/init.py`: "the .env family is never committed"). The
+catalog validator also requires every `[files]` entry to exist in this
+directory, and a deployed `.env` can never be committed. Listing its digest
+would therefore make the entry unrestorable. The restorable settings live in
+`[env]`. The
 `.env`-digest drift check (deviation d4) therefore applies only to a lock kept
 beside a live deployment, never to a catalog entry.
 

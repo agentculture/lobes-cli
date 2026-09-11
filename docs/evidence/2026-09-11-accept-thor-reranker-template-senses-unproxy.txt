@@ -171,13 +171,23 @@ lobes assess --probes --role reranker --json:
 
 A. SUMMARY (Thor, before -> after)
   prompt tokens per pair   17–30  ->  88–100
-  distractor scores        0.209–0.872 (bananas 0.872 for "capital of France")  ->  all 0.000
+  distractor scores        0.209–0.872 (bananas 0.872 for "capital of France")  ->  all 0.000 at 3 dp
+                           (raw values are ~1e-5, STRICTLY POSITIVE — see note below)
   relevant documents       0.937–0.988  ->  0.995–1.000
   toolbatch inversion      NOTICE 0.795 beside the right answer  ->  0.000
   `instruction` honoured   False  ->  True (/v1/rerank and /v1/score)
   median latency (1q x 5d) 43.2 ms  ->  47.3 ms
-Scores are byte-for-byte the Spark's #227 acceptance numbers
-(docs/evidence/2026-08-30-accept-reranker-template-spark.txt), same probe set.
+Scores are identical to the Spark's #227 acceptance numbers AT THE PROBE'S
+3-DECIMAL PRECISION (docs/evidence/2026-08-30-accept-reranker-template-spark.txt),
+same probe set.
+
+Note — "0.000" is rounding, not an exact zero. Raw /v1/rerank relevance_score,
+"What is the capital of France?", 2026-09-11 (PR #248 review follow-up):
+  thor : Paris 0.9951247572898865 | Bananas 1.9502436771290377e-05 | Amazon 6.019133252266329e-06
+  spark: Paris 0.9953681230545044 | Bananas 1.8491691662347876e-05 | Amazon 5.395844254962867e-06
+A consumer that treats scores as strictly positive (e.g. eidetic-cli's
+`--rerank-threshold`, where a non-positive cutoff means "no cutoff") is
+unaffected; pick a small positive cutoff such as 0.01 to drop distractors.
 Latency diverges from the Spark: the Spark got FASTER (28.0 -> 18.1 ms); the
 Thor got slightly slower. The Thor lane runs `--enforce-eager` + TRITON_ATTN
 (validated sm_110 divergences), so the ~4x longer templated prompt is not
