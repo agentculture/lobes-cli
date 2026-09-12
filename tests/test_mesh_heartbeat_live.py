@@ -348,3 +348,58 @@ def test_seed_merge_never_refreshes_a_known_member_s_liveness() -> None:
         assert "dead" not in roster.members(), "a seed listing must not keep a silent member alive"
     finally:
         srv.shutdown()
+
+
+def test_a_dropped_member_is_not_revived_by_a_peer_roster_that_still_lists_it() -> None:
+    """Regression (live, dev526, 2026-09-12): the heartbeat pass ticks FIRST and
+    fetches seed rosters SECOND, so the very pass that dropped the stopped
+    Thor re-learned it from the Orin's roster — which still listed it — and
+    the two survivors revived the dead member for each other forever
+    (``thor[v=False]`` never left the Spark roster in 260 s)."""
+    from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routes import _fetch_seed_roster
+
+    class Seed(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(
+                {
+                    "members": [
+                        {"name": "dead", "origin": "http://dead.local:8000", "capacity": 1.0}
+                    ],
+                    "ledger": {},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), Seed)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    clock = {"t": 0.0}
+    roster = Roster(clock=lambda: clock["t"], missed_max=2)
+    roster.announce("dead", "http://dead.local:8000", None, now=0.0)
+    seen_absent = False
+    try:
+        for _ in range(6):  # the LIVE pass order: tick, then merge the seed rosters
+            clock["t"] += 60.0
+            roster.tick(now=clock["t"])
+            if "dead" not in roster.members():
+                seen_absent = True
+            _fetch_seed_roster(
+                [f"http://127.0.0.1:{srv.server_address[1]}"],
+                "sk-test",
+                roster,
+                timeout=3.0,
+                routes=None,
+            )
+        assert seen_absent, "missed_max=2 must drop a silent member within two ticks"
+        assert "dead" not in roster.members(), "a peer roster must not revive a dropped member"
+        # A heartbeat FROM the member itself always re-admits it, hold-down or not.
+        roster.announce("dead", "http://dead.local:8000", None, now=clock["t"])
+        assert "dead" in roster.members()
+    finally:
+        srv.shutdown()

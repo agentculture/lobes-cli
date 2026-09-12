@@ -1391,19 +1391,17 @@ def _fetch_seed_roster(
                                 if routes is not None and mname == routes.config.name:
                                     # A peer's roster lists US; never merge ourselves in.
                                     continue
-                                if mname and mname in roster.members():
+                                if mname and morigin:
                                     # DISCOVERY only: a peer's roster tells us a member
                                     # exists; it is not a heartbeat FROM that member.
-                                    # Re-announcing a known name here refreshed its
-                                    # liveness every tick and a stopped Thor stayed in
-                                    # every roster for 4+ minutes (live, 2026-09-12).
-                                    continue
-                                if mname and morigin:
-                                    # Roster.announce takes roster._lock itself;
-                                    # wrapping it in that same lock deadlocked the
-                                    # heartbeat on the first NON-EMPTY seed roster
-                                    # (live Orin, 2026-09-12: /mesh/roster hung forever).
-                                    roster.announce(mname, morigin, None, now=time.monotonic())
+                                    # `discover` never refreshes a known name (a stopped
+                                    # Thor stayed alive 4+ min, live 2026-09-12) and is
+                                    # refused during the post-drop hold-down (the pass
+                                    # that dropped it re-learned it from the Orin and
+                                    # the survivors revived it forever, dev526).
+                                    # Roster takes its own lock; wrapping it in that
+                                    # same lock deadlocked the heartbeat live (Orin).
+                                    roster.discover(mname, morigin, None, now=time.monotonic())
 
                     # Finding 9 (review #252): merge the peer's LEDGER too, not
                     # just its membership records — the ledger is what a

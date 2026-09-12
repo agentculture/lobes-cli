@@ -249,6 +249,14 @@ class Roster:
         self._capacity_max: float = capacity_max
         # Finding 10: inject missed_max; None → fall back to module-level env default.
         self._missed_max_override: int | None = missed_max
+        # Per-name DROP HOLD-DOWN (live dev526, 2026-09-12): a name tick()
+        # just dropped may not be re-admitted by DISCOVERY (a peer's roster
+        # listing it) for missed_max ticks. Without it the heartbeat pass —
+        # which ticks first and merges seed rosters second — revived the
+        # stopped Thor from the Orin's roster in the very pass that dropped
+        # it, and the two survivors kept the dead member alive for each
+        # other forever. A heartbeat FROM the member itself always clears it.
+        self._hold_down: dict[str, int] = {}
 
     # -- public API (Roster) ------------------------------------------------
 
@@ -306,6 +314,29 @@ class Roster:
             )
             self._flap_counts[name] = flap_count + 1
             self._flap_times[name] = now
+
+    def discover(
+        self, name: str, origin: str, capacity: object, *, now: float | None = None
+    ) -> bool:
+        """Admit a member learned from a PEER's roster, not from the member.
+
+        Discovery is weaker than :meth:`announce`: it never refreshes a known
+        member's liveness (a peer listing it is not a heartbeat from it), and
+        it is refused while the name is in drop hold-down — ``tick()`` just
+        expired it and only a heartbeat from the member itself may bring it
+        back before the hold-down lapses. Returns ``True`` when the member
+        was admitted.
+        """
+        with self._lock:
+            if name in self._roster or name in self._hold_down:
+                return False
+            self.announce(name, origin, capacity, now=now)
+            return True
+
+    def is_held_down(self, name: str) -> bool:
+        """Is *name* inside the post-drop discovery hold-down window?"""
+        with self._lock:
+            return name in self._hold_down
 
     def announce_gated(
         self, name: str, origin: str, capacity: object, *, now: float | None = None
@@ -365,10 +396,15 @@ class Roster:
                     to_remove.append(name)
 
             dropped_origins: list[str] = []
+            for name in list(self._hold_down):
+                self._hold_down[name] -= 1
+                if self._hold_down[name] <= 0:
+                    del self._hold_down[name]
             for name in to_remove:
                 dropped_origins.append(self._roster[name].origin)
                 del self._roster[name]
                 dropped += 1
+                self._hold_down[name] = local_missed_max
 
             # Clear each name's flapping count once its own hold-out window
             # has elapsed (item A: per-name, not the old single roster-wide
