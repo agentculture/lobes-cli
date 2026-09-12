@@ -1436,3 +1436,224 @@ class TestRequireSelfOrigin:
         from lobes.gateway._mesh_routes import require_self_origin
 
         assert require_self_origin("http://spark.tail:8001/") == "http://spark.tail:8001/"
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 16: /mesh/approve must reject a non-finite expiry too
+# ---------------------------------------------------------------------------
+
+
+class TestApproveExpiryFiniteness:
+    def test_nan_expiry_falls_back_to_default(self) -> None:
+        routes = _make_routes()
+        status, _, _ = routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "bob", "expiry": float("nan")}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        assert status == 200
+        now = routes.roster.now()
+        # A NaN expiry must not silently produce an already-expired grant.
+        assert routes.roster.is_approved("bob", now=now)
+
+    def test_inf_expiry_falls_back_to_default(self) -> None:
+        routes = _make_routes()
+        status, _, _ = routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "bob", "expiry": float("inf")}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        assert status == 200
+        now = routes.roster.now()
+        # An infinite expiry must not silently produce a permanent grant —
+        # the default (3600s) bounds it instead.
+        assert not routes.roster.is_approved("bob", now=now + 3601.0)
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 5: the heartbeat's own call to _fetch_seed_roster must
+# use the right argument order (a wrong one used to hand a MeshRoutes
+# instance to http.client as a socket timeout, silently swallowed).
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatSeedFetchArgOrder:
+    def test_heartbeat_calls_fetch_seed_roster_with_correct_types(self) -> None:
+        import threading
+
+        from lobes.gateway import _mesh_routes as mesh_routes_mod
+
+        routes = _make_routes(
+            {
+                "LOBES_MESH_KEY": "k",
+                "LOBES_MESH_NAME": "x",
+                "LOBES_MESH_SEEDS": "http://seed.local:9000",
+                "LOBES_MESH_HEARTBEAT_S": "1",
+            }
+        )
+        captured: dict = {}
+
+        def fake_fetch(seeds, key, roster, timeout=None, routes=None):
+            captured["seeds"] = seeds
+            captured["key"] = key
+            captured["roster"] = roster
+            captured["timeout"] = timeout
+            captured["routes"] = routes
+
+        stop = threading.Event()
+        reannounce = threading.Event()
+        with patch.object(mesh_routes_mod, "_fetch_seed_roster", fake_fetch):
+            thread = threading.Thread(
+                target=mesh_routes_mod._heartbeat_loop,
+                args=(routes, b"{}", 1.0, stop, reannounce),
+                daemon=True,
+            )
+            thread.start()
+            time.sleep(1.3)
+            stop.set()
+            thread.join(timeout=2)
+
+        assert captured.get("seeds") == ("http://seed.local:9000",)
+        assert captured.get("key") == routes.config.key
+        assert captured.get("roster") is routes.roster
+        # The bug swapped these two: timeout must be a float, routes must be
+        # the MeshRoutes instance — never the other way around.
+        assert isinstance(captured.get("timeout"), float)
+        assert captured.get("routes") is routes
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 17: an immediate reannounce must run a pass THIS
+# iteration, not wait for the ordinary heartbeat deadline.
+# ---------------------------------------------------------------------------
+
+
+class TestReannounceRunsImmediately:
+    def test_reannounce_event_triggers_a_pass_before_the_deadline(self) -> None:
+        import threading
+
+        from lobes.gateway import _mesh_routes as mesh_routes_mod
+
+        routes = _make_routes(
+            {
+                "LOBES_MESH_KEY": "k",
+                "LOBES_MESH_NAME": "x",
+                "LOBES_MESH_HEARTBEAT_S": "60",  # long — a pass must NOT wait for this
+                "LOBES_MESH_MISSED_MAX": "5",
+            }
+        )
+        tick_calls = []
+        orig_tick = routes.roster.tick
+
+        def counting_tick(*a, **k):
+            tick_calls.append(1)
+            return orig_tick(*a, **k)
+
+        stop = threading.Event()
+        reannounce = threading.Event()
+        with patch.object(routes.roster, "tick", counting_tick):
+            with patch("lobes.gateway._mesh_routes._fetch_seed_roster"):
+                thread = threading.Thread(
+                    target=mesh_routes_mod._heartbeat_loop,
+                    args=(routes, b"{}", 60.0, stop, reannounce),
+                    daemon=True,
+                )
+                thread.start()
+                time.sleep(0.05)  # let the loop enter its first wait
+                reannounce.set()
+                time.sleep(0.3)  # far less than the 60s deadline
+                stop.set()
+                thread.join(timeout=2)
+
+        # With the bug, the event was cleared before being checked, so
+        # `run_pass` could only ever become true at the 60s deadline —
+        # zero tick() calls in this window.
+        assert len(tick_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 9: a revocation must propagate by gossip through
+# GET /mesh/roster (ledger entries), not membership alone.
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerGossip:
+    def test_roster_list_includes_ledger_entries(self) -> None:
+        routes = _make_routes()
+        routes.approve(
+            _fake_handler(
+                "/mesh/approve",
+                "POST",
+                json.dumps({"name": "bob", "expiry": 9999.0}).encode(),
+                {"Authorization": "Bearer sk-test"},
+            )
+        )
+        status, _, body = routes.roster_list(
+            _fake_handler("/mesh/roster", "GET", headers={"Authorization": "Bearer sk-test"})
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert "ledger" in payload
+        assert "bob" in payload["ledger"]
+        assert payload["ledger"]["bob"]["approved_by"] == "requester"
+
+    def test_fetch_seed_roster_merges_ledger_and_revokes_locally(self) -> None:
+        """A peer's revoked ledger entry, learned via GET /mesh/roster, must
+        win over a locally-approved entry with an OLDER updated_at — the
+        standard updated_at-wins gossip rule — so the revocation actually
+        propagates instead of staying local to the node that issued it."""
+        from lobes.gateway._mesh_roster import Roster
+        from lobes.gateway._mesh_routes import _fetch_seed_roster
+
+        clock = _TickClock()
+        local_roster = Roster(clock=clock)
+        # Locally approved at an OLDER timestamp than the peer's revoke below.
+        local_roster.approve("bob", "admin", 9999.0, now=0.0)
+        assert local_roster.is_approved("bob", now=1.0)
+
+        seed = "http://seed.local:9000"
+
+        class _FakeResp:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+                self.status = 200
+
+            def read(self):
+                return self._payload
+
+        class _FakeConn:
+            def __init__(self, *a, **k):
+                pass
+
+            def request(self, *a, **k):
+                pass
+
+            def getresponse(self):
+                body = json.dumps(
+                    {
+                        "members": [],
+                        "ledger": {
+                            "bob": {
+                                "approved_by": "peer-admin",
+                                "expiry": 0.0,
+                                # Newer than the local approval's updated_at=0.0.
+                                "updated_at": 5.0,
+                            }
+                        },
+                    }
+                ).encode()
+                return _FakeResp(body)
+
+            def close(self):
+                pass
+
+        with patch("lobes.gateway._mesh_routes.http.client.HTTPConnection", _FakeConn):
+            _fetch_seed_roster((seed,), "sk-test", local_roster, 5.0)
+
+        assert not local_roster.is_approved("bob", now=6.0)

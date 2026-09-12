@@ -341,7 +341,11 @@ class MeshRoutes:
                     }
                 ).encode(),
             )
-        except (json.JSONDecodeError, ValueError, TypeError):
+        except (json.JSONDecodeError, ValueError, TypeError, KeyError, AttributeError):
+            # Finding 15 (review #252): KeyError/AttributeError added as a
+            # boundary safeguard — decode() now validates structure and
+            # raises ValueError consistently, but a malformed body must
+            # never escape this route as an unhandled 500 either way.
             return (
                 400,
                 [
@@ -361,9 +365,17 @@ class MeshRoutes:
         # Finding 5: ledger only RESTRICTS — an absent entry is "no
         # restriction", key-holders are admitted permanently.  Only when an
         # entry exists AND is not in force (expired/revoked) do we refuse.
+        # Finding 4 (review #252): the ledger check and the roster admission
+        # used to be two separate, unsynchronized steps here — a concurrent
+        # /mesh/revoke could commit in the gap and this request would still
+        # admit the just-revoked name. announce_gated() does both under one
+        # lock shared with approve/revoke, so a revoke can never interleave.
         roster_now = self.roster.now()
-        entry = self.roster.ledger.entries.get(name)
-        if entry is not None and not self.roster.is_approved(name, now=roster_now):
+        from lobes.gateway._mesh_roster import MeshApprovalExpired, MeshFlapping
+
+        try:
+            self.roster.announce_gated(name, origin, None, now=roster_now)
+        except MeshApprovalExpired:
             return (
                 403,
                 [
@@ -380,18 +392,6 @@ class MeshRoutes:
                     }
                 ).encode(),
             )
-
-        # Finding 5: pass None for capacity (roles data is in the wire format, not capacity param).
-        # Also finding 5: handle MeshNameConflict → 409.
-        # Item A (t9): Roster.announce() can now raise MeshFlapping for a
-        # name churning through more than _FLAPPING_THRESHOLD new
-        # registrations inside one hold-out window — held out with reason
-        # "mesh_flapping" (429, retryable) rather than propagating as an
-        # unhandled 500.
-        from lobes.gateway._mesh_roster import MeshFlapping
-
-        try:
-            self.roster.announce(name, origin, None, now=roster_now)
         except MeshFlapping as exc:
             return (
                 429,
@@ -537,11 +537,31 @@ class MeshRoutes:
                     "unverified_reason": unverified_reason,
                 }
 
+        # Finding 9 (review #252): include the ledger's own entries in the
+        # authenticated roster exchange. Without this, a revocation made on
+        # one node was purely local — /mesh/roster only ever serialized
+        # membership records, so a peer that already accepted and verified
+        # the member never learned it was revoked, and kept forwarding to it
+        # forever. `_fetch_seed_roster` merges these into its own Ledger via
+        # `Ledger.merge()` (updated_at wins), matching the announce/approve/
+        # revoke gossip contract.
+        with self.roster.ledger._lock:  # noqa: SLF001 — snapshot for serialization
+            ledger_entries = {
+                n: {
+                    "approved_by": e.approved_by,
+                    "expiry": e.expiry,
+                    "updated_at": e.updated_at,
+                }
+                for n, e in self.roster.ledger.entries.items()
+            }
+
         # Finding 3: return per-member objects with name AND origin.
         return (
             200,
             [("Content-Type", "application/json")],
-            json.dumps({"members": list(member_records.values())}).encode(),
+            json.dumps(
+                {"members": list(member_records.values()), "ledger": ledger_entries}
+            ).encode(),
         )
 
     def approve(self, handler: object) -> tuple[int, list[tuple[str, str]], bytes]:
@@ -595,17 +615,26 @@ class MeshRoutes:
                 json.dumps({"error": "name is required"}).encode(),
             )
 
+        import math
+
         try:
             expiry_f = float(expiry)
         except (TypeError, ValueError):
+            expiry_f = 3600.0
+        # Finding 16 (review #252): reject nan/inf the same way the CLI's
+        # _parse_duration_seconds now does — a duration presented as finite
+        # must not silently become an immediately-expired (nan) or
+        # effectively-permanent (inf) approval.
+        if not math.isfinite(expiry_f) or expiry_f <= 0:
             expiry_f = 3600.0
 
         roster_now = self.roster.now()
         # Finding 6: convert duration to absolute expiry.
         expiry_abs = roster_now + expiry_f
-        self.roster.approve(str(name), approved_by, expiry_abs, now=roster_now)
-        # Finding 6: persist the ledger.
-        self.roster.save()
+        # Finding 3 (review #252): approve + persist as one transaction under
+        # the ledger's own lock, so a concurrent approve/revoke/save can
+        # never interleave with this mutation or observe a half-written file.
+        self.roster.approve_and_save(str(name), approved_by, expiry_abs, now=roster_now)
         # Mark verification as dirty.
         self._verify_event.set()
         return (
@@ -665,9 +694,9 @@ class MeshRoutes:
             )
 
         roster_now = self.roster.now()
-        self.roster.revoke(str(name), now=roster_now, approved_by=approved_by)
-        # Finding 6: persist the ledger.
-        self.roster.save()
+        # Finding 3 (review #252): revoke + persist as one transaction under
+        # the ledger's own lock — see the matching approve_and_save note above.
+        self.roster.revoke_and_save(str(name), now=roster_now, approved_by=approved_by)
         # Remove the revoked member's announcement and rebuild the snapshot
         # so revoked members get zero forwards immediately.
         with self._lock:
@@ -855,8 +884,13 @@ def _build_announcement(
         # Convert backend name → role name (mesh speaks roles: cortex, senses, …)
         role_name = BACKEND_ROLE.get(backend_name, backend_name)
 
-        # Check readiness: only include ready+hosted roles.
-        if ready_roles and ready_roles.get(role_name) is not True:
+        # Check readiness: only include ready+hosted roles. Finding 6 (review
+        # #252): ReadinessCache.current() is keyed by BACKEND name ("primary",
+        # "multimodal", …) — see ReadinessCache.from_backends — never by role
+        # name. Looking this up as `role_name` ("cortex", "senses") missed
+        # every entry once `ready_roles` was non-empty, so every ready lane
+        # was silently dropped from the announcement.
+        if ready_roles and ready_roles.get(backend_name) is not True:
             continue
 
         # Get live fingerprint from replica cache if available. `replica_caches`
@@ -1086,6 +1120,7 @@ def _heartbeat_loop(
 
     while not stop_event.is_set():
         # Compute the next deadline.
+        woken_by_reannounce = False
         if deadline == 0.0:
             deadline = time.monotonic() + interval
         else:
@@ -1096,7 +1131,13 @@ def _heartbeat_loop(
                 pass
             else:
                 wait_dur = min(remaining, 1.0)
-                reannounce_event.wait(timeout=wait_dur)
+                # Finding 17 (review #252): capture wait()'s own return value
+                # BEFORE clearing the event. The old code cleared first, so
+                # `reannounce_event.is_set()` below was always False and an
+                # immediate re-announce (POST /mesh/reannounce, `lobes
+                # switch`/`up`) never ran a pass until the ordinary deadline —
+                # exactly the bug the event exists to avoid.
+                woken_by_reannounce = reannounce_event.wait(timeout=wait_dur)
 
         reannounce_event.clear()
 
@@ -1105,7 +1146,7 @@ def _heartbeat_loop(
 
         # Check if we should run a pass: deadline elapsed or reannounce fired.
         now = time.monotonic()
-        run_pass = (now >= deadline) or reannounce_event.is_set()
+        run_pass = (now >= deadline) or woken_by_reannounce
 
         if run_pass:
             # Advance to next deadline.
@@ -1122,15 +1163,19 @@ def _heartbeat_loop(
                 except Exception:  # nosec B110 — best-effort: tick never blocks
                     tick_result = TickResult()
 
-                # Drop refresh: prune announcements for any dropped members.
-                if tick_result.dropped > 0 and holder is not None:
+                # Drop refresh: prune announcements for the DROPPED members
+                # only (review #252 finding 2). Iterating the SURVIVORS and
+                # popping their announcements — the old code — did the exact
+                # opposite of what a single expiry should do: it wiped every
+                # still-healthy member's announcement, leaving nothing for
+                # the next verification pass to verify. `tick()` now names
+                # the dropped origins directly.
+                if tick_result.dropped_origins and holder is not None:
                     try:
                         from lobes.gateway._mesh_routing import MeshRoutingView
 
-                        for mname in list(routes.roster.members()):
-                            rec = routes.roster._roster.get(mname)  # noqa: SLF001
-                            if rec is not None:
-                                routes._announcements.pop(rec.origin, None)
+                        for origin in tick_result.dropped_origins:
+                            routes._announcements.pop(origin, None)
                         snap = build_snapshot(routes.roster, announcements=routes._announcements)
                         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
                     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
@@ -1170,7 +1215,14 @@ def _heartbeat_loop(
         # Finding 3: first fetch from seed roster.
         if seeds:
             try:
-                _fetch_seed_roster(seeds, routes.config.key, routes.roster, routes, dial_timeout)
+                # Finding 5 (review #252): named arguments — the old
+                # positional call swapped `timeout` and `routes`, handing a
+                # MeshRoutes instance to http.client as a socket timeout.
+                # The resulting TypeError was swallowed by this very
+                # except-Exception, so seed rosters were never fetched.
+                _fetch_seed_roster(
+                    seeds, routes.config.key, routes.roster, timeout=dial_timeout, routes=routes
+                )
             except Exception:  # nosec B110 — best-effort: seed fetch never blocks
                 pass
 
@@ -1263,6 +1315,56 @@ def _fetch_seed_roster(
                                             )
                                     else:
                                         roster.announce(mname, morigin, None, now=time.monotonic())
+
+                    # Finding 9 (review #252): merge the peer's LEDGER too, not
+                    # just its membership records — the ledger is what a
+                    # revocation lives in. Without this, a revoke made on one
+                    # node never reached a peer that had already accepted and
+                    # verified the member, so that peer kept forwarding to it
+                    # forever. `Ledger.merge()` applies the standard
+                    # updated_at-wins gossip rule.
+                    ledger_data = data.get("ledger", {})
+                    if isinstance(ledger_data, dict) and ledger_data:
+                        from lobes.gateway._mesh_roster import Ledger, _LedgerEntry
+
+                        peer_ledger = Ledger(path=None)
+                        for pname, pinfo in ledger_data.items():
+                            if not isinstance(pinfo, dict):
+                                continue
+                            try:
+                                peer_ledger.entries[pname] = _LedgerEntry(
+                                    approved_by=str(pinfo["approved_by"]),
+                                    expiry=float(pinfo["expiry"]),
+                                    updated_at=float(pinfo["updated_at"]),
+                                )
+                            except (KeyError, TypeError, ValueError):
+                                continue
+                        newly_unapproved: list[str] = []
+                        merge_now = time.monotonic()
+                        roster.merge(peer_ledger)
+                        roster.save()
+                        for pname in peer_ledger.entries:
+                            if not roster.is_approved(pname, now=merge_now):
+                                newly_unapproved.append(pname)
+                        # Rebuild routing so a merged revocation removes the
+                        # member from forwarding immediately, exactly as the
+                        # local /mesh/revoke handler already does.
+                        if routes is not None and newly_unapproved:
+                            with routes._lock:  # noqa: SLF001
+                                for pname in newly_unapproved:
+                                    rec = roster._roster.get(pname)  # noqa: SLF001
+                                    if rec is None:
+                                        continue
+                                    routes._announcements.pop(rec.origin, None)  # noqa: SLF001
+                                if routes._holder is not None:  # noqa: SLF001
+                                    from lobes.gateway._mesh_routing import MeshRoutingView
+
+                                    snap = build_snapshot(
+                                        roster, announcements=routes._announcements  # noqa: SLF001
+                                    )
+                                    routes._holder.replace(  # noqa: SLF001
+                                        MeshRoutingView(snapshot=snap, peer_states={})
+                                    )
                 except (json.JSONDecodeError, TypeError, KeyError):
                     pass
         except Exception:  # nosec B110 — best-effort: seed roster fetch never blocks
@@ -1358,7 +1460,15 @@ def verify_members(
                 return origin, frozenset(), f"HTTP {status}"
 
             payload = json.loads(body)
-            roles_data = payload.get("roles", {})
+            # Finding 8 (review #252): GET /capabilities returns the role
+            # mapping AT THE TOP LEVEL (see server.capabilities_payload —
+            # ``payload = {role: dataclasses.asdict(registry[role]) ...}``,
+            # never nested under a "roles" key). colleague and
+            # capabilities_payload's own consumers already treat the
+            # response this way; reading ``payload.get("roles", {})`` here
+            # found nothing on every real gateway response, so no member was
+            # ever verified.
+            roles_data = payload if isinstance(payload, dict) else {}
 
             # Build the probed_roles dict per the verify_member_roles signature.
             probed_roles: dict[str, dict] = {}
