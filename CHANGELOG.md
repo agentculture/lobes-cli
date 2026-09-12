@@ -16,6 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - The verification probe ignores a peer's proxied capabilities entries (a relay is never a lane); `MemberInfo` gains `probed` and `ready_roles`, `RolePlacement` gains `pending_origins`.
+- Review round: a mesh-provided role's `/capabilities` `context` is the serving peer's advertised window (a pooled role publishes it only when its members agree); a probe result is discarded when the member's announcement changed mid-probe, and the refresh path applies the same rule; heartbeat wake events are consumed losslessly; the live gate treats a still-`role_unverified` role as unreachable after three retries; 16 SonarCloud findings.
 - `deployments/jetson-agx-thor__thor-worker/` re-captured from the live Thor.
 
 ### Fixed

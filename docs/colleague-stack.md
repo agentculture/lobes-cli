@@ -688,7 +688,7 @@ box would forward to it. A dead or misconfigured peer means `ready: false`
 (or the id drops off `/v1/models` entirely) even though `proxied: true` is
 still declared — declaring the intent to proxy is not evidence the peer is
 reachable right now. **Mesh-sourced case — MEASURED 2026-09-12 on a gateway-only member (same
-transcript):** on a
+transcript):** `context` for such a role is, since the review round, the serving peer's own advertised window captured by the same probe (a pooled role publishes it only when every named member agrees); on a
 mesh member, `ready` for a mesh-provided role is the chosen peer's own
 per-role `ready` bit as captured during the mesh's verification probe (the
 same probe that populates `GET /capabilities` `ready`) rather than a

@@ -2251,3 +2251,68 @@ class TestRoutingViewRefreshesOnIngest:
         by = {x.name: x for x in holder.current().snapshot.members}
         assert by["thor"].context_for("associate") == 262144
         assert by["orin"].role_context == ()
+
+
+class TestRefreshDropsResultsForAChangedAnnouncement:
+    """The refresh path's twin of Qodo thread 3: a probed member whose
+    announcement changed since its probe must NOT carry its old verified set
+    onto the new fingerprints — it goes back to pending until re-probed."""
+
+    def test_changed_fingerprint_on_ingest_makes_the_member_pending_again(self) -> None:
+        from lobes.gateway._mesh_routing import MeshRoutingView, SnapshotHolder, build_snapshot
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        holder = SnapshotHolder(routes.roster)
+        routes._holder = holder
+        routes.roster.announce("thor", "http://thor:8000", 1.0)
+        routes._announcements["http://thor:8000"] = _peer_ann(
+            "thor", "http://thor:8000", served="m"
+        )
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                ),
+                peer_states={},
+            )
+        )
+        changed = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann("thor", "http://thor:8000", served="m2")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(changed)
+        m = {x.name: x for x in holder.current().snapshot.members}["thor"]
+        assert m.probed is False
+        assert m.verified_roles == ()
+        assert routes._verify_now_event.is_set()
+
+    def test_unchanged_reannounce_keeps_the_member_verified(self) -> None:
+        from lobes.gateway._mesh_routing import MeshRoutingView, SnapshotHolder, build_snapshot
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        holder = SnapshotHolder(routes.roster)
+        routes._holder = holder
+        routes.roster.announce("thor", "http://thor:8000", 1.0)
+        routes._announcements["http://thor:8000"] = _peer_ann(
+            "thor", "http://thor:8000", served="m"
+        )
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                ),
+                peer_states={},
+            )
+        )
+        same = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann("thor", "http://thor:8000", served="m")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(same)
+        m = {x.name: x for x in holder.current().snapshot.members}["thor"]
+        assert m.probed is True
+        assert m.verified_roles == ("associate",)

@@ -816,11 +816,11 @@ def _role_unverified_body(
         {
             "error": {
                 "message": (
-                    f"The model `{label}` is not served on this machine — its "
-                    f"backend (`{backend_name}`) is hosted by the mesh member at "
-                    f"`{pending_origin}`, which announced the role but has not "
-                    "been verified yet (its first /capabilities probe has not "
-                    "landed). Retry shortly."
+                    f"The model `{label}` is not served on this machine — the "
+                    f"role it resolves to here (`{backend_name}`) is announced by "
+                    f"the mesh member at `{pending_origin}`, which has not been "
+                    "verified yet (its first /capabilities probe has not landed). "
+                    "Retry shortly."
                 ),
                 "type": "role_unverified",
                 "code": "role_unverified",

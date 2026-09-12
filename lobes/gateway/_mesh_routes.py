@@ -540,8 +540,10 @@ class MeshRoutes:
         first probe is still in flight (live 2026-09-12: the verify pass only
         replaced the view when EVERY probe returned, and a paused peer held
         it for the whole probe timeout). Members already probed carry their
-        verified / reason / ready data forward unchanged, so a refresh never
-        demotes a routable lane. No holder (unit-test wiring) is a no-op.
+        verified / reason / ready data forward unchanged — unless their
+        announcement's fingerprints changed since that probe, in which case
+        they return to pending — so a refresh never demotes a lane that is
+        still what it was verified as. No holder (unit-test wiring) is a no-op.
         """
         holder = self._holder
         if holder is None:
@@ -558,8 +560,23 @@ class MeshRoutes:
         ready: dict[str, frozenset[str]] = {}
         contexts: dict[str, dict[str, int]] = {}
         if prev is not None:
+            prev_anns = dict(prev.announcements)
             for m in prev.members:
                 if not m.probed:
+                    continue
+                # A probe result belongs to the announcement it verified. If
+                # the announcement changed since (a new fingerprint arrived
+                # by reply or heartbeat), carrying the old verified set onto
+                # the new lanes would make an unverified fingerprint routable
+                # until the next pass — the refresh-path twin of the guard in
+                # _drop_results_for_changed_announcements. Such a member goes
+                # back to pending; the verify-now pass is already scheduled.
+                before = prev_anns.get(m.origin)
+                now = self._announcements.get(m.origin)
+                if before is not None and now is not None:
+                    if _role_fingerprints(before) != _role_fingerprints(now):
+                        continue
+                elif before is not now:
                     continue
                 # ready_roles carries the "probed" trace even when empty (t1).
                 ready[m.origin] = frozenset(m.ready_roles)
