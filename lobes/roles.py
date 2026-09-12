@@ -1511,21 +1511,65 @@ def _annotate_plain_member(
 ) -> None:
     """Name the ONE mesh member serving *entry*'s plain pool answer, in place.
 
-    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
-    behaviour: a locally-hosted role (``loaded`` or a local fingerprint is
-    known) stays self-served and never gets a ``member`` key; otherwise the
-    first mesh member whose origin is in ``placement.plain_origins`` is
-    named, mirroring the original loop's ``break``.
+    A locally-hosted role (``loaded`` or a local fingerprint is known) stays
+    self-served and is never annotated at all; otherwise the first mesh
+    member whose origin is in ``placement.plain_origins`` is named in
+    ``member``, mirroring the original loop's ``break``.
+
+    **t4 — the mesh is now also the source of the honesty triple.** For a
+    role this box does NOT host but the mesh places, the entry additionally
+    gains:
+
+    * ``proxied: true`` — this box answers the role by forwarding to the
+      mesh, exactly the claim :func:`annotate_peer_referrals` used to make
+      from the (retired) ``<PREFIX>_PEER_PROXY`` env knob.
+    * ``ready`` — OVERWRITTEN with whether the CHOSEN member's last
+      ``/capabilities`` probe reported the role ready
+      (:attr:`~lobes.gateway._mesh_routing.MemberInfo.ready_roles`). The
+      registry's own value is a local-lane clamp (honestly ``False`` for a
+      role this box does not host), which says nothing about the lane that
+      will actually answer. Readiness is NOT verification — a member can be
+      verified for a role whose lane is still warming — so this can be
+      ``False`` on a perfectly placeable role.
+    * ``hosted_by`` — the chosen member's ANNOUNCED origin, iff there is
+      exactly ONE plain origin. With more than one there is no single host
+      to name, so ``hosted_by`` is instead REMOVED (a stale env-sourced one
+      included) and ``members`` — every plain member's name, in
+      ``plain_origins`` order — is emitted in its place. The two keys are
+      mutually exclusive by construction, so ``"members" in entry`` alone
+      tells a pool answer from a single-host one.
+
+    ``feasible`` is never touched: it stays the hardware/deployment fact
+    that this box does not itself host the model, exactly as
+    :func:`annotate_peer_referrals` documents. And because this annotator
+    runs LAST (see :func:`annotate_mesh_naming`'s caller in
+    :mod:`lobes.gateway.server`), a mesh-sourced ``hosted_by`` wins over
+    anything the retired env annotator wrote for the same role.
+
+    With no plain origins — no mesh, or a disagreement that suffixed
+    everybody — nothing here fires and the entry is byte-identical to the
+    pre-t4 payload.
     """
     if not placement.plain_origins or entry.get("member"):
         return
     served_locally = bool(entry.get("loaded")) or local_fp is not None
     if served_locally:
         return
-    for m in getattr(mesh_snapshot, "members", ()):
-        if m.origin in placement.plain_origins:
-            entry["member"] = m.name
-            return
+    by_origin = {m.origin: m for m in getattr(mesh_snapshot, "members", ())}
+    chosen = next(
+        (m for m in getattr(mesh_snapshot, "members", ()) if m.origin in placement.plain_origins),
+        None,
+    )
+    if chosen is None:
+        return
+    entry["member"] = chosen.name
+    entry["proxied"] = True
+    entry["ready"] = placement.role in getattr(chosen, "ready_roles", ())
+    if len(placement.plain_origins) == 1:
+        entry["hosted_by"] = chosen.origin
+        return
+    entry.pop("hosted_by", None)
+    entry["members"] = [by_origin[o].name for o in placement.plain_origins if o in by_origin]
 
 
 def annotate_mesh_naming(
