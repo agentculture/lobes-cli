@@ -1503,6 +1503,38 @@ def _resolve_local_fingerprint(
     return local_fp
 
 
+def _peer_role_context(member: object, role: str) -> int | None:
+    """The context *member*'s ``/capabilities`` probe advertised for *role*.
+
+    Duck-typed on purpose: the snapshot member is whatever the caller passed,
+    and a pre-thread-2 :class:`MemberInfo` (or a test double) without
+    ``context_for`` simply contributes nothing.
+    """
+    reader = getattr(member, "context_for", None)
+    if reader is None:
+        return None
+    value = reader(role)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _apply_peer_context(entry: dict, role: str, members: "list") -> None:
+    """Overwrite ``entry['context']`` with the serving lane's window (thread 2).
+
+    Publishes a number only when EVERY member named in the answer advertised
+    one and they all agree — the pooled case has no single honest window
+    otherwise, and picking the first member's would be the same first-match
+    guess the ``ready`` bit was already criticised for. A disagreement, a
+    missing advert, or an empty member list leaves the entry untouched, so the
+    existing local/env-derived fallback survives unchanged.
+    """
+    if not members:
+        return
+    contexts = [_peer_role_context(m, role) for m in members]
+    if any(c is None for c in contexts) or len(set(contexts)) != 1:
+        return
+    entry["context"] = contexts[0]
+
+
 def _annotate_plain_member(
     entry: dict,
     placement: object,
@@ -1511,21 +1543,80 @@ def _annotate_plain_member(
 ) -> None:
     """Name the ONE mesh member serving *entry*'s plain pool answer, in place.
 
-    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
-    behaviour: a locally-hosted role (``loaded`` or a local fingerprint is
-    known) stays self-served and never gets a ``member`` key; otherwise the
-    first mesh member whose origin is in ``placement.plain_origins`` is
-    named, mirroring the original loop's ``break``.
+    A locally-hosted role (``loaded`` or a local fingerprint is known) stays
+    self-served and is never annotated at all; otherwise the first mesh
+    member whose origin is in ``placement.plain_origins`` is named in
+    ``member``, mirroring the original loop's ``break``.
+
+    **t4 — the mesh is now also the source of the honesty triple.** For a
+    role this box does NOT host but the mesh places, the entry additionally
+    gains:
+
+    * ``proxied: true`` — this box answers the role by forwarding to the
+      mesh, exactly the claim :func:`annotate_peer_referrals` used to make
+      from the (retired) ``<PREFIX>_PEER_PROXY`` env knob.
+    * ``ready`` — OVERWRITTEN with whether the CHOSEN member's last
+      ``/capabilities`` probe reported the role ready
+      (:attr:`~lobes.gateway._mesh_routing.MemberInfo.ready_roles`). The
+      registry's own value is a local-lane clamp (honestly ``False`` for a
+      role this box does not host), which says nothing about the lane that
+      will actually answer. Readiness is NOT verification — a member can be
+      verified for a role whose lane is still warming — so this can be
+      ``False`` on a perfectly placeable role.
+    * ``context`` — OVERWRITTEN with the SERVING window the chosen member's
+      own ``/capabilities`` probe advertised for the role
+      (:attr:`~lobes.gateway._mesh_routing.MemberInfo.role_context`), for the
+      same reason ``ready`` is: the registry's value is this box's local or
+      env-derived number for a lane it does not host, and a peer whose window
+      differs published a stale one to every discovery client (Qodo thread 2).
+      For a POOLED answer the members must AGREE — one window is published
+      only when every named plain member advertised the same integer;
+      otherwise there is no single honest number and the existing value is
+      left untouched, never averaged or picked from the first member. A
+      member whose probe carried no context for the role publishes nothing,
+      so the legacy fallback survives.
+    * ``hosted_by`` — the chosen member's ANNOUNCED origin, iff there is
+      exactly ONE plain origin. With more than one there is no single host
+      to name, so ``hosted_by`` is instead REMOVED (a stale env-sourced one
+      included) and ``members`` — every plain member's name, in
+      ``plain_origins`` order — is emitted in its place. The two keys are
+      mutually exclusive by construction, so ``"members" in entry`` alone
+      tells a pool answer from a single-host one.
+
+    ``feasible`` is never touched: it stays the hardware/deployment fact
+    that this box does not itself host the model, exactly as
+    :func:`annotate_peer_referrals` documents. And because this annotator
+    runs LAST (see :func:`annotate_mesh_naming`'s caller in
+    :mod:`lobes.gateway.server`), a mesh-sourced ``hosted_by`` wins over
+    anything the retired env annotator wrote for the same role.
+
+    With no plain origins — no mesh, or a disagreement that suffixed
+    everybody — nothing here fires and the entry is byte-identical to the
+    pre-t4 payload.
     """
     if not placement.plain_origins or entry.get("member"):
         return
     served_locally = bool(entry.get("loaded")) or local_fp is not None
     if served_locally:
         return
-    for m in getattr(mesh_snapshot, "members", ()):
-        if m.origin in placement.plain_origins:
-            entry["member"] = m.name
-            return
+    by_origin = {m.origin: m for m in getattr(mesh_snapshot, "members", ())}
+    chosen = next(
+        (m for m in getattr(mesh_snapshot, "members", ()) if m.origin in placement.plain_origins),
+        None,
+    )
+    if chosen is None:
+        return
+    entry["member"] = chosen.name
+    entry["proxied"] = True
+    entry["ready"] = placement.role in getattr(chosen, "ready_roles", ())
+    if len(placement.plain_origins) == 1:
+        _apply_peer_context(entry, placement.role, [chosen])
+        entry["hosted_by"] = chosen.origin
+        return
+    entry.pop("hosted_by", None)
+    plain_members = [by_origin[o] for o in placement.plain_origins if o in by_origin]
+    _apply_peer_context(entry, placement.role, plain_members)
+    entry["members"] = [m.name for m in plain_members]
 
 
 def annotate_mesh_naming(

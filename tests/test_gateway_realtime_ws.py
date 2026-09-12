@@ -528,3 +528,40 @@ def test_a_plain_get_to_the_route_is_426_not_404(gateway_with_key) -> None:
         sock.close()
     assert R.status_of(raw) == 426
     assert b"Upgrade: websocket" in raw  # tells the caller what to send instead
+
+
+def test_never_probed_stt_member_still_refuses_404_role_infeasible() -> None:
+    """t3 boundary: the boot-window 503 ``role_unverified`` is a POST-path
+    contract only. ``GET /v1/realtime`` is never proxied mesh-wide (#129's
+    forwarder is POST-only), so a declared-off ``stt`` lane whose only mesh
+    candidate has never been probed keeps answering the honest referral 404
+    — never a "retry, it may come up" 503."""
+    from lobes.gateway._mesh_routing import MemberInfo, RoutingSnapshot
+
+    snapshot = RoutingSnapshot(
+        members=(
+            MemberInfo(
+                name="thor",
+                origin="http://thor:8000",
+                announced_roles=("stt",),
+                verified_roles=(),  # never probed → nothing verified yet
+                capacity=4.0,
+                probed=False,
+            ),
+        ),
+        announcements=(),
+    )
+    assert S._first_stt_origin(snapshot) == "http://thor:8000"
+
+    d = R.plan_realtime_upgrade(
+        _table(infeasible=frozenset({"stt"})),
+        _cfg(),
+        "/v1/realtime",
+        _WS_HEADERS,
+        mesh_stt_origin=S._first_stt_origin(snapshot),
+    )
+    assert isinstance(d, R.RealtimeRefusal)
+    assert d.kind == "role_infeasible"
+    assert d.status == 404
+    assert d.role == "stt"
+    assert d.peer_origin == "http://thor:8000"

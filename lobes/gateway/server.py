@@ -91,6 +91,7 @@ from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._mesh_routing import (
     MESH_MEMBER_HEADER,
     MeshRoutingView,
+    RolePlacement,
     RoutingSnapshot,
     SnapshotHolder,
     as_routing_snapshot,
@@ -687,7 +688,7 @@ def _error_body(
     message: str, attempts: list[str], *, error_type: str = "upstream_unavailable"
 ) -> bytes:
     """OpenAI-shaped gateway error body. ``error_type`` names the failure class a
-    client must react to differently — the four are deliberately distinct:
+    client must react to differently — the five are deliberately distinct:
 
     * ``upstream_unavailable`` — the degenerate **502**: ``order_backends``
       returned no owner (a malformed routing table). A config/deploy bug, not
@@ -696,6 +697,11 @@ def _error_body(
       refused / timed out / 5xx'd (#14/#91). Retryable (carries ``Retry-After``).
     * ``server_busy``          — the **429** pressure shed (#85), built separately
       by :func:`_busy_body`.
+    * ``role_unverified``      — the boot-window **503**, built separately by
+      :func:`_role_unverified_body`: the role's only mesh candidate announced
+      it but has not been probed yet, so the honest answer is "not yet"
+      (retryable, carries ``Retry-After``) rather than the terminal 404
+      ``role_infeasible`` "never".
     * a relayed upstream ``404`` "model does not exist" — the owner's own verdict,
       never generated here.
     """
@@ -785,6 +791,86 @@ def _role_infeasible_body(
             f"address one directly: {', '.join(suffixed_names)}."
         )
     return json.dumps({"error": error}).encode("utf-8")
+
+
+def _role_unverified_body(
+    requested: str | None,
+    backend_name: str,
+    pending_origin: str,
+) -> bytes:
+    """The boot-window **503** body — a "not yet", never a "never".
+
+    Cloned deliberately from :func:`_role_infeasible_body` (same OpenAI error
+    shape, same ``hosted_by`` referral key) with ONE difference that is the
+    whole point: the ``type``/``code`` is ``role_unverified`` and the status
+    is a retryable 503 rather than a terminal 404. The mesh member at
+    ``pending_origin`` PUBLICLY ANNOUNCED this role but its first
+    ``/capabilities`` probe has not landed yet — ``verified_roles == ()``
+    alone conflated that boot window with "probed and verified nothing", and
+    a caller that arrived during it was told the role would never be served
+    here. A member that WAS probed and verified nothing is a hard negative
+    and still gets the 404.
+    """
+    label = requested or "(unspecified)"
+    return json.dumps(
+        {
+            "error": {
+                "message": (
+                    f"The model `{label}` is not served on this machine — the "
+                    f"role it resolves to here (`{backend_name}`) is announced by "
+                    f"the mesh member at `{pending_origin}`, which has not been "
+                    "verified yet (its first /capabilities probe has not landed). "
+                    "Retry shortly."
+                ),
+                "type": "role_unverified",
+                "code": "role_unverified",
+                "hosted_by": pending_origin,
+            }
+        }
+    ).encode("utf-8")
+
+
+def _role_unverified_response(
+    mesh_snapshot: "RoutingSnapshot | None",
+    role: str,
+    placement: "RolePlacement",
+    requested: str | None,
+    backend_name: str,
+) -> GatewayResponse | None:
+    """The 503 ``role_unverified`` for a role whose only candidate is pending,
+    or ``None`` when this is not the boot window.
+
+    Extracted as ONE helper (rather than inlined at each of the three
+    fall-through sites in :func:`handle_post`) so those already-branchy
+    functions gain no cognitive complexity (Sonar S3776) and the three sites
+    cannot drift apart on status, body or headers.
+
+    Self-guarding, so a caller can invoke it unconditionally: it returns
+    ``None`` whenever the role has a routable plain origin (forward there
+    instead) or nothing pending (fall through to the terminal 404).
+    """
+    if placement.plain_origins or not placement.pending_origins:
+        return None
+    origin = placement.pending_origins[0]
+    member_name = origin
+    if mesh_snapshot is not None:
+        for m in mesh_snapshot.members:
+            if m.origin == origin:
+                member_name = m.name
+                break
+    markers: list[tuple[str, str]] = []
+    if mesh_snapshot is not None:
+        markers = mesh_markers(mesh_snapshot, role, chosen_origin=origin, unverified=True)
+    return GatewayResponse(
+        status=503,
+        headers=[
+            ("Content-Type", _CONTENT_TYPE_JSON),
+            ("Retry-After", str(BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)),
+        ]
+        + markers
+        + [(MESH_MEMBER_HEADER, member_name)],
+        body=_role_unverified_body(requested, backend_name, origin),
+    )
 
 
 def _busy_body(requested_tier: str) -> bytes:
@@ -3233,6 +3319,15 @@ def handle_post(
                     ),
                 )
                 return resp
+            # Boot window (t3): no ROUTABLE mesh member, but a member that
+            # announced this role has not been probed yet — answer "not yet"
+            # (503 role_unverified, naming it) instead of falling through to
+            # the terminal "never" 404 below.
+            pending = _role_unverified_response(
+                mesh_snapshot, role, placement, requested, owned_backend
+            )
+            if pending is not None:
+                return pending
 
     early, served, tier_headers, local_busy = _resolve_served_or_early(
         table,
@@ -3334,6 +3429,12 @@ def handle_post(
                     ),
                 )
                 return resp
+            # Boot window (t3): same "not yet" answer as the alias path above,
+            # for a request that named the raw checkpoint id this member
+            # announced.
+            pending = _role_unverified_response(mesh_snapshot, role, placement, requested, served)
+            if pending is not None:
+                return pending
             # No verified mesh member — this box lacks the role and no peer
             # can serve it either.  Let the normal flow produce the 404.
         else:

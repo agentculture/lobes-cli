@@ -18,6 +18,7 @@ from lobes.gateway._mesh_routing import (
     MemberInfo,
     SnapshotHolder,
     build_snapshot,
+    compute_role_placement,
     member_exists,
     mesh_markers,
     origins_for_role,
@@ -322,6 +323,15 @@ class TestVerifiedPool:
         origins = origins_for_role(snap, "cortex")
         assert origins == ("http://alpha.local:8001",)
 
+        # New meaning (boot window, t1): beta's probe DID land — it simply
+        # verified a different role — so beta is `probed` and is NOT excused
+        # as pending.  "Unverified" and "not yet probed" are now distinct.
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        beta = next(m for m in snap.members if m.origin == "http://beta.local:8001")
+        assert beta.probed is True
+        assert compute_role_placement(snap, "cortex").pending_origins == ()
+
     def test_unverified_member_has_empty_verified_roles(self):
         """An unverified member's MemberInfo carries empty verified_roles."""
         roster = _FakeRoster([("beta", "http://beta.local:8001", 1.0)])
@@ -338,6 +348,9 @@ class TestVerifiedPool:
             if m.origin == "http://beta.local:8001":
                 assert m.verified_roles == ()
                 assert m.announced_roles == ("cortex",)
+                # New meaning (t1): the probe landed, so this is a hard
+                # "unverified", not the boot window's "not yet probed".
+                assert m.probed is True
                 break
         else:
             pytest.fail("beta not found in snapshot members")
@@ -901,3 +914,293 @@ def test_verification_is_per_role_not_all_or_nothing():
         verified_roles={"http://orin.local:8000": frozenset(["cortex"])},
     )
     assert next(m for m in snap2.members).verified_roles == ()
+
+
+# ---------------------------------------------------------------------------
+# Boot window: the never-probed sentinel, per-role readiness, and pending
+# placement (mesh-boot-window-and-capabilities-advert, t1 — covers c4, h4).
+#
+# Before this, "not verified" conflated two different states: a member whose
+# probe RAN and verified nothing, and a member whose first probe has not
+# landed yet (the boot window).  ``MemberInfo.probed`` separates them, and
+# ``RolePlacement.pending_origins`` names the announcers still inside that
+# window so a caller can be told "not yet" instead of "never".
+# ---------------------------------------------------------------------------
+
+
+ORIGIN_A = "http://alpha.local:8001"
+ORIGIN_B = "http://beta.local:8001"
+
+
+class TestNeverProbedSentinel:
+    def test_member_info_defaults_are_back_compatible(self):
+        """The two new fields default so every pre-existing construction of a
+        MemberInfo (keyword, without them) stays byte-identical in meaning."""
+        m = MemberInfo(
+            name="alpha",
+            origin=ORIGIN_A,
+            announced_roles=("cortex",),
+            verified_roles=(),
+            capacity=1.0,
+        )
+        assert m.probed is False
+        assert m.ready_roles == ()
+        assert m.unverified_reason is None
+
+    def test_never_probed_member_reads_probed_false_and_no_reason(self):
+        """No probe data at all → probed False, and the model level carries NO
+        fabricated reason (the ``not_yet_probed`` string is a /mesh/roster
+        presentation concern, not a MemberInfo value)."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)})
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        assert member.probed is False
+        assert member.unverified_reason is None
+        assert member.verified_roles == ()
+        assert member.ready_roles == ()
+
+    def test_probed_true_for_every_origin_in_the_verified_map(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0), ("beta", ORIGIN_B, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={
+                ORIGIN_A: _ann("alpha", ORIGIN_A),
+                ORIGIN_B: _ann("beta", ORIGIN_B),
+            },
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+        )
+        by_origin = {m.origin: m for m in snap.members}
+        assert by_origin[ORIGIN_A].probed is True
+        assert by_origin[ORIGIN_B].probed is False
+
+    def test_probed_true_for_every_origin_in_the_reason_map(self):
+        """A probe that RAN and verified nothing still counts as probed — that
+        is exactly the member the boot window must stop excusing."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            unverified_reasons={ORIGIN_A: "HTTP 503"},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        assert member.probed is True
+        assert member.unverified_reason == "HTTP 503"
+        assert member.verified_roles == ()
+
+
+class TestReadyRoles:
+    def test_ready_roles_threaded_from_the_probe_map(self):
+        """``ready_roles`` are the roles whose probed /capabilities entry read
+        ``ready: true`` — a superset of verified_roles in general (readiness
+        does not imply a matching fingerprint)."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        roles = {
+            "cortex": _role("cortex"),
+            "hand": _role("hand", fingerprint=_fp(served_id="LiquidAI/LFM2.5-1.2B-Instruct")),
+        }
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A, roles)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+            ready_roles={ORIGIN_A: frozenset(["cortex", "hand"])},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        assert member.verified_roles == ("cortex",)
+        assert member.ready_roles == ("cortex", "hand")
+
+    def test_ready_roles_absent_means_empty_and_probed_still_set(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        assert member.ready_roles == ()
+        assert member.probed is True
+
+    def test_ready_roles_alone_counts_as_probed(self):
+        """A clean probe that found the lane not-ready reports readiness data
+        but neither a verified role nor a reason; it is still probed."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            ready_roles={ORIGIN_A: frozenset()},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        assert member.probed is True
+
+
+class TestPendingPlacement:
+    def test_role_placement_pending_origins_defaults_empty(self):
+        from lobes.gateway._mesh_routing import RolePlacement
+
+        placement = RolePlacement(role="cortex", plain_origins=(), suffixed=())
+        assert placement.pending_origins == ()
+
+    def test_never_probed_announcer_is_pending_not_plain(self):
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)})
+        placement = compute_role_placement(snap, "cortex")
+        assert placement.pending_origins == (ORIGIN_A,)
+        assert placement.plain_origins == ()
+        assert placement.suffixed == ()
+
+    def test_probed_but_unverified_announcer_is_not_pending(self):
+        """The boot window excuses only a member whose probe has not landed.
+        One that was probed and verified nothing is a hard negative."""
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            unverified_reasons={ORIGIN_A: "HTTP 503"},
+        )
+        placement = compute_role_placement(snap, "cortex")
+        assert placement.pending_origins == ()
+        assert placement.plain_origins == ()
+
+    def test_verified_member_placement_is_unchanged_and_not_pending(self):
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+        )
+        placement = compute_role_placement(snap, "cortex")
+        assert placement.plain_origins == (ORIGIN_A,)
+        assert placement.suffixed == ()
+        assert placement.pending_origins == ()
+
+    def test_pending_and_verified_coexist(self):
+        """One verified member serves plain while a second, still-unprobed
+        announcer of the same role is listed pending — the plain pool is NOT
+        widened by a pending origin."""
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0), ("beta", ORIGIN_B, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={
+                ORIGIN_A: _ann("alpha", ORIGIN_A),
+                ORIGIN_B: _ann("beta", ORIGIN_B),
+            },
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+        )
+        placement = compute_role_placement(snap, "cortex")
+        assert placement.plain_origins == (ORIGIN_A,)
+        assert placement.pending_origins == (ORIGIN_B,)
+
+    def test_pending_only_for_the_announced_role(self):
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A, {"cortex": _role("cortex")})},
+        )
+        assert compute_role_placement(snap, "cortex").pending_origins == (ORIGIN_A,)
+        assert compute_role_placement(snap, "senses").pending_origins == ()
+
+    def test_pending_origins_are_ordered_by_member_name(self):
+        from lobes.gateway._mesh_routing import compute_role_placement
+
+        roster = _FakeRoster([("zeta", ORIGIN_B, 1.0), ("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={
+                ORIGIN_A: _ann("alpha", ORIGIN_A),
+                ORIGIN_B: _ann("zeta", ORIGIN_B),
+            },
+        )
+        placement = compute_role_placement(snap, "cortex")
+        assert placement.pending_origins == (ORIGIN_A, ORIGIN_B)
+
+
+class TestDiscoveredRoles:
+    """d1: a seed roster's per-member ``roles`` list stands in for the
+    announcement a recreated box has not received yet, so the pending (503)
+    path can name the member; a real announcement always wins."""
+
+    def _roster(self):
+        from lobes.gateway._mesh_roster import Roster
+
+        r = Roster()
+        r.discover("thor", "http://thor:8000", None, now=0.0)
+        return r
+
+    def test_discovered_roles_become_announced_roles_when_no_announcement(self) -> None:
+        snap = build_snapshot(
+            self._roster(), discovered_roles={"http://thor:8000": ("worker", "reranker")}
+        )
+        m = snap.members[0]
+        assert m.announced_roles == ("reranker", "worker")
+        assert m.verified_roles == ()
+        assert m.probed is False
+
+    def test_discovered_member_is_pending_for_its_roles(self) -> None:
+        snap = build_snapshot(self._roster(), discovered_roles={"http://thor:8000": ("worker",)})
+        placement = compute_role_placement(snap, "worker")
+        assert placement.pending_origins == ("http://thor:8000",)
+        assert placement.plain_origins == ()
+        assert compute_role_placement(snap, "cortex").pending_origins == ()
+
+    def test_a_real_announcement_wins_over_discovered_roles(self) -> None:
+        ann = _ann("thor", "http://thor:8000", roles={"cortex": _role("m")})
+        snap = build_snapshot(
+            self._roster(),
+            announcements={"http://thor:8000": ann},
+            discovered_roles={"http://thor:8000": ("worker",)},
+        )
+        assert snap.members[0].announced_roles == ("cortex",)
+
+    def test_absent_discovered_roles_is_byte_identical(self) -> None:
+        a = build_snapshot(self._roster())
+        b = build_snapshot(self._roster(), discovered_roles=None)
+        assert a.members == b.members
+
+
+class TestRoleContext:
+    """Qodo thread 2: the peer-advertised serving window rides the snapshot."""
+
+    def test_role_context_is_threaded_from_the_probe_map(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+            role_contexts={ORIGIN_A: {"cortex": 262144, "hand": 32768}},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        # Sorted by role name, never by payload iteration order.
+        assert member.role_context == (("cortex", 262144), ("hand", 32768))
+        assert member.context_for("cortex") == 262144
+        assert member.context_for("hand") == 32768
+        assert member.context_for("muse") is None
+
+    def test_role_context_defaults_to_empty_and_is_byte_identical(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        a = build_snapshot(roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)})
+        b = build_snapshot(
+            roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)}, role_contexts=None
+        )
+        assert a.members == b.members
+        assert a.members[0].role_context == ()
+        assert a.members[0].context_for("cortex") is None
+
+    def test_role_context_alone_does_not_mark_a_member_probed(self):
+        """``probed`` stays the verified/reason/ready sentinel — adding a
+        context map must not silently retire a member from the boot window."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            role_contexts={ORIGIN_A: {"cortex": 262144}},
+        )
+        assert snap.members[0].probed is False

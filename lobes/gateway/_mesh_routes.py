@@ -56,11 +56,12 @@ from lobes.gateway._mesh_wire import (
     Fingerprint,
     MeshSchemaIncompatible,
     RoleInfo,
+    decode,
 )
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_roster import Roster
-    from lobes.gateway._mesh_routing import SnapshotHolder
+    from lobes.gateway._mesh_routing import RoutingSnapshot, SnapshotHolder
 
 
 # --- internal data ----------------------------------------------------------
@@ -79,11 +80,19 @@ class _PendingJoin:
 # Per-dial timeout constant – a named value, not a derived formula.
 _DIAL_TIMEOUT_S: float = 10.0
 
+# t2: how long the heartbeat's wait blocks before re-checking the second wake
+# event (`_verify_now_event`).  `Event.wait` takes one object, so the wait is
+# sliced; this is the resulting worst-case wake latency for a verify-now
+# request, and the upper bound on how long a newly announced member stays
+# inside its boot window before the first probe reaches it.
+_WAKE_SLICE_S: float = 0.05
+
 # S1192: literals repeated across route handlers, named once.
 _JSON: str = "application/json"
 _NAME_REQUIRED_MSG: str = "name is required"
 _INVALID_KEY_MSG: str = "Invalid API key."
 _ANNOUNCE_PATH: str = "/mesh/announce"
+_CAPABILITIES_PATH: str = "/capabilities"
 
 
 # --- shared route-handler helpers (S3776: extracted from the handlers below) -
@@ -201,6 +210,11 @@ class MeshRoutes:
         self.roster = roster
         self._announcement: Announcement | None = None
         self._announcement_bytes: bytes | None = None
+        # d1: roles a SEED ROSTER listed for a member we hold no announcement
+        # for yet (origin -> roles). Provisional: the pending/503 path may name
+        # the member from it; nothing is ever routed or verified from it, and a
+        # real announcement always wins in build_snapshot.
+        self._discovered_roles: dict[str, tuple[str, ...]] = {}
         self._join_log = _join_log
         self._verify_log = _verify_log
         self._stop = threading.Event()
@@ -210,6 +224,20 @@ class MeshRoutes:
         self._pending: list[_PendingJoin] = []
         self._announcements: dict[str, Announcement] = {}
         self._verify_event = threading.Event()
+        # t2: the boot window closes on its own.  `_verify_event` is the
+        # ordinary "the snapshot is dirty, rebuild it on the next tick" flag;
+        # `_verify_now_event` is the stronger "there is a member nobody has
+        # probed yet (or one whose fingerprint just changed) — wake the loop
+        # NOW" signal.  It is set only by `announce()` (gated: unprobed or a
+        # changed fingerprint, so a steady heartbeat storm never re-probes)
+        # and by seed discovery.  A pass still only ever RUNS on the
+        # heartbeat thread: a request handler sets the event, never probes.
+        self._verify_now_event = threading.Event()
+        # Single flight: one verification pass at a time, always on the loop
+        # thread.  Held non-blocking, so a would-be second pass is skipped
+        # rather than queued behind the first (a queued pass would just
+        # re-probe the same members with staler data).
+        self._verify_pass_lock = threading.Lock()
         self._holder: SnapshotHolder | None = None
         # Rebuild hook for POST /mesh/reannounce (t8): a callable that returns
         # a fresh Announcement reflecting this box's CURRENT state (fingerprint
@@ -445,30 +473,170 @@ class MeshRoutes:
         if error is not None:
             return error
         name = public.name
-        origin = public.origin
 
         if not name:
             return _name_required_response()
 
-        roster_now = self.roster.now()
-        error = self._admit_announcement(name, origin, roster_now)
+        error = self._ingest_public_announcement(public)
+        if error is not None:
+            return error
+
+        reply: dict = {"status": "announced", "name": name, "schema_version": SCHEMA_MAJOR}
+        # d1: answer with OUR OWN public announcement. A box that has just been
+        # recreated holds no peer announcements at all — the seed rosters it
+        # fetches list members and roles but carry no announcement — so its
+        # first pass had nothing to verify and its mesh-provided roles 404'd
+        # until every peer's next heartbeat (57 s measured live, 2026-09-12).
+        # Carrying the responder's announcement in the reply lets the
+        # announcer learn and verify us on the very pass that reached us.
+        # Additive: a pre-d1 announcer ignores the field.
+        own = self._own_announcement_object()
+        if own is not None:
+            reply["announcement"] = own
+        return (200, [("Content-Type", _JSON)], json.dumps(reply).encode())
+
+    def _ingest_public_announcement(
+        self, public: "Announcement"
+    ) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """Admit *public* into the roster and store it; ``None`` on success.
+
+        Shared by the inbound handler and by :meth:`ingest_reply_announcement`
+        (d1) so a peer's announcement is admitted through exactly one path
+        (self-name refusal, ledger gate, hold-down) whichever way it arrived.
+        """
+        name = public.name
+        origin = public.origin
+        error = self._admit_announcement(name, origin, self.roster.now())
         if error is not None:
             return error
 
         # Store the decoded announcement keyed by origin for snapshot rebuilds.
+        previous = self._announcements.get(origin)
         self._announcements[origin] = public
 
         # Mark verification as dirty so the heartbeat loop rebuilds the
         # snapshot with updated announcement data.
         self._verify_event.set()
 
-        return (
-            200,
-            [("Content-Type", _JSON)],
-            json.dumps(
-                {"status": "announced", "name": name, "schema_version": SCHEMA_MAJOR}
-            ).encode(),
+        # t2: and ask for an IMMEDIATE pass when — and only when — this
+        # announcement carries something a probe has not seen yet.  A member
+        # already probed that re-announces the same fingerprints every
+        # heartbeat changes nothing, so waking the loop for it would turn a
+        # three-member mesh announcing once a second into a probe storm.
+        if self._needs_immediate_verify(origin, previous, public):
+            self._verify_now_event.set()
+        # d2: visible to routing at once — pending until its probe lands.
+        self.refresh_routing_view()
+        return None
+
+    def refresh_routing_view(self) -> None:
+        """Rebuild the routing view from the roster NOW, keeping probe results (d2).
+
+        Cheap and network-free: every member the roster knows appears in the
+        view at once — a member learned from an announce reply, an inbound
+        announce or a seed roster is PENDING (``probed`` False, its announced
+        or discovered roles known) from this instant, so a request for one of
+        its roles answers 503 ``role_unverified`` instead of 404 while the
+        first probe is still in flight (live 2026-09-12: the verify pass only
+        replaced the view when EVERY probe returned, and a paused peer held
+        it for the whole probe timeout). Members already probed carry their
+        verified / reason / ready data forward unchanged — unless their
+        announcement's fingerprints changed since that probe, in which case
+        they return to pending — so a refresh never demotes a lane that is
+        still what it was verified as. No holder (unit-test wiring) is a no-op.
+        """
+        holder = self._holder
+        if holder is None:
+            return
+        from lobes.gateway._mesh_routing import MeshRoutingView
+
+        try:
+            view = holder.current()
+        except Exception:  # nosec B110 — a duck-typed holder never breaks ingest
+            return
+        prev = getattr(view, "snapshot", None)
+        verified, reasons, ready, contexts = _carry_forward_probe_results(prev, self._announcements)
+        snap = build_snapshot(
+            self.roster,
+            announcements=self._announcements,
+            verified_roles=verified,
+            unverified_reasons=reasons,
+            ready_roles=ready,
+            discovered_roles=self._discovered_roles,
+            role_contexts=contexts,
         )
+        peer_states = getattr(view, "peer_states", None) or {}
+        holder.replace(MeshRoutingView(snapshot=snap, peer_states=peer_states))
+
+    def _own_announcement_object(self) -> dict | None:
+        """This box's stored public announcement as a JSON object, or ``None``."""
+        raw = self._announcement_bytes
+        if raw is None:
+            return None
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    def ingest_reply_announcement(self, body: bytes | None) -> bool:
+        """Learn a peer from the ``announcement`` its announce reply carried (d1).
+
+        Returns ``True`` when a well-formed announcement was admitted and
+        stored. Anything else — no body, no field, bad JSON, an incompatible
+        schema, our own name, a lapsed approval — is ``False`` and leaves the
+        roster untouched: the reply is a courtesy, never a requirement.
+        """
+        if not body:
+            return False
+        try:
+            obj = json.loads(body)
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(obj, dict) or not isinstance(obj.get("announcement"), dict):
+            return False
+        try:
+            ann = decode(json.dumps(obj["announcement"]).encode()).public()
+        except Exception:  # nosec B110 — a malformed courtesy field is ignored
+            return False
+        if not ann.name or not ann.origin:
+            return False
+        with self._lock:
+            return self._ingest_public_announcement(ann) is None
+
+    def _member_probed(self, origin: str) -> bool:
+        """Has ANY ``/capabilities`` probe result for *origin* landed yet?
+
+        Read from the current routing snapshot (t1's ``MemberInfo.probed``).
+        No snapshot, no member, no holder — all mean "not yet", which is the
+        safe answer: it asks for one extra pass, never suppresses one.
+        """
+        holder = self._holder
+        if holder is None:
+            return False
+        try:
+            view = holder.current()
+        except Exception:  # nosec B110 — a duck-typed holder never breaks announce
+            return False
+        if view is None or getattr(view, "snapshot", None) is None:
+            return False
+        member = next((m for m in view.snapshot.members if m.origin == origin), None)
+        return bool(member is not None and member.probed)
+
+    @staticmethod
+    def _announcement_fingerprints(ann: "Announcement | None") -> dict:
+        """The per-role fingerprints of *ann* — the part a probe verifies."""
+        if ann is None:
+            return {}
+        return {role: info.fingerprint for role, info in ann.roles.items()}
+
+    def _needs_immediate_verify(
+        self, origin: str, previous: "Announcement | None", current: "Announcement"
+    ) -> bool:
+        """Should this announcement wake the loop for an immediate pass?"""
+        if not self._member_probed(origin):
+            return True
+        return self._announcement_fingerprints(previous) != self._announcement_fingerprints(current)
 
     def _build_member_record(self, mname: str, now: float, snapshot: object | None) -> dict | None:
         """Build one ``/mesh/roster`` member record, or ``None`` when the
@@ -506,6 +674,15 @@ class MeshRoutes:
         flap_count = self.roster._flap_counts.get(mname, 0)  # noqa: SLF001
         flapping = flap_count >= _FLAPPING_THRESHOLD
         unverified_reason = member_info.unverified_reason if member_info is not None else None
+        # t2 (boot window): "probed and verified nothing" and "not probed
+        # yet" both used to read verified:false / unverified_reason:null —
+        # indistinguishable, so an operator watching a box come up could not
+        # tell a broken peer from one still inside its first pass.  `probed`
+        # is the sentinel; while it is False the reason reads the plain
+        # string "not_yet_probed" instead of null.
+        probed = bool(member_info.probed) if member_info is not None else False
+        if not probed:
+            unverified_reason = "not_yet_probed"
         return {
             "name": rec.name,
             "origin": rec.origin,
@@ -515,6 +692,9 @@ class MeshRoutes:
             "verified": verified,
             "flapping": flapping,
             "roles": roles,
+            # t2: True once the FIRST probe result for this member has
+            # landed, whatever it found.
+            "probed": probed,
             # Item C (t9): a short, operator-facing reason the last
             # verification probe found nothing verified, or None on
             # a clean/never-probed member.
@@ -630,7 +810,11 @@ class MeshRoutes:
         # so revoked members get zero forwards immediately.
         with self._lock:
             self._announcements.pop(name, None)
-            snap = build_snapshot(self.roster, announcements=self._announcements)
+            snap = build_snapshot(
+                self.roster,
+                announcements=self._announcements,
+                discovered_roles=self._discovered_roles,
+            )
             if self._holder is not None:
                 from lobes.gateway._mesh_routing import MeshRoutingView
 
@@ -1042,11 +1226,12 @@ def _post_announcement(
     body: bytes,
     timeout: float,
     key: bytes | str | None = None,
-) -> None:
+) -> bytes | None:
     """POST *body* to *url* via http.client with a hard timeout.
 
-    Silently drops on any failure — a down peer is handled by tick-based
-    staleness in the roster.
+    Returns the reply body on a 200 (d1: it may carry the responder's own
+    announcement), ``None`` otherwise. Silently drops on any failure — a down
+    peer is handled by tick-based staleness in the roster.
 
     Parameters
     ----------
@@ -1085,6 +1270,7 @@ def _post_announcement(
         key_text = key.decode("utf-8") if isinstance(key, bytes) else key
         headers["Authorization"] = f"Bearer {key_text}"
 
+    reply: bytes | None = None
     try:
         conn.request(
             "POST",
@@ -1092,7 +1278,10 @@ def _post_announcement(
             body=body,
             headers=headers,
         )
-        conn.getresponse()
+        resp = conn.getresponse()
+        data = resp.read(_MAX_REPLY_BYTES)
+        if resp.status == 200:
+            reply = data
     except Exception:  # nosec B110 — best-effort: silently drop failed peer connections
         pass
     finally:
@@ -1103,37 +1292,67 @@ def _post_announcement(
             conn.close()
         except Exception:  # nosec B110 — silently ignore close errors
             pass
+    return reply
+
+
+# d1: an announce reply is small (status + one public announcement); cap the
+# read so a misbehaving peer cannot make the heartbeat thread buffer freely.
+_MAX_REPLY_BYTES = 256 * 1024
 
 
 def _wait_for_tick(
     deadline: float | None,
     interval: float,
     reannounce_event: threading.Event,
+    verify_now_event: threading.Event | None = None,
 ) -> tuple[float, bool]:
-    """Sleep until *deadline* or a reannounce wake, whichever comes first.
+    """Sleep until *deadline* or a wake event, whichever comes first.
 
     Waits in ≤1s increments so the caller's ``stop_event`` check stays
-    responsive.  Returns ``(deadline, woken_by_reannounce)`` — a ``None``
+    responsive.  Returns ``(deadline, woken_by_event)`` — a ``None``
     input deadline is resolved to ``now + interval`` without waiting (the
     loop's first iteration). Finding 4: paces on the full interval, not
     ``min(interval, 1.0)``.
+
+    t2: there are now TWO wake events — ``reannounce_event`` (re-broadcast
+    this box's own announcement) and ``verify_now_event`` (a member nobody
+    has probed yet, or one whose fingerprint just changed).  ``Event.wait``
+    takes one object, so the wait is sliced: each slice blocks on the
+    reannounce event and re-checks the verify-now event, which bounds the
+    wake latency at ``_WAKE_SLICE_S`` for the verify half while keeping the
+    reannounce half instantaneous.
+
+    Qodo thread 4: the wait **never consumes** either event.  It used to
+    ``clear()`` both unconditionally on the way out, which erased any set
+    that landed after its final ``is_set()`` check — and, whenever the
+    deadline had already elapsed (``budget <= 0``), erased a wake it had
+    never even looked at.  A lost verify-now leaves a freshly discovered
+    member unprobed until the ordinary heartbeat deadline.  Consumption is
+    the LOOP's job now: :func:`_heartbeat_loop` clears both at the start of
+    a pass it actually runs, so a set that lands outside that window
+    survives to drive the next iteration (one extra pass is harmless).
     """
-    woken_by_reannounce = False
+    woken_by_event = False
     if deadline is None:
         deadline = time.monotonic() + interval
     else:
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            wait_dur = min(remaining, 1.0)
+        budget = min(deadline - time.monotonic(), 1.0)
+        while budget > 0 and not woken_by_event:
+            if verify_now_event is not None and verify_now_event.is_set():
+                woken_by_event = True
+                break
             # Finding 17 (review #252): capture wait()'s own return value
             # BEFORE clearing the event. The old code cleared first, so
             # `reannounce_event.is_set()` below was always False and an
             # immediate re-announce (POST /mesh/reannounce, `lobes
             # switch`/`up`) never ran a pass until the ordinary deadline —
             # exactly the bug the event exists to avoid.
-            woken_by_reannounce = reannounce_event.wait(timeout=wait_dur)
-    reannounce_event.clear()
-    return deadline, woken_by_reannounce
+            slice_dur = min(budget, _WAKE_SLICE_S)
+            woken_by_event = reannounce_event.wait(timeout=slice_dur)
+            if verify_now_event is not None and verify_now_event.is_set():
+                woken_by_event = True
+            budget -= slice_dur
+    return deadline, woken_by_event
 
 
 def _prune_dropped_announcements(
@@ -1154,7 +1373,11 @@ def _prune_dropped_announcements(
 
         for origin in tick_result.dropped_origins:
             routes._announcements.pop(origin, None)
-        snap = build_snapshot(routes.roster, announcements=routes._announcements)
+        snap = build_snapshot(
+            routes.roster,
+            announcements=routes._announcements,
+            discovered_roles=routes._discovered_roles,  # noqa: SLF001
+        )
         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
         pass
@@ -1236,8 +1459,14 @@ def _broadcast_announcement(
     stop_event: threading.Event,
     dial_timeout: float,
     key: str | None,
+    routes: "MeshRoutes | None" = None,
 ) -> None:
-    """Finding 9: parallelize announces to every seed + roster member."""
+    """Finding 9: parallelize announces to every seed + roster member.
+
+    d1: every reply is offered to :meth:`MeshRoutes.ingest_reply_announcement`
+    so a peer's own announcement, carried in its reply, lands the moment we
+    reach it — the recreated-box boot window closes on the first pass.
+    """
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=min(8, len(seeds) + len(member_origins) + 1)
     ) as pool:
@@ -1260,9 +1489,63 @@ def _broadcast_announcement(
         # Wait for all dials to complete (each has its own timeout).
         for fut in concurrent.futures.as_completed(futures):
             try:
-                fut.result(timeout=dial_timeout)
-            except Exception:  # nosec B110 — best-effort: drop failed peer connections
-                pass
+                reply = fut.result(timeout=dial_timeout)
+            except Exception:  # nosec B112 — best-effort: drop failed peer connections
+                continue
+            if routes is not None and reply:
+                try:
+                    routes.ingest_reply_announcement(reply)
+                except Exception:  # nosec B110 — a bad reply never breaks the pass
+                    pass
+
+
+def _run_heartbeat_pass(
+    routes: "MeshRoutes",
+    announcement_bytes: bytes,
+    stop_event: threading.Event,
+    seeds: "tuple[str, ...] | list[str]",
+    holder: "SnapshotHolder | None",
+    force_verify: bool,
+) -> None:
+    """Run ONE heartbeat pass: tick, verify if dirty, then broadcast.
+
+    Extracted from :func:`_heartbeat_loop` so each half stays within the
+    project's cognitive-complexity budget; the sequencing is unchanged.
+    *force_verify* is the loop's first iteration (see the comment below).
+    """
+    to_send, verify_dirty = _tick_and_collect(routes, announcement_bytes, holder)
+    # t2: the first iteration always verifies.  It used to `continue`
+    # here, so on a box that started with members already in its roster
+    # (a restored roster, a seeded peer) nothing was probed until a whole
+    # heartbeat interval had passed — a boot window at least one tick
+    # long, for no reason.
+    if force_verify:
+        verify_dirty = True
+
+    # Verification pass OUTSIDE the lock: network I/O never holds it.
+    if verify_dirty:
+        try:
+            _run_verify_pass(routes, holder)
+        except Exception:  # nosec B110 — verification is best-effort
+            pass
+
+    if to_send is None:
+        return
+
+    member_origins = _collect_member_origins(routes)
+    # Find 10: use named per-dial budget, not missed_max * 10.
+    dial_timeout = _DIAL_TIMEOUT_S
+
+    _maybe_fetch_seed_roster(routes, seeds, dial_timeout)
+    _broadcast_announcement(
+        to_send,
+        seeds,
+        member_origins,
+        stop_event,
+        dial_timeout,
+        routes.config.key,
+        routes=routes,
+    )
 
 
 def _heartbeat_loop(
@@ -1272,6 +1555,7 @@ def _heartbeat_loop(
     stop_event: threading.Event,
     reannounce_event: threading.Event,
     holder: "SnapshotHolder | None" = None,
+    verify_now_event: threading.Event | None = None,
 ) -> None:
     """Background thread that announces the local member to seeds + roster.
 
@@ -1279,43 +1563,42 @@ def _heartbeat_loop(
     delays another.  The loop exits when *stop_event* is set.
     """
     seeds = routes.config.seeds
+    if verify_now_event is None:
+        verify_now_event = routes._verify_now_event  # noqa: SLF001
     deadline: float | None = None
+    first_iteration = True
     while not stop_event.is_set():
-        deadline, woken_by_reannounce = _wait_for_tick(deadline, interval, reannounce_event)
+        deadline, woken_by_event = _wait_for_tick(
+            deadline, interval, reannounce_event, verify_now_event
+        )
 
         if stop_event.is_set():
             break
 
-        # Check if we should run a pass: deadline elapsed or reannounce fired.
+        # Check if we should run a pass: the first iteration, the deadline
+        # elapsing, or a wake event (reannounce / verify-now).
         now = time.monotonic()
-        run_pass = (now >= deadline) or woken_by_reannounce
+        run_pass = first_iteration or (now >= deadline) or woken_by_event
 
         if run_pass:
             # Advance to next deadline.
             deadline = now + interval
         else:
+            # Qodo thread 4: no pass, no consumption. A wake that landed
+            # after the wait's last check is still set here and drives the
+            # NEXT iteration instead of being erased.
             continue
 
-        to_send, verify_dirty = _tick_and_collect(routes, announcement_bytes, holder)
+        # Qodo thread 4: consume the wake events HERE, at the start of a pass
+        # that is actually going to run — not inside `_wait_for_tick`, which
+        # cleared them whether or not it had observed them. A set that lands
+        # after this point survives to wake the next iteration; that costs one
+        # extra pass at worst, where the old clear cost a lost wake.
+        reannounce_event.clear()
+        verify_now_event.clear()
 
-        # Verification pass OUTSIDE the lock: network I/O never holds it.
-        if verify_dirty:
-            try:
-                _run_verify_pass(routes, holder)
-            except Exception:  # nosec B110 — verification is best-effort
-                pass
-
-        if to_send is None:
-            continue
-
-        member_origins = _collect_member_origins(routes)
-        # Find 10: use named per-dial budget, not missed_max * 10.
-        dial_timeout = _DIAL_TIMEOUT_S
-
-        _maybe_fetch_seed_roster(routes, seeds, dial_timeout)
-        _broadcast_announcement(
-            to_send, seeds, member_origins, stop_event, dial_timeout, routes.config.key
-        )
+        _run_heartbeat_pass(routes, announcement_bytes, stop_event, seeds, holder, first_iteration)
+        first_iteration = False
 
 
 def _seed_connection(
@@ -1339,28 +1622,62 @@ def _seed_connection(
     return conn, path, {"Content-Type": _JSON}
 
 
+def _record_discovered_roles(routes: "MeshRoutes | None", morigin: str, roles: object) -> None:
+    """Remember the roles a seed listed for *morigin* (d1).
+
+    Provisional, so the pending (503) path can name a member we hold no
+    announcement for yet. Never routed, never verified from; a real
+    announcement wins (see build_snapshot's discovered_roles).
+    """
+    if routes is None or not isinstance(roles, list):
+        return
+    routes._discovered_roles[morigin] = tuple(  # noqa: SLF001
+        sorted(r for r in roles if isinstance(r, str) and r)
+    )
+
+
+def _merge_one_seed_member(roster: "Roster", routes: "MeshRoutes | None", member: object) -> None:
+    """Discovery-merge ONE entry of a seed's ``members`` list into *roster*."""
+    if not isinstance(member, dict):
+        return
+    mname = member.get("name", "")
+    morigin = member.get("origin", "")
+    if routes is not None and mname == routes.config.name:
+        # A peer's roster lists US; never merge ourselves in.
+        return
+    if not mname or not morigin:
+        return
+
+    _record_discovered_roles(routes, morigin, member.get("roles"))
+    # DISCOVERY only: a peer's roster tells us a member exists; it
+    # is not a heartbeat FROM that member. `discover` never
+    # refreshes a known name (a stopped Thor stayed alive 4+ min,
+    # live 2026-09-12) and is refused during the post-drop
+    # hold-down (the pass that dropped it re-learned it from the
+    # Orin and the survivors revived it forever, dev526). Roster
+    # takes its own lock; wrapping it in that same lock deadlocked
+    # the heartbeat live (Orin).
+    newly_discovered = mname not in roster.members()
+    roster.discover(mname, morigin, None, now=time.monotonic())
+    # t2: a member we have never seen before is, by definition,
+    # never-probed — ask the loop for an immediate pass rather than
+    # leaving it inside the boot window until the next tick.  Only
+    # NEW names set the event: a seed roster re-lists every known
+    # member on every fetch, and waking on those would make the
+    # verify-now event fire once per tick per seed forever.
+    if newly_discovered and routes is not None:
+        routes._verify_event.set()  # noqa: SLF001
+        routes._verify_now_event.set()  # noqa: SLF001
+        # d2: in the routing view now, pending on its discovered roles.
+        routes.refresh_routing_view()
+
+
 def _merge_seed_members(roster: "Roster", routes: "MeshRoutes | None", members: object) -> None:
     """Discovery-merge a seed's ``members`` list into *roster* (finding 3)."""
     if not isinstance(members, list):
         return
     for member in members:
-        if not isinstance(member, dict):
-            continue
-        mname = member.get("name", "")
-        morigin = member.get("origin", "")
-        if routes is not None and mname == routes.config.name:
-            # A peer's roster lists US; never merge ourselves in.
-            continue
-        if mname and morigin:
-            # DISCOVERY only: a peer's roster tells us a member exists; it
-            # is not a heartbeat FROM that member. `discover` never
-            # refreshes a known name (a stopped Thor stayed alive 4+ min,
-            # live 2026-09-12) and is refused during the post-drop
-            # hold-down (the pass that dropped it re-learned it from the
-            # Orin and the survivors revived it forever, dev526). Roster
-            # takes its own lock; wrapping it in that same lock deadlocked
-            # the heartbeat live (Orin).
-            roster.discover(mname, morigin, None, now=time.monotonic())
+        _merge_one_seed_member(roster, routes, member)
 
 
 def _rebuild_routing_after_revocations(
@@ -1379,7 +1696,11 @@ def _rebuild_routing_after_revocations(
         if routes._holder is not None:  # noqa: SLF001
             from lobes.gateway._mesh_routing import MeshRoutingView
 
-            snap = build_snapshot(roster, announcements=routes._announcements)  # noqa: SLF001
+            snap = build_snapshot(
+                roster,
+                announcements=routes._announcements,  # noqa: SLF001
+                discovered_roles=routes._discovered_roles,  # noqa: SLF001
+            )
             routes._holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))  # noqa: SLF001
 
 
@@ -1465,10 +1786,28 @@ def _fetch_seed_roster(
     timeout: float,
     routes: "MeshRoutes | None" = None,
 ) -> None:
-    """GET /mesh/roster from every seed and merge entries (finding 3)."""
+    """GET /mesh/roster from every seed and merge entries (finding 3).
+
+    d3: the seeds are dialed IN PARALLEL, one bounded dial each, and every
+    roster is merged the moment it arrives. Sequential fetching let one dead
+    or paused seed hold the first pass — and every other seed's discovery —
+    for its whole dial timeout (live 2026-09-12: a recreated Spark showed no
+    mesh activity for 13 s while its first seed was paused, so the d2
+    pending refresh had nothing to show and every request 404'd).
+    """
     bearer = f"Bearer {key}" if key else None
-    for seed in seeds:
-        _fetch_one_seed_roster(seed, bearer, roster, timeout, routes)
+    if not seeds:
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(seeds))) as pool:
+        futures = [
+            pool.submit(_fetch_one_seed_roster, seed, bearer, roster, timeout, routes)
+            for seed in seeds
+        ]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                fut.result()
+            except Exception:  # nosec B110 — best-effort: a seed fetch never blocks
+                pass
 
 
 def _run_verify_pass(
@@ -1482,10 +1821,21 @@ def _run_verify_pass(
     """
     if holder is None:
         return
+    # Single flight (t2): one pass at a time, and only ever on this thread.
+    # Held non-blocking — a second pass would re-probe the same members with
+    # staler data, so it is skipped, not queued. The verify-now event is
+    # already set by whoever asked for it, so the skipped work is not lost:
+    # the next loop iteration picks it up.
+    if not routes._verify_pass_lock.acquire(blocking=False):  # noqa: SLF001
+        # Re-raise the dirty flag so the skipped work is not lost.
+        routes._verify_event.set()  # noqa: SLF001
+        return
     try:
         verify_members(routes, holder)
     except Exception:  # nosec B110 — verification is best-effort
         pass
+    finally:
+        routes._verify_pass_lock.release()  # noqa: SLF001
 
 
 def _collect_members_to_verify(routes: "MeshRoutes") -> list[tuple[str, str, Announcement]]:
@@ -1507,8 +1857,21 @@ def _collect_members_to_verify(routes: "MeshRoutes") -> list[tuple[str, str, Ann
 
 def _probe_member_capabilities(
     member_data: tuple[str, str, Announcement], key: str | None, probe_timeout: float
-) -> tuple[str, frozenset[str], str | None]:
-    """Probe one member's /capabilities and verify roles."""
+) -> tuple[str, frozenset[str], frozenset[str], str | None, dict[str, int]]:
+    """Probe one member's /capabilities and verify roles.
+
+    Returns ``(origin, verified_roles, ready_roles, reason, role_context)``.
+    ``role_context`` (Qodo thread 2) is the ``{role: context}`` window the
+    peer advertised for its OWN (non-proxied) lanes — ints only, so a missing
+    or non-integer context simply leaves the role out rather than publishing a
+    guess.  It is what makes a proxied ``/capabilities`` entry name the
+    SERVING lane's window instead of this box's local, env-derived one.  ``ready_roles``
+    (t2, feeding t1's ``MemberInfo.ready_roles``) is what the probe read back
+    as ``ready: true``, independent of verification — a lane can be ready and
+    serving a fingerprint that disagrees with what its box announced, and a
+    verified lane can be down.  A probe that never reached the peer reports
+    both sets empty plus a reason.
+    """
     from lobes.gateway._mesh_routing import verify_member_roles
     from lobes.gateway._readiness import _default_peer_opener
 
@@ -1516,12 +1879,12 @@ def _probe_member_capabilities(
     try:
         get_caps = _default_peer_opener
         status, body = get_caps(
-            origin.rstrip("/") + "/capabilities",
+            origin.rstrip("/") + _CAPABILITIES_PATH,
             probe_timeout,
             key,
         )
         if status != 200:
-            return origin, frozenset(), f"HTTP {status}"
+            return origin, frozenset(), frozenset(), f"HTTP {status}", {}
 
         payload = json.loads(body)
         # Finding 8 (review #252): GET /capabilities returns the role
@@ -1536,9 +1899,24 @@ def _probe_member_capabilities(
 
         # Build the probed_roles dict per the verify_member_roles signature.
         probed_roles: dict[str, dict] = {}
+        role_context: dict[str, int] = {}
         for role_name, role_entry in roles_data.items():
             if not isinstance(role_entry, dict):
                 continue
+            # d2: a PROXIED entry is the peer relaying someone else's lane —
+            # never a lane of its own. Its ready bit (true since t4) and its
+            # fingerprint must not make the peer a candidate: live
+            # 2026-09-12 the Spark's proxied worker entry drew a raw-id
+            # request that the Spark then refused 508 (single hop).
+            # The announcement builder already skips proxied entries
+            # (_hosted_role_slice); the probe now agrees.
+            if role_entry.get("proxied"):
+                continue
+            # Qodo thread 2: `True`/`False` are ints in Python; a bool here
+            # would publish a context of 1 or 0.
+            context = role_entry.get("context")
+            if isinstance(context, int) and not isinstance(context, bool):
+                role_context[role_name] = context
             role_fp = role_entry.get("fingerprint")
             probed_roles[role_name] = {
                 "fingerprint": role_fp,
@@ -1547,11 +1925,14 @@ def _probe_member_capabilities(
 
         # Compare announced vs probed fingerprints.
         verified = verify_member_roles(ann, probed_roles)
+        ready = frozenset(
+            role for role, entry in probed_roles.items() if entry.get("ready") is True
+        )
         reason = None if verified else "no announced role verified against /capabilities"
-        return origin, verified, reason
+        return origin, verified, ready, reason, role_context
 
     except Exception as exc:  # nosec B110 — best-effort: probe never blocks
-        return origin, frozenset(), type(exc).__name__
+        return origin, frozenset(), frozenset(), type(exc).__name__, {}
 
 
 def _run_verification_probes(
@@ -1559,17 +1940,35 @@ def _run_verification_probes(
     key: str | None,
     probe_timeout: float,
     verify_log: RejectionLog | None,
-) -> tuple[dict[str, frozenset[str]], dict[str, str | None]]:
+) -> tuple[
+    dict[str, frozenset[str]],
+    dict[str, str | None],
+    dict[str, frozenset[str]],
+    dict[str, dict[str, int]],
+]:
     """Probe every member's /capabilities in parallel and collect results.
 
     Item C (t9): every probe that fails to verify anything carries a short
     reason string instead of vanishing into a bare `except: pass`. `None`
     means "verified cleanly" — never logged, never stored on the member.
+
+    t2: returns a THIRD mapping, per-origin ready roles, and — importantly —
+    gives every origin an entry in it even when the probe found nothing ready.
+    That entry is what tells `build_snapshot` the member was probed at all: a
+    clean probe of a box whose lanes are all still loading verifies nothing
+    and records no reason, so without it the member would read exactly like
+    one nobody has dialled yet.
+
+    Qodo thread 2: and a FOURTH mapping, per-origin ``{role: context}`` as the
+    peer advertised it, so a proxied entry can publish the serving lane's
+    window rather than this box's own.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     verified_by_origin: dict[str, frozenset[str]] = {}
     reason_by_origin: dict[str, str | None] = {}
+    ready_by_origin: dict[str, frozenset[str]] = {}
+    context_by_origin: dict[str, dict[str, int]] = {}
 
     max_workers = min(8, len(members_to_verify))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -1580,18 +1979,158 @@ def _run_verification_probes(
         for fut in as_completed(futures):
             mname, origin, _ann = futures[fut]
             try:
-                origin, verified, reason = fut.result(timeout=probe_timeout)
+                origin, verified, ready, reason, contexts = fut.result(timeout=probe_timeout)
             except Exception as exc:  # nosec B110 — best-effort: drop failed probes
-                verified, reason = frozenset(), type(exc).__name__
+                verified, ready, reason = frozenset(), frozenset(), type(exc).__name__
+                contexts = {}
             if verified:
                 verified_by_origin[origin] = verified
             reason_by_origin[origin] = reason
+            ready_by_origin[origin] = ready
+            if contexts:
+                context_by_origin[origin] = contexts
             if reason is not None and verify_log is not None:
-                line = verify_log.record(origin, "GET", "/capabilities", reason)
+                line = verify_log.record(origin, "GET", _CAPABILITIES_PATH, reason)
                 if line is not None:
                     sys.stderr.write(f"[gateway] mesh verify {mname}: {line}\n")
 
-    return verified_by_origin, reason_by_origin
+    return verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin
+
+
+def _log_pending_members(
+    routes: "MeshRoutes",
+    holder: "SnapshotHolder",
+    members_to_verify: list[tuple[str, str, Announcement]],
+) -> None:
+    """Say once, per member, that this box is about to leave a boot window.
+
+    Item C (t9) gave failed probes a collapsed stderr line; t2 gives the
+    not-yet-probed state the same treatment, through the SAME throttled
+    RejectionLog so a mesh that is slow to verify cannot flood the log. The
+    throttle key is deliberately distinct from the failure key (`#pending`),
+    because a pending line and a failure line for one origin are different
+    facts and must not collapse into each other.
+    """
+    verify_log = routes._verify_log
+    if verify_log is None:
+        return
+    try:
+        view = holder.current()
+    except Exception:  # nosec B110 — a duck-typed holder never breaks a pass
+        return
+    if view is None or getattr(view, "snapshot", None) is None:
+        return
+    probed = {m.origin for m in view.snapshot.members if m.probed}
+    for mname, origin, _ann in members_to_verify:
+        if origin in probed:
+            continue
+        # The RejectionLog is used for its THROTTLE only; its own line reads
+        # "auth: rejected ..." (it was built for 401s) and misled the first
+        # live run, so the wording here is ours.
+        line = verify_log.record(f"{origin}#pending", "GET", _CAPABILITIES_PATH, "not_yet_probed")
+        if line is not None:
+            sys.stderr.write(
+                f"[gateway] mesh pending {mname}: {origin} not yet probed — requests for its "
+                "roles answer 503 role_unverified until the first /capabilities probe lands\n"
+            )
+
+
+def _role_fingerprints(ann: Announcement) -> dict[str, object]:
+    """The ``role -> fingerprint`` map a probe result is only valid against."""
+    return {role: info.fingerprint for role, info in ann.roles.items()}
+
+
+def _probe_result_still_current(
+    origin: str,
+    prev_anns: Mapping[str, "Announcement"],
+    current_anns: Mapping[str, "Announcement"],
+) -> bool:
+    """Does a probe result taken against ``prev_anns[origin]`` still describe
+    ``current_anns[origin]``?  False when the fingerprints changed (the
+    refresh-path twin of :func:`_drop_results_for_changed_announcements`)."""
+    before = prev_anns.get(origin)
+    now = current_anns.get(origin)
+    if before is not None and now is not None:
+        return _role_fingerprints(before) == _role_fingerprints(now)
+    return before is now
+
+
+def _carry_forward_probe_results(
+    prev: "RoutingSnapshot | None",
+    current_anns: Mapping[str, "Announcement"],
+) -> tuple[
+    dict[str, frozenset[str]],
+    dict[str, str],
+    dict[str, frozenset[str]],
+    dict[str, dict[str, int]],
+]:
+    """The per-origin probe maps to hand ``build_snapshot`` on a refresh.
+
+    Every PROBED member of *prev* whose announcement is unchanged carries its
+    verified / reason / ready / context data forward; ``ready`` is recorded
+    even when empty because it is the "probed" trace (t1).  A member whose
+    announcement's fingerprints changed since its probe is left out on
+    purpose — it returns to pending until the verify-now pass the change
+    already scheduled re-probes it.
+    """
+    verified: dict[str, frozenset[str]] = {}
+    reasons: dict[str, str] = {}
+    ready: dict[str, frozenset[str]] = {}
+    contexts: dict[str, dict[str, int]] = {}
+    if prev is None:
+        return verified, reasons, ready, contexts
+    prev_anns = dict(prev.announcements)
+    for m in prev.members:
+        if not m.probed or not _probe_result_still_current(m.origin, prev_anns, current_anns):
+            continue
+        ready[m.origin] = frozenset(m.ready_roles)
+        if m.verified_roles:
+            verified[m.origin] = frozenset(m.verified_roles)
+        if m.unverified_reason is not None:
+            reasons[m.origin] = m.unverified_reason
+        if m.role_context:
+            contexts[m.origin] = dict(m.role_context)
+    return verified, reasons, ready, contexts
+
+
+def _drop_results_for_changed_announcements(
+    routes: "MeshRoutes",
+    members_to_verify: list[tuple[str, str, Announcement]],
+    verified_by_origin: dict[str, frozenset[str]],
+    reason_by_origin: dict[str, str | None],
+    ready_by_origin: dict[str, frozenset[str]],
+    context_by_origin: dict[str, dict[str, int]],
+) -> None:
+    """Discard probe results whose announcement changed mid-pass (Qodo thread 3).
+
+    The pass probes the announcement objects captured by
+    :func:`_collect_members_to_verify`, but publishes against the CURRENT
+    ``routes._announcements``.  An announcement replaced while a probe was in
+    flight would therefore have its replacement fingerprint authorised by a
+    result obtained for the previous one — briefly routable without ever
+    having been verified.
+
+    Dropping all three results for such an origin leaves the member
+    ``probed is False`` — pending (503 ``role_unverified``), never routable —
+    until the next pass.  That pass is already scheduled: a fingerprint change
+    is exactly what ``_needs_immediate_verify`` sets the verify-now event for.
+
+    Comparison is per-role FINGERPRINT, not object identity: a member
+    re-announcing the same lanes every heartbeat stores a fresh object each
+    time, and identity would make it permanently unverifiable.
+    """
+    with routes._lock:  # noqa: SLF001
+        changed = [
+            origin
+            for _mname, origin, ann in members_to_verify
+            if (current := routes._announcements.get(origin)) is None  # noqa: SLF001
+            or _role_fingerprints(current) != _role_fingerprints(ann)
+        ]
+    for origin in changed:
+        verified_by_origin.pop(origin, None)
+        reason_by_origin.pop(origin, None)
+        ready_by_origin.pop(origin, None)
+        context_by_origin.pop(origin, None)
 
 
 def verify_members(
@@ -1619,12 +2158,29 @@ def verify_members(
 
     if not members_to_verify:
         # Rebuild snapshot even without verification (e.g. stale data).
-        snap = build_snapshot(routes.roster, announcements=routes._announcements)
+        snap = build_snapshot(
+            routes.roster,
+            announcements=routes._announcements,
+            discovered_roles=routes._discovered_roles,  # noqa: SLF001
+        )
         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
         return
 
-    verified_by_origin, reason_by_origin = _run_verification_probes(
-        members_to_verify, key, probe_timeout, routes._verify_log
+    _log_pending_members(routes, holder, members_to_verify)
+
+    verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin = (
+        _run_verification_probes(members_to_verify, key, probe_timeout, routes._verify_log)
+    )
+
+    # Qodo thread 3: a result obtained for an announcement that has since been
+    # replaced never authorises the replacement.
+    _drop_results_for_changed_announcements(
+        routes,
+        members_to_verify,
+        verified_by_origin,
+        reason_by_origin,
+        ready_by_origin,
+        context_by_origin,
     )
 
     # Build the verified_roles mapping for build_snapshot.
@@ -1633,6 +2189,9 @@ def verify_members(
         announcements=routes._announcements,
         verified_roles=verified_by_origin,
         unverified_reasons={o: r for o, r in reason_by_origin.items() if r is not None},
+        ready_roles=ready_by_origin,
+        discovered_roles=routes._discovered_roles,  # noqa: SLF001
+        role_contexts=context_by_origin,
     )
     holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 
@@ -1662,6 +2221,7 @@ def start_mesh(
             routes._stop,  # Use the __init__ stop event.
             routes._reannounce_event,
             routes._holder,
+            routes._verify_now_event,
         ),
         name="lobes-mesh-heartbeat",
         daemon=True,

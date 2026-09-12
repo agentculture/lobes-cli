@@ -408,3 +408,633 @@ def test_a_dropped_member_is_not_revived_by_a_peer_roster_that_still_lists_it() 
         assert "dead" in roster.members()
     finally:
         srv.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# t2 — the boot window closes on its own: a pass on the loop's FIRST
+# iteration, an event-woken (never handler-run) verify pass on announce and
+# on seed discovery, and single-flight verification.
+# ---------------------------------------------------------------------------
+
+
+def _peer(probe_log: list, *, delay: float = 0.0, label: str = "peer") -> tuple[HTTPServer, str]:
+    """A fake peer gateway that records every ``/capabilities`` probe.
+
+    Each peer gets its OWN single-threaded server, so a slow peer stalls only
+    its own probe — exactly the live shape the verification pool assumes.
+    """
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *_a):  # noqa: D401
+            pass
+
+        def _send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.startswith("/capabilities"):
+                probe_log.append((label, time.monotonic()))
+                if delay:
+                    time.sleep(delay)
+                self._send(b"{}")
+            else:
+                self._send(b'{"members": [], "ledger": {}}')
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            self._send(b'{"status": "ok"}')
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+def _env(**over) -> dict:
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "unsloth/Qwen3.8-27B-NVFP4",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+    }
+    env.update({k: str(v) for k, v in over.items()})
+    return env
+
+
+def _peer_announcement(name: str, origin: str, *, served: str = "m"):
+    from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo
+
+    return Announcement(
+        name=name,
+        origin=origin,
+        schema_version="1",
+        roles={
+            "associate": RoleInfo(
+                model=served,
+                runtime="vllm",
+                context=1,
+                quant="q",
+                responsibilities=(),
+                forbidden_responsibilities=(),
+                fingerprint=Fingerprint(
+                    served_id=served, quantization="q", max_model_len=1, runtime="vllm"
+                ),
+            )
+        },
+    )
+
+
+class _Req:
+    def __init__(self, body: bytes):
+        import io
+
+        self.rfile = io.BytesIO(body)
+        self.headers = {"Authorization": "Bearer sk-test", "Content-Length": str(len(body))}
+        self.client_address = ("127.0.0.1", 1)
+
+
+def _wiring(env: dict):
+    table, cfg = build_config(env)
+    return build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+
+
+def test_the_first_capabilities_probe_lands_within_one_second_of_start() -> None:
+    """Criterion 1: the loop's FIRST iteration runs a pass (it used to
+    `continue`, so the very first verification waited a whole heartbeat
+    interval and the boot window was at least one tick long)."""
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _peer(probes)
+    env = _env(LOBES_MESH_HEARTBEAT_S=1)
+    routes, _holder = _wiring(env)
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        deadline = t0 + 5.0
+        while not probes and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert probes, "no /capabilities probe within 5 s of start"
+        assert probes[0][1] - t0 < 1.0, f"first probe took {probes[0][1] - t0:.3f}s"
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_an_announce_during_a_slow_probe_returns_fast_and_is_probed_before_the_next_tick() -> None:
+    """Criterion 2: POST /mesh/announce answers in < 50 ms while a 3 s probe
+    is in flight, and the announcing member is probed long before the next
+    periodic tick (the heartbeat here is 30 s, so a tick-driven probe is
+    impossible within the window this asserts)."""
+    from lobes.gateway._mesh_routes import start_mesh
+    from lobes.gateway._mesh_wire import encode
+
+    slow_probes: list = []
+    fast_probes: list = []
+    slow_srv, slow_origin = _peer(slow_probes, delay=3.0, label="slow")
+    fast_srv, fast_origin = _peer(fast_probes, label="fast")
+    env = _env(LOBES_MESH_HEARTBEAT_S=30)
+    routes, _holder = _wiring(env)
+    routes.roster.announce("slowbox", slow_origin, 1.0)
+    routes._announcements[slow_origin] = _peer_announcement("slowbox", slow_origin)
+    try:
+        start_mesh(routes, routes._announcement_builder())
+        deadline = time.monotonic() + 5.0
+        while not slow_probes and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert slow_probes, "the first pass never probed the slow member"
+
+        body = encode(_peer_announcement("fastbox", fast_origin))
+        t0 = time.monotonic()
+        status, _h, _b = routes.announce(_Req(body))
+        elapsed = time.monotonic() - t0
+        assert status == 200
+        assert elapsed < 0.05, f"announce blocked for {elapsed:.3f}s"
+
+        deadline = time.monotonic() + 15.0
+        while not fast_probes and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert fast_probes, "the announcing member was never probed"
+        assert fast_probes[0][1] - t0 < 15.0  # << the 30 s tick: event-driven, not tick-driven
+    finally:
+        routes._stop.set()
+        slow_srv.shutdown()
+        fast_srv.shutdown()
+
+
+def test_a_member_discovered_from_a_seed_roster_is_probed_without_waiting_for_a_tick() -> None:
+    """Criterion 2 (seed half): discovery sets the verify-now event, so the
+    newly learned member is probed in the pass that immediately follows the
+    seed merge rather than one heartbeat later (30 s here).
+
+    The member's announcement is pre-seeded because `_collect_members_to_verify`
+    only probes members that HAVE one — on a live mesh that announcement
+    arrives from the member's own heartbeat; here it is placed directly so the
+    test isolates the discovery wake.
+    """
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _peer(probes)
+
+    class Seed(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(
+                {
+                    "members": [{"name": "peerbox", "origin": peer_origin, "capacity": 1.0}],
+                    "ledger": {},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    seed_srv = HTTPServer(("127.0.0.1", 0), Seed)
+    threading.Thread(target=seed_srv.serve_forever, daemon=True).start()
+    env = _env(
+        LOBES_MESH_HEARTBEAT_S=30,
+        LOBES_MESH_SEEDS=f"http://127.0.0.1:{seed_srv.server_address[1]}",
+    )
+    routes, _holder = _wiring(env)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        deadline = t0 + 10.0
+        while not probes and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert probes, "a seed-discovered member was never probed"
+        assert probes[0][1] - t0 < 10.0  # << the 30 s tick
+        assert "peerbox" in routes.roster.members()
+    finally:
+        routes._stop.set()
+        seed_srv.shutdown()
+        peer_srv.shutdown()
+
+
+def test_repeated_announces_do_not_reprobe_beyond_the_first_announce_plus_one_per_tick() -> None:
+    """Criterion 2 (storm half): three members announcing every second for 6 s
+    are each probed at most once per member's first announce (the events
+    coalesce, so this is an upper bound of three passes) plus once per tick —
+    never once per announce.  Ungated, the 18 announces in this window would
+    drive up to 18 passes.
+    """
+    from lobes.gateway._mesh_routes import start_mesh
+    from lobes.gateway._mesh_wire import encode
+
+    probes: list = []
+    servers = []
+    peers = []
+    for i in range(3):
+        srv, origin = _peer(probes, label=f"p{i}")
+        servers.append(srv)
+        peers.append((f"box{i}", origin))
+    env = _env(LOBES_MESH_HEARTBEAT_S=3)
+    routes, _holder = _wiring(env)
+    try:
+        start_mesh(routes, routes._announcement_builder())
+        end = time.monotonic() + 6.0
+        while time.monotonic() < end:
+            for name, origin in peers:
+                assert routes.announce(_Req(encode(_peer_announcement(name, origin))))[0] == 200
+            time.sleep(1.0)
+        counts = {label: 0 for label, _ in peers}
+        for label, _ts in probes:
+            idx = int(label[1:])
+            counts[peers[idx][0]] += 1
+        assert all(c >= 1 for c in counts.values()), counts
+        # 3 first-announce wakes (worst case, uncoalesced) + 2 ticks + 1 slack.
+        assert all(c <= 6 for c in counts.values()), counts
+    finally:
+        routes._stop.set()
+        for srv in servers:
+            srv.shutdown()
+
+
+def test_verification_passes_never_overlap_and_run_only_on_the_heartbeat_thread() -> None:
+    """Criterion 3: single flight.  No request handler ever runs a pass, and
+    two passes never overlap even under an announce storm."""
+    from unittest.mock import patch
+
+    from lobes.gateway import _mesh_routes as mod
+    from lobes.gateway._mesh_routes import start_mesh
+    from lobes.gateway._mesh_wire import encode
+
+    probes: list = []
+    peer_srv, peer_origin = _peer(probes)
+    state = {"active": 0, "max": 0}
+    thread_names: set = set()
+    guard = threading.Lock()
+
+    def wrapper(members, key, timeout, log):
+        with guard:
+            state["active"] += 1
+            state["max"] = max(state["max"], state["active"])
+            thread_names.add(threading.current_thread().name)
+        try:
+            time.sleep(0.3)
+            return {}, {}, {}
+        finally:
+            with guard:
+                state["active"] -= 1
+
+    env = _env(LOBES_MESH_HEARTBEAT_S=1)
+    routes, _holder = _wiring(env)
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin)
+    try:
+        with patch.object(mod, "_run_verification_probes", wrapper):
+            start_mesh(routes, routes._announcement_builder())
+            end = time.monotonic() + 3.0
+            i = 0
+            while time.monotonic() < end:
+                i += 1
+                ann = _peer_announcement("peerbox", peer_origin, served=f"m{i}")
+                assert routes.announce(_Req(encode(ann)))[0] == 200
+                time.sleep(0.05)
+            routes._stop.set()
+            time.sleep(0.5)
+        assert state["max"] == 1, f"verification passes overlapped ({state['max']} at once)"
+        assert thread_names == {"lobes-mesh-heartbeat"}, thread_names
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def _replying_peer(probes: list, name: str, *, delay: float = 0.0) -> tuple[HTTPServer, str]:
+    """A fake peer whose POST /mesh/announce reply carries ITS OWN announcement
+    (d1) and whose /capabilities agrees with it, so the announcer can verify
+    it on the very pass that discovered it."""
+    from lobes.gateway._mesh_wire import encode
+
+    holder: dict = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *_a):  # noqa: D401
+            pass
+
+        def _send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.startswith("/capabilities"):
+                probes.append((name, time.monotonic()))
+                if delay:
+                    time.sleep(delay)
+                self._send(
+                    json.dumps(
+                        {
+                            "associate": {
+                                "ready": True,
+                                "fingerprint": {
+                                    "served_id": "m",
+                                    "quantization": "q",
+                                    "max_model_len": 1,
+                                    "runtime": "vllm",
+                                },
+                            }
+                        }
+                    ).encode()
+                )
+            else:
+                self._send(b'{"members": [], "ledger": {}}')
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            ann = json.loads(encode(_peer_announcement(name, holder["origin"])))
+            self._send(json.dumps({"status": "announced", "announcement": ann}).encode())
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    holder["origin"] = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, holder["origin"]
+
+
+def test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies_it() -> None:
+    """d1 (measured gap, 2026-09-12): a recreated gateway holds NO peer
+    announcements, so its first pass had nothing to verify and requests 404'd
+    until each peer's next heartbeat (~60 s live). Now the seed's announce
+    reply carries the seed's own announcement, and it is verified within the
+    first seconds — with the heartbeat at 30 s, a tick-driven path cannot
+    explain the timing this asserts."""
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _replying_peer(probes, "seedbox")
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=peer_origin)
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        deadline = t0 + 5.0
+        while time.monotonic() < deadline:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None and any(m.name == "seedbox" and m.probed for m in snap.members):
+                break
+            time.sleep(0.02)
+        view = holder.current()
+        members = {m.name: m for m in view.snapshot.members}
+        assert "seedbox" in members, "seed never entered the roster from its reply"
+        assert members["seedbox"].probed, "seed was not probed within 5 s of start"
+        assert "associate" in members["seedbox"].verified_roles
+        assert probes
+        assert probes[0][1] - t0 < 5.0
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_a_seed_peer_is_pending_in_the_routing_view_while_its_first_probe_is_in_flight() -> None:
+    """d2 (2), the live 2026-09-12 shape: with the peer's /capabilities held
+    for 3 s, the peer must already be IN the routing view (probed False,
+    announced roles known) well before that probe returns — that is what
+    turns the boot window's 404 into a 503 role_unverified."""
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _replying_peer(probes, "slowseed", delay=3.0)
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=peer_origin)
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        seen_pending = None
+        while time.monotonic() < t0 + 2.5:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None:
+                m = next((x for x in snap.members if x.name == "slowseed"), None)
+                if m is not None and not m.probed and "associate" in m.announced_roles:
+                    seen_pending = time.monotonic() - t0
+                    break
+            time.sleep(0.02)
+        assert seen_pending is not None, "peer never appeared as pending before its probe returned"
+        assert seen_pending < 2.5
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_a_hung_seed_does_not_delay_the_other_seeds_discovery() -> None:
+    """d3: seed rosters are fetched in parallel. With the FIRST seed's
+    /mesh/roster held for 4 s, the second seed's roster (which lists a
+    member with its roles) must be merged — and that member visible in the
+    routing view as pending — well inside that hold."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from lobes.gateway._mesh_routes import start_mesh
+
+    def _seed_server(delay: float, members: list) -> tuple[HTTPServer, str]:
+        body = json.dumps({"members": members, "ledger": {}}).encode()
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *_a):  # noqa: D401
+                pass
+
+            def _send(self, b: bytes) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                if self.path.startswith("/mesh/roster"):
+                    if delay:
+                        time.sleep(delay)
+                    self._send(body)
+                else:
+                    self._send(b"{}")
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(n)
+                if delay:
+                    time.sleep(delay)
+                self._send(b'{"status": "ok"}')
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+    slow_srv, slow = _seed_server(4.0, [])
+    fast_srv, fast = _seed_server(
+        0.0, [{"name": "listed", "origin": "http://listed:8000", "roles": ["worker"]}]
+    )
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=f"{slow},{fast}")
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        seen = None
+        while time.monotonic() < t0 + 3.0:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None:
+                m = next((x for x in snap.members if x.name == "listed"), None)
+                if m is not None and not m.probed and "worker" in m.announced_roles:
+                    seen = time.monotonic() - t0
+                    break
+            time.sleep(0.02)
+        assert seen is not None, "the fast seed's member never appeared while the slow seed hung"
+        assert seen < 3.0, f"took {seen:.2f}s — the slow seed delayed the fast one"
+    finally:
+        routes._stop.set()
+        slow_srv.shutdown()
+        fast_srv.shutdown()
+
+
+def _mutating_peer(state: dict, *, delay: float = 0.0) -> tuple[HTTPServer, str]:
+    """A fake peer whose ``/capabilities`` fingerprint follows ``state['served']``.
+
+    The served id is read when the request ARRIVES, before the artificial
+    delay, so a probe held open across an announcement swap answers with what
+    the peer was serving when the probe was launched — the exact shape of the
+    Qodo thread 3 race.
+    """
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *_a):  # noqa: D401
+            pass
+
+        def _send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if not self.path.startswith("/capabilities"):
+                self._send(b'{"members": [], "ledger": {}}')
+                return
+            served = state["served"]
+            state.setdefault("probes", []).append(served)
+            if delay:
+                time.sleep(delay)
+            self._send(
+                json.dumps(
+                    {
+                        "associate": {
+                            "ready": True,
+                            "fingerprint": {
+                                "served_id": served,
+                                "quantization": "q",
+                                "max_model_len": 1,
+                                "runtime": "vllm",
+                            },
+                        }
+                    }
+                ).encode()
+            )
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            self._send(b'{"status": "announced"}')
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+def _member_named(holder, name: str):
+    view = holder.current()
+    return {m.name: m for m in view.snapshot.members}[name]
+
+
+def test_an_announcement_replaced_mid_probe_stays_pending_until_the_next_pass() -> None:
+    """Qodo thread 3: a probe result never authorises a fingerprint it did
+    not see. With the peer's /capabilities held open, the stored announcement
+    is replaced with a DIFFERENT fingerprint while that probe is in flight.
+    The finishing pass must discard its result — leaving the member pending
+    (probed False), not verified against the replacement — and the very next
+    pass, with the announcement settled, must verify it."""
+    from lobes.gateway._mesh_routes import verify_members
+
+    state = {"served": "m"}
+    peer_srv, peer_origin = _mutating_peer(state, delay=1.0)
+    routes, holder = _wiring(_env(LOBES_MESH_HEARTBEAT_S=30))
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    def swap() -> None:
+        time.sleep(0.3)  # the probe is open; its body is not written yet
+        state["served"] = "m2"
+        routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m2")
+
+    try:
+        swapper = threading.Thread(target=swap, daemon=True)
+        swapper.start()
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        swapper.join(timeout=2)
+
+        member = _member_named(holder, "peerbox")
+        assert state["probes"] == ["m"], f"expected one probe of the old lane, got {state}"
+        assert member.probed is False, "a result for a replaced announcement must be discarded"
+        assert member.verified_roles == ()
+
+        # The next pass sees a settled announcement and verifies it.
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        member = _member_named(holder, "peerbox")
+        assert member.probed is True
+        assert "associate" in member.verified_roles
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_an_unchanged_reannouncement_mid_probe_still_verifies() -> None:
+    """The thread 3 guard compares per-role FINGERPRINTS, not object identity:
+    a member re-announcing the same lanes every heartbeat stores a fresh
+    Announcement object each time, and an identity check would have made it
+    permanently unverifiable."""
+    from lobes.gateway._mesh_routes import verify_members
+
+    state = {"served": "m"}
+    peer_srv, peer_origin = _mutating_peer(state, delay=0.6)
+    routes, holder = _wiring(_env(LOBES_MESH_HEARTBEAT_S=30))
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    def restore() -> None:
+        time.sleep(0.2)
+        # A different OBJECT carrying the identical fingerprint.
+        routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    try:
+        swapper = threading.Thread(target=restore, daemon=True)
+        swapper.start()
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        swapper.join(timeout=2)
+        member = _member_named(holder, "peerbox")
+        assert member.probed is True
+        assert "associate" in member.verified_roles
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()

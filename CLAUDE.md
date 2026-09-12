@@ -755,6 +755,29 @@ is a fleet-wide restart**, not a per-pair credential swap — see
 `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`,
 `docs/deployment-shapes.md`, and `lobes explain mesh`.
 
+> **Boot window and mesh-sourced advert (PR #254, 0.77.0) — MEASURED
+> 2026-09-12** (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`,
+> Spark + Thor + Orin + a gateway-only member on `0.77.0.dev544`). A recreated
+> gateway verifies its peers on its FIRST pass — the announce reply carries the
+> responder's own announcement, seed rosters are fetched in parallel and their
+> listed roles make a member *pending* at once — so the first request that
+> reaches the new container answers 200 (previously 404 `role_infeasible`
+> for ~60 s). A request for a role whose only candidate is announced but not
+> yet probed answers **503 `role_unverified`** with `Retry-After: 5`,
+> `error.hosted_by` and `X-Lobes-Mesh-Member/-Origin/-Role/-Unverified`
+> (measured with the Thor's gateway paused: 13 consecutive 503s, then 200 on
+> the first retry after the unpause); a probed-and-disagreeing member and an
+> empty roster still 404. `GET /mesh/roster` carries `probed` and the
+> `not_yet_probed` sentinel. `GET /capabilities` on a member that reaches a
+> role only via the mesh now sources `hosted_by` (sole plain origin) or a
+> `members` list (pooled), `ready` (the peer's probe-time bit, flips false
+> within ~30 s of the peer's lane stopping) and `proxied: true` from the
+> roster. Still open: raw checkpoint-id addressing through a non-hosting front
+> is #236 (pre-existing; the live capabilities suite's two raw-id checks fail
+> for it on every mesh member), and the verification-failure log line still
+> reuses the rejection log's `auth: rejected` wording (#255). Both are tracked
+> together as the PR #254 follow-ups in **#256**.
+>
 > **Implementation status.** The code-level removal of the retired peer
 > family is done (t14): the gateway no longer parses any of the retired
 > peer keys, and the replica-pool dispatch path reads the mesh roster as its

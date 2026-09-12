@@ -1,0 +1,566 @@
+{
+  "slug": "mesh-boot-window-and-capabilities-advert",
+  "title": "mesh-boot-window-and-capabilities-advert",
+  "frame_slug": "mesh-boot-window-and-capabilities-advert",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-12T09:34:34Z",
+  "updated": "2026-09-12T11:05:45Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes gateway: a mesh-provided role is verified the moment it is announced, answers a retryable not-yet-verified status during the boot window instead of 404 role_infeasible, and /capabilities reports mesh-provided roles with a mesh-sourced hosted_by and ready",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "All three behaviours (verify-on-announce/boot, 503 role_unverified, mesh-sourced hosted_by/ready/proxied) are measured live on the fleet before any doc calls them validated (#108).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The heartbeat loop runs its first verification pass at thread start, not one full LOBES_MESH_HEARTBEAT_S later: _wait_for_tick (_mesh_routes.py:1108-1136) resolves a None deadline to now+interval without waiting and the loop then 'continue's (lines 1284-1297), so the first real pass lands ~60 s after a gateway recreate \u2014 the measured window.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "With LOBES_MESH_HEARTBEAT_S=1 the first verification probe reaches a fake peer in < 1 s of start_mesh, not ~1 interval later.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "An inbound announce and a seed-roster discovery each trigger an immediate verification of that member: MeshRoutes.announce() (_mesh_routes.py:459-463) only sets _verify_event, which is read on the next periodic tick; _merge_seed_members (1342-1363) runs after _tick_and_collect in the same pass, so a seeded member verifies one interval later. verify_members already runs its probes outside routes._lock (dev518 note 1170-1175; test_mesh_heartbeat_live.py:80-163), so calling it out-of-band is lock-safe.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "A POST /mesh/announce from a new member results in a /capabilities probe of that member before the next periodic tick, and a seed-discovered member is probed in the same pass that discovered it; roster reads and inbound announces still return in < 1 s while a slow probe is in flight.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "MemberInfo/the /mesh/roster payload distinguish 'never probed yet' from 'probed and clean': today unverified_reason=None means both (_mesh_routing.py:54-61 docstring; _build_member_record _mesh_routes.py:498-521), pinned by tests/test_mesh_verify_reason.py:96-108 and 127-135, which must be updated deliberately, not broken.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "GET /mesh/roster distinguishes a never-probed member (e.g. unverified_reason 'not_yet_probed' or an explicit probed:false) from a cleanly verified one, and tests/test_mesh_verify_reason.py:96-135 are updated to the new meaning rather than deleted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "A request for a role that an announced-but-not-yet-probed member hosts answers 503, error.type/code role_unverified, Retry-After = BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS (5 s), error.hosted_by naming the pending member's origin, X-Lobes-Mesh-Member/-Origin/-Role plus X-Lobes-Mesh-Unverified via mesh_markers(unverified=True) \u2014 instead of 404 role_infeasible. Today _collect_role_candidates (_mesh_routing.py:608-625) drops every unverified member silently and server.py:3161/3268/3337 fall through to the plain 404; the 503+Retry-After builder at server.py:1414-1424 and the _error_body type list (686-703) are the shape to extend.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A request for a role announced by a never-probed member answers 503, body error.type=role_unverified with hosted_by = that member's origin, headers Retry-After=heartbeat_s and X-Lobes-Mesh-Member/-Origin/-Role/-Unverified; a probed-and-disagreed member and an empty roster still answer 404 role_infeasible with no hosted_by.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "GET /capabilities on a member that reaches a role only via the mesh sources hosted_by, ready and proxied from the RoutingSnapshot: hosted_by = the verified peer's announced origin ONLY when the role has exactly one plain origin; when the role is pooled across several plain origins the entry carries a members list instead and no hosted_by (q4, resolved a), so X-Lobes-Proxied-By always equals hosted_by whenever hosted_by is present; ready = the peer's per-role ready bit fetched in _probe_member_capabilities (_mesh_routes.py:1540-1554, currently discarded before MemberInfo); proxied:true. Today annotate_peer_referrals (roles.py:1169-1266) reads only the retired table.peer_origins/peer_proxied and is a no-op on every real deployment.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "capabilities_payload on a member that hosts a role nowhere but has a verified plain-placed peer for it emits hosted_by = that peer's announced origin, ready = the peer's probed ready bit, proxied:true; with no verified peer the three keys are absent/false exactly as today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The tests that pin the current gap flip to the new contract: tests/test_peer_referral.py:255-263 test_capabilities_hosted_by_stays_env_sourced_and_the_env_knob_is_inert and its neighbouring no-op tests (266-289); tests/test_live_capabilities.py's 'advertised ready implies reachable' gate (line 348) and proxied-vs-X-Lobes-Proxied-By cross-check (~511-586) must still hold for mesh-sourced values.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "tests/test_live_capabilities.py's advertised-ready-implies-reachable gate and the proxied-vs-X-Lobes-Proxied-By cross-check pass on the gateway-only member live.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Docs and explain follow in lockstep: docs/gateway-fleet.md 643-653 (trust-but-verify, 'receives nothing'), docs/colleague-stack.md 421-425 and 589-680 (hosted_by/proxied/ready semantics), docs/deployment-shapes.md 652-654 and 682 (404 body and state table), docs/openai-api.md role_infeasible mentions (204, 541, 621-626), lobes/explain/catalog.py ~1467-1471, and the two follow-up lines in docs/deliveries/2026-09-11-mesh-brain-join.md (127-128, 134) are closed with a citation to a new evidence transcript.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "Every doc line cited in s8-s10 is updated in the same PR and the delivery follow-up lines 127-128/134 cite the new evidence transcript; markdownlint passes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "A member whose probe RAN and disagreed on fingerprint keeps today's 404 role_infeasible with no hosted_by: TestMismatchVariant.test_mismatch_fingerprint (tests/test_mesh_routing_wiring.py:556-635) and the spec's honesty clause (docs/specs/2026-09-11-mesh-brain-join.md:133, 'requests for its roles either pool elsewhere or 404 role_infeasible naming no hosted_by \u2014 never hang') stay true; only the never-probed boot window gets the retryable status. A roster with zero members (TestDropMember, 883-946; tests/test_mesh_routing.py:500-586) also stays 404.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "TestMismatchVariant.test_mismatch_fingerprint and TestDropMember stay green unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "#92 holds: hosted_by is only ever the peer's own announced GATEWAY_SELF_ORIGIN as the roster verified it, never derived from a socket, hostname or DNS \u2014 docs/colleague-stack.md:677-680 already sanctions 'on a mesh-brain member, the origin the mesh roster verified'. The profile renderer stays mesh-blind (tests/test_shape_gateway_only.py:22-26, 318-341 grep gate) and no new .env or render-time key is added \u2014 membership is runtime state (spec: 'Membership state is RUNTIME state, never a rendered .env key').",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "hosted_by values in the payload are string-equal to an announced GATEWAY_SELF_ORIGIN in the roster; no new key appears in env.example, render.py tables or the lock allowlist; the profile grep gate in tests/test_shape_gateway_only.py passes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "Forwarding stays single-hop and the heartbeat period / LOBES_MESH_MISSED_MAX defaults (60 s / 3, _mesh_config.py:79-107,158) are unchanged: the fix is first-pass timing plus announce-triggered verification, not a faster clock.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "_mesh_config.py defaults are byte-identical after the change and no forwarded request gains a second hop.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "audience",
+      "text": "Colleague-side callers that address roles by name through any mesh member (Qwen Code, culture agents, reachy-mini-cli), and the operator running lobes capabilities / lobes mesh status after a gateway recreate.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "docs/colleague-stack.md and docs/gateway-fleet.md name the caller-facing status and the operator-facing roster sentinel respectively.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "before_state",
+      "text": "After a gateway recreate a mesh-provided role 404s role_infeasible for ~60 s until the first periodic verification pass (docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt:411), and /capabilities on a member that reaches a role only via the mesh shows ready:false / hosted_by:null beside a correct member name (same transcript, line 439).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "The two transcript lines (411, 439) are quoted as the baseline in the new evidence transcript's header.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "after_state",
+      "text": "A recreated gateway verifies announced members within seconds (at boot, on announce, on seed discovery); a request that lands before that answers 503 role_unverified with Retry-After 5 s and mesh headers naming the pending member; /capabilities on any member reports a mesh-provided role with hosted_by = the verified peer origin when the role has one plain origin (a members list when pooled), ready from the peer's probe, proxied:true.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "The live re-run shows the 503-then-200 sequence and the populated capabilities dump.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "why_it_matters",
+      "text": "Callers cannot tell a transient boot window from a role nobody hosts, so a retry loop gives up on a 404 that would have succeeded a minute later; and an advert that says ready:false while routing works breaks the 'advertised implies reachable' contract the live capabilities gate enforces.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "A one-line retry loop (curl with Retry-After honoured) succeeds through the boot window on the live fleet.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "On the 3-box fleet, a request for a mesh-provided role issued < 10 s after a gateway recreate answers 503 role_unverified (never 404), and a retry after Retry-After answers 200 within 1 heartbeat (60 s); the gateway-only member's /capabilities shows hosted_by non-null, ready:true and proxied:true for >= 5 mesh-provided roles (cortex, worker, associate, embedder, reranker); the offline suite passes with the two pinning tests flipped.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "Every number in the success signal appears in the acceptance transcript with a timestamp or a count.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Announce- and discovery-triggered verification wakes the heartbeat loop through an event (the _reannounce_event pattern, _mesh_routes.py:1108-1136) and only when the announcing member is unverified or its announcement changed; the pass itself stays single-flight on the loop thread and is never run inside the announce handler. Why: server.py:69/5338 is a ThreadingHTTPServer, so a handler-thread verify_members would overlap the loop's pass and SnapshotHolder.replace (_mesh_routing.py:419-427) is last-writer-wins \u2014 an older pass could overwrite a newer snapshot; and _collect_members_to_verify (1491-1506) probes EVERY member, so one pass per announce with N members re-announcing each heartbeat is N\u00b2 probes per heartbeat.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "With three fake members each announcing every second for 10 s (heartbeat_s=1), each fake /capabilities is probed at most once for its first announce plus once per periodic tick \u2014 never once per announce; and POST /mesh/announce returns in < 50 ms while a 3 s slow probe is in flight.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "boundary",
+      "text": "GET /v1/realtime keeps today's 404 role_infeasible for a declared-off stt lane (never proxied, _realtime.py:20,151) and is untouched by the 503 path; a raw model-id request whose checkpoint is announced only by a never-probed member follows the SAME 503 role_unverified rule as the role alias, because the served-backend branch (server.py:3268-3283) shares the fall-through.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A realtime handshake against a declared-off stt lane still answers 404 role_infeasible with a never-probed member announcing stt; a raw-id chat request for that member's checkpoint answers 503 role_unverified.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Observability: each 503 role_unverified is logged through the existing throttled RejectionLog (verify_log, _mesh_routes.py:1585-1590) once per member, not per request, and lobes mesh status renders the never-probed sentinel \u2014 mesh.py:215-258 already reads verified/unverified_reason via .get, so an older CLI tolerates the new field.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "Ten consecutive 503s for one pending member produce one gateway stderr line; lobes mesh status shows the sentinel text for a never-probed member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "Rollout: the fix ships only in the gateway image, so every member re-images its front (MODEL_GEAR_VERSION bump, lobes up gateway --build --apply); the announcement wire schema (SCHEMA_MAJOR) is unchanged so a mixed-version mesh interoperates during the rollout; and deployments/jetson-agx-thor__thor-worker/ is re-captured because its lock tracks the .env digest (CLAUDE.md, deployment lock section).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "SCHEMA_MAJOR is unchanged in the diff; a 0.76.x member and the new member verify each other live during the rollout; the Thor catalog lock is re-captured in the same PR and lobes doctor reports no lock_drift on the Thor after re-image.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Routing model: never-probed sentinel, per-role ready, and pending placement",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "MemberInfo has probed (default False) and ready_roles; a never-probed member reads probed False and unverified_reason None at the model level, and build_snapshot sets probed True for every origin present in the verified/reason maps",
+        "compute_role_placement returns pending_origins for a role announced by a never-probed member and leaves plain_origins/suffixed unchanged for verified members; tests/test_mesh_routing.py:290-330 and tests/test_mesh_verify_reason.py:96-135 updated to the new meaning, all green",
+        "Files owned: lobes/gateway/_mesh_routing.py, tests/test_mesh_routing.py, tests/test_mesh_verify_reason.py only"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h4"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). Touch only _mesh_routing.py and its two test files. Keep verify_member_roles signature; add ready_roles beside verified_roles in MemberInfo and thread it through build_snapshot from the probed_roles map (probe wiring is t2). Write the failing tests first."
+    },
+    {
+      "id": "t2",
+      "summary": "Heartbeat: first pass at start, event-woken single-flight verify on announce and seed discovery, roster sentinel and throttled log",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "With LOBES_MESH_HEARTBEAT_S=1 the first /capabilities probe of a seeded fake peer lands < 1 s after start_mesh (timestamped assertion in tests/test_mesh_heartbeat_live.py)",
+        "POST /mesh/announce from a new member returns in < 50 ms while a 3 s slow probe is in flight, and that member is probed before the next periodic tick; a member discovered from a seed roster is probed in the same pass; three fake members announcing every second for 10 s are each probed at most once for the first announce plus once per tick",
+        "GET /mesh/roster shows probed false + unverified_reason not_yet_probed until the first probe result lands; verify passes never overlap (single-flight assertion); lobes/gateway/_mesh_config.py is byte-identical (git diff empty)",
+        "Files owned: lobes/gateway/_mesh_routes.py, tests/test_mesh_heartbeat_live.py, tests/test_mesh_routes.py, tests/test_mesh_verify_reason.py (roster-record tests only)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "h2",
+        "c3",
+        "h3",
+        "c21",
+        "h17",
+        "c11",
+        "h11",
+        "c23"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). In _mesh_routes.py: add _verify_now_event next to _reannounce_event and make _wait_for_tick wake on either; run a pass on the loop first iteration instead of continue; in announce() set the event only when the roster member is not probed or its announcement fingerprint differs from the stored one; in _merge_seed_members set it for a newly discovered member; thread probed_roles ready bits into build_snapshot (t1 field); expose probed + not_yet_probed in _build_member_record; log the pending state through the existing throttled verify_log once per member. Never call verify_members from a request handler."
+    },
+    {
+      "id": "t3",
+      "summary": "Gateway: 503 role_unverified for a never-probed candidate; mismatch, empty roster, realtime and raw ids pinned",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A role request whose only candidate is announced by a never-probed member answers 503 with the contract body and headers (Retry-After 5, X-Lobes-Mesh-Member/-Origin/-Role, X-Lobes-Mesh-Unverified true); a raw model-id request for that member's checkpoint answers the same 503",
+        "TestMismatchVariant.test_mismatch_fingerprint and TestDropMember pass unchanged; a realtime handshake against a declared-off stt lane still answers 404 role_infeasible with a never-probed member announcing stt",
+        "_error_body's docstring lists role_unverified as the fifth distinct error type; the three fall-through sites share one extracted helper so Sonar S3776 does not fire on the touched functions",
+        "Files owned: lobes/gateway/server.py, tests/test_mesh_routing_wiring.py, and the realtime test module only"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c5",
+        "h5",
+        "c9",
+        "h9",
+        "c22",
+        "h18"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). Read placement.pending_origins at server.py 3161/3268/3337 BEFORE the plain-404 fall-through; build the body by cloning _role_infeasible_body and the 503 builder at 1414-1424; use mesh_markers(snapshot, role, chosen_origin=origin, unverified=True). Pre-extract a helper for the three sites (memory: pre-extract to avoid the Sonar round-trip). Do not touch lobes/roles.py (t4 owns it)."
+    },
+    {
+      "id": "t4",
+      "summary": "/capabilities: mesh-sourced hosted_by, members, ready and proxied",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "capabilities_payload on a box hosting a role nowhere with one verified plain origin emits hosted_by = that member announced origin (string-equal to its GATEWAY_SELF_ORIGIN in the roster), ready = its ready_roles membership, proxied true; with two plain origins it emits members = [names] and no hosted_by; with mesh disabled the payload is byte-identical to today",
+        "tests/test_peer_referral.py:255-289 flipped to the new contract and green; tests/test_shape_gateway_only.py profile grep gate green; git diff --stat shows no change under lobes/profiles/ or lobes/templates/",
+        "Files owned: lobes/roles.py, tests/test_peer_referral.py, tests/test_mesh_naming.py only"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c6",
+        "h6",
+        "c10",
+        "h10",
+        "c7"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). Do it inside annotate_mesh_naming/_annotate_plain_member (roles.py 1506-1576), which already receives the RoutingSnapshot at server.py:4075 \u2014 do not edit server.py. Leave annotate_peer_referrals in place (cite-don't-delete) but make the mesh annotation win when both would write hosted_by."
+    },
+    {
+      "id": "t5",
+      "summary": "CLI: render the never-probed sentinel and the pooled members list",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes mesh status prints unverified_reason: not_yet_probed for a member record with probed false (tests/test_cli_mesh.py); lobes capabilities prints one line naming the members list for a pooled mesh role and keeps the existing proxied-via/hosted-by lines for a sole origin (CLI capabilities tests)",
+        "Files owned: lobes/cli/_commands/mesh.py, lobes/cli/_commands/capabilities.py, tests/test_cli_mesh.py, the CLI capabilities test module only"
+      ],
+      "deps": [],
+      "covers": [
+        "c23",
+        "h19"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). mesh.py 215-258 already prints unverified_reason via .get \u2014 add the probed marker to the three-state label; capabilities.py 306-370 already prints proxied-via/hosted-by/served-by \u2014 add the members line beside them. Render from the payload only, never recompute."
+    },
+    {
+      "id": "t6",
+      "summary": "Docs and explain: caller-facing 503 contract, roster sentinel, mesh-sourced capabilities fields",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gateway-fleet.md 643-653, docs/colleague-stack.md 421-425 and 589-680, docs/deployment-shapes.md 652-654 and 682, docs/openai-api.md 204/541/621-626 and lobes/explain/catalog.py ~1467-1471 describe role_unverified, not_yet_probed, and the hosted_by / members / ready / proxied rules; grep for 'receives nothing' finds only text that now names the 503",
+        "markdownlint-cli2 passes on every touched doc; docs/colleague-stack.md and docs/gateway-fleet.md each name role_unverified",
+        "Files owned: the five docs above and lobes/explain/catalog.py only (NOT docs/deliveries/, docs/evidence/ or CLAUDE.md \u2014 t8 owns those)"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h8",
+        "c16",
+        "h12"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). Mirror gateway-fleet.md prose into explain/catalog.py verbatim as the existing sections do. Mark every new behaviour DECLARED/UNVALIDATED (#108) \u2014 t8 flips the wording after the transcript lands."
+    },
+    {
+      "id": "t7",
+      "summary": "Live capabilities gate: accept the pooled members rule and the 503 boot window",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_live_capabilities.py's proxied cross-check accepts X-Lobes-Proxied-By equal to hosted_by when present, or any origin of a listed member when members is present; the advertised-ready gate treats a 503 role_unverified as a retry (honouring Retry-After, bounded by 3 attempts) before classifying",
+        "Files owned: tests/test_live_capabilities.py only; the offline suite is untouched"
+      ],
+      "deps": [],
+      "covers": [
+        "c7"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). The suite is the live honesty gate; keep every existing assertion and add the two rules. It runs only in t8 against the fleet."
+    },
+    {
+      "id": "t8",
+      "summary": "Release and live acceptance: version bump, gateway re-image on all three boxes, Thor lock re-capture, evidence transcript, delivery and CLAUDE.md closure",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-09-XX-accept-mesh-boot-window-fleet.txt: header quotes transcript lines 411 and 439 as baseline; a mesh-role request < 10 s after a Spark gateway recreate answers 503 role_unverified and a retry after Retry-After answers 200 within 60 s, timestamped; a curl retry loop honouring Retry-After succeeds; the gateway-only member's /capabilities shows hosted_by or members non-null, ready true and proxied true for cortex, worker, associate, embedder, reranker; stopping the Orin associate lane flips its ready to false within 60 s plus the probe timeout",
+        "SCHEMA_MAJOR unchanged in the diff; a 0.76.1 member and the new member verify each other mid-rollout (roster reads in the transcript); MODEL_GEAR_VERSION bumped and the front re-imaged on Spark, Thor and Orin with lobes up gateway --build --apply (Spark: the four -f compose files); deployments/jetson-agx-thor__thor-worker/ re-captured via lobes.runtime._lock.capture_lock and lobes doctor reports no lock_drift on the Thor",
+        "docs/deliveries/2026-09-11-mesh-brain-join.md lines 127-128 and 134 cite the new transcript; CLAUDE.md mesh section names the 503 and the mesh-sourced fields as MEASURED; tests/test_live_capabilities.py passes against spark-gw; uv run pytest -n auto green; version bumped per the every-PR rule",
+        "Files owned: docs/evidence/, docs/deliveries/, CLAUDE.md, CHANGELOG.md, pyproject.toml, deployments/jetson-agx-thor__thor-worker/ only"
+      ],
+      "deps": [
+        "t2",
+        "t3",
+        "t4",
+        "t5",
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c17",
+        "h13",
+        "c18",
+        "h14",
+        "c19",
+        "h15",
+        "c20",
+        "h16",
+        "c24",
+        "h20",
+        "h7"
+      ],
+      "instruction": "SHARED CONTRACT (pinned; every task builds to it, none redefines it): (1) MemberInfo gains probed: bool (False until the first probe result for that member lands) and ready_roles: tuple[str, ...] (roles whose probed /capabilities entry had ready True); RolePlacement gains pending_origins: tuple[str, ...] = origins of members with probed False that publicly announce the role. (2) /mesh/roster member record gains \"probed\": bool and carries unverified_reason \"not_yet_probed\" (a plain string) while probed is False; None only after a clean probe. (3) 503 body {\"error\": {\"message\", \"type\": \"role_unverified\", \"code\": \"role_unverified\", \"hosted_by\": <pending origin>}}, headers Retry-After: 5 (BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS), X-Lobes-Mesh-Member, X-Lobes-Mesh-Origin, X-Lobes-Mesh-Role, X-Lobes-Mesh-Unverified: true. (4) /capabilities entry for a role not hosted locally with mesh plain origins: proxied true; ready = the chosen origin is in that member ready_roles; hosted_by = the origin iff exactly one plain origin; members = [names] iff more than one (then no hosted_by); the existing member key unchanged; with no mesh, byte-identical to today. (5) Heartbeat: a new _verify_now_event; announce sets it iff the member is not yet probed or its announcement fingerprint changed; seed discovery sets it; the loop first iteration runs a pass immediately; a pass only ever runs on the loop thread (single-flight). Memory traps: Thor ~/.bashrc exports GATEWAY_API_KEY (use env -u); Spark compose is hand-kept \u2014 never re-scaffold, pass all four -f files; probe a peer's /capabilities not /v1/models. Capture the lock by calling capture_lock directly (no CLI verb exists). Run t7's suite against the gateway-only member on the Spark as in the h8 section."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Fan-in cost of a full verify pass per new announcement on a 3-box recreate is unmeasured (frame v1 resolved to a full single-flight pass); t8 records probe counts per member during the recreate",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "server.py's three fall-through sites are inside functions already near the Sonar S3776 threshold; t3 must pre-extract one helper or the PR hits the per-PR Sonar round-trip",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Probe amplification under a flood of distinct member names rests on the roster capacity clamp (delivery t3), not re-read during the challenge pass (frame v2)",
+      "kind": "follow_up",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "The Spark's hand-maintained docker-compose.yml plus override.yml (memory: lacks fingerprint passthroughs; four -f files required) may make lobes up gateway --build --apply behave differently there than on the Thor/Orin; t8 falls back to the explicit docker compose invocation if so",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": [
+    {
+      "id": "o1",
+      "task_id": "t3",
+      "criterion_index": 1,
+      "criterion_snapshot": "A role request whose only candidate is announced by a never-probed member answers 503 with the contract body and headers (Retry-After 5, X-Lobes-Mesh-Member/-Origin/-Role, X-Lobes-Mesh-Unverified true); a raw model-id request for that member's checkpoint answers the same 503",
+      "seam": "server.py fall-through sites -> HTTP response",
+      "behavior": "503 with the contract body and all five headers; body hosted_by equals X-Lobes-Mesh-Origin; a test asserts every header by name",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "task_id": "t3",
+      "criterion_index": 2,
+      "criterion_snapshot": "TestMismatchVariant.test_mismatch_fingerprint and TestDropMember pass unchanged; a realtime handshake against a declared-off stt lane still answers 404 role_infeasible with a never-probed member announcing stt",
+      "seam": "server.py -> existing 404 consumers",
+      "behavior": "TestMismatchVariant and TestDropMember run unmodified (git diff on those two classes is empty) and pass",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "task_id": "t4",
+      "criterion_index": 1,
+      "criterion_snapshot": "capabilities_payload on a box hosting a role nowhere with one verified plain origin emits hosted_by = that member announced origin (string-equal to its GATEWAY_SELF_ORIGIN in the roster), ready = its ready_roles membership, proxied true; with two plain origins it emits members = [names] and no hosted_by; with mesh disabled the payload is byte-identical to today",
+      "seam": "lobes/roles.py annotate_mesh_naming -> capabilities payload",
+      "behavior": "hosted_by and members are mutually exclusive; ready derives only from MemberInfo.ready_roles; no key is emitted when the mesh snapshot is None",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "task_id": "t2",
+      "criterion_index": 2,
+      "criterion_snapshot": "POST /mesh/announce from a new member returns in < 50 ms while a 3 s slow probe is in flight, and that member is probed before the next periodic tick; a member discovered from a seed roster is probed in the same pass; three fake members announcing every second for 10 s are each probed at most once for the first announce plus once per tick",
+      "seam": "MeshRoutes.announce -> _verify_now_event",
+      "behavior": "the event is set only for a not-yet-probed member or a changed fingerprint; a counting fake peer proves at most first-announce + per-tick probes",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "task_id": "t2",
+      "criterion_index": 1,
+      "criterion_snapshot": "With LOBES_MESH_HEARTBEAT_S=1 the first /capabilities probe of a seeded fake peer lands < 1 s after start_mesh (timestamped assertion in tests/test_mesh_heartbeat_live.py)",
+      "seam": "start_mesh -> first probe",
+      "behavior": "a timestamped assertion, not a sleep-and-hope: the fake peer's first /capabilities hit is < 1 s after start_mesh returns",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "task_id": "t8",
+      "criterion_index": 1,
+      "criterion_snapshot": "docs/evidence/2026-09-XX-accept-mesh-boot-window-fleet.txt: header quotes transcript lines 411 and 439 as baseline; a mesh-role request < 10 s after a Spark gateway recreate answers 503 role_unverified and a retry after Retry-After answers 200 within 60 s, timestamped; a curl retry loop honouring Retry-After succeeds; the gateway-only member's /capabilities shows hosted_by or members non-null, ready true and proxied true for cortex, worker, associate, embedder, reranker; stopping the Orin associate lane flips its ready to false within 60 s plus the probe timeout",
+      "seam": "the live fleet -> docs/evidence transcript",
+      "behavior": "every number in success signal c20 appears with a timestamp or a count; the 503 and its following 200 are in the same session log",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
+}

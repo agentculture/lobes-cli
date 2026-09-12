@@ -208,6 +208,15 @@ auto-wired proxying) is armed — the #129 proxy-lobes
 forwarder is POST-only. See [Realtime session](#realtime-session-v1realtime-websocket)
 below for the session contract.
 
+> **DECLARED/UNVALIDATED (#108).** `/v1/realtime` is deliberately outside the
+> mesh's caller-facing boot-window status too: even when the mesh has
+> announced but not yet probed a `stt` lane elsewhere, this route keeps the
+> plain `404 role_infeasible` above rather than the `503 role_unverified`
+> the batch generate/embed/rerank routes now answer during that window —
+> `stt` is never proxied mesh-wide, so there is no pending mesh candidate to
+> report a boot window for in the first place. See
+> [`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain).
+
 Because the tunnel is opaque and already pumps both directions in parallel,
 the spoken replies #151 adds — server-to-client `response.audio.delta` frames
 — ride it with **zero gateway change**: the gateway neither knows nor cares
@@ -539,7 +548,11 @@ same connection:
   reply, versus a thinking lane spending that on a trace nobody hears);
   override with `OPENAI_MODEL`. A lane this box does not host surfaces as
   `generate_failed` carrying the `hosted_by` peer hint — never a silent
-  fallback.
+  fallback. DECLARED/UNVALIDATED (#108): on a mesh member whose only
+  candidate for that lane is a not-yet-probed peer, the underlying generate
+  call answers `503 role_unverified` instead of the plain referral, and that
+  status surfaces through `generate_failed` the same way — retryable, not a
+  new terminal failure shape.
 - Speaking during playback **interrupts**: generate and TTS are both
   cancelled, the undelivered audio is never sent, and `response.interrupted`
   (`truncated: true`) goes out. `BARGE_IN_WINDOW_MS` (default 750) guards the
@@ -624,6 +637,16 @@ silent fallback to the primary — the inverted feasibility default; see
 this writing `muse` is DORMANT mesh-wide (no box declares its hosting shape)
 and `worker`'s hosting shape is forthcoming — both currently 404
 `role_infeasible` everywhere.
+
+DECLARED/UNVALIDATED (#108): on a mesh-brain member, a role a peer has
+*announced but not yet probed* is a distinct, retryable case — `503`,
+`error.type`/`error.code` `role_unverified`, `error.hosted_by` naming the
+pending member, `Retry-After: 5` — rather than the plain `404
+role_infeasible` above, which stays reserved for "nobody hosts this role" and
+"a probed peer disagreed on fingerprint." `GET /mesh/roster` marks that same
+never-probed member `"probed": false` with `unverified_reason:
+"not_yet_probed"`, distinct from a clean probe's `None`. See
+[`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain).
 
 ```bash
 curl -s http://localhost:8000/capabilities

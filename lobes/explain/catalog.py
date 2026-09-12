@@ -1483,6 +1483,36 @@ single hop (`X-Lobes-Proxied` arriving twice refuses `508 proxy_loop`) and
 carries `X-Lobes-Mesh-Member: <name>`. A role can be announced `private` to
 stay off the mesh's auto-wiring entirely.
 
+## The boot-window status (MEASURED 2026-09-12)
+
+A member the roster has announced but never yet probed carries
+`"probed": false` and `unverified_reason: "not_yet_probed"` on `GET
+/mesh/roster` — `None` only after a clean probe, distinct from a probe that
+RAN and disagreed. A request for a role only such a member hosts answers
+`503` instead of `404`: `error.type`/`error.code` `role_unverified`,
+`error.hosted_by` naming the pending origin, `Retry-After: 5`
+(`BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS`), and
+`X-Lobes-Mesh-Member`/`X-Lobes-Mesh-Origin`/`X-Lobes-Mesh-Role`/
+`X-Lobes-Mesh-Unverified: true` — retryable, the same discipline as
+`backend_unavailable`/`server_busy`. A member whose probe ran and disagreed
+on fingerprint, and an empty roster, both keep the plain `404
+role_infeasible` with no `hosted_by`; a raw checkpoint id announced only by a
+never-probed member follows the SAME `role_unverified` rule. The heartbeat
+loop's first pass runs immediately at thread start (not a full
+`LOBES_MESH_HEARTBEAT_S` later), and an inbound announce or a seed-discovered
+member wakes an immediate, single-flight, loop-thread verification pass
+instead of waiting for the next periodic tick.
+
+`GET /capabilities` sources `hosted_by`/`ready`/`proxied` for a
+mesh-provided role from this same verified roster: `proxied: true` whenever
+the role is auto-wired to a peer; `ready` is that peer's own per-role
+`ready` bit as captured at probe time (refreshed each pass, up to one
+heartbeat stale); `hosted_by` names the peer's origin ONLY when the role has
+exactly one plain (agreeing-fingerprint) origin — a `members` list of
+origins takes its place, with `hosted_by` omitted, when the role is pooled
+across more than one. With no mesh configured, `/capabilities` stays
+byte-identical to today.
+
 ## The consumer-only shape
 
 `lobes init --shape gateway-only` hosts NOTHING locally (`hosts = []`) and

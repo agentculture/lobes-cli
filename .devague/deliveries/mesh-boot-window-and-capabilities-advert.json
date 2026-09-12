@@ -1,0 +1,58 @@
+{
+  "plan_slug": "mesh-boot-window-and-capabilities-advert",
+  "schema_version": 2,
+  "created": "2026-09-12T11:05:25Z",
+  "updated": "2026-09-12T11:48:33Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "announce responses carry the responder's own public announcement so a recreated box learns and verifies every reachable peer on its first pass; seed-discovered members' roster-listed roles count as provisional announced roles for the pending (503) path; the pending log line gets its own wording instead of the rejection-log 'auth: rejected' prefix",
+      "task_ref": "t2",
+      "reason": "measured live 2026-09-12T11:00:47Z (bootwindow-worker): a recreated Spark gateway answered 404 role_infeasible for 57 s and never 503 \u2014 seed rosters carry members and roles but no announcement, so the first pass had nothing to verify and pending_origins stayed empty until the peers' own 60 s heartbeats delivered their announcements",
+      "affects": [
+        "t1",
+        "c3",
+        "h3",
+        "c18",
+        "c20"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "(1) the verification probe ignores a peer's proxied capabilities entries when collecting ready roles and fingerprints \u2014 a relay is never a lane; (2) the routing snapshot is refreshed immediately on announcement ingest and seed discovery, carrying forward each probed member's verified/reason/ready data, so a new member is pending (503) during the first pass instead of absent (404); (3) the live capabilities suite accepts a box with zero feasible generate lobes when at least one generate role answered by proxy with a marked reply; the two raw-id checks that fail for #236 are recorded in evidence with the 0.76.0 control, not suppressed \u2014 t8's suite criterion becomes 'passes except the two #236 raw-id checks, recorded'",
+      "task_ref": "t8",
+      "reason": "measured on 0.77.0.dev541 2026-09-12T11:24Z: the staged 503 demo (Thor gateway paused, Spark recreated) still answered 404 because the snapshot is replaced only when the whole first pass completes and a paused peer holds it for the probe timeout; the 35B raw id resolved to the Spark (508 proxy_loop) via spark-gw and the Thor because t4 marks proxied entries ready and the probe collects ready from every entry (0.76.0 control: 404 model_not_found); the suite's discovery check requires a feasible generate lobe, which a gateway-only box never has",
+      "affects": [
+        "t2",
+        "t4",
+        "t7",
+        "h7"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "seed rosters are fetched in parallel (one bounded dial per seed, merged as each completes) instead of sequentially, so a dead or paused seed cannot hold the first pass \u2014 and with it every other seed's discovery \u2014 for its dial timeout",
+      "task_ref": "t2",
+      "reason": "measured on 0.77.0.dev543 2026-09-12T11:42:26Z (demo503): with the Thor gateway paused, the recreated Spark's first pass blocked on the Thor's seed-roster GET from ~11:42:37 until the unpause at 11:42:50; the Orin's roster (which lists the Thor's roles) was merged only after that, so d2's immediate-pending refresh had nothing to show and every request 404'd for the whole window",
+      "affects": [
+        "c3",
+        "h3"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

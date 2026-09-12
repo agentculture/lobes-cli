@@ -1,3 +1,13 @@
 services:
   gateway:
+    environment:
+      - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}
+      - LOBES_MESH_KEY=${LOBES_MESH_KEY:-}
+      - LOBES_MESH_NAME=${LOBES_MESH_NAME:-}
+      - LOBES_MESH_SEEDS=${LOBES_MESH_SEEDS:-}
+      - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
+      - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
+      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
     image: lobes-gateway:worker
+    volumes:
+      - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh

@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.77.0] - 2026-09-12
+
+### Added
+
+- Mesh boot window closed (PR #254, follow-ups from #253): the heartbeat loop runs its first verification pass at thread start; an inbound announce from a not-yet-probed member (or a changed fingerprint) and a seed discovery wake it at once, single-flight on the loop thread; announce replies carry the responder's own announcement; seed rosters are fetched in parallel and their listed roles make a member pending immediately; the routing view refreshes the moment a member is learned (deviations d1-d3). A request for a role whose only candidate is announced but not yet probed answers `503 role_unverified` with `Retry-After: 5`, `error.hosted_by` and the `X-Lobes-Mesh-*` headers instead of `404 role_infeasible`; a probed-and-disagreeing member and an empty roster still 404.
+- `GET /mesh/roster` carries `probed` and the `not_yet_probed` sentinel; `lobes mesh status` renders it; the pending state is logged once per member.
+- `GET /capabilities` sources `hosted_by`, `ready` and `proxied` from the mesh roster for a role reached only via the mesh; a pooled role carries a `members` list instead of `hosted_by`; `lobes capabilities` renders it. Docs, `lobes explain` and the live capabilities gate follow.
+- MEASURED live 2026-09-12 on the Spark/Thor/Orin fleet plus a gateway-only member (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`): a recreated gateway answers its first reachable request 200; with a peer paused the same request answers 503 `role_unverified` until the first retry after the unpause; the gateway-only member advertises `hosted_by`/`ready`/`proxied` for four mesh roles and `members` for the pooled reranker, and `ready` flips false within ~30 s of the peer's lane stopping.
+
+### Changed
+
+- The verification probe ignores a peer's proxied capabilities entries (a relay is never a lane); `MemberInfo` gains `probed` and `ready_roles`, `RolePlacement` gains `pending_origins`.
+- Review round: a mesh-provided role's `/capabilities` `context` is the serving peer's advertised window (a pooled role publishes it only when its members agree); a probe result is discarded when the member's announcement changed mid-probe, and the refresh path applies the same rule; heartbeat wake events are consumed losslessly; the live gate treats a still-`role_unverified` role as unreachable after three retries; 16 SonarCloud findings.
+- `deployments/jetson-agx-thor__thor-worker/` re-captured from the live Thor.
+
+### Fixed
+
+- `/capabilities` on a mesh-only member reported `ready:false` / `hosted_by:null` while routing worked (measured 2026-09-12, h8).
+
 ## [0.76.1] - 2026-09-12
 
 ### Added

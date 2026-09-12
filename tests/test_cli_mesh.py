@@ -698,3 +698,63 @@ class TestParseDurationFiniteness:
         from lobes.cli._commands.mesh import _parse_duration_seconds
 
         assert _parse_duration_seconds("24h") == pytest.approx(86400.0)
+
+
+# ---------------------------------------------------------------------------
+# mesh-boot-window-and-capabilities-advert (task t5, c23/h19): a member
+# record that has never yet been probed carries `"probed": false` and
+# `unverified_reason: "not_yet_probed"` — the roster table already prints
+# any `unverified_reason` via `.get` (Item C, t9); this pins the additive
+# `(not probed)` marker on the three-state status label alongside it.
+# ---------------------------------------------------------------------------
+
+_UNPROBED_ROSTER = {
+    "members": [
+        {
+            "name": "thor",
+            "origin": "http://thor.example:8000",
+            "capacity": 1.0,
+            "last_seen_age": 3,
+            "expiry": 3600,
+            "verified": False,
+            "probed": False,
+            "unverified_reason": "not_yet_probed",
+            "roles": ["worker"],
+        },
+    ]
+}
+
+
+def test_mesh_status_marks_unprobed_member_with_reason_and_status_marker(fake_mesh, capsys) -> None:
+    port, handler = fake_mesh
+    handler.roster_payload = _UNPROBED_ROSTER
+    rc = main(["mesh", "status", "--port", str(port)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "unverified_reason: not_yet_probed" in out
+    assert "unverified (not probed)" in out
+
+
+def test_mesh_status_probed_member_has_no_unprobed_marker(fake_mesh, capsys) -> None:
+    """A clean probe clears both `probed` (True) and `unverified_reason`
+    (None) — the roster table must not fabricate a marker that isn't in the
+    payload."""
+    port, handler = fake_mesh
+    handler.roster_payload = {
+        "members": [
+            {
+                "name": "thor",
+                "origin": "http://thor.example:8000",
+                "capacity": 1.0,
+                "verified": True,
+                "probed": True,
+                "unverified_reason": None,
+                "roles": ["worker"],
+            },
+        ]
+    }
+    rc = main(["mesh", "status", "--port", str(port)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "(not probed)" not in out
+    assert "unverified_reason" not in out

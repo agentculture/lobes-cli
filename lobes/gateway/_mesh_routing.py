@@ -16,7 +16,7 @@ Public API
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -49,8 +49,22 @@ class MemberInfo:
         Role names verified by the ``/capabilities`` probe.  These are the ONLY
         roles that should be used for forwarding; a member that is not verified
         for a role must never receive forwarded traffic for it.
+    ready_roles:
+        Role names whose probed ``/capabilities`` entry reported ``ready:
+        true``.  Readiness is NOT verification — a lane can be ready while
+        serving a fingerprint that disagrees with what the member announced —
+        so this is a separate, purely informational tuple used to advertise an
+        honest ``ready`` on a proxied ``/capabilities`` entry.  Empty when the
+        member has never been probed or the probe reported no ready lane.
     capacity:
         Resolved capacity from the roster.
+    probed:
+        ``True`` once the FIRST ``/capabilities`` probe result for this member
+        has landed (whether it verified anything or not); ``False`` while the
+        member is still inside the boot window.  This is the sentinel that
+        separates "probed and verified nothing" (a hard negative) from "not
+        yet probed" (a not-yet), which ``verified_roles == ()`` alone
+        conflated.
     unverified_reason:
         Short, operator-facing reason the last verification probe of this
         member failed or found nothing verified (item C, t9) — e.g. an HTTP
@@ -58,7 +72,20 @@ class MemberInfo:
         ``None`` when the member has never been probed, or its last probe
         succeeded. Never derived from the member's own credential or
         response body verbatim (mirrors the ``RejectionLog`` reason
-        convention) — just a short, stable category for triage.
+        convention) — just a short, stable category for triage.  A
+        never-probed member carries ``None`` HERE, at the model level: the
+        ``"not_yet_probed"`` string belongs to the ``GET /mesh/roster``
+        presentation, which reads ``probed`` to decide it.
+    role_context:
+        ``(role, context)`` pairs the member's own ``/capabilities`` probe
+        advertised — the SERVING window of the lane that will actually answer
+        a forwarded request.  Sorted by role name, so the tuple never depends
+        on payload iteration order, and a tuple (not a mapping) so the member
+        stays frozen and hashable.  Empty when the member has never been
+        probed, or when its probe carried no integer context for any role;
+        :meth:`context_for` is the reader.  Qodo thread 2: without this the
+        proxied ``/capabilities`` entry kept this box's own local or
+        env-derived context for a role it does not host.
     """
 
     name: str
@@ -67,6 +94,18 @@ class MemberInfo:
     verified_roles: tuple[str, ...]
     capacity: float
     unverified_reason: str | None = None
+    # Additive, defaulted so every pre-boot-window construction (all keyword,
+    # all without these) keeps its exact previous meaning.
+    probed: bool = False
+    ready_roles: tuple[str, ...] = ()
+    role_context: tuple[tuple[str, int], ...] = ()
+
+    def context_for(self, role: str) -> int | None:
+        """The context this member's probe advertised for *role*, or ``None``."""
+        for name, context in self.role_context:
+            if name == role:
+                return context
+        return None
 
 
 @dataclass(frozen=True)
@@ -312,6 +351,24 @@ def build_snapshot(
     # strings (see MemberInfo.unverified_reason). Carried straight onto the
     # matching MemberInfo; an origin absent here simply gets None.
     unverified_reasons: Mapping[str, str] | None = None,
+    # Optional per-origin sets of roles the probe found READY (the probed
+    # /capabilities entry's ``ready: true``).  Readiness is independent of
+    # verification: a ready lane whose fingerprint disagrees with the
+    # announcement is ready but not verified, and vice versa.  Carried onto
+    # MemberInfo.ready_roles; an origin absent here gets an empty tuple.
+    ready_roles: Mapping[str, "frozenset[str]"] | None = None,
+    # d1: origin -> roles a SEED ROSTER listed for a member we hold no
+    # announcement for yet. Stands in for ``announced_roles`` ONLY while the
+    # announcement is absent, so the pending (503) path can name the member;
+    # never routed and never verified from — a real announcement always wins.
+    discovered_roles: Mapping[str, "Sequence[str]"] | None = None,
+    # Qodo thread 2: origin -> {role: context} as the member's OWN
+    # /capabilities probe advertised it. Carried onto MemberInfo.role_context
+    # and read by lobes.roles._annotate_plain_member so a proxied entry
+    # publishes the serving lane's window instead of this box's local one.
+    # An origin absent here (or a role absent from its map) simply gets
+    # nothing, and the entry keeps whatever context it already carried.
+    role_contexts: Mapping[str, Mapping[str, int]] | None = None,
 ) -> RoutingSnapshot:
     """Build a :class:`RoutingSnapshot` from *roster* + probe data.
 
@@ -349,6 +406,8 @@ def build_snapshot(
     ann_map: dict[str, Announcement] = {} if announcements is None else dict(announcements)
     ver_map: dict[str, frozenset[str]] = {} if verified_roles is None else dict(verified_roles)
     reason_map: dict[str, str] = {} if unverified_reasons is None else dict(unverified_reasons)
+    ready_map: dict[str, frozenset[str]] = {} if ready_roles is None else dict(ready_roles)
+    context_map: dict[str, Mapping[str, int]] = {} if role_contexts is None else dict(role_contexts)
 
     # Collect the set of known origins from the roster so we can prune stale data.
     roster_origins: set[str] = set()
@@ -363,6 +422,8 @@ def build_snapshot(
         origin = rec.origin
         roster_origins.add(origin)
         announced, verified = _resolve_member_roles(ann_map.get(origin), ver_map.get(origin))
+        if not announced and ann_map.get(origin) is None and discovered_roles:
+            announced = tuple(sorted(str(r) for r in discovered_roles.get(origin, ()) if r))
 
         members.append(
             MemberInfo(
@@ -372,6 +433,14 @@ def build_snapshot(
                 verified_roles=verified,
                 capacity=rec.capacity,
                 unverified_reason=reason_map.get(origin),
+                # A member is "probed" once ANY probe result for it has
+                # landed.  Every probe outcome leaves a trace in exactly one
+                # of these three maps: a verified set, a failure reason, or
+                # (clean probe, nothing ready) a readiness set.  Presence in
+                # none of them is the boot window.
+                probed=(origin in ver_map or origin in reason_map or origin in ready_map),
+                ready_roles=tuple(sorted(ready_map.get(origin, frozenset()))),
+                role_context=tuple(sorted(context_map.get(origin, {}).items())),
             )
         )
 
@@ -578,11 +647,23 @@ class RolePlacement:
     existing replica-pool / mesh-forward machinery exactly as before);
     ``suffixed`` lists every member whose fingerprint disagreed with the
     reference, each addressable only by its own suffixed name.
+
+    ``pending_origins`` are origins of members that PUBLICLY announce the role
+    but whose first ``/capabilities`` probe has not landed yet
+    (``MemberInfo.probed is False``) — the boot window.  They are NOT
+    routable: a pending origin never widens ``plain_origins`` and never
+    becomes a suffixed lane.  It exists so a caller can be answered "not yet"
+    (503 ``role_unverified``, naming the pending origin) instead of "never"
+    (404 ``role_infeasible``).  A member that WAS probed and verified nothing
+    is a hard negative and is never pending.  Ordered by member name so the
+    listing never depends on roster iteration order.
     """
 
     role: str
     plain_origins: tuple[str, ...]
     suffixed: tuple[SuffixedLane, ...]
+    # Additive, defaulted: every pre-boot-window construction stays valid.
+    pending_origins: tuple[str, ...] = ()
 
     def suffixed_names(self) -> tuple[str, ...]:
         return tuple(lane.name for lane in self.suffixed)
@@ -603,6 +684,21 @@ def _role_fingerprint(
     if info is None:
         return None
     return _wire_fingerprint_to_replica(info.fingerprint)
+
+
+def _pending_origins_for_role(snapshot: RoutingSnapshot, role: str) -> tuple[str, ...]:
+    """Origins announcing *role* whose first probe has not landed yet.
+
+    A role a member announced ``private`` was stripped from the stored
+    :class:`~lobes.gateway._mesh_wire.Announcement` at the wire boundary
+    (``Announcement.public()``), so reading ``announced_roles`` here already
+    means "publicly announces the role" — nothing extra is excluded.
+    """
+    pending = [
+        (m.name, m.origin) for m in snapshot.members if not m.probed and role in m.announced_roles
+    ]
+    pending.sort(key=lambda p: p[0])
+    return tuple(origin for _name, origin in pending)
 
 
 def _collect_role_candidates(
@@ -680,9 +776,10 @@ def compute_role_placement(
     from lobes.gateway._replicas import compare_fingerprints
 
     candidates = _collect_role_candidates(snapshot, role)
+    pending = _pending_origins_for_role(snapshot, role)
 
     if not candidates:
-        return RolePlacement(role=role, plain_origins=(), suffixed=())
+        return RolePlacement(role=role, plain_origins=(), suffixed=(), pending_origins=pending)
 
     # Deterministic ordering (by member name) so the reference member and the
     # emitted suffixed order never depend on roster/dict iteration order.
@@ -700,7 +797,12 @@ def compute_role_placement(
         # `model=embedder` 404'd role_infeasible. A candidate whose
         # announcement carries no fingerprint for the role (a private role
         # stripped by `Announcement.public()`) is still never plain.
-        return RolePlacement(role=role, plain_origins=(candidates[0][1],), suffixed=())
+        return RolePlacement(
+            role=role,
+            plain_origins=(candidates[0][1],),
+            suffixed=(),
+            pending_origins=pending,
+        )
     else:
         # No local hosting: the reference is only trustworthy when every
         # candidate agrees with the FIRST one — otherwise there is no
@@ -718,9 +820,20 @@ def compute_role_placement(
                 )
                 for name, origin, _fp in candidates
             )
-            return RolePlacement(role=role, plain_origins=(), suffixed=suffixed)
+            return RolePlacement(
+                role=role, plain_origins=(), suffixed=suffixed, pending_origins=pending
+            )
 
-    return _split_candidates_by_reference(role, candidates, reference)
+    # S5886: build the placement through RolePlacement's own constructor
+    # rather than `dataclasses.replace`, whose return type is the generic
+    # DataclassInstance (the same treatment `Announcement.public()` got).
+    split = _split_candidates_by_reference(role, candidates, reference)
+    return RolePlacement(
+        role=split.role,
+        plain_origins=split.plain_origins,
+        suffixed=split.suffixed,
+        pending_origins=pending,
+    )
 
 
 def find_suffixed_lane(
