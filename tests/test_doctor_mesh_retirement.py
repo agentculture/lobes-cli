@@ -172,3 +172,52 @@ class TestPassthroughMissing:
 
         after = compose_path.read_bytes()
         assert after == before, "doctor --fix --apply must never edit docker-compose.yml"
+
+
+class TestMeshKeySecretsEnvOnly:
+    """review #252 finding 7: LOBES_MESH_KEY set only in .secrets.env never
+    reaches the gateway (no env_file on that service; Compose interpolates
+    ${LOBES_MESH_KEY} from .env only) — doctor must name this."""
+
+    def test_key_only_in_secrets_env_is_reported(self, tmp_path, monkeypatch, capsys):
+        _scaffold_fleet(tmp_path)
+        monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+        monkeypatch.setattr(_compose, "docker_available", lambda: True)
+        (tmp_path / ".secrets.env").write_text("LOBES_MESH_KEY=super-secret\n", encoding="utf-8")
+
+        payload = _doctor_json(capsys)
+        ids = {c["id"]: c for c in payload["checks"]}
+        check = ids["mesh_key_secrets_env_only"]
+        assert check["passed"] is False
+        assert ".secrets.env" in check["message"]
+        assert ".env" in check["remediation"]
+
+    def test_key_also_in_env_has_no_finding(self, tmp_path, monkeypatch, capsys):
+        _scaffold_fleet(tmp_path)
+        monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+        monkeypatch.setattr(_compose, "docker_available", lambda: True)
+        (tmp_path / ".secrets.env").write_text("LOBES_MESH_KEY=super-secret\n", encoding="utf-8")
+        _env.set_env(tmp_path / ".env", "LOBES_MESH_KEY", "super-secret")
+
+        payload = _doctor_json(capsys)
+        ids = {c["id"]: c for c in payload["checks"]}
+        assert "mesh_key_secrets_env_only" not in ids
+
+    def test_no_secrets_env_file_has_no_finding(self, tmp_path, monkeypatch, capsys):
+        _scaffold_fleet(tmp_path)
+        monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+        monkeypatch.setattr(_compose, "docker_available", lambda: True)
+
+        payload = _doctor_json(capsys)
+        ids = {c["id"]: c for c in payload["checks"]}
+        assert "mesh_key_secrets_env_only" not in ids
+
+    def test_legacy_single_model_scaffold_has_no_finding(self, tmp_path, monkeypatch, capsys):
+        _compose.write_scaffold(tmp_path, force=True)
+        monkeypatch.setenv("LOBES_DIR", str(tmp_path))
+        monkeypatch.setattr(_compose, "docker_available", lambda: True)
+        (tmp_path / ".secrets.env").write_text("LOBES_MESH_KEY=super-secret\n", encoding="utf-8")
+
+        payload = _doctor_json(capsys)
+        ids = {c["id"]: c for c in payload["checks"]}
+        assert "mesh_key_secrets_env_only" not in ids
