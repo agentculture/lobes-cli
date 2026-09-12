@@ -690,3 +690,27 @@ def test_mesh_status_cli_renders_the_populated_roster_row(capsys):
     assert "verified" in out
     assert "unverified" in out
     assert "cortex" in out
+
+
+def test_sole_verified_member_is_plain_even_with_an_unknown_field():
+    """Live dev528 (2026-09-12): the Thor was the only verified embedder in the
+    mesh and the Spark hosts none, yet the Spark exposed it as ``embedder-thor``
+    only — the strict pool rule made the sole candidate disagree with itself
+    over ``quantization: unknown``. One candidate has nothing to pool with, so
+    it is plain; two candidates keep the strict rule."""
+    fp_unknown = _fp(quantization="unknown")
+    snap = _two_member_snapshot(fp_unknown, fp_unknown)
+    two = compute_role_placement(snap, "cortex", local_fingerprint=None)
+    assert two.plain_origins == ()  # unknown never pools (spec h11), unchanged
+    assert len(two.suffixed) == 2
+
+    from lobes.gateway._mesh_routing import MemberInfo, RoutingSnapshot
+
+    sole = RoutingSnapshot(
+        members=tuple(m for m in snap.members if m.origin == "http://a"),
+        announcements=tuple(a for a in snap.announcements if a[0] == "http://a"),
+    )
+    one = compute_role_placement(sole, "cortex", local_fingerprint=None)
+    assert one.plain_origins == ("http://a",)
+    assert one.suffixed == ()
+    assert isinstance(sole.members[0], MemberInfo)

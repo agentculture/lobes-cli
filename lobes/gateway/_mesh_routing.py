@@ -639,6 +639,17 @@ def compute_role_placement(
 
     if local_fingerprint is not None:
         reference = local_fingerprint
+    elif len(candidates) == 1 and candidates[0][2] is not None:
+        # No local hosting and ONE verified member: nothing to pool, nothing
+        # to disagree with — it is exposed plain. The strict pool rule below
+        # (unknown never pools) made a sole candidate disagree with ITSELF
+        # whenever its fingerprint carried an unknown field: live dev528,
+        # 2026-09-12, the Spark exposed the Thor's embedder (the only one in
+        # the mesh, quantization unknown) as `embedder-thor` only, and
+        # `model=embedder` 404'd role_infeasible. A candidate whose
+        # announcement carries no fingerprint for the role (a private role
+        # stripped by `Announcement.public()`) is still never plain.
+        return RolePlacement(role=role, plain_origins=(candidates[0][1],), suffixed=())
     else:
         # No local hosting: the reference is only trustworthy when every
         # candidate agrees with the FIRST one — otherwise there is no
