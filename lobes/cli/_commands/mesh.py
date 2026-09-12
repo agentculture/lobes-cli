@@ -212,20 +212,32 @@ def _fetch_roster(port: int, headers: dict[str, str]) -> dict | None:
 
 
 def _member_status(member: dict) -> str:
-    """Three-state verified/unverified/flapping (issue mesh-brain-join, c47).
+    """Three-state verified/unverified/flapping (issue mesh-brain-join, c47),
+    plus an additive "not probed" marker (mesh-boot-window-and-capabilities-
+    advert, c23/h19).
 
     Additive: today's ``/mesh/roster`` payload carries neither ``verified``
     nor ``flapping`` per member (see the module docstring) — a member
-    missing both keys renders ``unknown`` rather than guessing.
+    missing both keys renders ``unknown`` rather than guessing. A member
+    whose ``probed`` key is explicitly ``False`` (never yet probed) gets the
+    label suffixed with ``(not probed)`` regardless of which of the three
+    base states it renders — a member absent the key at all (an older
+    gateway, or a hand-built fixture) renders exactly as before, since
+    ``.get("probed")`` on a missing key returns ``None``, not ``False``.
     """
     if member.get("flapping"):
-        return "flapping"
-    verified = member.get("verified")
-    if verified is True:
-        return "verified"
-    if verified is False:
-        return "unverified"
-    return "unknown"
+        status = "flapping"
+    else:
+        verified = member.get("verified")
+        if verified is True:
+            status = "verified"
+        elif verified is False:
+            status = "unverified"
+        else:
+            status = "unknown"
+    if member.get("probed") is False:
+        status += " (not probed)"
+    return status
 
 
 def _fmt_seconds(value: object) -> str:
