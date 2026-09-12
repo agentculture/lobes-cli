@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-12T06:19:57Z",
+  "updated": "2026-09-12T06:31:40Z",
   "deviations": [
     {
       "id": "d1",
@@ -306,7 +306,7 @@
         "commit": "97caa12"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 17
     },
@@ -325,7 +325,7 @@
         "commit": "97caa12"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 18
     },
@@ -344,7 +344,7 @@
         "commit": "97caa12"
       },
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "superseded": false,
       "seq": 19
     }
