@@ -375,6 +375,22 @@ class MeshRoutes:
         from lobes.gateway._mesh_roster import MeshApprovalExpired, MeshFlapping
 
         try:
+            if name == self.config.name:
+                # A peer relaying OUR name (or a misconfigured twin) never
+                # enters our own roster — the live Spark listed itself.
+                return (
+                    409,
+                    [("Content-Type", "application/json"), ("Connection", "close")],
+                    json.dumps(
+                        {
+                            "error": {
+                                "message": "a member cannot announce this box's own name",
+                                "type": "mesh_name_conflict",
+                                "name": name,
+                            }
+                        }
+                    ).encode(),
+                )
             self.roster.announce_gated(name, origin, None, now=roster_now)
         except MeshApprovalExpired:
             return (
@@ -1372,6 +1388,9 @@ def _fetch_seed_roster(
                             if isinstance(member, dict):
                                 mname = member.get("name", "")
                                 morigin = member.get("origin", "")
+                                if routes is not None and mname == routes.config.name:
+                                    # A peer's roster lists US; never merge ourselves in.
+                                    continue
                                 if mname and morigin:
                                     # Roster.announce takes roster._lock itself;
                                     # wrapping it in that same lock deadlocked the

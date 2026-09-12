@@ -241,3 +241,65 @@ def test_announced_and_advertised_fingerprints_carry_a_known_runtime() -> None:
     routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
     fresh = routes._announcement_builder()
     assert fresh.roles["cortex"].fingerprint.runtime == "vllm"
+
+
+def test_a_box_never_lists_itself_via_announce_or_seed_merge() -> None:
+    """Regression: the live Spark's roster listed 'spark' after merging a seed
+    roster that (correctly) listed it as a member."""
+    import io
+
+    from lobes.gateway._mesh_routes import _fetch_seed_roster
+    from lobes.gateway._mesh_wire import Announcement, encode
+
+    class Seed(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(
+                {
+                    "members": [
+                        {"name": "me", "origin": "http://me.local:8000", "capacity": 1.0},
+                        {"name": "other", "origin": "http://other.local:8000", "capacity": 1.0},
+                    ],
+                    "ledger": {},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), Seed)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "unsloth/Qwen3.8-27B-NVFP4",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+    }
+    table, cfg = build_config(env)
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    try:
+        _fetch_seed_roster(
+            [f"http://127.0.0.1:{srv.server_address[1]}"],
+            "sk-test",
+            routes.roster,
+            timeout=3.0,
+            routes=routes,
+        )
+        assert "other" in routes.roster.members() and "me" not in routes.roster.members()
+
+        class Req:
+            def __init__(self, body: bytes):
+                self.rfile = io.BytesIO(body)
+                self.headers = {"Authorization": "Bearer sk-test", "Content-Length": str(len(body))}
+                self.client_address = ("127.0.0.1", 1)
+
+        ann = Announcement(name="me", origin="http://me.local:8000", schema_version="1", roles={})
+        status, _h, body = routes.announce(Req(encode(ann)))
+        assert status == 409 and json.loads(body)["error"]["type"] == "mesh_name_conflict"
+        assert "me" not in routes.roster.members()
+    finally:
+        srv.shutdown()
