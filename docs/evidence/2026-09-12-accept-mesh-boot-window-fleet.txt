@@ -1,0 +1,436 @@
+# Acceptance — the mesh boot window and the mesh-sourced /capabilities advert (PR #254, 0.77.0)
+
+Fleet: DGX Spark GB10 (`spark`, gateway :8001, hosts cortex + reranker, spark-lobe shape), Jetson AGX Thor (`thor`, :8000,
+hosts worker + embedder + reranker, thor-worker shape), Jetson AGX Orin (`orin`, :8000, hosts associate, orin-associate
+shape), plus a temporary gateway-only member on the Spark (`spark-gw`, :8002, hosts nothing, `lobes init --shape
+gateway-only`, torn down after). Gateway images built from the packaged Dockerfile against TestPyPI dev wheels of this
+branch (0.77.0.dev540 = the seven plan tasks; dev541 = + d1; dev543 = + d2; dev544 = + d3). Every vLLM lane untouched
+(`--no-deps`). Date: 2026-09-12. Operator: lobes (Claude), user present for every fleet-changing step.
+
+BASELINE (PR #253, `docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`):
+  line 411: "The first worker attempt 404'd role_infeasible because it ran ~60 s after signal 5 had recreated the Spark
+            gateway, while the roster still read thor[v=False]: until the first verification pass completes a
+            mesh-provided role answers 404 role_infeasible, not a 'not yet verified' status"
+  line 439: "/capabilities reports every mesh-provided role as ready:false / hosted_by:null even though routing to it
+            works and `member` names the serving box"
+
+## Measured summary
+
+| check | build | result |
+| --- | --- | --- |
+| A. recreate the Spark gateway, all peers up, hammer model=worker | dev541, dev543, dev544 | the first request that reaches the new container (t+11 s, container boot) answers 200 via the Thor; never 404, never 503 — the window is shorter than the container boot |
+| A0. the same on dev540 (plan tasks only, before d1) | dev540 | 404 role_infeasible for 57 s (t+11 .. t+67), then 200 — the seed rosters carry no announcement, so nothing was pending or verifiable until the peers' 60 s heartbeats (root cause of d1) |
+| B. the 503 path, staged: Thor gateway paused, Spark recreated | dev544 | 13 consecutive 503 role_unverified (Retry-After 5, X-Lobes-Mesh-Unverified true, hosted_by + X-Lobes-Mesh-Member = thor, X-Lobes-Mesh-Role worker) from t+11 s until the unpause; the first retry after the unpause (t+5.4 s) answers 200 via the Thor |
+| B0. the same on dev541 / dev543 | dev541, dev543 | 404 throughout: the first pass was blocked on the paused seed (root cause of d2's refresh and d3's parallel fetch) |
+| C. gateway-only member /capabilities | dev541, dev543, dev544 | cortex/worker/associate/embedder: feasible false, ready true, proxied true, hosted_by = the serving peer's announced origin; reranker (pooled Spark+Thor): members ['spark','thor'], no hosted_by; hand/senses/muse: unchanged (nobody hosts them) |
+| D. every mesh role by plain name via spark-gw | dev544 | cortex 200 (spark), worker 200 (thor), associate 200 (orin), embedder 200 (thor), reranker 200 (pool) with X-Lobes-Mesh-Member naming the box |
+| E. tests/test_live_capabilities.py against spark-gw | dev544 | 3 pass (CLI/gateway agree, version, Colleague discovery incl. proxied roles); 2 FAIL on raw checkpoint ids — #236, pre-existing, see the raw-id section |
+| F. ready flips when the peer's lane stops | dev544 | spark-gw associate ready true -> false 31 s after `docker compose stop vllm-associate` on the Orin (hosted_by cleared with it: not ready => not verified => not placed) |
+| G. cold gateway-only member joins | dev541 | started 11:20:09Z; pending lines at 11:20:10Z; all three peers probed + verified by 11:20:29Z (20 s) |
+| H. roster sentinel | dev541+ | never-probed members read probed:false + unverified_reason "not_yet_probed"; `lobes mesh status` prints "(not probed)" |
+
+Not measured / still open: the Retry-After value against a slow-but-reachable probe (the paused-peer demo covers the in-flight case); concurrent recreates; raw checkpoint-id addressing through a non-hosting front (#236, see below); the verification-FAILURE log line still reuses the rejection log's `auth: rejected` wording (pre-existing, t9 item C).
+
+## Re-image transcripts (per build)
+### reimage-spark
+[spark] recreate gateway at 0.77.0.dev540: 2026-09-12T10:58:06Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[spark] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev540"}
+lobes 0.77.0.dev540
+
+### reimage-thor
+[thor] recreate gateway at 0.77.0.dev540: 2026-09-12T10:58:26Z
+ Container model-gear-gateway  Recreated
+ Container model-gear-gateway  Starting
+ Container model-gear-gateway  Started
+[thor] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev540"}
+lobes 0.77.0.dev540
+
+### reimage-orin
+[orin] recreate gateway at 0.77.0.dev540: 2026-09-12T10:58:47Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[orin] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev540"}
+lobes 0.77.0.dev540
+
+### reimage2-spark
+[spark] recreate gateway at 0.77.0.dev541: 2026-09-12T11:19:54Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[spark] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev541"}
+lobes 0.77.0.dev541
+
+### reimage2-thor
+[thor] recreate gateway at 0.77.0.dev541: 2026-09-12T11:18:00Z
+ Container model-gear-gateway  Recreated
+ Container model-gear-gateway  Starting
+ Container model-gear-gateway  Started
+[thor] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev541"}
+lobes 0.77.0.dev541
+
+### reimage2-orin
+[orin] recreate gateway at 0.77.0.dev541: 2026-09-12T11:18:21Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[orin] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev541"}
+lobes 0.77.0.dev541
+
+### gwonly-up
+## gateway-only member up at dev541 (attempt 2): 2026-09-12T11:20:09Z
+ Container lobes-gwonly-gateway Created 
+ Container lobes-gwonly-gateway Starting 
+ Container lobes-gwonly-gateway Started 
+health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev541"}
+
+### reimage3-spark
+[spark] recreate gateway at 0.77.0.dev543: 2026-09-12T11:40:44Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[spark] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev543"}
+lobes 0.77.0.dev543
+
+### reimage3-thor
+[thor] recreate gateway at 0.77.0.dev543: 2026-09-12T11:40:59Z
+ Container model-gear-gateway  Recreated
+ Container model-gear-gateway  Starting
+ Container model-gear-gateway  Started
+[thor] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev543"}
+lobes 0.77.0.dev543
+
+### reimage3-orin
+[orin] recreate gateway at 0.77.0.dev543: 2026-09-12T11:39:34Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[orin] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev543"}
+lobes 0.77.0.dev543
+
+### gwonly-up-dev543
+## gateway-only member up at dev543: 2026-09-12T11:40:16Z
+ Container lobes-gwonly-gateway Started 
+health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev543"}
+
+### reimage4-spark
+[spark] recreate gateway at 0.77.0.dev544: 2026-09-12T11:55:20Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[spark] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev544"}
+lobes 0.77.0.dev544
+
+### reimage4-thor
+[thor] recreate gateway at 0.77.0.dev544: 2026-09-12T11:59:11Z
+ Container model-gear-gateway  Recreated
+ Container model-gear-gateway  Starting
+ Container model-gear-gateway  Started
+[thor] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev544"}
+lobes 0.77.0.dev544
+
+### reimage4-orin
+[orin] recreate gateway at 0.77.0.dev544: 2026-09-12T11:56:49Z
+ Container model-gear-gateway Recreated 
+ Container model-gear-gateway Starting 
+ Container model-gear-gateway Started 
+[orin] health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev544"}
+lobes 0.77.0.dev544
+
+### gwonly-up-dev544
+## gateway-only member up at dev544: 2026-09-12T11:57:10Z
+ Container lobes-gwonly-gateway Started 
+health after 2s: {"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev544"}
+
+## G. rosters after the dev540 re-image (the first pass on dev540 could not verify a seed-discovered member)
+## rosters 2026-09-12T10:59:38Z
+spark: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_api_key", "code": "invalid_api_key"}}
+thor: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_api_key", "code": "invalid_api_key"}}
+orin: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_api_key", "code": "invalid_api_key"}}
+## spark gateway mesh log lines since recreate
+[gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+[gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+## rosters 2026-09-12T10:59:53Z (join-key bearer)
+spark: thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None]
+thor: orin[p=True,v=True,roles=1,r=None]
+orin: thor[p=True,v=True,roles=3,r=None] spark[p=True,v=True,roles=2,r=None]
+
+thor roster 2026-09-12T11:00:35Z: {"members": [{"name": "orin", "origin": "http://orin.tail0be7e0.ts.net:8000", "capacity": 1.0, "last_seen_age": 40.29937719699228, "expiry": null, "verified": true, "flapping": false, "roles": ["associate"], "probed": true, "unverified_reason": null}, {"name": "spark", "origin": "http://spark.tail0be7e0.ts.net:8001", "capacity": 1.0, "last_seen_age": 40.46725072094705, "expiry": null, "verified": true, "flapping": false, "roles": ["cortex", "reranker"], "probed": true, "unverified_reason": null}], "ledger": {}}
+## thor gateway log: mesh + announce lines since recreate
+[gateway] "GET /mesh/roster HTTP/1.1" 200 -
+
+## A0. boot window on dev540 (plan tasks only) — the measured root cause of d1
+recreate spark gateway: 2026-09-12T11:00:47Z
+RESULT: first 503 at t+nones, first 200 at t+67.33s (gateway health, then roster):
+{"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev540"}
+first 6 and last 4 probe lines:
+t+10.58s  worker -> HTTP 000 type=- retry-after,unverified,member=-,-,-
+t+11.18s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+11.73s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+12.28s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+12.84s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+13.39s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+65.66s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+66.21s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+66.78s  worker -> HTTP 404 type=role_infeasible retry-after,unverified,member=-,-,-
+t+67.33s  worker -> HTTP 200 type=- retry-after,unverified,member=-,-,thor
+## spark gateway log 11:00:47Z -> 11:02:00Z (mesh lines + first announces)
+2026-09-12T11:01:54.710771278Z [gateway] "GET /mesh/roster HTTP/1.1" 200 -
+2026-09-12T11:01:54.726397853Z [gateway] "GET /mesh/roster HTTP/1.1" 200 -
+2026-09-12T11:01:54.763617901Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
+2026-09-12T11:01:54.763707165Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
+2026-09-12T11:01:54.777819277Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
+2026-09-12T11:01:54.777959741Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
+2026-09-12T11:01:54.795957325Z [gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+2026-09-12T11:01:54.795989869Z [gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+2026-09-12T11:01:55.575920296Z [gateway] "GET /mesh/roster HTTP/1.1" 401 -
+## spark roster now
+orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None]
+
+## G. cold gateway-only member on dev541 + C. its /capabilities
+## rosters 2026-09-12T11:20:29Z — spark recreated ~11:19:20Z, spark-gw started 11:20:09Z
+spark:    orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities]
+spark-gw: orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None] spark[p=True,v=True,roles=2,r=None]
+thor:     orin[p=True,v=True,roles=1,r=None] spark[p=True,v=True,roles=2,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities]
+orin:     thor[p=True,v=True,roles=3,r=None] spark[p=True,v=True,roles=2,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities]
+## spark-gw gateway log (mesh lines)
+2026-09-12T11:20:10.783729453Z [gateway] mesh pending orin: http://orin.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+2026-09-12T11:20:10.783736957Z [gateway] mesh pending thor: http://thor.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+2026-09-12T11:20:10.783740558Z [gateway] mesh pending spark: http://spark.tail0be7e0.ts.net:8001 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+## spark-gw /capabilities per role
+  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.tail0be7e0.ts.net:8001 members=None member=spark
+  worker    feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  associate feasible=False ready=True proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 members=None member=orin
+  hand      feasible=False ready=False proxied=None hosted_by=None members=None member=None
+  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  reranker  feasible=False ready=True proxied=True hosted_by=None members=['spark', 'thor'] member=thor
+  senses    feasible=False ready=False proxied=None hosted_by=None members=None member=None
+  muse      feasible=False ready=False proxied=None hosted_by=None members=None member=None
+
+## A. boot window, all peers up — dev541
+recreate spark gateway: 2026-09-12T11:20:44Z
+RESULT: first 503 at t+nones, first 200 at t+11.14s (gateway health, then roster):
+{"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev541"}
+t+10.57s  worker -> HTTP 000 type=- retry-after,unverified,member=-,-,-
+t+11.14s  worker -> HTTP 200 type=- retry-after,unverified,member=-,-,thor
+
+## B0. staged 503 demo on dev541 (before d2/d3) — 404 throughout
+pause thor gateway: model-gear-gateway
+2026-09-12T11:24:21Z
+recreate spark gateway: 2026-09-12T11:24:21Z
+gateway up after 11.09 s
+## while thor is paused (12 probes, 1 s apart)
+## spark roster while thor paused
+thor[p=False,v=False,roles=0,r=not_yet_probed] spark-gw[p=False,v=False,roles=0,r=not_yet_probed] orin[p=False,v=False,roles=0,r=not_yet_probed]
+unpause thor gateway: model-gear-gateway
+2026-09-12T11:24:45Z
+## after unpause: retry honouring Retry-After (5 s) until 200 or 120 s
+t+0.01s after unpause  HTTP 404 type=role_infeasible hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=- X-Lobes-Mesh-Role=-
+t+5.36s after unpause  HTTP 200 type=- hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=-
+## spark roster after
+thor[p=True,v=True,roles=3,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] orin[p=True,v=True,roles=1,r=None]
+(12 probes, all HTTP 404 role_infeasible)
+
+## E (first run, dev541) — the live suite's failures that led to d2 (3)
+## tests/test_live_capabilities.py against the gateway-only member (spark-gw, :8002) 2026-09-12T11:21:25Z
+    def test_advertised_ready_roles_are_reachable(caps: dict) -> None:
+            line = f"  {role:9} {url:42} -> {verdict}"
+E           worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)
+E           associate http://localhost:8002/v1/chat/completions  -> 404 not-found
+E           cortex    http://localhost:8002/v1/chat/completions  -> 200 served
+E           embedder  http://localhost:8002/v1/embeddings        -> 200 served
+E           reranker  http://localhost:8002/v1/rerank            -> 200 served
+E       assert not ['  worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)', '  associate http://localhost:8002/v1/chat/completions  -> 404 not-found']
+    def test_advertised_models_are_reachable(caps: dict, model_ids: list[str]) -> None:
+            line = f"  {mid:58} [{lane}] -> {verdict}"
+E           nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4         [/v1/chat/completions] -> 404 not-found
+E           nvidia/Qwen3.6-35B-A3B-NVFP4                               [/v1/chat/completions] -> 508 backend error (no honest Retry-After — dishonest relay)
+E           Qwen/Qwen3-Embedding-0.6B                                  [/v1/embeddings] -> 200 served
+E           unsloth/Qwen3.8-27B-NVFP4                                  [/v1/chat/completions] -> 200 served
+E           Qwen/Qwen3-Reranker-0.6B                                   [/v1/rerank] -> 200 served
+E       assert not ['  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4         [/v1/chat/completions] -> 404 not-found', '  nvidia/Qwe...4                               [/v1/chat/completions] -> 508 backend error (no honest Retry-After — dishonest relay)']
+    def test_colleague_discovers_and_dials_generate_roles(caps: dict, mesh_roster: dict) -> None:
+                    # non-2xx (peer down -> 503, peer shed -> 429) is still an
+            "#81/#87 Colleague discovery path failed — a peer given ONLY the gateway "
+E       AssertionError: #81/#87 Colleague discovery path failed — a peer given ONLY the gateway origin could not resolve-and-dial these roles from the contract:
+PASSED tests/test_live_capabilities.py::test_cli_and_gateway_capabilities_agree
+PASSED tests/test_live_capabilities.py::test_deployed_gateway_version_matches_cli
+FAILED tests/test_live_capabilities.py::test_advertised_ready_roles_are_reachable
+FAILED tests/test_live_capabilities.py::test_advertised_models_are_reachable
+FAILED tests/test_live_capabilities.py::test_colleague_discovers_and_dials_generate_roles
+3 failed, 2 passed in 5.29s
+## re-run against spark-gw on a stable mesh 2026-09-12T11:22:49Z
+E       AssertionError: advertised-ready roles that are NOT reachably served (a 404 is #92/#96; a bare 5xx without Retry-After is a dishonestly relayed dead backend, e.g. the poisoned STT sidecar #89):
+E           worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)
+
+## raw-id routing matrix on dev541 (spark-gw, spark, thor)
+  spark-gw  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  spark-gw  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  spark-gw  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  spark     nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  spark     nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=- member=- proxied-by=-
+  spark     worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  thor      nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 200 type=- route=- member=- proxied-by=-
+  thor      nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  thor      worker                                       HTTP 200 type=- route=- member=- proxied-by=-
+
+## raw-id control on 0.76.0 — INVALID (ran 45 s after the control gateway started, inside the 0.76.0 boot window; lapse l7)
+## raw ids via spark-gw on 0.76.0 (control) 2026-09-12T11:27:24Z
+  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 404 type=model_not_found route=- member=- proxied-by=-
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=- member=- proxied-by=-
+  worker                                       HTTP 404 type=role_infeasible route=- member=- proxied-by=-
+
+## C. rosters + spark-gw /capabilities on dev543, then A. boot window on dev543
+## 2026-09-12T11:41:34Z rosters on dev543 (spark-gw up 11:40:16Z, spark ~11:42, thor ~11:42)
+spark:    orin[p=True,v=True,roles=1,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] thor[p=True,v=True,roles=3,r=None]
+spark-gw: thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None] spark[p=True,v=True,roles=2,r=None]
+## spark-gw /capabilities
+  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.tail0be7e0.ts.net:8001 members=None member=spark
+  worker    feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  associate feasible=False ready=True proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 members=None member=orin
+  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  reranker  feasible=False ready=True proxied=True hosted_by=None members=['spark', 'thor'] member=thor
+  hand      feasible=False ready=False proxied=None hosted_by=None members=None member=None
+recreate spark gateway: 2026-09-12T11:41:34Z
+RESULT: first 503 at t+nones, first 200 at t+11.11s (gateway health, then roster):
+{"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev543"}
+t+10.56s  worker -> HTTP 000 type=- retry-after,unverified,member=-,-,-
+t+11.11s  worker -> HTTP 200 type=- retry-after,unverified,member=-,-,thor
+
+## B0. staged 503 demo on dev543 (d2 in, d3 not yet) — 404 throughout; the Spark gateway log shows no mesh activity until the unpause
+pause thor gateway: model-gear-gateway
+2026-09-12T11:42:26Z
+recreate spark gateway: 2026-09-12T11:42:26Z
+gateway up after 11.07 s
+## while thor is paused (12 probes, 1 s apart)
+## spark roster while thor paused
+spark-gw[p=False,v=False,roles=0,r=not_yet_probed] orin[p=False,v=False,roles=0,r=not_yet_probed] thor[p=False,v=False,roles=0,r=not_yet_probed]
+unpause thor gateway: model-gear-gateway
+2026-09-12T11:42:50Z
+## after unpause: retry honouring Retry-After (5 s) until 200 or 120 s
+t+0.01s after unpause  HTTP 404 type=role_infeasible hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=- X-Lobes-Mesh-Role=-
+t+5.36s after unpause  HTTP 200 type=- hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=-
+## spark roster after
+spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None]
+(12 probes, all HTTP 404 role_infeasible)
+
+## B. staged 503 demo on dev544 (d1+d2+d3) — PASS
+pause thor gateway: model-gear-gateway
+2026-09-12T11:58:25Z
+recreate spark gateway: 2026-09-12T11:58:25Z
+gateway up after 11.1 s
+## while thor is paused (12 probes, 1 s apart)
+t+11.13s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+12.17s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+13.2s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+14.23s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+15.27s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+16.31s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+17.34s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+18.38s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+19.41s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+20.46s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+21.49s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+22.54s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+## spark roster while thor paused
+spark-gw[p=False,v=False,roles=0,r=not_yet_probed] thor[p=False,v=False,roles=0,r=not_yet_probed] orin[p=False,v=False,roles=0,r=not_yet_probed]
+unpause thor gateway: model-gear-gateway
+2026-09-12T11:58:49Z
+## after unpause: retry honouring Retry-After (5 s) until 200 or 120 s
+t+0.01s after unpause  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+5.38s after unpause  HTTP 200 type=- hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=-
+## spark roster after
+spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None]
+## spark gateway log: pending lines
+[gateway] mesh pending thor: http://thor.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+[gateway] mesh pending orin: http://orin.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+[gateway] mesh pending spark-gw: http://spark.tail0be7e0.ts.net:8002 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+
+## A. boot window, all peers up — dev544
+recreate spark gateway: 2026-09-12T12:00:04Z
+RESULT: first 503 at t+nones, first 200 at t+11.11s (gateway health, then roster):
+{"status": "ok", "service": "model-gear-gateway", "version": "0.77.0.dev544"}
+t+10.57s  worker -> HTTP 000 type=- retry-after,unverified,member=-,-,-
+t+11.11s  worker -> HTTP 200 type=- retry-after,unverified,member=-,-,thor
+
+## D + E. live suite and raw-id matrix against spark-gw on dev544
+## tests/test_live_capabilities.py against spark-gw on dev544 2026-09-12T12:01:14Z
+E       AssertionError: advertised-ready roles that are NOT reachably served (a 404 is #92/#96; a bare 5xx without Retry-After is a dishonestly relayed dead backend, e.g. the poisoned STT sidecar #89):
+E           worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)
+E           associate http://localhost:8002/v1/chat/completions  -> 404 not-found
+E         
+E         reachable:
+E           cortex    http://localhost:8002/v1/chat/completions  -> 200 served
+E           embedder  http://localhost:8002/v1/embeddings        -> 200 served
+E           reranker  http://localhost:8002/v1/rerank            -> 200 served
+E       assert not ['  worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)', '  associate http://localhost:8002/v1/chat/completions  -> 404 not-found']
+E       AssertionError: #91: GET /v1/models advertises models that read as 'model does not exist' when dialed on their own lane (a listed model must never be undialable):
+E           nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4         [/v1/chat/completions] -> 404 not-found
+E           nvidia/Qwen3.6-35B-A3B-NVFP4                               [/v1/chat/completions] -> 508 backend error (no honest Retry-After — dishonest relay)
+E         
+E         reachable:
+E           Qwen/Qwen3-Embedding-0.6B                                  [/v1/embeddings] -> 200 served
+E           unsloth/Qwen3.8-27B-NVFP4                                  [/v1/chat/completions] -> 200 served
+E           Qwen/Qwen3-Reranker-0.6B                                   [/v1/rerank] -> 200 served
+E       assert not ['  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4         [/v1/chat/completions] -> 404 not-found', '  nvidia/Qwe...4                               [/v1/chat/completions] -> 508 backend error (no honest Retry-After — dishonest relay)']
+PASSED tests/test_live_capabilities.py::test_cli_and_gateway_capabilities_agree
+PASSED tests/test_live_capabilities.py::test_deployed_gateway_version_matches_cli
+PASSED tests/test_live_capabilities.py::test_colleague_discovers_and_dials_generate_roles
+FAILED tests/test_live_capabilities.py::test_advertised_ready_roles_are_reachable
+FAILED tests/test_live_capabilities.py::test_advertised_models_are_reachable
+2 failed, 3 passed in 6.25s
+
+## raw ids and the alias via spark-gw on dev544
+  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  associate                                    HTTP 200 type=- route=sole-ready member=orin proxied-by=http://orin.tail0be7e0.ts.net:8000
+
+## raw-id FAIR control on 0.76.0 — spark-gw rebuilt at the 0.76.0 release, probed 100 s after start (after its first verify pass)
+Identical to dev544: the mis-route is pre-existing (#236 defect 2 — an unknown raw id falls back to the primary lane and is forwarded to the cortex member). Posted to #236.
+## FAIR raw-id control: spark-gw on 0.76.0, 2026-09-12T12:18:24Z, 100 s after start
+spark-gw roster: orin[p=None,v=True,roles=2,r=None] spark[p=None,v=True,roles=2,r=None] thor[p=None,v=True,roles=3,r=None]
+  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+
+## F. ready flips when the Orin's associate lane stops (dev544)
+## F (continued): associate lane recovered on the Orin at 12:21:39Z (healthy after 180 s once embed+rerank were stopped); spark-gw associate ready:
+  2026-09-12T12:26:22Z ready,hosted_by,proxied = True http://orin.tail0be7e0.ts.net:8000 True
+## orinlane.sh output (the poller saw the stop; the lane's own restart crash-looped on util 0.80 — see orin-recovery)
+stop orin associate lane: 2026-09-12T12:02:03Z
+0
+t+11s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
+t+16s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
+t+21s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
+t+26s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
+t+31s spark-gw associate ready,hosted_by = False None
+start orin associate lane: 2026-09-12T12:05:23Z
+orin lane: model-gear-vllm-associate Up 6 minutes (healthy)
+[exited with code 0]
+## orin recovery
+recovery start: 2026-09-12T12:18:52Z — stop embed + rerank so the associate lane (util 0.80 in this box .env) can take its 49 GiB
+t+15s associate: starting restarts=15
+t+30s associate: starting restarts=16
+t+45s associate: starting restarts=16
+t+60s associate: starting restarts=16
+t+75s associate: starting restarts=16
+t+90s associate: starting restarts=16
+t+105s associate: starting restarts=16
+t+120s associate: starting restarts=16
+t+135s associate: starting restarts=16
+t+150s associate: starting restarts=16
+t+165s associate: starting restarts=16
+t+180s associate: healthy restarts=16
+start embed + rerank: 2026-09-12T12:21:39Z
+model-gear-vllm-associate Up 6 minutes (healthy)
+model-gear-vllm-rerank Up 2 seconds (health: starting)
+model-gear-vllm-embed Up 3 minutes (healthy)
+
+Deployment finding (Orin, not this PR): the Orin's .env pins ASSOCIATE_GPU_MEM_UTIL=0.80 (the orin-associate shape's measured value is 0.56); the lane only fits when it boots BEFORE the embed/rerank gears, so a plain `docker compose start vllm-associate` crash-looped 16 times ('Free memory 43.02/61.34 GiB ... less than desired 0.8, 49.08 GiB') until the gears were stopped for its boot. hand and multimodal were already exited on the Orin (2 weeks). Recovered to the pre-run state; the util value is the operator's to reconcile.
+

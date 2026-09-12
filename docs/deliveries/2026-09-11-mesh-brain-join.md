@@ -124,11 +124,11 @@ Lapse ledger evidence:
 ## Remaining Work / Follow-up
 
 - (closed) gateway-only member and Qwen Code through the mesh — both measured on the 0.76.0 release run; see the transcript's release section.
-- A mesh-provided role answers 404 role_infeasible for the first ~60 s after a gateway recreate, until the first verification pass; a distinguishable 'not yet verified' answer is a follow-up.
-- `/capabilities` on a member that reaches a role only via the mesh reports it ready:false / hosted_by:null while routing works (measured on the gateway-only member) — the hosted_by follow-up now has a live instance.
+- (closed by PR #254, 0.77.0) A mesh-provided role answered 404 role_infeasible for the first ~60 s after a gateway recreate — measured fixed 2026-09-12 (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`): the first reachable request after a recreate answers 200, and with a peer paused it answers 503 `role_unverified` + `Retry-After: 5` until the peer is probed.
+- (closed by PR #254, 0.77.0) `/capabilities` on a member that reaches a role only via the mesh reported ready:false / hosted_by:null — measured fixed 2026-09-12 on the gateway-only member (same transcript): hosted_by, ready and proxied are mesh-sourced; a pooled role carries `members`.
 - `t12` signal 3 spill-over — generate real local load on a pooled role (or add a second cortex host) and observe `X-Lobes-Proxied-By` from a pooled member; the policy keeps an idle local lane local by design.
 - `t14` residue — done on the branch (`f25b53e`): docstrings and comments now describe routing via the mesh; deliberately historical mentions (Retired (t14), dated findings, issue numbers) kept; `_check_pool_arming` kept because a hand-built RoutingTable can still reach it.
 - Announce only loaded lanes — the Orin announces five hosted-but-not-running lanes; harmless with per-role verification, still noise on every peer.
 - Cortex proxy 200 — closed: the dev532 re-validation obtained a chat completion through the Thor → Spark forward (earlier runs were shed 429 by the Spark's own pressure policy).
-- `/capabilities` JSON `hosted_by` is not mesh-sourced (the CLI member field is); service-rate weighting for heterogeneous pools (#232); the raw-id pressure gate (#215); the `./mesh` mount is root-owned on first recreate (chmod applied by hand on all three boxes).
+- `/capabilities` JSON `hosted_by` — closed by PR #254 (mesh-sourced since 0.77.0); service-rate weighting for heterogeneous pools (#232); the raw-id pressure gate (#215); the `./mesh` mount is root-owned on first recreate (chmod applied by hand on all three boxes).
 - Colleague lane architecture (colleague#495/#496/#497) and the associate facts-pass fixes (associate#3/#4) — filed, outside this plan.

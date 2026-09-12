@@ -14,6 +14,7 @@
   - instruction: read the new transcript header
 - After: A recreated gateway verifies announced members within seconds (at boot, on announce, on seed discovery); a request that lands before that answers 503 `role_unverified` with Retry-After 5 s and mesh headers naming the pending member; /capabilities on any member reports a mesh-provided role with `hosted_by` = the verified peer origin when the role has one plain origin (a members list when pooled), ready from the peer's probe, proxied:true.
   - instruction: same acceptance transcript
+  - ⚠ contested by `d1` (needs-follow-up): measured live 2026-09-12T11:00:47Z (bootwindow-worker): a recreated Spark gateway answered 404 `role_infeasible` for 57 s and never 503 — seed rosters carry members and roles but no announcement, so the first pass had nothing to verify and `pending_origins` stayed empty until the peers' own 60 s heartbeats delivered their announcements
 
 ## Why it matters
 
@@ -27,6 +28,7 @@
   - honesty: With `LOBES_MESH_HEARTBEAT_S`=1 the first verification probe reaches a fake peer in < 1 s of `start_mesh`, not ~1 interval later.
 - An inbound announce and a seed-roster discovery each trigger an immediate verification of that member: MeshRoutes.announce() (`_mesh_routes.py`:459-463) only sets `_verify_event`, which is read on the next periodic tick; `_merge_seed_members` (1342-1363) runs after `_tick_and_collect` in the same pass, so a seeded member verifies one interval later. `verify_members` already runs its probes outside routes.`_lock` (dev518 note 1170-1175; `test_mesh_heartbeat_live.py`:80-163), so calling it out-of-band is lock-safe.
   - instruction: new tests beside `test_a_slow_peer_probe_never_blocks_the_roster_or_inbound_announces`
+  - ⚠ contested by `d1` (needs-follow-up): measured live 2026-09-12T11:00:47Z (bootwindow-worker): a recreated Spark gateway answered 404 `role_infeasible` for 57 s and never 503 — seed rosters carry members and roles but no announcement, so the first pass had nothing to verify and `pending_origins` stayed empty until the peers' own 60 s heartbeats delivered their announcements
   - honesty: A POST /mesh/announce from a new member results in a /capabilities probe of that member before the next periodic tick, and a seed-discovered member is probed in the same pass that discovered it; roster reads and inbound announces still return in < 1 s while a slow probe is in flight.
 - MemberInfo/the /mesh/roster payload distinguish 'never probed yet' from 'probed and clean': today `unverified_reason`=None means both (`_mesh_routing.py`:54-61 docstring; `_build_member_record` `_mesh_routes.py`:498-521), pinned by tests/`test_mesh_verify_reason.py`:96-108 and 127-135, which must be updated deliberately, not broken.
   - instruction: run the two named tests after the change; assert the new sentinel on a never-probed member
@@ -71,6 +73,7 @@
 
 - On the 3-box fleet, a request for a mesh-provided role issued < 10 s after a gateway recreate answers 503 `role_unverified` (never 404), and a retry after Retry-After answers 200 within 1 heartbeat (60 s); the gateway-only member's /capabilities shows `hosted_by` non-null, ready:true and proxied:true for >= 5 mesh-provided roles (cortex, worker, associate, embedder, reranker); the offline suite passes with the two pinning tests flipped.
   - instruction: read the transcript
+  - ⚠ contested by `d1` (needs-follow-up): measured live 2026-09-12T11:00:47Z (bootwindow-worker): a recreated Spark gateway answered 404 `role_infeasible` for 57 s and never 503 — seed rosters carry members and roles but no announcement, so the first pass had nothing to verify and `pending_origins` stayed empty until the peers' own 60 s heartbeats delivered their announcements
 
 ## Scope / boundaries
 

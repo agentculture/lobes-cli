@@ -686,7 +686,8 @@ request whose checkpoint is announced only by a never-probed member follows
 the SAME `role_unverified` rule as the role alias, since the served-backend
 lookup shares the same fall-through.
 
-**DECLARED/UNVALIDATED (#108):** `GET /capabilities` sources `hosted_by`,
+**MEASURED 2026-09-12 (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`):**
+`GET /capabilities` sources `hosted_by`,
 `ready` and `proxied` for a mesh-provided role from this same verified
 roster, not from the retired `<PREFIX>_PEER_*` env family. `proxied` is
 `true` whenever the role is auto-wired to a verified peer; `ready` is that

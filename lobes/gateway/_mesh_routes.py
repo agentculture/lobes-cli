@@ -1491,7 +1491,7 @@ def _broadcast_announcement(
         for fut in concurrent.futures.as_completed(futures):
             try:
                 reply = fut.result(timeout=dial_timeout)
-            except Exception:  # nosec B110 — best-effort: drop failed peer connections
+            except Exception:  # nosec B112 — best-effort: drop failed peer connections
                 continue
             if routes is not None and reply:
                 try:

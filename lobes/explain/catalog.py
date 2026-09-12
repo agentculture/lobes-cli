@@ -1483,7 +1483,7 @@ single hop (`X-Lobes-Proxied` arriving twice refuses `508 proxy_loop`) and
 carries `X-Lobes-Mesh-Member: <name>`. A role can be announced `private` to
 stay off the mesh's auto-wiring entirely.
 
-## DECLARED/UNVALIDATED (#108): the boot-window status
+## The boot-window status (MEASURED 2026-09-12)
 
 A member the roster has announced but never yet probed carries
 `"probed": false` and `unverified_reason: "not_yet_probed"` on `GET

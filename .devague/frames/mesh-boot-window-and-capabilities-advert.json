@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-12T09:14:56Z",
-  "updated": "2026-09-12T10:00:39Z",
+  "updated": "2026-09-12T12:13:32Z",
   "claims": [
     {
       "id": "c1",
@@ -688,7 +688,96 @@
       ]
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "assumption-for-measurement",
+      "what": "t1 asserted in a test docstring that ready_roles is a superset of verified_roles, reasoning from verify_member_roles rather than a live probe payload; also widened the pinned probed derivation to include the ready map (a strict superset of the contract) and chose member-name ordering for pending_origins without a contract basis",
+      "skipped_check": "live probe payload comparison (t8)",
+      "refs": [
+        "t1 / lobes/gateway/_mesh_routing.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "grader-unverified",
+      "what": "t6's grep criterion 'receives nothing' never matched the doc prose (which says 'receive nothing'), so the criterion passed trivially and did not grade whether the trust-but-verify sentence was actually rewritten; the 503 explanation was appended after the unchanged clause",
+      "skipped_check": "a grep on the phrase the docs actually use",
+      "refs": [
+        "t6 / docs/gateway-fleet.md 643-653"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t7 made GET /mesh/roster fail-closed to an empty roster in the live gate fixture, so a broken roster endpoint on a box declaring pooled members reads as 'no accepted origin' \u2014 a correct failure with an indistinguishable message; the real roster payload shape was assumed, not observed",
+      "skipped_check": "observe /mesh/roster live in t8 before trusting the message",
+      "refs": [
+        "t7 / tests/test_live_capabilities.py mesh_roster fixture"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "control-absent",
+      "what": "t3: the third fall-through site (server.py served-backend branch ~3435) is unreachable from any build_config table \u2014 coverage shows lines ~3354-3499 dead across the mesh/gateway suite \u2014 so its role_unverified guard and the pre-existing mesh-forward path there are unexercised; the guard is correct by construction and the helper is unit-tested, but the site itself has no test",
+      "skipped_check": "a test reaching the served-backend mesh branch",
+      "refs": [
+        "t3 / lobes/gateway/server.py served-backend branch"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "assumption-for-measurement",
+      "what": "t2: a seed-discovered member is probed in the event-woken pass immediately AFTER discovery (loop order is verify, then seed fetch), not literally 'the same pass' as c3/h3 and frame obligation o5 word it; the observable no-tick-wait property is what the test asserts. Also the seed-discovery live test pre-seeds the peer's announcement, so cold discovery of a peer whose announcement arrives only by its own heartbeat is not proven end-to-end offline",
+      "skipped_check": "an offline test that lets the announcement arrive by the peer's own heartbeat, or the live run (t8)",
+      "refs": [
+        "t2 / lobes/gateway/_mesh_routes.py seed merge; frame o5"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "control-absent",
+      "what": "t2: the announce-storm probe-count test was not red-first \u2014 before the change neither the gate nor the event existed, so the storm was already within bounds; the test only goes red against an ungated implementation of the new event",
+      "skipped_check": "",
+      "refs": [
+        "t2 / tests/test_mesh_heartbeat_live.py announce-storm test"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "control-absent",
+      "what": "t8: the 0.76.0 'control' for the raw-id mis-route ran 45 s after the control gateway started \u2014 inside the very boot window this PR removes \u2014 so it had no verified peers and its 404s do not show what 0.76.0 does once verified; the comparison was cited to the user as a regression signal before this was noticed. A fair control (>= 90 s after start) is re-run in the same transcript",
+      "skipped_check": "wait for the control box's roster to verify before probing",
+      "refs": [
+        "t8 / rawid-control-0.76.0"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "assumption-for-measurement",
+      "what": "d2 (1) attributed the 35B raw-id 508 to the probe collecting ready from proxied entries; measured on dev544 after that change the id still forwards to the Spark (route sole-ready), so the cause is the unknown-raw-id fallback to the primary lane (#236 defect 2), not the probe. The probe change stays as a correct invariant but did not fix the symptom",
+      "skipped_check": "re-probe the raw id after the change before claiming the cause",
+      "refs": [
+        "t8 / d2 (1); lobes/gateway/server.py raw-id fallback"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",

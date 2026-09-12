@@ -36,6 +36,23 @@ narrative of how this box reached cortex before the mesh-brain join
 replaced that mechanism (see CLAUDE.md's "Live as of 2026-09-11" paragraph)
 — it is not re-asserted as current operator guidance by this capture.
 
+**Re-captured from the LIVE box on 2026-09-12 at 0.77.0** (mesh boot window +
+mesh-sourced `/capabilities`, PR #254): the three compose files are the bytes
+the Thor actually runs (fetched over ssh), not a template render — so
+`docker-compose.override.yml` now carries the mesh-brain join's
+`LOBES_MESH_*`/`GATEWAY_SELF_ORIGIN` passthrough and ledger mount that the
+cutover runbook added by hand, and `docker-compose.yml`/`docker-compose.shape.yml`
+are the box's own again. The `[env]` table's `PRIMARY_*`/`MULTIMODAL_*`
+documentation-only values (both roles stay `FEASIBLE=false` here) therefore
+return to the live box's deviation-d1-era local-cortex leftovers (util 0.58,
+262144 + YaRN `hf_overrides`), reversing the previous capture's fresh-render
+choice; nothing about them is served. The gateway ran `0.77.0.dev544` from
+TestPyPI when the evidence below was measured; the lock pins the release
+`0.77.0`. Evidence for this capture:
+`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt` (the Thor is a
+peer in every measurement there: the announce-reply path, the paused-Thor
+503 demonstration, and the mesh-sourced `hosted_by` = this box's origin).
+
 It hosts **`worker`** — `nvidia/Qwen3.6-35B-A3B-NVFP4` at the full native
 262144 window, `gpu_mem_util=0.45`, fp8 KV cache, `max_num_seqs=1`, and DFlash
 k=12 speculation against the `z-lab/Qwen3.6-35B-A3B-DFlash` drafter — plus the
@@ -66,6 +83,10 @@ are absent by construction. Declare them yourself after restoring.
 
 ## Measured result
 
+> Measured live on 2026-09-12:
+> `docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt` covers the
+> state captured here as a mesh peer — see the re-capture paragraph above.
+>
 > Measured live on 2026-09-11:
 > `docs/evidence/2026-09-11-accept-thor-reranker-template-senses-unproxy.txt`
 > covers the state captured here. The templated reranker went from 0.21–0.87

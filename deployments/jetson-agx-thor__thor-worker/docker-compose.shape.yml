@@ -9,15 +9,17 @@
 # base compose boots every core gear unconditionally, so a dropped lobe would
 # RUN and eat the GPU budget the shape reclaimed (proven live on the GB10).
 #
-# The gateway needs no patch here. It used to be reset with the compose
-# `!reset` merge tag, because the base template made every core service a
-# hard start-order dependency of the gateway and a profile-disabled service
-# left that edge dangling. Since issue #222 the base template declares no
-# such dependency at all — an unconditional one meant ANY gateway restart
-# started every heavy lane, including one this box declares infeasible — so
-# there is nothing left here to reset.
+# The gateway's base `depends_on` lists every core service, so once one is
+# profile-disabled that edge dangles (compose errors on / auto-enables a
+# depends_on to an inactive-profile service). The compose `!reset` tag CLEARS
+# the attribute (the value is ignored — list *replacement* is `!override`,
+# which is not what we want): the remaining core gears carry no profile and
+# start regardless of `depends_on`, and the gateway tolerates a backend still
+# loading (see its base comment), so dropping the start-order edge is safe.
+#
+# REQUIRES Docker Compose v2.24+ (compose-spec `!reset` merge tag).
 services:
   vllm-multimodal:
     profiles: ["shape-dropped"]
-  vllm-primary:
-    profiles: ["shape-dropped"]
+  gateway:
+    depends_on: !reset null

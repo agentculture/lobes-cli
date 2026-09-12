@@ -422,7 +422,7 @@ by role name, each value carrying exactly these fields:
     "loaded": bool,                       # is this role's backend wired in THIS deployment? (LOCAL wiring only — see below)
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
     "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared (or, on a mesh member, the role's ONE verified plain origin)
-    "members": [str, ...],                # OPTIONAL, DECLARED/UNVALIDATED (#108) — present instead of hosted_by when a mesh-provided role is pooled across more than one plain origin
+    "members": [str, ...],                # OPTIONAL, MEASURED 2026-09-12 — present instead of hosted_by when a mesh-provided role is pooled across more than one plain origin
     "proxied": bool,                      # OPTIONAL — present (and true) only when this box also forwards to that peer
     "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a retired peer-origins pool is declared
       {
@@ -583,7 +583,8 @@ above.)
 > The mesh path is DECLARED/UNVALIDATED (#108) — see that same section for
 > the code-vs-docs implementation-status caveat.
 >
-> **DECLARED/UNVALIDATED (#108): the caller-facing boot-window status.** A
+> **The caller-facing boot-window status — MEASURED 2026-09-12
+> (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`).** A
 > mesh member the roster has announced but not yet probed answers `503`,
 > `error.type`/`error.code` `role_unverified`, `error.hosted_by` naming that
 > member's origin, `Retry-After: 5`, and
@@ -686,7 +687,8 @@ healthy — a background thread probes the declared peer's own `GET
 box would forward to it. A dead or misconfigured peer means `ready: false`
 (or the id drops off `/v1/models` entirely) even though `proxied: true` is
 still declared — declaring the intent to proxy is not evidence the peer is
-reachable right now. **DECLARED/UNVALIDATED (#108), mesh-sourced case:** on a
+reachable right now. **Mesh-sourced case — MEASURED 2026-09-12 on a gateway-only member (same
+transcript):** on a
 mesh member, `ready` for a mesh-provided role is the chosen peer's own
 per-role `ready` bit as captured during the mesh's verification probe (the
 same probe that populates `GET /capabilities` `ready`) rather than a
