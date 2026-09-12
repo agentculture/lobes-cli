@@ -266,12 +266,21 @@ def _probe_verification(
     member_origins: list[str],
     join_key: str,
     announced_roles_per_origin: dict[str, dict[str, RoleInfo]],
-) -> dict[str, frozenset[str]]:
-    """Probe each member's /capabilities, compare fingerprints, return verified_roles.
+) -> tuple[dict[str, frozenset[str]], dict[str, str]]:
+    """Probe each member's /capabilities, compare fingerprints, return
+    ``(verified_roles, unverified_reasons)``.
 
     This mirrors what verify_members() computes: for each announced role,
     compare the announced fingerprint with the probed fingerprint from
-    /capabilities. Returns {origin: frozenset_of_verified_role_names}.
+    /capabilities. Returns {origin: frozenset_of_verified_role_names} plus
+    {origin: reason} for every member whose probe LANDED but verified
+    nothing — exactly the ``reason`` half of
+    ``_mesh_routes._run_verification_probes`` (``"no announced role verified
+    against /capabilities"`` / the exception class name). That half used to
+    be dropped here, which made a probed-and-rejected member
+    indistinguishable from a never-probed one once ``MemberInfo.probed``
+    landed (t1): ``build_snapshot`` reads presence in ANY of the three probe
+    maps as "probed", so a fingerprint mismatch has to leave its trace.
     """
     import ssl
     import urllib.request
@@ -279,6 +288,7 @@ def _probe_verification(
     from lobes.gateway._mesh_routing import verify_member_roles
 
     verified: dict[str, frozenset[str]] = {}
+    reasons: dict[str, str] = {}
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -290,7 +300,9 @@ def _probe_verification(
             req.add_header("Authorization", f"Bearer {join_key}")
             req.add_header("Content-Type", "application/json")
             with urllib.request.urlopen(req, timeout=2.0, context=ctx) as resp:
-                if resp.status == 200:
+                if resp.status != 200:
+                    reasons[origin] = f"HTTP {resp.status}"
+                else:
                     import json
 
                     payload = json.loads(resp.read())
@@ -327,10 +339,12 @@ def _probe_verification(
                     verified_roles = verify_member_roles(ann, probed_roles)
                     if verified_roles:
                         verified[origin] = verified_roles
-        except Exception:
-            pass  # probe failed → no verification
+                    else:
+                        reasons[origin] = "no announced role verified against /capabilities"
+        except Exception as exc:  # probe failed → no verification, but it LANDED
+            reasons[origin] = type(exc).__name__
 
-    return verified
+    return verified, reasons
 
 
 def _build_mesh_snapshot(
@@ -339,12 +353,16 @@ def _build_mesh_snapshot(
     verified_roles: dict[str, frozenset[str]],
     fingerprints: dict[str, Fingerprint] | None = None,
     member_names: list[str] | None = None,
+    unverified_reasons: dict[str, str] | None = None,
 ) -> "RoutingSnapshot":
     """Build a mesh snapshot from member origins, announced roles, and
     verified roles.
 
     member_names: mesh member names (used as backend names in _mesh_roles()).
     Defaults to "origin:port".
+    unverified_reasons: per-origin probe-failure reasons, passed straight
+    through to ``build_snapshot`` exactly as ``verify_members`` does — the
+    trace that marks a member PROBED even when it verified nothing.
     """
     if fingerprints is None:
         fingerprints = {o: _fp() for o in member_origins}
@@ -361,7 +379,12 @@ def _build_mesh_snapshot(
         announcements[origin] = _ann(member_names[i], origin, roles)
 
     roster = _FakeRoster(roster_members)
-    return build_snapshot(roster, announcements=announcements, verified_roles=verified_roles)
+    return build_snapshot(
+        roster,
+        announcements=announcements,
+        verified_roles=verified_roles,
+        unverified_reasons=unverified_reasons,
+    )
 
 
 def _setup_mesh(
@@ -417,20 +440,22 @@ def _setup_mesh(
     # We need to capture what verify_members computed. Since verify_members
     # stores results in its local verified_by_origin, we rebuild the snapshot
     # by re-probing (matching what the probe actually returns).
+    default_roles = {
+        o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins
+    }
+    # Probe the members and do fingerprint comparison, just like verify_members —
+    # keeping BOTH halves of its result (verified roles and probe reasons).
+    probe_verified, probe_reasons = _probe_verification(
+        member_origins,
+        join_key,
+        announced_roles or default_roles,
+    )
     snap = _build_mesh_snapshot(
         member_origins,
-        announced_roles=announced_roles
-        or {o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins},
-        # Probe the members and do fingerprint comparison, just like verify_members.
-        verified_roles=_probe_verification(
-            member_origins,
-            join_key,
-            announced_roles
-            or {
-                o: {"cortex": _role("cortex", fingerprint=fingerprints[o])} for o in member_origins
-            },
-        ),
+        announced_roles=announced_roles or default_roles,
+        verified_roles=probe_verified,
         member_names=member_names,
+        unverified_reasons=probe_reasons,
     )
     return routes, snap
 
@@ -1183,3 +1208,138 @@ class TestHandlerMeshSnapshotWiring:
 
         assert "mesh_snapshot" in received
         assert isinstance(received["mesh_snapshot"], RoutingSnapshot)
+
+
+# ---------------------------------------------------------------------------
+# Boot window (t3): a member that ANNOUNCED the role but has never been
+# probed is a "not yet", not a "never" — 503 role_unverified, zero dials.
+# ---------------------------------------------------------------------------
+
+
+class TestNeverProbedMemberIsPending:
+    """t3 / c5+h5: the only candidate for a role announced it but its first
+    ``/capabilities`` probe has not landed — the request must be answered
+    503 ``role_unverified`` naming the pending origin, never the terminal
+    404 ``role_infeasible``, and never dialed anywhere."""
+
+    ORIGIN = "http://alpha.local:8001"
+
+    def _never_probed_snapshot(self):
+        """A snapshot whose sole member announced cortex and was NEVER probed.
+
+        ``verified_roles``/``unverified_reasons``/``ready_roles`` are all
+        omitted, which is exactly what ``build_snapshot`` reads as
+        ``probed=False`` — the boot window.
+        """
+        return build_snapshot(
+            _FakeRoster([("primary", self.ORIGIN, 1.0)]),
+            announcements={
+                self.ORIGIN: _ann(
+                    "primary",
+                    self.ORIGIN,
+                    {"cortex": _role("cortex", fingerprint=_fp())},
+                ),
+            },
+        )
+
+    def _post(self, monkeypatch, model: str):
+        env = {
+            "PRIMARY_FEASIBLE": "false",
+            "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        }
+        table, cfg = build_config(env)
+        specs = S.peer_specs_from_table(table)
+        assert "primary" not in specs
+        monkeypatch.setenv("LOBES_MESH_KEY", "sk-mesh-join-key")
+        monkeypatch.setenv("LOBES_MESH_NAME", "me")
+
+        opener_calls: list[bool] = []
+
+        def fake_open(backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
+            opener_calls.append(True)
+            return _FakeUpstream(200, b'{"choices": [{"text": "ok"}]}')
+
+        monkeypatch.setattr(S, "open_upstream", fake_open)
+
+        resp = S.handle_post(
+            table,
+            cfg,
+            "/v1/chat/completions",
+            [("Authorization", "Bearer sk-caller")],
+            json.dumps({"model": model}).encode(),
+            fake_open,
+            peer_specs=specs,
+            replica_snapshot=None,
+            mesh_snapshot=self._never_probed_snapshot(),
+        )
+        return resp, opener_calls
+
+    def _assert_contract(self, resp, opener_calls):
+        assert resp.status == 503
+        assert len(opener_calls) == 0  # zero dials — nothing is routable yet
+
+        headers = {k.lower(): v for k, v in resp.headers}
+        assert headers["content-type"] == "application/json"
+        assert headers["retry-after"] == str(S.BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)
+        assert headers["retry-after"] == "5"
+        assert headers["x-lobes-mesh-member"] == "primary"
+        assert headers["x-lobes-mesh-origin"] == self.ORIGIN
+        assert headers["x-lobes-mesh-role"] == "cortex"
+        assert headers["x-lobes-mesh-unverified"] == "true"
+        # The boot window is NOT a verification claim.
+        assert "x-lobes-mesh-verified" not in headers
+
+        error = json.loads(resp.body)["error"]
+        assert error["type"] == "role_unverified"
+        assert error["code"] == "role_unverified"
+        assert error["hosted_by"] == self.ORIGIN
+        assert isinstance(error["message"], str) and error["message"]
+
+    def test_role_alias_answers_503_role_unverified(self, monkeypatch):
+        resp, opener_calls = self._post(monkeypatch, "cortex")
+        self._assert_contract(resp, opener_calls)
+
+    def test_raw_model_id_answers_the_same_503(self, monkeypatch):
+        resp, opener_calls = self._post(monkeypatch, "unsloth/Qwen3.8-27B-NVFP4")
+        self._assert_contract(resp, opener_calls)
+
+
+class TestRoleUnverifiedHelperGuards:
+    """The one helper the three fall-through sites share is self-guarding, so
+    a site can call it unconditionally: it answers ``None`` — never a 503 —
+    whenever the role is routable or nothing is pending."""
+
+    def _placement(self, **over):
+        from lobes.gateway._mesh_routing import RolePlacement
+
+        return RolePlacement(
+            role=over.get("role", "cortex"),
+            plain_origins=over.get("plain_origins", ()),
+            suffixed=over.get("suffixed", ()),
+            pending_origins=over.get("pending_origins", ()),
+        )
+
+    def test_routable_role_is_not_the_boot_window(self):
+        placement = self._placement(
+            plain_origins=("http://alpha.local:8001",),
+            pending_origins=("http://beta.local:8001",),
+        )
+        assert S._role_unverified_response(None, "cortex", placement, "cortex", "primary") is None
+
+    def test_nothing_pending_falls_through_to_the_terminal_404(self):
+        assert (
+            S._role_unverified_response(None, "cortex", self._placement(), "cortex", "primary")
+            is None
+        )
+
+    def test_pending_without_a_snapshot_names_the_origin_as_the_member(self):
+        """A pending origin with no snapshot to name it still answers the full
+        contract — the member header falls back to the origin rather than
+        being dropped."""
+        placement = self._placement(pending_origins=("http://alpha.local:8001",))
+        resp = S._role_unverified_response(None, "cortex", placement, "cortex", "primary")
+        assert resp is not None and resp.status == 503
+        headers = {k.lower(): v for k, v in resp.headers}
+        assert headers["x-lobes-mesh-member"] == "http://alpha.local:8001"
+        assert headers["retry-after"] == "5"
+        assert json.loads(resp.body)["error"]["code"] == "role_unverified"
