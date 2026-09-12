@@ -524,7 +524,57 @@ class MeshRoutes:
         # three-member mesh announcing once a second into a probe storm.
         if self._needs_immediate_verify(origin, previous, public):
             self._verify_now_event.set()
+        # d2: visible to routing at once — pending until its probe lands.
+        self.refresh_routing_view()
         return None
+
+    def refresh_routing_view(self) -> None:
+        """Rebuild the routing view from the roster NOW, keeping probe results (d2).
+
+        Cheap and network-free: every member the roster knows appears in the
+        view at once — a member learned from an announce reply, an inbound
+        announce or a seed roster is PENDING (``probed`` False, its announced
+        or discovered roles known) from this instant, so a request for one of
+        its roles answers 503 ``role_unverified`` instead of 404 while the
+        first probe is still in flight (live 2026-09-12: the verify pass only
+        replaced the view when EVERY probe returned, and a paused peer held
+        it for the whole probe timeout). Members already probed carry their
+        verified / reason / ready data forward unchanged, so a refresh never
+        demotes a routable lane. No holder (unit-test wiring) is a no-op.
+        """
+        holder = self._holder
+        if holder is None:
+            return
+        from lobes.gateway._mesh_routing import MeshRoutingView
+
+        try:
+            view = holder.current()
+        except Exception:  # nosec B110 — a duck-typed holder never breaks ingest
+            return
+        prev = getattr(view, "snapshot", None)
+        verified: dict[str, frozenset[str]] = {}
+        reasons: dict[str, str] = {}
+        ready: dict[str, frozenset[str]] = {}
+        if prev is not None:
+            for m in prev.members:
+                if not m.probed:
+                    continue
+                # ready_roles carries the "probed" trace even when empty (t1).
+                ready[m.origin] = frozenset(m.ready_roles)
+                if m.verified_roles:
+                    verified[m.origin] = frozenset(m.verified_roles)
+                if m.unverified_reason is not None:
+                    reasons[m.origin] = m.unverified_reason
+        snap = build_snapshot(
+            self.roster,
+            announcements=self._announcements,
+            verified_roles=verified,
+            unverified_reasons=reasons,
+            ready_roles=ready,
+            discovered_roles=self._discovered_roles,
+        )
+        peer_states = getattr(view, "peer_states", None) or {}
+        holder.replace(MeshRoutingView(snapshot=snap, peer_states=peer_states))
 
     def _own_announcement_object(self) -> dict | None:
         """This box's stored public announcement as a JSON object, or ``None``."""
@@ -1586,6 +1636,8 @@ def _merge_seed_members(roster: "Roster", routes: "MeshRoutes | None", members: 
             if newly_discovered and routes is not None:
                 routes._verify_event.set()  # noqa: SLF001
                 routes._verify_now_event.set()  # noqa: SLF001
+                # d2: in the routing view now, pending on its discovered roles.
+                routes.refresh_routing_view()
 
 
 def _rebuild_routing_after_revocations(
@@ -1786,6 +1838,15 @@ def _probe_member_capabilities(
         probed_roles: dict[str, dict] = {}
         for role_name, role_entry in roles_data.items():
             if not isinstance(role_entry, dict):
+                continue
+            # d2: a PROXIED entry is the peer relaying someone else's lane —
+            # never a lane of its own. Its ready bit (true since t4) and its
+            # fingerprint must not make the peer a candidate: live
+            # 2026-09-12 the Spark's proxied worker entry drew a raw-id
+            # request that the Spark then refused 508 (single hop).
+            # The announcement builder already skips proxied entries
+            # (_hosted_role_slice); the probe now agrees.
+            if role_entry.get("proxied"):
                 continue
             role_fp = role_entry.get("fingerprint")
             probed_roles[role_name] = {

@@ -720,7 +720,7 @@ def test_verification_passes_never_overlap_and_run_only_on_the_heartbeat_thread(
         peer_srv.shutdown()
 
 
-def _replying_peer(probes: list, name: str) -> tuple[HTTPServer, str]:
+def _replying_peer(probes: list, name: str, *, delay: float = 0.0) -> tuple[HTTPServer, str]:
     """A fake peer whose POST /mesh/announce reply carries ITS OWN announcement
     (d1) and whose /capabilities agrees with it, so the announcer can verify
     it on the very pass that discovered it."""
@@ -742,6 +742,8 @@ def _replying_peer(probes: list, name: str) -> tuple[HTTPServer, str]:
         def do_GET(self):
             if self.path.startswith("/capabilities"):
                 probes.append((name, time.monotonic()))
+                if delay:
+                    time.sleep(delay)
                 self._send(
                     json.dumps(
                         {
@@ -801,6 +803,37 @@ def test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies
         assert members["seedbox"].probed, "seed was not probed within 5 s of start"
         assert "associate" in members["seedbox"].verified_roles
         assert probes and probes[0][1] - t0 < 5.0
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_a_seed_peer_is_pending_in_the_routing_view_while_its_first_probe_is_in_flight() -> None:
+    """d2 (2), the live 2026-09-12 shape: with the peer's /capabilities held
+    for 3 s, the peer must already be IN the routing view (probed False,
+    announced roles known) well before that probe returns — that is what
+    turns the boot window's 404 into a 503 role_unverified."""
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _replying_peer(probes, "slowseed", delay=3.0)
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=peer_origin)
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        seen_pending = None
+        while time.monotonic() < t0 + 2.5:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None:
+                m = next((x for x in snap.members if x.name == "slowseed"), None)
+                if m is not None and not m.probed and "associate" in m.announced_roles:
+                    seen_pending = time.monotonic() - t0
+                    break
+            time.sleep(0.02)
+        assert seen_pending is not None, "peer never appeared as pending before its probe returned"
+        assert seen_pending < 2.5
     finally:
         routes._stop.set()
         peer_srv.shutdown()

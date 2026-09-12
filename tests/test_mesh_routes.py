@@ -1971,3 +1971,146 @@ class TestSeedRosterRolesAreProvisional:
             [{"name": "thor", "origin": "http://thor:8000", "roles": ["worker", 7]}],
         )
         assert routes._discovered_roles["http://thor:8000"] == ("worker",)
+
+
+class TestProbeIgnoresProxiedEntries:
+    """d2 (1): a peer's PROXIED capabilities entry is a relay, never a lane —
+    its ready bit and fingerprint must not make the peer a candidate."""
+
+    def _serve(self, payload: dict):
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        body = json.dumps(payload).encode()
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *_a):  # noqa: D401
+                pass
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+    def test_proxied_ready_entry_is_not_a_ready_role(self) -> None:
+        from lobes.gateway._mesh_routes import _probe_member_capabilities
+
+        fp = {"served_id": "m", "quantization": "q", "max_model_len": 1, "runtime": "vllm"}
+        srv, origin = self._serve(
+            {
+                "associate": {"feasible": True, "ready": True, "fingerprint": fp},
+                "worker": {"feasible": False, "ready": True, "proxied": True, "fingerprint": fp},
+            }
+        )
+        try:
+            ann = _peer_ann("peer", origin)
+            _origin, verified, ready, reason = _probe_member_capabilities(
+                ("peer", origin, ann), None, 2.0
+            )
+            assert "associate" in verified and reason is None
+            assert ready == frozenset({"associate"}), ready
+        finally:
+            srv.shutdown()
+
+    def test_proxied_fingerprint_never_verifies_an_announced_role(self) -> None:
+        from lobes.gateway._mesh_routes import _probe_member_capabilities
+        from lobes.gateway._mesh_wire import Fingerprint, RoleInfo
+
+        fp = {"served_id": "m", "quantization": "q", "max_model_len": 1, "runtime": "vllm"}
+        srv, origin = self._serve(
+            {"worker": {"feasible": False, "proxied": True, "ready": True, "fingerprint": fp}}
+        )
+        try:
+            ann = Announcement(
+                name="peer",
+                origin=origin,
+                schema_version="1",
+                roles={
+                    "worker": RoleInfo(
+                        model="m",
+                        runtime="vllm",
+                        context=1,
+                        quant="q",
+                        responsibilities=(),
+                        forbidden_responsibilities=(),
+                        fingerprint=Fingerprint(
+                            served_id="m", quantization="q", max_model_len=1, runtime="vllm"
+                        ),
+                    )
+                },
+            )
+            _o, verified, ready, _r = _probe_member_capabilities(("peer", origin, ann), None, 2.0)
+            assert verified == frozenset() and ready == frozenset()
+        finally:
+            srv.shutdown()
+
+
+class TestRoutingViewRefreshesOnIngest:
+    """d2 (2): a member learned from an announce reply, an inbound announce or
+    a seed roster is in the ROUTING VIEW at once (pending, probed False), and
+    already-probed members keep their probe results across the refresh."""
+
+    def _routes_with_holder(self):
+        from lobes.gateway._mesh_routing import SnapshotHolder
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        holder = SnapshotHolder(routes.roster)
+        routes._holder = holder
+        return routes, holder
+
+    def test_reply_ingest_puts_the_member_in_the_view_as_pending(self) -> None:
+        routes, holder = self._routes_with_holder()
+        reply = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann("thor", "http://thor:8000")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(reply)
+        snap = holder.current().snapshot
+        m = {x.name: x for x in snap.members}["thor"]
+        assert m.probed is False and "associate" in m.announced_roles
+
+    def test_seed_discovery_puts_the_member_in_the_view_with_discovered_roles(self) -> None:
+        from lobes.gateway._mesh_routes import _merge_seed_members
+
+        routes, holder = self._routes_with_holder()
+        _merge_seed_members(
+            routes.roster,
+            routes,
+            [{"name": "orin", "origin": "http://orin:8000", "roles": ["associate"]}],
+        )
+        snap = holder.current().snapshot
+        m = {x.name: x for x in snap.members}["orin"]
+        assert m.probed is False and m.announced_roles == ("associate",)
+
+    def test_refresh_carries_forward_probe_results(self) -> None:
+        from lobes.gateway._mesh_routing import MeshRoutingView, build_snapshot
+
+        routes, holder = self._routes_with_holder()
+        routes.roster.announce("thor", "http://thor:8000", 1.0)
+        routes._announcements["http://thor:8000"] = _peer_ann("thor", "http://thor:8000")
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                ),
+                peer_states={},
+            )
+        )
+        reply = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann("orin", "http://orin:8000")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(reply)
+        snap = holder.current().snapshot
+        by = {x.name: x for x in snap.members}
+        assert by["thor"].probed is True
+        assert by["thor"].verified_roles == ("associate",) and by["thor"].ready_roles == (
+            "associate",
+        )
+        assert by["orin"].probed is False
