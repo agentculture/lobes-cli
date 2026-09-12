@@ -166,6 +166,19 @@ def decode(data: bytes) -> Announcement:
     """
     obj = json.loads(data)
 
+    # Finding 15 (review #252): validate the top-level shape BEFORE indexing
+    # into it. A bare `obj["schema_version"]` / `obj["roles"].items()` /
+    # `obj["name"]` on a structurally-wrong-but-valid-JSON body (a list, a
+    # string, `roles` present but not a mapping, `name`/`origin` missing)
+    # raised an uncaught TypeError/AttributeError/KeyError that `announce()`'s
+    # `except (json.JSONDecodeError, ValueError, TypeError)` never fully
+    # covered (AttributeError and a bare KeyError were not in that set),
+    # crashing the request handler instead of reaching the intended 400.
+    # Every failure here is normalized to ValueError so callers have exactly
+    # one non-schema failure type to catch.
+    if not isinstance(obj, dict):
+        raise ValueError("announcement body must be a JSON object")
+
     # --- schema version ---------------------------------------------------
     try:
         major = int(obj["schema_version"].split(".")[0])
@@ -178,11 +191,26 @@ def decode(data: bytes) -> Announcement:
             f"schema version {SCHEMA_MAJOR} expected, got {obj.get('schema_version', '<?>')}"
         )
 
+    name = obj.get("name")
+    origin = obj.get("origin")
+    if not isinstance(name, str) or not name:
+        raise ValueError("announcement 'name' must be a non-empty string")
+    if not isinstance(origin, str):
+        raise ValueError("announcement 'origin' must be a string")
+
+    roles_obj = obj.get("roles", {})
+    if not isinstance(roles_obj, dict):
+        raise ValueError("announcement 'roles' must be a JSON object")
+
     # --- role info (per-lane fingerprint + capacity) ----------------------
     roles: dict[str, RoleInfo] = {}
-    for role_name, role_obj in obj.get("roles", {}).items():
+    for role_name, role_obj in roles_obj.items():
+        if not isinstance(role_obj, dict):
+            raise ValueError(f"malformed role {role_name!r}: not a JSON object")
         try:
             fp_obj = role_obj["fingerprint"]
+            if not isinstance(fp_obj, dict):
+                raise ValueError(f"malformed role {role_name!r}: 'fingerprint' not a JSON object")
             capacity = role_obj.get("capacity")
             roles[role_name] = RoleInfo(
                 model=role_obj["model"],
@@ -200,12 +228,12 @@ def decode(data: bytes) -> Announcement:
                 capacity=float(capacity) if capacity is not None else None,
                 private=bool(role_obj.get("private", False)),
             )
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             raise ValueError(f"malformed role {role_name!r}: {exc}") from exc
 
     return Announcement(
-        name=obj["name"],
-        origin=obj["origin"],
+        name=name,
+        origin=origin,
         schema_version=obj["schema_version"],
         roles=roles,
     )
