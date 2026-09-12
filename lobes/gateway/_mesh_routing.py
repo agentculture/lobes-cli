@@ -130,6 +130,21 @@ class MeshRoutingView:
     peer_states: Mapping[str, Mapping[str, "ReplicaState"]]
 
 
+def as_routing_snapshot(obj: "object | None") -> "RoutingSnapshot | None":
+    """Unwrap a :class:`MeshRoutingView` to its :class:`RoutingSnapshot`.
+
+    The snapshot holder publishes a view (snapshot + per-peer replica states);
+    every routing/advert consumer wants the snapshot. Accepting both here is
+    what keeps a holder-returned view from reaching ``compute_role_placement``
+    — the live 2026-09-12 ``/capabilities`` crash on the Thor (Qodo #12).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, MeshRoutingView):
+        return obj.snapshot
+    return obj  # already a RoutingSnapshot (or a test double)
+
+
 # ---------------------------------------------------------------------------
 # Fingerprint verification
 # ---------------------------------------------------------------------------

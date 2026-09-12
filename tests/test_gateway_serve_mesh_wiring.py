@@ -47,3 +47,18 @@ def test_mesh_key_without_self_origin_refuses_with_a_named_error() -> None:
     table, cfg = build_config(env)
     with pytest.raises(MeshConfigError, match="GATEWAY_SELF_ORIGIN"):
         build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+
+
+def test_capabilities_payload_accepts_the_holder_view_not_only_the_snapshot() -> None:
+    """Regression: the holder publishes a MeshRoutingView; /capabilities crashed on it live."""
+    from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routing import MeshRoutingView, as_routing_snapshot, build_snapshot
+    from lobes.gateway.server import capabilities_payload
+
+    env = _env()
+    table, cfg = build_config(env)
+    view = MeshRoutingView(snapshot=build_snapshot(Roster()), peer_states={})
+    assert as_routing_snapshot(view) is view.snapshot
+    assert as_routing_snapshot(None) is None
+    payload = capabilities_payload(table, cfg, env, mesh_snapshot=view)
+    assert "cortex" in payload

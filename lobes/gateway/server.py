@@ -92,6 +92,7 @@ from lobes.gateway._mesh_routing import (
     MeshRoutingView,
     RoutingSnapshot,
     SnapshotHolder,
+    as_routing_snapshot,
     build_snapshot,
     compute_role_placement,
     find_suffixed_lane,
@@ -3987,7 +3988,9 @@ def capabilities_payload(
         role: next((s for s in (replica_snapshot or {}).get(role, ()) if s.local), None)
         for role in ROLES
     }
-    return annotate_mesh_naming(payload, mesh_snapshot, local_fingerprints=local_fingerprints)
+    return annotate_mesh_naming(
+        payload, as_routing_snapshot(mesh_snapshot), local_fingerprints=local_fingerprints
+    )
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to
@@ -4217,7 +4220,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         # Read mesh snapshot once at the top of every request (W2).
-        mesh_snapshot = (
+        mesh_snapshot = as_routing_snapshot(
             self.mesh_snapshot_holder.current()
             if getattr(self, "mesh_snapshot_holder", None) is not None
             else None
@@ -4512,7 +4515,7 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         # Read mesh snapshot once at the top of every request (W2).
-        mesh_snapshot = (
+        mesh_snapshot = as_routing_snapshot(
             self.mesh_snapshot_holder.current()
             if getattr(self, "mesh_snapshot_holder", None) is not None
             else None
