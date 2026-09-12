@@ -262,8 +262,185 @@ Signal 2 re-run after pinning both CLIs to dev532 (the two FAILs were doctor's g
   orin: peer keys=0 doctor peer/FAIL findings=0 PASS
 RESULTS: signal 1 PASS (10 s); signal 2 PASS on all three after the CLI pin; signal 3 MEASURED exactly as on dev529 (both lanes plain, local-idle); signal 3b PASS — and this time the cortex forward Thor -> Spark was answered 200 THROUGH the proxy (chat completion from unsloth/Qwen3.8-27B-NVFP4 with X-Lobes-Proxied-By + X-Lobes-Mesh-Member: spark), closing the "cortex proxy 200 not obtained" item below; signal 4 PASS (Thor left the Spark roster after 60 s, exclusive role 404 in 0.01 s). The refactor changed no measured behaviour.
 
+## RELEASE RUN — 0.76.0 from PyPI on all three boxes (PR #252 squash-merged as 97caa12; gateway images rebuilt --no-cache from the packaged Dockerfile with GATEWAY_PIP_EXTRA_INDEX_URL unset; the Orin's local-wheel Dockerfile retired in favour of the packaged one; CLIs `uv tool install lobes-cli==0.76.0` on all three)
+
+### Signals 1–4 (validate.sh)
+### t12 validation 2026-09-12T06:10:09Z build=0.76.0
+## (1) membership: every member lists the other two
+  t+10s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None]]
+  PASS: all three rosters complete after 10 s (<= 120 s)
+## (2) zero *_PEER_* keys + lobes doctor findings per box
+  spark: peer keys=0 doctor peer/FAIL findings=0 PASS
+  thor: peer keys=0 doctor peer/FAIL findings=0 PASS
+  orin: peer keys=0 doctor peer/FAIL findings=0 PASS
+## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+
+  (PASS if both X-Lobes-Served-By and X-Lobes-Proxied-By appear across the four; FAIL otherwise — judged by the reader)
+## (3b) auto-proxy: the Thor lacks hand and cortex — request them on the Thor's own gateway
+HTTP/1.1 404 Not Found
+  model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
+HTTP/1.1 200 OK
+ X-Lobes-Mesh-Member: spark
+ X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+  model=cortex body={"id":"chatcmpl-8bfb3f66c4f3e8e7","object":"chat.completion","created":1789193411,"model":"unsloth/Qwen3.8-27B-NVFP4","c
+## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s
+  thor gateway stopped 09:10:22
+  t+10s spark roster=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 503 in 0.02s
+  t+20s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+30s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+40s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+50s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+60s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+70s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+80s spark roster=[orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  Thor left the Spark roster after 80 s (<= 120 s) PASS
+  exclusive role after drop: HTTP 404 in 0.01s PASS
+  thor gateway started 09:11:33
+## (5) byte-identical with no join key: compared separately (spark-0.75.1-*.json vs the dev build with LOBES_MESH_KEY unset)
+RESULTS: 1 PASS (10 s); 2 PASS on all three, first try; 3 MEASURED as before (both reranker lanes plain, local-idle); 3b PASS with the cortex forward Thor -> Spark answered 200 through the proxy; 4 PASS (Thor left the Spark roster after 80 s, exclusive role 404 in 0.01 s).
+
+### Signal 5 (signal5.sh)
+## signal 5 — key unset: {"status": "ok", "service": "model-gear-gateway", "version": "0.76.0"}
+mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
+--- diff 0.75.1 vs no-key: v1models
+13,27d12
+<         },
+<         {
+<             "id": "associate",
+<             "object": "model",
+<             "owned_by": "lobes"
+<         },
+<         {
+<             "id": "Qwen/Qwen3-Embedding-0.6B",
+<             "object": "model",
+<             "owned_by": "lobes"
+<         },
+<         {
+<             "id": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+<             "object": "model",
+<             "owned_by": "lobes"
+--- diff 0.75.1 vs no-key: capabilities
+113,116c113,114
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+124c122
+<         "context": 128000,
+---
+>         "context": null,
+144,147c142,143
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://orin.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+190,193c186,187
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+--- diff 0.75.1 vs no-key: status-shape
+56c56
+<   "iowait_percent": 44.966442953020135,
+---
+>   "iowait_percent": 9.966777408637874,
+60c60
+<   "swap_used_percent": 0.1451909628624298
+---
+>   "swap_used_percent": 0.03961920974369107
+## key restored: {"mesh": true, "name": "spark", "schema_version": 1}
+RESULT: PASS — identical diff set to the dev529 run (the retired family's own entries and live pressure fields only).
+
+### h6 — a robot client (Qwen Code) reaches mesh roles through its local gateway (the previously UNCHECKED half)
+### Qwen Code through the mesh, 0.76.0, 2026-09-12T06:13:03Z — qwen 0.23.3 at http://localhost:8001/v1 (the Spark gateway; worker is NOT hosted on the Spark — reached only via the mesh member thor)
+## qwen -m worker
+Warning: running headless with --yolo / approval-mode=yolo and no sandbox. All tool calls (shell, write, edit) auto-execute at this process's privilege level. Enable a sandbox via --sandbox / QWEN_SANDBOX, or set QWEN_CODE_SUPPRESS_YOLO_WARNING=1 to silence this notice.
+[API Error: 404 The model `worker` is not feasible on this machine — its backend (`worker`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here.]
+  exit=0 in 2 s; calc.py now:
+def add(a, b):
+    return a - b
+
+## qwen -m associate
+Warning: running headless with --yolo / approval-mode=yolo and no sandbox. All tool calls (shell, write, edit) auto-execute at this process's privilege level. Enable a sandbox via --sandbox / QWEN_SANDBOX, or set QWEN_CODE_SUPPRESS_YOLO_WARNING=1 to silence this notice.
+
+
+DONE
+  exit=0 in 66 s; calc.py now:
+def add(a, b):
+    return a + b
+## Spark gateway log: mesh-forwarded chat completions during the run
+5
+## re-run qwen -m worker 2026-09-12T06:14:33Z — the first attempt ran ~60 s after signal 5 recreated the Spark gateway, while its roster still read thor[v=False]; spark roster now: thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]
+
+
+DONE
+  exit=0 in 29 s; calc.py now:
+def add(a, b):
+    return a + b
+5
+## Thor gateway: chat completions received in the last 5 min (the worker lane lives there)
+7
+RESULT: PASS for worker (fixed calc.py through the Thor's lane in 29 s) and associate (through the Orin's lane in 66 s), both addressed at the Spark's gateway, which hosts neither. The first worker attempt 404'd role_infeasible because it ran ~60 s after signal 5 had recreated the Spark gateway, while the roster still read thor[v=False]: until the first verification pass completes a mesh-provided role answers 404 role_infeasible, not a 'not yet verified' status — recorded as a follow-up below.
+
+### h8 — a gateway-only member (hosts=[]) boots, joins and serves every role by proxy (the previously UNCHECKED criterion)
+### gateway-only fourth member (h8), 0.76.0 from PyPI, 2026-09-12T06:17:43Z: 'lobes init --shape gateway-only --fleet --apply' into ~/.lobes-gwonly on the Spark, LOBES_MESH_NAME=spark-gw, GATEWAY_SELF_ORIGIN=http://spark.tail0be7e0.ts.net:8002, seeds = the three members; published port set via the template's ${VLLM_PORT:-8000} mapping (edited to 8002:8000 — VLLM_PORT=8002 in .env is the supported spelling); container renamed lobes-gwonly-gateway to avoid the fixed container_name clash with the Spark's own gateway; started with 'docker compose -p lobes-gwonly ... up -d --no-deps gateway' (every vllm lane parked by the shape)
+  t+15s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None]] spark-gw=[-]
+  t+30s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
+  t+45s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
+  t+60s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
+  t+75s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
+  t+90s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=no announced role verified against /capabilities]] spark-gw=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None]]
+  PASS: spark-gw listed by all three and verifies all three after 90 s
+## /v1/models on the gateway-only member
+  ['Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Reranker-0.6B', 'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4', 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'unsloth/Qwen3.8-27B-NVFP4']
+## every mesh role by PLAIN name on the gateway-only member's own front
+  model=cortex -> HTTP 200 in 0.38s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 
+  model=worker -> HTTP 200 in 0.3s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
+  model=associate -> HTTP 200 in 0.17s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000 
+  model=embedder -> HTTP 200 in 0.08s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
+  model=reranker -> HTTP 200 in 0.03s X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 
+## /capabilities on the gateway-only member: feasible/proxied/hosted_by per role
+   cortex {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'spark'}
+   worker {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'thor'}
+   associate {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'orin'}
+   hand {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': None}
+   embedder {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'thor'}
+   reranker {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'thor'}
+RESULT: PASS — spark-gw was listed by all three members within 30 s and verified all three within 90 s (its own /capabilities carries no roles, so the others show it unverified with reason 'no announced role verified', which is correct for a box that serves nothing); /v1/models on it lists the five mesh checkpoints; cortex, worker, associate, embedder and reranker all answered 200 by proxy from its own front with X-Lobes-Mesh-Member naming the serving box, and reranker was placed across the Spark+Thor pool (peer-less-loaded). Torn down after the run (docker compose down, directory removed).
+Two scaffold frictions for a second gateway on the same box, both deployment-level: the fleet template publishes the gateway on ${VLLM_PORT:-8000} (set VLLM_PORT for a non-default host port) and pins container_name model-gear-gateway (renamed by hand for the co-located test). A gateway-only member on its own box needs neither.
+Advert gap on the gateway-only member: /capabilities reports every mesh-provided role as ready:false / hosted_by:null even though routing to it works and `member` names the serving box — the recorded '/capabilities hosted_by is not mesh-sourced' follow-up now has a measured instance.
 ### Not exercised / still open (recorded, not claimed)
 - Spill-over inside the reranker pool under real local load (the policy keeps an idle local lane local; the mechanism was observed on dev524 with the local lane absent).
+- (closed on the release run) The gateway-only member and Qwen Code through the mesh — both measured above.
+- A mesh-provided role answers 404 role_infeasible during the first ~60 s after a gateway recreate (before the first verification pass), not a distinguishable 'not yet verified' status.
 - The Orin announces five hosted-but-not-running lanes (hand, embedder, reranker, stt, tts) alongside associate; per-role verification makes this harmless, but announcing only loaded lanes is a recorded follow-up.
 - (closed on dev532) A cortex proxy had been answered 429 by the destination's own pressure policy on every earlier run; the re-validation obtained a 200 through the Thor -> Spark forward.
 - /capabilities JSON `hosted_by` is not mesh-sourced; #232 service-rate weighting; #215 raw-id pressure gate; the `./mesh` mount is root-owned on first recreate (chmod 1777 was applied by hand on all three boxes).
