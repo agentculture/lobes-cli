@@ -81,7 +81,7 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t12` | The gateway-only shape was never booted on the Orin as a fourth member, and Qwen Code was not run through the mesh; both acceptance criteria were reported unchecked (lapse l2), not passed. | `needs-follow-up` |
 | `t12` | Signal 3's literal expectation (4 concurrent cortex requests served by two members) could not be met: no two members host cortex in this fleet, and the reranker pool keeps an idle local lane local (delta b1, evidence e3 filed as fail). | `needs-follow-up` |
 | `t12` | The plan assumed the code default `missed_max=3`; the fleet was cut over at `LOBES_MESH_MISSED_MAX=2` so signal 4 could meet its two-interval bound (delta b5). | `acceptable` |
-| `t14` | Docstrings and comments across the gateway and roles modules still mention the retired `*_PEER_*` names as history; parsing is gone, the prose is not. | `needs-follow-up` |
+| `t14` | Docstrings and comments across the gateway and roles modules still mentioned the retired `*_PEER_*` names as live behaviour after the parsing was gone; scrubbed on the branch in `f25b53e` before the PR gate. | `acceptable` |
 
 ## Evidence
 
@@ -89,7 +89,8 @@ Quoted verbatim from the `devague summary` skeleton:
 - tests: the nine mesh test files (`tests/test_mesh_*.py`, `tests/test_gateway_serve_mesh_wiring.py`, `tests/test_cli_mesh.py`) — 293 passed at `9ce1a2a` (evidence e10)
 - tests, live pass order: `tests/test_mesh_heartbeat_live.py::test_a_dropped_member_is_not_revived_by_a_peer_roster_that_still_lists_it`, `tests/test_mesh_routing.py::test_verification_is_per_role_not_all_or_nothing`, `tests/test_mesh_naming.py::test_sole_verified_member_is_plain_even_with_an_unknown_field` — pass
 - lint: `black --check`, `isort --check-only`, `flake8`, `bandit -c pyproject.toml -r lobes`, `afi cli doctor . --strict` — clean; CI lint, secrets-scan, version-check, site-build green on `9ce1a2a`
-- SonarCloud quality gate on PR #252: passed (reliability A, security A, maintainability A, new coverage 95.6 %); 85 open code smells at the time of writing, being fixed on the branch (44 test-side fixes merged in `537c849`)
+- SonarCloud quality gate on PR #252: passed (reliability A, security A, maintainability A, new coverage 95.6 %); the 85 open code smells were fixed on the branch by three Sonnet agents (`537c849`, `52d0787`, `67fcaef`) plus one by hand, and three accepted in SonarCloud with rationale (the pre-existing 117-complexity dispatcher, a load-bearing `list()` copy, a shared handler signature)
+- live re-validation on 0.76.0.dev532 (the refactored code): signals 1, 2, 3b, 4 PASS again, 3 measured as before; the Thor → Spark cortex forward answered 200 through the proxy this time (`docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`, re-validation section)
 - live: `docs/evidence/2026-09-12-baseline-mesh-cutover.txt` (pre-cutover state, backups `~/.lobes.pre-mesh-20260911T222244Z` on every box) and `docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt` (five signals on 0.76.0.dev529, findings table of nine live-only defects)
 - validate-delivery ledger: obligations o1–o11, evidence e1–e10 (e3 = fail), deltas b1–b5, lapses l1–l3 — all approved by the operator 2026-09-12
 - commits: `7216340..537c849` (107 commits on `spec/mesh-brain-join`)
@@ -125,9 +126,8 @@ Lapse ledger evidence:
 - `t12` gateway-only member — boot `lobes init --shape gateway-only` on a fourth box (or the Orin) and measure `model=cortex` by proxy; until then the claim stays unverified. Owner: operator, next live session.
 - `t12` Qwen Code through the mesh — run `qwen -m worker` against the Spark's gateway on the mesh build and record it; the curl half is measured.
 - `t12` signal 3 spill-over — generate real local load on a pooled role (or add a second cortex host) and observe `X-Lobes-Proxied-By` from a pooled member; the policy keeps an idle local lane local by design.
-- `t14` residue — scrub the retired `*_PEER_*` names from docstrings, comments and the stale pool-arming error string in `server.py`, `roles.py`, `_config.py`, `_pressure_policy.py`, `_realtime.py` (queued for a Sonnet agent after the Sonar fixes land).
-- SonarCloud — 41 remaining code smells on PR #252 (cognitive-complexity extractions in the mesh modules, server and CLI; constants; parameter counts) are being fixed by two Sonnet agents; pre-existing server functions the PR only touched will be accepted with rationale.
+- `t14` residue — done on the branch (`f25b53e`): docstrings and comments now describe routing via the mesh; deliberately historical mentions (Retired (t14), dated findings, issue numbers) kept; `_check_pool_arming` kept because a hand-built RoutingTable can still reach it.
 - Announce only loaded lanes — the Orin announces five hosted-but-not-running lanes; harmless with per-role verification, still noise on every peer.
-- Cortex proxy 200 — the Thor → Spark cortex forward was answered 429 by the Spark's own pressure policy all night (iowait 45–55 %); the forward is proven, a 200 through it is not.
+- Cortex proxy 200 — closed: the dev532 re-validation obtained a chat completion through the Thor → Spark forward (earlier runs were shed 429 by the Spark's own pressure policy).
 - `/capabilities` JSON `hosted_by` is not mesh-sourced (the CLI member field is); service-rate weighting for heterogeneous pools (#232); the raw-id pressure gate (#215); the `./mesh` mount is root-owned on first recreate (chmod applied by hand on all three boxes).
 - Colleague lane architecture (colleague#495/#496/#497) and the associate facts-pass fixes (associate#3/#4) — filed, outside this plan.

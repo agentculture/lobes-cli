@@ -525,5 +525,6 @@ class TestMalformedTopLevel:
             mutate(obj)
             bad_bodies.append(obj)
         for obj in bad_bodies:
+            body = json.dumps(obj).encode()
             with pytest.raises(ValueError):
-                decode(json.dumps(obj).encode())
+                decode(body)
