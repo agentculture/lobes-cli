@@ -1146,10 +1146,10 @@ class TestDiscoveredRoles:
 
     def test_discovered_member_is_pending_for_its_roles(self) -> None:
         snap = build_snapshot(self._roster(), discovered_roles={"http://thor:8000": ("worker",)})
-        placement = compute_role_placement(snap, "worker", None)
+        placement = compute_role_placement(snap, "worker")
         assert placement.pending_origins == ("http://thor:8000",)
         assert placement.plain_origins == ()
-        assert compute_role_placement(snap, "cortex", None).pending_origins == ()
+        assert compute_role_placement(snap, "cortex").pending_origins == ()
 
     def test_a_real_announcement_wins_over_discovered_roles(self) -> None:
         ann = _ann("thor", "http://thor:8000", roles={"cortex": _role("m")})
