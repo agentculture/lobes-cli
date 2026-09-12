@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-12T09:14:56Z",
-  "updated": "2026-09-12T12:13:32Z",
+  "updated": "2026-09-12T12:59:44Z",
   "claims": [
     {
       "id": "c1",
@@ -773,6 +773,39 @@
       "skipped_check": "re-probe the raw id after the change before claiming the cause",
       "refs": [
         "t8 / d2 (1); lobes/gateway/server.py raw-id fallback"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "assumption-for-measurement",
+      "what": "review agent: the two S3776 fixes claim cognitive complexity <= 15 by hand-count (no analyser in the venv); SonarCloud on the pushed PR is the only measurement",
+      "skipped_check": "SonarCloud re-analysis of the PR",
+      "refs": [
+        "review round / lobes/gateway/_mesh_routes.py _heartbeat_loop, _merge_seed_members"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "control-absent",
+      "what": "review agent: test_a_wake_set_during_a_pass_drives_the_next_iteration_at_once passes with and without the Qodo-4 fix \u2014 kept as a contract test, not a regression guard; the two _wait_for_tick tests are the discriminating ones",
+      "skipped_check": "",
+      "refs": [
+        "review round / tests/test_mesh_routes.py TestVerifyNowEvent"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "assumption-for-measurement",
+      "what": "review agent: the proxied-context fix (Qodo 2) is test-proven only; no live gateway pair was dialled after it, so 'a proxied /capabilities advertises the peer's window' is not MEASURED in the #108 sense \u2014 the transcript predates it",
+      "skipped_check": "a live /capabilities read on a mesh member after the next re-image",
+      "refs": [
+        "review round / lobes/roles.py _apply_peer_context"
       ],
       "origin": "llm",
       "status": "proposed"
