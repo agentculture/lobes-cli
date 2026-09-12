@@ -5159,11 +5159,15 @@ def build_mesh_wiring(
             Exception
         ):  # nosec B110 — best-effort: an unreadable cache announces without readiness
             ready = None
+        # Same inputs GET /capabilities uses for the fingerprint: the live
+        # replica snapshot when a lane is probed, the offline one otherwise —
+        # so announced and advertised fingerprints are identical bytes.
         payload = capabilities_payload(
             table,
             cfg,
             env,
             backend_ready=ready,
+            replica_snapshot=replica_role_snapshot(replica_caches),
             mesh_snapshot=build_snapshot(mesh_routes.roster),
         )
         return announcement_from_capabilities(
