@@ -2,7 +2,7 @@
   "plan_slug": "mesh-boot-window-and-capabilities-advert",
   "schema_version": 2,
   "created": "2026-09-12T11:05:25Z",
-  "updated": "2026-09-12T11:48:33Z",
+  "updated": "2026-09-12T14:18:08Z",
   "deviations": [
     {
       "id": "d1",
@@ -52,7 +52,291 @@
       "seq": 3
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_mesh_routing_wiring.py::TestNeverProbedMemberIsPending",
+      "behavior_text": "a role alias and a raw model id whose only candidate is a never-probed member answer 503 with type/code role_unverified, hosted_by, Retry-After 5, X-Lobes-Mesh-Member/-Origin/-Role/-Unverified, zero upstream dials",
+      "contract_text": "503 + Retry-After 5 + role_unverified + X-Lobes-Mesh-Unverified true, naming the pending origin; never 404",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "2 passed on merged main",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o1",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt section B (demo503-dev544)",
+      "behavior_text": "with the Thor gateway paused and the Spark recreated, 13 consecutive 503 role_unverified with the full header set and hosted_by = the Thor, then 200 on the first retry after the unpause",
+      "contract_text": "503 + Retry-After 5 + role_unverified; once probed a forward (200)",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live on the fleet at 0.77.0.dev544, 11:58:25Z",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T11:58:25Z",
+        "commit": "b338712"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_mesh_naming.py (mesh-sourced hosted_by/members/ready/proxied cases)",
+      "behavior_text": "one plain origin emits hosted_by = the member's announced origin, ready from ready_roles, proxied true; two plain origins emit members and no hosted_by; mesh disabled is byte-identical",
+      "contract_text": "hosted_by present implies exactly one plain origin; pooled carries members; ready true implies the member advertised ready at its last probe; proxied true iff this box forwards",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "41 passed on merged main",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o2",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt section C + D (spark-gw dev544)",
+      "behavior_text": "gateway-only member advertised hosted_by/ready true/proxied true for cortex, worker, associate, embedder and members ['spark','thor'] for the pooled reranker; every forward's X-Lobes-Mesh-Member matched",
+      "contract_text": "hosted_by/members/ready/proxied mesh-sourced",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live 11:41:34Z on spark-gw at dev544",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T11:41:34Z",
+        "commit": "b338712"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_mesh_verify_reason.py::TestRosterRecordBootWindow",
+      "behavior_text": "a never-probed member reads probed:false + unverified_reason not_yet_probed on /mesh/roster; None after a clean probe",
+      "contract_text": "probed:false + not_yet_probed until the first probe result lands",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "3 passed on merged main",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o3",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt (rosters while the Thor was paused; pending log lines)",
+      "behavior_text": "the recreated Spark's roster listed thor/orin/spark-gw as p=False r=not_yet_probed until their probes landed",
+      "contract_text": "roster sentinel",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live 11:58Z",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T11:58:40Z",
+        "commit": "b338712"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_mesh_heartbeat_live.py::test_repeated_announces_do_not_reprobe_beyond_the_first_announce_plus_one_per_tick + ::test_verification_passes_never_overlap_and_run_only_on_the_heartbeat_thread",
+      "behavior_text": "three peers announcing every second are probed at most first-announce + per-tick; verification concurrency is 1 and only on the heartbeat thread; announce returns fast during a slow probe",
+      "contract_text": "handler does no network I/O; at most one pass in flight; unchanged re-announce triggers no extra probe",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "both passed on merged main",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_gateway_realtime_ws.py::test_never_probed_stt_member_still_refuses_404_role_infeasible",
+      "behavior_text": "a realtime handshake against a declared-off stt lane answers 404 role_infeasible even with a never-probed member announcing stt",
+      "contract_text": "GET /v1/realtime unchanged; the 503 path never applies",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "1 passed on merged main",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_shape_gateway_only.py (profile grep gate) + git show --stat HEAD -- lobes/profiles lobes/templates (empty)",
+      "behavior_text": "no mesh knowledge in the profile renderer; no key added to env.example or render tables; hosted_by string-equals an announced origin (tests/test_mesh_naming.py)",
+      "contract_text": "no new rendered or allowlisted key; hosted_by is an announced GATEWAY_SELF_ORIGIN",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "37 passed; the squash commit touches nothing under lobes/profiles or lobes/templates",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o8",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt (re-image transcripts dev540..dev544; rosters)",
+      "behavior_text": "members on 0.76.0, dev540, dev541, dev543 and dev544 verified each other during every staggered re-image; SCHEMA_MAJOR untouched in the diff; the Thor catalog entry re-captured from the live box (validator green)",
+      "contract_text": "announcements interoperate unchanged; old members treat the new member as before; Thor catalog re-captured",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live across five staggered re-images 10:58Z-12:00Z; lobes doctor lock_drift on the Thor NOT run (the lock lives in the repo catalog, not beside the deployment)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T12:00:04Z",
+        "commit": "b338712"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_mesh_heartbeat_live.py::test_a_member_discovered_from_a_seed_roster_is_probed_without_waiting_for_a_tick + ::test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies_it + ::test_a_hung_seed_does_not_delay_the_other_seeds_discovery",
+      "behavior_text": "a seed-discovered member is probed in the event-woken pass immediately following its discovery (sub-second, heartbeat 30 s), a cold box verifies a seed within seconds from the announce reply, and a hung seed does not delay the others",
+      "contract_text": "a member first discovered from a seed roster is probed in the same pass that discovered it, not the following one",
+      "evidence_type": "automated",
+      "strength": "fidelity",
+      "strength_basis": "all three passed on merged main; the literal 'same pass' wording is not what the code does \u2014 the loop order is verify, then seed fetch, so the probe lands in the event-woken pass right after discovery (lapse l5); the observable no-tick-wait property holds",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T14:16:36Z",
+        "commit": "1350fe2"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "added",
+      "behavior_text": "POST /mesh/announce answers with the responder's own public announcement and the broadcaster ingests every reply through the inbound admission path; seed-listed roles stand in as provisional announced roles so a discovered member is pending (503) rather than absent (404)",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e1",
+        "e2"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "the routing view is refreshed the moment a member is learned (reply, inbound announce, seed discovery), carrying probed members' results forward unless their fingerprints changed; the verification probe ignores a peer's proxied capabilities entries; the live capabilities gate accepts a proxy-only brain",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e3",
+        "e6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "seed rosters are fetched in parallel with one bounded dial each and merged as they arrive, so a dead or paused seed cannot hold the first pass",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "a seed-discovered member is probed in the event-woken pass immediately after discovery, not literally 'the same pass' (c3/o5 wording)",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "review round after merge-time: a mesh-provided role's /capabilities context is the serving peer's advertised window (pooled: only when members agree); a probe result is discarded when the member's announcement changed mid-probe, in both the verify and refresh paths; heartbeat wake events are consumed losslessly; the live gate treats a still-role_unverified role as unreachable after three retries",
+      "caused_by": [
+        "c6"
+      ],
+      "evidence_refs": [
+        "e3",
+        "e4"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
