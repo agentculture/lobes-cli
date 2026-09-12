@@ -1,0 +1,137 @@
+# Baseline before the mesh-brain cutover — captured 20260911T222244Z (read-only; backups taken in the same pass)
+# lobes-cli branch spec/mesh-brain-join @ 2a2d28c; plan mesh-brain-join task t12 (h22, c52)
+
+=============================== spark ===============================
+hostname: spark-f8a9
+## peer/mesh keys in ~/.lobes/.env (values redacted)
+627:MODEL_GEAR_VERSION=0.75.1
+641:MULTIMODAL_FEASIBLE=false
+648:COMPOSE_PROFILES=
+654:GATEWAY_API_KEY=<redacted>
+669:WORKER_FEASIBLE=false
+670:WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+671:WORKER_PEER_PROXY=true
+682:EMBED_FEASIBLE=false
+683:EMBED_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+684:EMBED_PEER_PROXY=true
+691:HAND_FEASIBLE=false
+694:STT_FEASIBLE=false
+695:TTS_FEASIBLE=false
+697:GATEWAY_SELF_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+709:ASSOCIATE_FEASIBLE=false
+710:ASSOCIATE_PEER_ORIGIN=http://orin.tail0be7e0.ts.net:8000
+711:ASSOCIATE_PEER_PROXY=true
+712:ASSOCIATE_PEER_API_KEY=<redacted>
+720:PRIMARY_MAX_ACTIVE=2
+## compose files
+/home/spark/.lobes/docker-compose.audio.yml
+/home/spark/.lobes/docker-compose.cortex-candidate.yml
+/home/spark/.lobes/docker-compose.override.yml
+/home/spark/.lobes/docker-compose.shape.yml
+/home/spark/.lobes/docker-compose.yml
+## containers
+model-gear-gateway Up 16 hours (healthy)
+model-gear-vllm-rerank Up 17 hours (healthy)
+model-gear-vllm-primary Up 17 hours (healthy)
+## gateway /health
+{"status": "ok", "service": "model-gear-gateway", "version": "0.75.1"}
+## /capabilities (role -> ready/proxied/hosted_by)
+associate True True http://orin.tail0be7e0.ts.net:8000
+cortex True None None
+embedder True True http://thor.tail0be7e0.ts.net:8000
+hand False None None
+muse False None None
+reranker True None None
+senses False None None
+stt False None None
+tts False None None
+worker True True http://thor.tail0be7e0.ts.net:8000
+## backup
+created /home/spark/.lobes.pre-mesh-20260911T222244Z (526M)
+
+=============================== thor ===============================
+
+## peer/mesh keys in ~/.lobes/.env (values redacted)
+627:MODEL_GEAR_VERSION=0.75.1
+643:MULTIMODAL_FEASIBLE=false
+656:WORKER_FEASIBLE=true
+657:HAND_FEASIBLE=false
+658:HAND_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+659:HAND_PEER_PROXY=true
+660:HAND_PEER_API_KEY=<redacted>
+671:GATEWAY_SELF_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+672:PRIMARY_PEER_ORIGINS=http://spark.tail0be7e0.ts.net:8001
+673:PRIMARY_PEER_API_KEYS=<redacted>
+674:PRIMARY_MAX_ACTIVE=2
+675:PRIMARY_FEASIBLE=false
+676:PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+677:PRIMARY_PEER_PROXY=true
+684:COMPOSE_PROFILES=worker
+687:PRIMARY_PEER_API_KEY=<redacted>
+## compose files
+/home/thor/.lobes/docker-compose.override.yml
+/home/thor/.lobes/docker-compose.shape.yml
+/home/thor/.lobes/docker-compose.yml
+## containers
+model-gear-gateway Up 14 hours (healthy)
+model-gear-vllm-rerank Up 14 hours (healthy)
+model-gear-vllm-worker Up 18 hours (healthy)
+model-gear-vllm-embed Up 4 days (healthy)
+## gateway /health
+{"status": "ok", "service": "model-gear-gateway", "version": "0.75.1"}
+## /capabilities (role -> ready/proxied/hosted_by)
+associate False None None
+cortex True True http://spark.tail0be7e0.ts.net:8001
+embedder True None None
+hand False True http://spark.tail0be7e0.ts.net:8001
+muse False None None
+reranker True None None
+senses False None None
+stt False None None
+tts False None None
+worker True None None
+## backup
+created /home/thor/.lobes.pre-mesh-20260911T222244Z (635M)
+
+=============================== orin ===============================
+
+## peer/mesh keys in ~/.lobes/.env (values redacted)
+543:MODEL_GEAR_VERSION=0.63.1
+557:PRIMARY_FEASIBLE=false
+558:MUSE_FEASIBLE=false
+559:WORKER_FEASIBLE=false
+563:PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001   # dual-cortex era (2026-08-20): Spark serves the fast MTP cortex again; Thor also serves one locally
+564:PRIMARY_PEER_PROXY=true   # 2026-08-30: cortex was 404 role_infeasible from this box; forward to the Spark replica (single-hop, pins to Spark — pool across both peers needs the non-hosted-pool feature)
+565:PRIMARY_PEER_API_KEY=<redacted>
+579:WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+580:WORKER_PEER_PROXY=true
+595:MULTIMODAL_FEASIBLE=false
+603:COMPOSE_PROFILES=associate
+604:GATEWAY_API_KEY=<redacted>
+613:PRIMARY_PEER_ORIGINS=http://spark.tail0be7e0.ts.net:8001,http://thor.tail0be7e0.ts.net:8000
+614:PRIMARY_PEER_API_KEYS=<redacted>
+## compose files
+/home/orin/.lobes/docker-compose.audio.yml
+/home/orin/.lobes/docker-compose.gpu-audio.yml
+/home/orin/.lobes/docker-compose.gpu.yml
+/home/orin/.lobes/docker-compose.shape.yml
+/home/orin/.lobes/docker-compose.yml
+## containers
+model-gear-gateway Up 12 days (healthy)
+model-gear-vllm-associate Up 7 days (healthy)
+## gateway /health
+{"status": "ok", "service": "model-gear-gateway", "version": "0.70.0"}
+## /capabilities (role -> ready/proxied/hosted_by)
+associate True None None
+cortex True True http://spark.tail0be7e0.ts.net:8001
+embedder False None None
+hand False None None
+muse False None None
+reranker False None None
+senses False None None
+stt False None None
+tts False None None
+worker True True http://thor.tail0be7e0.ts.net:8000
+## backup
+created /home/orin/.lobes.pre-mesh-20260911T222244Z (252M)
+

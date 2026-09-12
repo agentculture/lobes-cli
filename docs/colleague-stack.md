@@ -119,7 +119,8 @@ per the callout above, but it never decides).
 > Thor — the one box that ran (unvalidated) `thor-muse` — moved to hosting
 > `worker` instead: an operator decision (thor-worker-lobe plan) that no box
 > in the mesh currently hosts the 31B `muse`, and the Thor's deployment
-> declares no `MUSE_PEER_ORIGIN`, so `model=muse` 404s `role_infeasible` with
+> declares no referral for it (neither the retired per-role peer channel
+nor a mesh member announcing it), so `model=muse` 404s `role_infeasible` with
 > **no** `hosted_by` referral anywhere. The `muse` role, its catalog entry,
 > and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) — dormant,
 > not deleted — so this contract still enumerates `muse` with `loaded=false`,
@@ -422,7 +423,7 @@ by role name, each value carrying exactly these fields:
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
     "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
     "proxied": bool,                      # OPTIONAL — present (and true) only when this box also forwards to that peer
-    "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a *_PEER_ORIGINS pool is declared
+    "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a retired peer-origins pool is declared
       {
         "origin": str,                    # "local" for this box's own replica, else the peer origin
         "local": bool,
@@ -454,12 +455,14 @@ three-state contract. `replicas` and `fingerprint` are a SEPARATE, purely
 **additive** extension (issue #199, the cortex replica pool): every existing
 key here — `feasible`, `hosted_by`, `proxied`, `ready`, `loaded` — keeps its
 documented type and single-owner meaning even on a pooled role; a payload
-built with no `*_PEER_ORIGINS` declared anywhere has no `replicas` key at all
+built with no retired peer-origins pool declared anywhere has no `replicas` key at all
 and is byte-identical to the pre-pool contract. The pool composes on top of
 the awake/proxied states above, not a fourth state, and its full mechanism —
 selection policy, marker headers (`X-Lobes-Served-By` alongside the existing
 `X-Lobes-Proxied-By`, plus `X-Lobes-Route-Reason` on every pooled answer),
-the `<PREFIX>_PEER_ORIGINS`/`_PEER_API_KEYS` config family, and the
+the retired peer-origins/peer-api-keys config family (see the "Retired"
+section of [`docs/gateway-fleet.md`](gateway-fleet.md) for its exact
+spelling), and the
 failure/rollback table — lives in
 [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only).
 **Status: VALIDATED live 2026-08-25 (#108) — cortex only**, on the Spark+Thor
@@ -568,6 +571,17 @@ above.)
 
 ## A third role state: proxied
 
+> **Two sources feed this state today.** The retired, hand-typed per-role
+> peer channel (see the "Retired" section of
+> [`docs/gateway-fleet.md`](gateway-fleet.md)) is one; the mesh-brain join's
+> auto-wired proxying (`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`)
+> is the current, documented one — a member that lacks a role gets it
+> auto-wired from whichever verified mesh member announces it, with no
+> per-role config. The JSON shape below is unchanged either way; a
+> mesh-forwarded answer additionally carries `X-Lobes-Mesh-Member: <name>`.
+> The mesh path is DECLARED/UNVALIDATED (#108) — see that same section for
+> the code-vs-docs implementation-status caveat.
+
 A role's `feasible: false` (this box's deployment shape dropped it — see
 [`docs/deployment-shapes.md`](deployment-shapes.md)) has always meant one of
 two things a client can tell apart by key presence alone:
@@ -660,16 +674,18 @@ reachable right now.
   locally-feasible model. The peer's own served id is what comes back; a
   peer that itself declines the role (`404 role_infeasible`) is relayed
   terminally, naming the peer, never silently retried against something else.
-- **#92 (operator-declared origins, never derived)** — `hosted_by` is always
-  the literal `<PREFIX>_PEER_ORIGIN` an operator typed into `.env`; nothing
-  here infers a peer from hostnames, interfaces, or DNS.
+- **#92 (operator-declared origins, never derived)** — `hosted_by` is always an
+  operator-declared origin — the literal value typed into `.env` (the
+  retired per-role peer channel) or, on a mesh-brain member, the origin the
+  mesh roster verified — never inferred from hostnames, interfaces, or DNS.
 - **Single-hop** — a role proxied on this box is never proxied a second time:
   a request already carrying the internal hop marker that would need to
   depart again is refused rather than forwarded onward, so two
   misconfigured boxes pointing at each other fail fast instead of looping.
 
-**Default off, byte-identical.** With no `<PREFIX>_PEER_PROXY` armed
-anywhere, no role in this deployment is ever proxied — every payload here
+**Default off, byte-identical.** With no proxying armed anywhere — no
+retired per-role peer-proxy knob, and no mesh join — no role in this
+deployment is ever proxied — every payload here
 looks exactly as it did before this state existed (a `feasible: false` role
 carries `hosted_by` at most, never `proxied`).
 

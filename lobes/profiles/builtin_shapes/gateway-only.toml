@@ -1,0 +1,46 @@
+# The consumer-only member of a mesh-brain deployment (mesh-brain-join, t5):
+# a box that serves NOTHING locally and draws on every lobe in the mesh.
+# `hosts = []` is the first built-in shape with an empty hosts list -- the
+# schema always admitted it (no cardinality check; from_dict takes whatever
+# role subset the TOML names, and [] is a subset) and the renderer always
+# knew its projection: shape_services renders exactly ("gateway",) -- no role
+# service, no audio overlay, no opt-in gear -- and every dropped core role
+# renders ONLY the #110 flagged-off <PREFIX>_FEASIBLE=false marker, no model,
+# no knobs. A box on this shape runs the gateway alone and answers every role
+# request from the mesh (join-key membership and auto-wired proxying,
+# mesh-brain-join t6-t8), never from a local lane -- which is why the
+# gateway's routing layer relaxes its "a built table always has a primary
+# backend" assumption along with this shape (order_backends in
+# lobes/gateway/_routing.py): this shape's env wires no local backend at all,
+# so a table whose only entry is an infeasible one yields nothing locally and
+# routes by mesh instead.
+#
+# DECLARED-BUT-UNVALIDATED (the #108 rule, mirrored exactly): no box has
+# booted this shape yet. The mesh-brain-join plan's t12 fourth-member test
+# (booting it on a candidate box and requesting model=cortex through it) is
+# its first live run, so no doc, support table, or `lobes capabilities`
+# output may claim it validated until one does -- see
+# docs/deployment-shapes.md's support table for the discipline every
+# declared-but-unvalidated shape file carries, and orin-small.toml's own
+# #108 comment, whose structure this mirrors.
+#
+# Like orin-small.toml, this shape declares no overrides: the lobe shapes'
+# overrides exist to SPEND a dropped lobe's budget (the reclamation
+# arithmetic a peer-referenced lobe frees up), and this shape drops every
+# lobe -- the card's declarations are simply never rendered, and there is
+# nothing to re-derive.
+name = "gateway-only"
+summary = "Consumer-only member (DECLARED, UNVALIDATED) -- gateway alone, no local lane, every role served by the mesh"
+
+
+# An empty hosts list is deliberate: this shape hosts NO role at all -- not
+# even `hand`, the cheap role every OTHER built-in shape hosts (see the hand
+# comment in orin-small.toml). `hand` is hosted everywhere today precisely
+# because a caller always has a local fine-tuning base; on this shape there
+# is no local lane of any kind, so `hand` drops like every other role,
+# renders its flagged-off marker, and is reached through the mesh instead
+# (the mesh-brain-join spec's auto-wired proxying applies to hand with no
+# never-proxied carve-out). The audio overlay and the opt-in gears
+# (minor/muse/worker/associate) are absent from hosts for the same reason --
+# a box that serves nothing runs nothing but the fleet front.
+hosts = []

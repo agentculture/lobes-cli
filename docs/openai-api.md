@@ -203,7 +203,8 @@ it never parses the WebSocket protocol itself. A plain `GET` with no
 `Upgrade: websocket` header gets **426**; a declared-off `stt` lane gets the
 same **404 `role_infeasible`** (naming `hosted_by`) the batch STT route
 gets. Unlike the batch audio routes, this tunnel is **never proxied
-cross-box** even when `STT_PEER_PROXY` is armed — the #129 proxy-lobes
+cross-box** even when the retired STT peer-proxy knob (or the mesh join's
+auto-wired proxying) is armed — the #129 proxy-lobes
 forwarder is POST-only. See [Realtime session](#realtime-session-v1realtime-websocket)
 below for the session contract.
 
@@ -743,7 +744,8 @@ is already held to, extended across the box boundary.
 
 **Replica-pool markers (issue #199, opt-in, VALIDATED live for cortex on
 Spark+Thor 2026-08-25, declared-only for other roles — see [`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)).**
-When a box declares a `<PREFIX>_PEER_ORIGINS` pool for a role it also hosts,
+When a box declares the retired peer-origins pool for a role it also hosts
+(see the "Retired" section of [`docs/gateway-fleet.md`](gateway-fleet.md)),
 every pooled answer carries one honest placement marker plus why:
 
 | Header | Present on | Meaning |

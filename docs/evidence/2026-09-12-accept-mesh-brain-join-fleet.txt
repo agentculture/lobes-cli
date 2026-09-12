@@ -1,0 +1,361 @@
+# Acceptance transcript — mesh-brain join on the live fleet (t12, 2026-09-12)
+
+Fleet: DGX Spark GB10 (spark, gateway :8001, hosts cortex + reranker), Jetson AGX Thor (thor, :8000, hosts worker + embedder + reranker), Jetson AGX Orin (orin, :8000, hosts associate). Tailnet tail0be7e0.ts.net.
+Branch: spec/mesh-brain-join (PR #252). Gateways: Spark/Thor on the TestPyPI dev build of the commit named per run; the Orin runs a local-wheel image of the same commit (its Dockerfile is the documented local-wheel variant).
+Baseline before any change: docs/evidence/2026-09-12-baseline-mesh-cutover.txt; backups ~/.lobes.pre-mesh-20260911T222244Z on all three boxes.
+Cutover mechanics per box (runbook, idempotent): delete every *_PEER_* key from .env; set LOBES_MESH_KEY (one mesh-wide key), LOBES_MESH_NAME, LOBES_MESH_SEEDS (the other two origins), GATEWAY_SELF_ORIGIN, LOBES_MESH_MISSED_MAX=2, RERANK_QUANTIZATION=none on the two reranker hosts; add the LOBES_MESH_* passthrough + the ./mesh:/home/gateway/mesh volume via docker-compose.override.yml (never re-scaffolding docker-compose.yml); recreate ONLY the gateway (--no-deps). Downtime per box: the gateway recreate (~20 s); the vLLM lanes were never restarted.
+
+
+## What the live test found that the test suite had not (each fixed on the branch before the final run)
+# Live test findings (t12, 2026-09-12) — what the cutover found that tests had not
+| build | box | finding | fix |
+| --- | --- | --- | --- |
+| dev515 | Thor | gateway restart loop: serve() read cfg.self_origin (lives on RoutingTable); then Backend.lane_fingerprints (lives on the table) | 9c05d98: serve()'s mesh wiring extracted to build_mesh_wiring + tests |
+| dev516 | Thor | /capabilities 500: holder's MeshRoutingView handed to compute_role_placement | 40dd9bb + review 777b4d1: unwrap at both entry points |
+| dev518 | Spark+Thor | mesh silent: every announce raised (str key .decode) inside the best-effort catch; /mesh/reannounce "no announcement yet" | d660268: key str|bytes, initial announcement stored, builder wired, e2e heartbeat test |
+| 0.70.0 | Orin | hand-built local-wheel Dockerfile ignored MODEL_GEAR_VERSION | Dockerfile switched to the branch wheel (0.76.0) |
+| dev518 | Spark | /mesh/roster hung after the first real member: the verification pass (network probes, re-takes routes._lock) ran INSIDE routes._lock, starving roster reads and inbound announces | bcfbef8: verify pass moved outside the lock; slow-peer regression test |
+| 0.70.0→0.76.0 | Orin | proved the announce path once fixed: forced re-announce from the Orin landed on the Spark as 200 | (validation step) |
+| dev520 | Orin | /mesh/roster hung: _fetch_seed_roster wrapped Roster.announce in the roster's own non-reentrant lock — deadlock on the first NON-EMPTY seed roster (only the Orin fetched one) | 5d101cb: wrapper removed, roster lock made reentrant; regression test |
+| dev520 | Spark+Thor | nothing verifies: every published fingerprint has runtime=unknown (lane never live-probed without a declared pool) and unknown never verifies | 5d101cb: runtime injected from the role registry into declared lane configs; test asserts runtime=vllm |
+| dev520 | Thor | validate.sh signals 1 and 4 invalid (roster helper quoting bug) — signal 2 PASS on all three boxes | validate.sh to be fixed before the final run |
+| dev521 | all | announcement built from the declared-knob table: every box announced ALL six roles with empty served ids / quantization / context 0 — verification could never pass | c8f9fa2: announcement = hosted slice of the box's own /capabilities payload; offline fingerprint carries the registry runtime; verification by field identity |
+| c8f9fa2 | (review) | associate facts pass: GET /capabilities passes the live replica snapshot, the announcement builder did not — probed lanes would announce offline fingerprints and advertise live ones | 4d6d862: builder passes replica_role_snapshot(replica_caches) — second fact acted on that associate alone found (d5 retention test passed twice) |
+| dev523 | Spark | the Spark's roster listed 'spark' itself after merging a seed roster that listed it | be089f6: seed merge skips our own name; an announcement carrying it is refused 409 |
+| dev523 | fleet | validation: membership complete in 20 s (signal 1 PASS), doctor clean on all three (signal 2 PASS), the Orin's view showed spark verified (2 roles) and thor verified (3 roles) — verification works; signals 3/3b ran before the first verify pass; drop after a stop is 3 intervals by default (missed_max) | runbook now sets LOBES_MESH_MISSED_MAX=2 and declares RERANK_QUANTIZATION=none on both reranker hosts so the strict pool rule can pass |
+| dev524 | Spark | reranker pool forwarded every request to the Thor (reason sole-ready): local replica states exist only for env-declared pools, so a mesh-only host's own lane was never a candidate | f80edb5: synthesized local candidate in _pool_selection; test with a hosted rerank lane + one verified member |
+| dev524 | fleet | validation 4: signals 1 and 2 PASS; mutual verification within 30 s; Thor -> Spark cortex auto-proxy forwarded (429 from the Spark's own pressure policy, iowait ~45-49%); hand 404 correct (no box hosts hand); signal 5: mesh inert with the key unset, diffs vs 0.75.1 are exactly the retired peer family's proxied entries; drop after a stop not observed within 130 s at missed_max=2 | observation window extended to 240 s for the final run |
+| dev525 | fleet | a stopped Thor stayed in every roster for 4+ min: each tick's seed-roster merge re-announced it from peers that still listed it, refreshing its liveness | 163a4ec: seed merge is discovery-only — never refreshes a known member; regression test with an injected clock |
+| dev525 | fleet | validation 5: signals 1, 2 PASS; pool formed with the local lane (4/4 served local-idle with X-Lobes-Mesh-Member, spill-over needs local pressure by design); cortex auto-proxied Thor->Spark (429 = Spark pressure policy); signal 5 mesh inert with key unset | signal 4 re-measured after the fix |
+| dev526 | fleet | signal 4 still FAIL: thor[v=False] never left the Spark roster in 260 s. Cause: the heartbeat pass ticks FIRST and merges seed rosters SECOND, so the pass that dropped the Thor re-learned it from the Orin roster (which still listed it) and the survivors revived the dead member for each other forever | ffae309: per-name drop hold-down of missed_max ticks in Roster; seed merge goes through Roster.discover, refused during hold-down; a heartbeat from the member itself clears it; regression test in the live pass order |
+| dev527 | fleet | signal 4 PASS (Thor dropped after 51 s, stayed out through the hold-down, rejoined verified ~120 s after restart). New: the Orin was v=False roles=0 on the Spark AND the Thor throughout — verification was all-or-nothing per member (every announced role had to verify); the Orin announces six hosted lanes with only associate running, so its one verifiable role was discarded with the rest. Reproduced offline: a real verify pass from the repo returned verified=[] for the Orin while verify_member_roles alone returned [associate] | 3cef3ad: build_snapshot verifies PER ROLE — a member keeps the announced roles the probe verified and is unverified only when none does; regression test |
+| dev528 | fleet | every member verified on every peer within 45 s (orin roles=[associate]); associate via the Spark front auto-proxied to the Orin (200, X-Lobes-Mesh-Member: orin). New: the Spark exposed the Thor embedder — the ONLY verified embedder in the mesh — as `embedder-thor` only; `model=embedder` 404d role_infeasible. Cause: with no local reference the placement rule compared the sole candidate against ITSELF under the strict pool rule, and quantization=unknown never pools, so it disagreed with itself. Also: the Thor lists `reranker-spark` because the Spark advertises reranker quantization unknown — its hand-maintained docker-compose.yml predates the fingerprint-knob passthrough block, so RERANK_QUANTIZATION=none in .env never reached the gateway | 39a2412: a sole verified candidate with a fingerprint is exposed plain (two candidates keep the strict rule); Spark override.yml gains the RERANK_QUANTIZATION passthrough (deployment, not code) |
+
+## Final run — Spark+Thor on 0.76.0.dev529 (commit 39a2412), Orin on the local wheel of the same commit; all five signals measured on THIS build (signals 1–4 by validate.sh in one pass, 5 by signal5.sh right after; the extra checks 3c–3e ran on the same build minutes before the pass)
+
+### Signal 1 — a joining member is listed by all others within <= 2 heartbeat intervals (<= 120 s)
+## (1) membership: every member lists the other two
+  t+10s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] thor=[spark[v=True,roles=2,r=None] orin[v=True,roles=1,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None]]
+  PASS: all three rosters complete after 10 s (<= 120 s)
+Every entry is v=True: mutual VERIFICATION (fingerprint identity against each member's own /capabilities, per role since 3cef3ad) was already in place — measured separately on dev528: every member verified on every peer 45 s after the Spark's recreate (signal3c.out).
+RESULT: PASS (10 s).
+
+### Signal 2 — zero *_PEER_* keys in any member's .env and lobes doctor reports 0 findings
+## (2) zero *_PEER_* keys + lobes doctor findings per box
+  spark: peer keys=0 doctor peer/FAIL findings=1 FAIL
+  thor: peer keys=0 doctor peer/FAIL findings=1 FAIL
+  orin: peer keys=0 doctor peer/FAIL findings=0 PASS
+The two FAILs in the pass were doctor's gateway_version_match (the Spark's and Thor's CLIs were still pinned to dev526/dev525 against dev529 gateways — issue #99's deployed-artifact skew, not a mesh finding). After `uv tool install lobes-cli==0.76.0.dev529` on both boxes, re-run:
+  spark: peer keys=0 doctor peer/FAIL findings=0 PASS
+  thor: peer keys=0 doctor peer/FAIL findings=0 PASS
+  orin: peer keys=0 doctor peer/FAIL findings=0 PASS
+RESULT: PASS on all three boxes (CLI dev529 on Spark/Thor, 0.76.0 on the Orin).
+
+### Signal 3 — two members serving a compatible role: 4 concurrent requests to one member's gateway
+## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+  (PASS if both X-Lobes-Served-By and X-Lobes-Proxied-By appear across the four; FAIL otherwise — judged by the reader)
+All four served LOCALLY (local-idle). The pool now holds BOTH lanes as PLAIN lanes on both boxes — the Spark's reranker fingerprint reads quantization=none since its override gained the RERANK_QUANTIZATION passthrough (before that the Thor exposed it as `reranker-spark`, see the dev528 finding) — and the routing policy keeps an idle local lane local; four (and eight, 3e below) concurrent requests on an idle 0.6B reranker never produced the local load that triggers spill-over.
+RESULT: MEASURED — pool formed with both members plain; the signal's literal expectation (Served-By AND Proxied-By in one burst) needs local load this run did not generate. The spill path itself was observed on dev524 (all four forwarded to the Thor while the local lane was absent from the pool).
+
+### Signal 3b — auto-wired proxying for roles a member lacks (Thor lacks hand and cortex)
+## (3b) auto-proxy: the Thor lacks hand and cortex — request them on the Thor's own gateway
+HTTP/1.1 404 Not Found
+  model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
+HTTP/1.1 429 Too Many Requests
+ X-Lobes-Mesh-Member: spark
+ X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+  model=cortex body={"error": {"message": "cortex is under pressure; retry shortly", "type": "server_busy", "code": "busy"}}
+- hand: 404 role_infeasible is CORRECT — no box in the fleet runs the hand lane today, so there is nobody to forward to.
+- cortex: FORWARDED to the Spark (X-Lobes-Proxied-By, X-Lobes-Mesh-Member: spark) and answered 429 server_busy by the Spark's OWN pressure policy (iowait 45–55% all night from this session's workload; 50% is the shed threshold). The mesh routed correctly; the shed is the documented pressure behaviour of the destination.
+RESULT: PASS for the routing mechanism.
+
+### Signals 3c/3d/3e — plain names for roles the Spark lacks, the reranker pool without suffixes, an 8-way burst (same build, minutes before the pass)
+### extra checks on 0.76.0.dev529 (before the validate.sh Thor stop), 2026-09-12T03:10:22Z
+## (3c) roles the Spark lacks, addressed by their PLAIN names on the Spark front
+  model=embedder -> HTTP 200 in 0.04s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
+  model=worker -> HTTP 200 in 0.24s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
+  model=associate -> HTTP 200 in 0.15s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000 
+## (3d) the reranker pool with BOTH lanes plain (Spark RERANK_QUANTIZATION now reaches its gateway): /capabilities reranker on each box
+  spark: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
+  thor: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
+## (3e) 8 concurrent rerank requests to the Spark front (spill-over needs local load; 4 never produced it on dev525)
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+- 3c: embedder/worker → the Thor and associate → the Orin, all by their PLAIN names on the Spark front (X-Lobes-Mesh-Member + X-Lobes-Proxied-By, sole-ready). On dev528 the plain `embedder` 404'd and only `embedder-thor` worked (fixed in 39a2412).
+- 3d: no suffixed_lanes on any box; both reranker fingerprints read quantization=none.
+- 3e: eight concurrent rerank requests were all served locally (local-idle) — same policy note as signal 3.
+RESULT: PASS (3c, 3d); 3e MEASURED (no spill-over without local load).
+
+### Signal 4 — losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang > 10 s
+## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s
+  thor gateway stopped 06:10:44
+  t+10s spark roster=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+20s spark roster=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+30s spark roster=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+40s spark roster=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+50s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+60s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+70s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+80s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+90s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+100s spark roster=[thor[v=False,roles=0,r=ConnectionRefusedError] orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  t+110s spark roster=[orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  Thor left the Spark roster after 110 s (<= 120 s) PASS
+  exclusive role after drop: HTTP 404 in 0.01s PASS
+  thor gateway started 06:12:25
+Timeline: for the first ~40 s the Spark still held the Thor verified and FORWARDED embedder requests to it — each failed fast (503 in 0.01 s, never a hang); at ~50 s the verification pass marked it unverified (ConnectionRefusedError) and the plain name 404'd role_infeasible; at 110 s the roster dropped it (missed_max=2 × 60 s; drop lands between 60 and 120 s depending on tick phase). The Orin stayed verified throughout and the Spark kept serving.
+Earlier on dev527 (signal4b.out): dropped after 51 s, stayed absent for the whole 3-minute hold-down while the Orin still listed nothing stale, rejoined ~75 s after `docker start` and re-verified at ~120 s. Two fixes were needed to get here (dev525 → 163a4ec discovery-only seed merge; dev526 → ffae309 drop hold-down, see the findings table).
+RESULT: PASS (110 s ≤ 120 s; exclusive role 404 in 0.01 s).
+
+### Signal 5 — with no join key set, responses are byte-identical to 0.75.x
+On the Spark, with LOBES_MESH_KEY commented out and only the gateway recreated, then restored:
+## signal 5 — key unset: {"status": "ok", "service": "model-gear-gateway", "version": "0.76.0.dev529"}
+mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
+--- diff 0.75.1 vs no-key: v1models
+13,27d12
+<         },
+<         {
+<             "id": "associate",
+<             "object": "model",
+<             "owned_by": "lobes"
+<         },
+<         {
+<             "id": "Qwen/Qwen3-Embedding-0.6B",
+<             "object": "model",
+<             "owned_by": "lobes"
+<         },
+<         {
+<             "id": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+<             "object": "model",
+<             "owned_by": "lobes"
+--- diff 0.75.1 vs no-key: capabilities
+113,116c113,114
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+124c122
+<         "context": 128000,
+---
+>         "context": null,
+144,147c142,143
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://orin.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+190,193c186,187
+<         "ready": true,
+<         "loaded": false,
+<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "proxied": true
+---
+>         "ready": false,
+>         "loaded": false
+--- diff 0.75.1 vs no-key: status-shape
+56,60c56,60
+<   "iowait_percent": 44.966442953020135,
+<   "mode": "warm",
+<   "reason": "default",
+<   "shed": false,
+<   "swap_used_percent": 0.1451909628624298
+---
+>   "iowait_percent": 54.515050167224075,
+>   "mode": "busy",
+>   "reason": "pressure",
+>   "shed": true,
+>   "swap_used_percent": 0.16183258067563658
+## key restored: {"mesh": true, "name": "spark", "schema_version": 1}
+The v1/models and capabilities diffs are EXACTLY the retired env peer family's entries: on 0.75.1 the Spark declared *_PEER_ORIGIN/_PROXY for associate/embedder/worker (proxied: true, hosted_by, ready: true, context 128000); with the family deleted and the mesh key unset those roles are plain infeasible (ready: false, context null) — the intended, documented consequence of decision c2 (dynamic membership REPLACES the family). The status-shape diff is live pressure state only (iowait 45% vs 54%, warm vs busy). /mesh/detect answers 404 with the key unset: nothing mesh-related runs.
+RESULT: PASS (byte-identical apart from the retired family's own entries and live pressure fields).
+
+### End state after the run
+end state 2026-09-12T03:14:14Z: spark=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None]]
+(Transient: the Spark's gateway had just been recreated twice by signal 5 and the Thor's restarted by signal 4 — the settled reading follows.)
+settled 2026-09-12T03:17:37Z: spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None]]
+Every member verified on every peer (spark: cortex+reranker = 2 roles, thor: worker+embedder+reranker = 3, orin: associate = 1). Gateways: Spark/Thor 0.76.0.dev529, Orin 0.76.0 (local wheel of 39a2412); CLIs pinned to match.
+
+### Re-validation on 0.76.0.dev532 (commit 67fcaef: the SonarCloud pass — heartbeat loop, seed merge, verification pass, announce handler and placement all extracted into helpers). Signals 1–4 re-run by validate.sh on the refactored code, same fleet, 2026-09-12T05:38Z
+### t12 validation 2026-09-12T05:38:28Z build=0.76.0.dev532
+## (1) membership: every member lists the other two
+  t+10s spark=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] thor=[spark[v=True,roles=2,r=None] orin[v=True,roles=1,r=None]] orin=[spark[v=True,roles=2,r=None] thor[v=True,roles=3,r=None]]
+  PASS: all three rosters complete after 10 s (<= 120 s)
+## (2) zero *_PEER_* keys + lobes doctor findings per box
+  spark: peer keys=0 doctor peer/FAIL findings=1 FAIL
+  thor: peer keys=0 doctor peer/FAIL findings=1 FAIL
+  orin: peer keys=0 doctor peer/FAIL findings=0 PASS
+## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+
+HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ HTTP/1.1 200 OK
+ X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Route-Reason: local-idle
+ X-Lobes-Mesh-Member: spark
+ 
+
+  (PASS if both X-Lobes-Served-By and X-Lobes-Proxied-By appear across the four; FAIL otherwise — judged by the reader)
+## (3b) auto-proxy: the Thor lacks hand and cortex — request them on the Thor's own gateway
+HTTP/1.1 404 Not Found
+  model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
+HTTP/1.1 200 OK
+ X-Lobes-Mesh-Member: spark
+ X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+  model=cortex body={"id":"chatcmpl-ad7802e8a61dafe3","object":"chat.completion","created":1789191510,"model":"unsloth/Qwen3.8-27B-NVFP4","c
+## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s
+  thor gateway stopped 08:38:41
+  t+10s spark roster=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+20s spark roster=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+30s spark roster=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+40s spark roster=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+50s spark roster=[orin[v=True,roles=1,r=None] thor[v=True,roles=3,r=None]] embedder(Thor-only) -> HTTP 503 in 0.01s
+  t+60s spark roster=[orin[v=True,roles=1,r=None]] embedder(Thor-only) -> HTTP 404 in 0.01s
+  Thor left the Spark roster after 60 s (<= 120 s) PASS
+  exclusive role after drop: HTTP 404 in 0.01s PASS
+  thor gateway started 08:39:32
+## (5) byte-identical with no join key: compared separately (spark-0.75.1-*.json vs the dev build with LOBES_MESH_KEY unset)
+Signal 2 re-run after pinning both CLIs to dev532 (the two FAILs were doctor's gateway_version_match skew again, CLI dev529 vs gateway dev532):
+  spark: peer keys=0 doctor peer/FAIL findings=0 PASS
+  thor: peer keys=0 doctor peer/FAIL findings=0 PASS
+  orin: peer keys=0 doctor peer/FAIL findings=0 PASS
+RESULTS: signal 1 PASS (10 s); signal 2 PASS on all three after the CLI pin; signal 3 MEASURED exactly as on dev529 (both lanes plain, local-idle); signal 3b PASS — and this time the cortex forward Thor -> Spark was answered 200 THROUGH the proxy (chat completion from unsloth/Qwen3.8-27B-NVFP4 with X-Lobes-Proxied-By + X-Lobes-Mesh-Member: spark), closing the "cortex proxy 200 not obtained" item below; signal 4 PASS (Thor left the Spark roster after 60 s, exclusive role 404 in 0.01 s). The refactor changed no measured behaviour.
+
+### Not exercised / still open (recorded, not claimed)
+- Spill-over inside the reranker pool under real local load (the policy keeps an idle local lane local; the mechanism was observed on dev524 with the local lane absent).
+- The Orin announces five hosted-but-not-running lanes (hand, embedder, reranker, stt, tts) alongside associate; per-role verification makes this harmless, but announcing only loaded lanes is a recorded follow-up.
+- (closed on dev532) A cortex proxy had been answered 429 by the destination's own pressure policy on every earlier run; the re-validation obtained a 200 through the Thor -> Spark forward.
+- /capabilities JSON `hosted_by` is not mesh-sourced; #232 service-rate weighting; #215 raw-id pressure gate; the `./mesh` mount is root-owned on first recreate (chmod 1777 was applied by hand on all three boxes).
+- The Spark's docker-compose.yml is hand-maintained and predates the fleet template's fingerprint-knob passthrough block; the RERANK_QUANTIZATION passthrough now lives in its override.yml (doctor's gateway_passthrough still warns about MULTIMODAL_/WORKER_QUANTIZATION there — set-but-unhosted lanes).
+
+## Appendix A — the per-box cutover runbook (verbatim)
+
+```bash
+#!/usr/bin/env bash
+# Mesh-brain cutover runbook — one box per invocation. Usage: runbook.sh <box> <dev-version> <join-key>
+# Idempotent: .env edits are guarded; the gateway is the ONLY service recreated (--no-deps).
+set -euo pipefail
+BOX=$1; VER=$2; KEY=$3
+case $BOX in
+  spark) NAME=spark; SELF=http://spark.tail0be7e0.ts.net:8001; SEEDS=http://thor.tail0be7e0.ts.net:8000,http://orin.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.audio.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="";;
+  thor)  NAME=thor;  SELF=http://thor.tail0be7e0.ts.net:8000;  SEEDS=http://spark.tail0be7e0.ts.net:8001,http://orin.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="env -u GATEWAY_API_KEY";;
+  orin)  NAME=orin;  SELF=http://orin.tail0be7e0.ts.net:8000;  SEEDS=http://spark.tail0be7e0.ts.net:8001,http://thor.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.override.yml"; ENVU="";;
+esac
+cd ~/.lobes
+# 1. .env: drop the retired family, add the mesh keys, pin the dev gateway build
+sed -i -E '/^[A-Z_]+_PEER_(ORIGINS?|PROXY|API_KEYS?)=/d' .env
+setk() { if grep -qE "^$1=" .env; then sed -i -E "s|^$1=.*|$1=$2|" .env; else printf '%s=%s\n' "$1" "$2" >> .env; fi; }
+setk LOBES_MESH_KEY "$KEY"; setk LOBES_MESH_NAME "$NAME"; setk LOBES_MESH_SEEDS "$SEEDS"; setk GATEWAY_SELF_ORIGIN "$SELF"
+setk MODEL_GEAR_VERSION "$VER"; setk GATEWAY_PIP_EXTRA_INDEX_URL "https://test.pypi.org/simple/"
+# Drop a silent member after 2 missed heartbeats (success signal 4: <= 2 intervals).
+setk LOBES_MESH_MISSED_MAX 2
+# The two boxes that host the reranker declare its bf16 lane quantization so the
+# pool's strict fingerprint rule (unknown never pools) can pass between them.
+case $BOX in spark|thor) setk RERANK_QUANTIZATION none;; esac
+# 2. override: mesh passthrough + the ledger mount (additive; never re-scaffold docker-compose.yml)
+python3 - <<'PY'
+import os,re
+p='docker-compose.override.yml'; s=open(p).read() if os.path.exists(p) else 'services:\n'
+env_lines=['      - LOBES_MESH_KEY=${LOBES_MESH_KEY:-}','      - LOBES_MESH_NAME=${LOBES_MESH_NAME:-}','      - LOBES_MESH_SEEDS=${LOBES_MESH_SEEDS:-}','      - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}','      - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}','      - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}','      - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}']
+vol='    volumes:\n      - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh\n'
+if 'LOBES_MESH_KEY' in s: raise SystemExit(0)
+m=re.search(r'^  gateway:\n', s, re.M)
+if not m:
+    s=s.rstrip('\n')+'\n  gateway:\n    environment:\n'+'\n'.join(env_lines)+'\n'+vol
+else:
+    # find the gateway block end (next 2-space service key or EOF)
+    start=m.end(); rest=s[start:]; nm=re.search(r'^  [A-Za-z]', rest, re.M); end=start+(nm.start() if nm else len(rest))
+    block=s[start:end]
+    if re.search(r'^    environment:\n', block, re.M):
+        block=re.sub(r'^    environment:\n', '    environment:\n'+'\n'.join(env_lines)+'\n', block, count=1, flags=re.M)
+    else:
+        block='    environment:\n'+'\n'.join(env_lines)+'\n'+block
+    dedup=[l for l in block.splitlines() if not re.match(r'\s*- GATEWAY_SELF_ORIGIN=', l)]; block='\n'.join(dedup)+'\n'
+    block=block.replace('    environment:\n','    environment:\n      - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}\n',1)
+    if 'volumes:' not in block: block=block.rstrip('\n')+'\n'+vol
+    s=s[:start]+block+s[end:]
+open(p,'w').write(s)
+PY
+docker compose $FILES config --services >/dev/null
+# 3. recreate ONLY the gateway on the new build
+$ENVU docker compose $FILES up -d --build --no-deps gateway
+sleep 25; P=$(docker port model-gear-gateway 8000 | head -1 | sed 's/.*://'); curl -s -m 5 localhost:$P/health; echo; curl -s -m 5 localhost:$P/mesh/detect; echo
+```
+
+## Appendix B — the validation script and roster formatter (verbatim)
+
+```bash
+#!/usr/bin/env bash
+# t12 validation — the five success signals (c36), run from the Spark. Usage: validate.sh <join-key> [<dev-version>]
+# Prints a transcript; every check ends with PASS/FAIL and a measured value. Nothing here mutates a box except signal 4 (stop/start the Thor gateway).
+set -uo pipefail
+KEY=$1; VER=${2:-}; SPARK=http://localhost:8001; THOR=http://thor.tail0be7e0.ts.net:8000; ORIN=http://orin.tail0be7e0.ts.net:8000
+CK=$(grep -E '^GATEWAY_API_KEY=' ~/.lobes/.env | cut -d= -f2)
+roster() { curl -s -m 8 -H "Authorization: Bearer $KEY" "$1/mesh/roster" | python3 "$(dirname "$0")/roster_fmt.py"; }
+echo "### t12 validation $(date -u +%FT%TZ) build=$VER"
+echo "## (1) membership: every member lists the other two"
+for i in $(seq 1 12); do s=$(roster $SPARK); t=$(roster $THOR); o=$(roster $ORIN); echo "  t+$((i*10))s spark=[$s] thor=[$t] orin=[$o]"; if [[ "$s" == *thor* && "$s" == *orin* && "$t" == *spark* && "$t" == *orin* && "$o" == *spark* && "$o" == *thor* ]]; then echo "  PASS: all three rosters complete after $((i*10)) s (<= 120 s)"; break; fi; [ $i = 12 ] && echo "  FAIL: rosters incomplete after 120 s"; sleep 10; done
+echo "## (2) zero *_PEER_* keys + lobes doctor findings per box"
+for b in spark thor orin; do if [ $b = spark ]; then n=$(grep -cE '^[A-Z_]+_PEER_(ORIGINS?|PROXY|API_KEYS?)=' ~/.lobes/.env); d=$(lobes doctor 2>&1 | grep -ciE "peer_family_retired|FAIL"); else n=$(ssh -o ConnectTimeout=8 $b@$b 'grep -cE "^[A-Z_]+_PEER_(ORIGINS?|PROXY|API_KEYS?)=" ~/.lobes/.env'); d=$(ssh -o ConnectTimeout=8 $b@$b '~/.local/bin/lobes doctor 2>&1 || lobes doctor 2>&1' | grep -ciE "peer_family_retired|FAIL"); fi; echo "  $b: peer keys=$n doctor peer/FAIL findings=$d $([ "$n" = 0 ] && [ "$d" = 0 ] && echo PASS || echo FAIL)"; done
+echo "## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front"
+for i in 1 2 3 4; do (curl -s -m 60 -D - -o /dev/null -H "Authorization: Bearer $CK" -H "Content-Type: application/json" -X POST $SPARK/v1/rerank -d '{"model":"reranker","query":"what is a mesh","documents":["a brain","a network of boxes","a fish"]}' | grep -iE "^HTTP|x-lobes-(served-by|proxied-by|mesh-member|route-reason)" | tr '\n' ' '; echo) & done; wait
+echo "  (PASS if both X-Lobes-Served-By and X-Lobes-Proxied-By appear across the four; FAIL otherwise — judged by the reader)"
+echo "## (3b) auto-proxy: the Thor lacks hand and cortex — request them on the Thor's own gateway"
+for m in hand cortex; do curl -s -m 90 -D - -o /tmp/v.out -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -X POST $THOR/v1/chat/completions -d "{\"model\":\"$m\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word: mesh\"}],\"max_tokens\":8,\"chat_template_kwargs\":{\"enable_thinking\":false}}" | grep -iE "^HTTP|x-lobes-(proxied-by|mesh-member)" | tr '\n' ' '; echo " model=$m body=$(head -c 120 /tmp/v.out | tr '\n' ' ')"; done
+echo "## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s"
+ssh -o ConnectTimeout=8 thor@thor 'docker stop model-gear-gateway >/dev/null && echo "  thor gateway stopped $(date +%T)"'
+for i in $(seq 1 24); do s=$(roster $SPARK); t0=$(date +%s.%N); code=$(curl -s -m 12 -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $CK" -H "Content-Type: application/json" -X POST $SPARK/v1/embeddings -d '{"model":"embedder","input":"x"}'); dt=$(python3 -c "print(round($(date +%s.%N)-$t0,2))"); echo "  t+$((i*10))s spark roster=[$s] embedder(Thor-only) -> HTTP $code in ${dt}s"; if [[ "$s" != *thor* ]]; then echo "  Thor left the Spark roster after $((i*10)) s $([ $((i*10)) -le 120 ] && echo '(<= 120 s) PASS' || echo '(> 120 s: missed_max=2 ticks of 60 s means drop between 120 and 180 s by phase) MEASURED')"; echo "  exclusive role after drop: HTTP $code in ${dt}s $([ "$code" = 404 ] && python3 -c "import sys; sys.exit(0 if $dt < 10 else 1)" && echo PASS || echo FAIL)"; break; fi; sleep 10; done
+ssh -o ConnectTimeout=8 thor@thor 'docker start model-gear-gateway >/dev/null && echo "  thor gateway started $(date +%T)"'
+echo "## (5) byte-identical with no join key: compared separately (spark-0.75.1-*.json vs the dev build with LOBES_MESH_KEY unset)"
+```
+
+```python
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    ms = d.get("members", [])
+    print(" ".join(f"{m.get('name')}[v={m.get('verified')},roles={len(m.get('roles') or [])},r={m.get('unverified_reason')}]" for m in ms) or "-")
+except Exception as e:
+    print("ERR")
+```

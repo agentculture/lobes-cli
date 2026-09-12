@@ -1,55 +1,46 @@
-"""Proxy-lobes CONFIG channels: proxy knob, peer keys, gateway key (t1, #127/#115).
+"""The env peer family is RETIRED (t14): PEER_ORIGIN/PEER_PROXY/PEER_API_KEY
+and their plural PEER_ORIGINS/PEER_API_KEYS siblings are no longer parsed by
+:func:`lobes.gateway._config.build_config` — t13 made the mesh
+``RoutingSnapshot`` the candidate source for both pool placement and
+forwarding, so no behaviour depended on these env vars any more.
 
-This task adds the *config layer only* for proxy-lobes — the ability to
-declare that a dropped role should be PROXIED to its declared peer
-(``<PREFIX>_PEER_PROXY``), per-peer outbound credentials
-(``<PREFIX>_PEER_API_KEY``), and an inbound gateway API key
-(``GATEWAY_API_KEY``, falling back to ``CULTURE_VLLM_API_KEY``). NO server
-behaviour changes here: nothing dials a peer and nothing enforces auth — the
-data-plane branch that consults these fields lands in a LATER task.
+This module used to pin the CONFIG-LAYER shape of that parsing (proxy-lobes
+t1, issues #115/#127): ``PEER_ORIGIN_ENV``/``PEER_PROXY_ENV``/
+``PEER_API_KEY_ENV``/``PEER_ORIGINS_ENV``/``PEER_API_KEYS_ENV`` and the
+``RoutingTable.peer_proxied``/``peer_api_keys`` fields they populated. All
+five dicts are DELETED along with the functions that read them — there is no
+mesh-shaped replacement to pin here, because ``build_config`` never consulted
+the mesh in the first place (the mesh is applied later, in
+``lobes.gateway.server``, as a separate ``mesh_snapshot`` parameter). So this
+file keeps only what survives the retirement:
 
-The contract pinned below:
-
-* ``peer_proxied`` holds a backend name ONLY when its proxy knob is truthy
-  AND a peer origin is declared AND the role is infeasible on this box.
-  Origin without the knob stays referral-only (the issue #112 contract is
-  preserved byte-for-byte); knob without an origin has nothing to dial and
-  is ignored; knob+origin on a locally-feasible role is ignored (the local
-  engine serves it — hosted behaviour unchanged).
-* ``peer_api_keys`` carries keys verbatim (stripped), and ONLY for names
-  with a declared peer origin — a key without an origin is inert.
-* ``ServerConfig.api_key`` resolves ``GATEWAY_API_KEY`` →
-  ``CULTURE_VLLM_API_KEY`` → ``None`` (auth disabled); both unset is
-  today's no-auth behaviour.
-* SECRETS NEVER APPEAR in ``repr``/``str`` of the config objects.
-* A no-new-knobs env yields config objects equal to today's on every
-  pre-existing field.
+* the still-live ``ServerConfig.api_key`` resolution
+  (``GATEWAY_API_KEY`` -> ``CULTURE_VLLM_API_KEY`` -> ``None``);
+* the still-live ``RoutingTable`` fields (``peer_proxied``/``peer_api_keys``/
+  ``peer_origins``/``replica_origins``/``replica_api_keys``) defaulting to
+  empty on direct construction — nothing deletes the fields, only their env
+  population;
+* a new, explicit "the retired env vars are now INERT" contract: setting any
+  of them in ``.env`` no longer moves any field on the built table — this is
+  the config-layer half of what ``lobes doctor``'s ``peer_family_retired``
+  finding polices operationally;
+* the no-new-knobs byte-identity claim, updated for the current field set;
+* the secrets-never-in-repr contract, now proven against a directly
+  constructed table (since ``build_config`` no longer carries a peer secret
+  through from env at all).
 """
 
 from __future__ import annotations
 
-import pytest
-
 from lobes.catalog import TIER_ROLE
-from lobes.gateway._config import (
-    FEASIBLE_ENV,
-    NEVER_PROXIED_BACKENDS,
-    PEER_API_KEY_ENV,
-    PEER_API_KEYS_ENV,
-    PEER_ORIGIN_ENV,
-    PEER_ORIGINS_ENV,
-    PEER_PROXY_ENV,
-    ServerConfig,
-    build_config,
-)
+from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
 
 _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 
 # Full, dialable origins an operator would DECLARE per box in .env — never
-# derived (#92).
+# derived (#92). Retained here only to prove the retired knobs are inert.
 _THOR_ORIGIN = "http://thor.local:8001"
-_SPARK_ORIGIN = "http://spark.local:8001"
 
 
 def _spark_lobe_env(**over: str) -> dict[str, str]:
@@ -63,274 +54,56 @@ def _spark_lobe_env(**over: str) -> dict[str, str]:
     return env
 
 
-def _worker_env(**over: str) -> dict[str, str]:
-    """A box hosting cortex but NOT worker — worker stays unwired, so it is
-    infeasible by default (OPT_IN_BACKENDS) without needing an explicit
-    WORKER_FEASIBLE=false, exactly like muse's own dropped-role shape."""
-    env = {
-        "PRIMARY_URL": "http://vllm-primary:8000",
-        "PRIMARY_SERVED_NAME": _CORTEX_ID,
-    }
-    env.update(over)
-    return env
-
-
 # ============================================================================
-# The env channels: one <PREFIX>_<KNOB> convention, five core roles
+# Retired: every *_PEER_* env knob is now inert — build_config ignores all of
+# them, on every shape they used to arm (proxy knob + origin on a dropped
+# role, worker's opt-in-core variant, the plural replica-pool family).
 # ============================================================================
 
 
-def test_peer_proxy_env_mirrors_feasible_env_prefixes() -> None:
-    # One channel vocabulary: the proxy knob names exactly the backends the
-    # feasibility / peer-origin channels name — the five core roles, the
-    # opt-in worker role (thor-worker-lobe plan, t3), plus the first-class
-    # stt/tts audio roles (issue #129) — MINUS the never-proxied set.
-    #
-    # `hand` is feasibility-tracked but has no peer channel at all: it is cheap
-    # enough to run on every box, so there is never a peer to refer it to (see
-    # NEVER_PROXIED_BACKENDS). Asserted as a derivation, not a hand-typed copy,
-    # so adding a role to FEASIBLE_ENV without a peer channel fails here unless
-    # the omission is DECLARED.
-    assert set(PEER_PROXY_ENV) == set(PEER_ORIGIN_ENV)
-    assert set(PEER_PROXY_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
-    # d1 reversal 2026-08-20: hand IS proxyable now (the Thor cannot serve
-    # LFM2.5 — see _config.py's NEVER_PROXIED_BACKENDS rationale).
-    assert NEVER_PROXIED_BACKENDS == frozenset()
-    assert PEER_PROXY_ENV == {
-        "primary": "PRIMARY_PEER_PROXY",
-        "multimodal": "MULTIMODAL_PEER_PROXY",
-        "muse": "MUSE_PEER_PROXY",
-        "worker": "WORKER_PEER_PROXY",
-        "associate": "ASSOCIATE_PEER_PROXY",
-        "hand": "HAND_PEER_PROXY",
-        "embed": "EMBED_PEER_PROXY",
-        "rerank": "RERANK_PEER_PROXY",
-        "stt": "STT_PEER_PROXY",
-        "tts": "TTS_PEER_PROXY",
-    }
-
-
-def test_replica_peer_env_families_mirror_feasible_env_prefixes() -> None:
-    # cortex-replica-pool (issue #199, t2) — the PLURAL peer family
-    # (PEER_ORIGINS_ENV / PEER_API_KEYS_ENV) covers exactly the same nine
-    # backend names as FEASIBLE_ENV, unlike the singular channels above
-    # which exclude NEVER_PROXIED_BACKENDS. A role can run as a replica pool
-    # regardless of whether it also carries a proxy-lobes escape hatch, so
-    # this invariant is asserted separately rather than folded into the
-    # scalar-channel one.
-    assert set(PEER_ORIGINS_ENV) == set(FEASIBLE_ENV)
-    assert set(PEER_API_KEYS_ENV) == set(FEASIBLE_ENV)
-
-
-def test_peer_api_key_env_mirrors_feasible_env_prefixes() -> None:
-    assert set(PEER_API_KEY_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
-    assert PEER_API_KEY_ENV == {
-        "primary": "PRIMARY_PEER_API_KEY",
-        "multimodal": "MULTIMODAL_PEER_API_KEY",
-        "muse": "MUSE_PEER_API_KEY",
-        "worker": "WORKER_PEER_API_KEY",
-        "associate": "ASSOCIATE_PEER_API_KEY",
-        "hand": "HAND_PEER_API_KEY",
-        "embed": "EMBED_PEER_API_KEY",
-        "rerank": "RERANK_PEER_API_KEY",
-        "stt": "STT_PEER_API_KEY",
-        "tts": "TTS_PEER_API_KEY",
-    }
-
-
-# ============================================================================
-# peer_proxied: knob AND origin AND infeasible — all three, or nothing
-# ============================================================================
-
-
-def test_proxy_knob_with_origin_on_infeasible_role_is_proxied() -> None:
+def test_retired_peer_proxy_and_origin_knobs_are_inert() -> None:
     table, _cfg = build_config(
         _spark_lobe_env(
             MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
             MULTIMODAL_PEER_PROXY="true",
-        )
-    )
-    assert table.peer_proxied == frozenset({"multimodal"})
-    # The referral annotation channel is independent and still populated.
-    assert dict(table.peer_origins) == {"multimodal": _THOR_ORIGIN}
-
-
-def test_proxy_knob_without_origin_is_ignored() -> None:
-    # A proxy knob with no declared origin has nothing to dial — ignored.
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_PROXY="true"))
-    assert table.peer_proxied == frozenset()
-
-
-def test_origin_without_knob_stays_referral_only() -> None:
-    # The issue #112 contract preserved: a declared origin alone is
-    # annotation-only referral, never a proxy opt-in.
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN))
-    assert table.peer_proxied == frozenset()
-    assert dict(table.peer_origins) == {"multimodal": _THOR_ORIGIN}
-
-
-def test_proxy_knob_and_origin_on_feasible_role_is_ignored() -> None:
-    # The role is hosted locally (no MULTIMODAL_FEASIBLE=false) — the local
-    # engine serves it; hosted behaviour is unchanged by the knob.
-    env = {
-        "PRIMARY_URL": "http://vllm-primary:8000",
-        "PRIMARY_SERVED_NAME": _CORTEX_ID,
-        "MULTIMODAL_PEER_ORIGIN": _THOR_ORIGIN,
-        "MULTIMODAL_PEER_PROXY": "true",
-    }
-    table, _cfg = build_config(env)
-    assert table.peer_proxied == frozenset()
-
-
-def test_proxy_knob_works_for_a_wired_but_infeasible_role() -> None:
-    # thor-lobe shape: the primary is unconditionally wired yet dropped —
-    # the knob still applies (infeasibility is a config fact, not wiring).
-    env = {
-        "PRIMARY_URL": "http://vllm-primary:8000",
-        "PRIMARY_SERVED_NAME": _CORTEX_ID,
-        "PRIMARY_FEASIBLE": "false",
-        "PRIMARY_PEER_ORIGIN": _SPARK_ORIGIN,
-        "PRIMARY_PEER_PROXY": "yes",
-    }
-    table, _cfg = build_config(env)
-    assert table.peer_proxied == frozenset({"primary"})
-
-
-@pytest.mark.parametrize("token", ["1", "true", "yes", "TRUE", "Yes", " true "])
-def test_truthy_proxy_tokens_accepted(token: str) -> None:
-    table, _cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_PROXY=token,
-        )
-    )
-    assert table.peer_proxied == frozenset({"multimodal"})
-
-
-@pytest.mark.parametrize("token", ["false", "", "0", "no", "off", "banana"])
-def test_non_truthy_proxy_tokens_rejected(token: str) -> None:
-    table, _cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_PROXY=token,
+            MULTIMODAL_PEER_API_KEY="sk-lobes-thor-0001",  # nosec B105 — test fixture
         )
     )
     assert table.peer_proxied == frozenset()
-
-
-def test_absent_proxy_knob_is_not_proxied() -> None:
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN))
-    assert table.peer_proxied == frozenset()
-
-
-# ============================================================================
-# worker (the opt-in-core eighth role, thor-worker-lobe plan t3): the exact
-# same three-condition arming as every other name — including the
-# OPT_IN_BACKENDS delta that a dropped opt-in role need not carry an explicit
-# WORKER_FEASIBLE=false to land in `infeasible` (unwired alone is enough).
-# ============================================================================
-
-
-def test_worker_proxy_knob_with_origin_on_unwired_role_is_proxied() -> None:
-    table, _cfg = build_config(
-        _worker_env(
-            WORKER_PEER_ORIGIN=_THOR_ORIGIN,
-            WORKER_PEER_PROXY="true",
-        )
-    )
-    assert table.peer_proxied == frozenset({"worker"})
-    assert dict(table.peer_origins) == {"worker": _THOR_ORIGIN}
-
-
-def test_worker_proxy_knob_without_origin_is_ignored() -> None:
-    table, _cfg = build_config(_worker_env(WORKER_PEER_PROXY="true"))
-    assert table.peer_proxied == frozenset()
-
-
-def test_worker_origin_without_knob_stays_referral_only() -> None:
-    table, _cfg = build_config(_worker_env(WORKER_PEER_ORIGIN=_THOR_ORIGIN))
-    assert table.peer_proxied == frozenset()
-    assert dict(table.peer_origins) == {"worker": _THOR_ORIGIN}
-
-
-def test_worker_proxy_knob_and_origin_on_locally_hosted_role_is_ignored() -> None:
-    # Worker IS hosted locally here (WORKER_BASE_URL set, no WORKER_FEASIBLE
-    # override) — the local engine serves it, so the knob is inert.
-    env = _worker_env(
-        WORKER_BASE_URL="http://vllm-worker:8000",
-        WORKER_PEER_ORIGIN=_THOR_ORIGIN,
-        WORKER_PEER_PROXY="true",
-    )
-    table, _cfg = build_config(env)
-    assert table.peer_proxied == frozenset()
-
-
-def test_worker_peer_api_key_populated_verbatim_when_origin_present() -> None:
-    table, _cfg = build_config(
-        _worker_env(
-            WORKER_PEER_ORIGIN=_THOR_ORIGIN,
-            WORKER_PEER_API_KEY="sk-lobes-thor-worker-0001",
-        )
-    )
-    assert dict(table.peer_api_keys) == {"worker": "sk-lobes-thor-worker-0001"}
-
-
-# ============================================================================
-# peer_api_keys: verbatim (stripped), and only alongside a declared origin
-# ============================================================================
-
-
-def test_peer_api_key_populated_verbatim_when_origin_present() -> None:
-    table, _cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_API_KEY="sk-lobes-thor-0001",
-        )
-    )
-    assert dict(table.peer_api_keys) == {"multimodal": "sk-lobes-thor-0001"}
-
-
-def test_peer_api_key_is_stripped_not_transformed() -> None:
-    table, _cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_API_KEY="  MiXeD-Case-Key==  ",
-        )
-    )
-    assert dict(table.peer_api_keys) == {"multimodal": "MiXeD-Case-Key=="}
-
-
-def test_peer_api_key_without_origin_is_inert() -> None:
-    # A key with no origin has no peer to authenticate to — omitted.
-    table, _cfg = build_config(_spark_lobe_env(MULTIMODAL_PEER_API_KEY="sk-orphan"))
+    assert dict(table.peer_origins) == {}
     assert dict(table.peer_api_keys) == {}
 
 
-def test_peer_api_key_blank_is_omitted() -> None:
+def test_retired_plural_replica_pool_knobs_are_inert() -> None:
     table, _cfg = build_config(
         _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_API_KEY="   ",
+            MULTIMODAL_PEER_ORIGINS=_THOR_ORIGIN,
+            MULTIMODAL_PEER_API_KEYS="sk-lobes-thor-0001",  # nosec B105 — test fixture
         )
     )
-    assert dict(table.peer_api_keys) == {}
+    assert dict(table.replica_origins) == {}
+    assert dict(table.replica_api_keys) == {}
 
 
-def test_peer_api_key_needs_no_proxy_knob() -> None:
-    # Keys ride the origin declaration, not the proxy knob — a referral-only
-    # peer may still carry a credential (harmless until a later task dials).
-    table, _cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_API_KEY="sk-referral-only",
-        )
-    )
+def test_retired_worker_peer_knobs_are_inert() -> None:
+    # worker (the opt-in-core eighth role) used to ride the exact same
+    # channel as every other backend name — it is just as inert now.
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": _CORTEX_ID,
+        "WORKER_PEER_ORIGIN": _THOR_ORIGIN,
+        "WORKER_PEER_PROXY": "true",
+        "WORKER_PEER_API_KEY": "sk-lobes-thor-worker-0001",  # nosec B105
+    }
+    table, _cfg = build_config(env)
     assert table.peer_proxied == frozenset()
-    assert dict(table.peer_api_keys) == {"multimodal": "sk-referral-only"}
+    assert dict(table.peer_origins) == {}
+    assert dict(table.peer_api_keys) == {}
 
 
 # ============================================================================
 # ServerConfig.api_key: GATEWAY_API_KEY → CULTURE_VLLM_API_KEY → None
+# (unrelated to the retired peer family — still fully live)
 # ============================================================================
 
 
@@ -375,21 +148,30 @@ def test_gateway_api_key_is_stripped() -> None:
 
 
 # ============================================================================
-# Secrets never appear in repr/str
+# Secrets never appear in repr/str — proven on a directly constructed table,
+# since build_config no longer carries any peer secret through from env.
 # ============================================================================
 
 
 def test_key_values_never_appear_in_repr_or_str() -> None:
     peer_secret = "sk-peer-secret-do-not-print"  # nosec B105 — test fixture, not a credential
     gateway_secret = "sk-gateway-secret-do-not-print"  # nosec B105 — test fixture
-    table, cfg = build_config(
-        _spark_lobe_env(
-            MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN,
-            MULTIMODAL_PEER_API_KEY=peer_secret,
-            GATEWAY_API_KEY=gateway_secret,
-        )
+    primary = Backend(name="primary", base_url="http://vllm-primary:8000", served_name=_CORTEX_ID)
+    table = RoutingTable(
+        backends=(primary,),
+        default_model=_CORTEX_ID,
+        aliases={},
+        peer_api_keys={"multimodal": peer_secret},
     )
-    # The values ARE carried (the later data-plane task needs them) ...
+    cfg = ServerConfig(
+        host="0.0.0.0",  # nosec B104
+        port=8000,
+        connect_timeout=5.0,
+        read_timeout=600.0,
+        api_key=gateway_secret,
+    )
+    # The values ARE carried (the proxy data plane still reads them off a
+    # directly/mesh-constructed table) ...
     assert dict(table.peer_api_keys) == {"multimodal": peer_secret}
     assert cfg.api_key == gateway_secret
     # ... but NEVER surface in repr/str of either config object.
@@ -414,18 +196,10 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         base_url="http://vllm-primary:8000",
         served_name=_CORTEX_ID,
     )
-    # Equality against a table constructed with ONLY pre-existing fields —
-    # proving the new fields default inert AND no pre-existing field moved.
     assert table == RoutingTable(
         backends=(primary,),
         default_model=_CORTEX_ID,
         aliases=tier_aliases([primary], TIER_ROLE),
-        # The deliberate deltas since muse (and now worker) landed: both
-        # opt-in lobes are unwired here (no MUSE_BASE_URL / WORKER_BASE_URL)
-        # and unflagged, so they default to INFEASIBLE (OPT_IN_BACKENDS) —
-        # `model=muse` / `model=worker` 404 role_infeasible instead of
-        # silently upward-falling-back to the primary. Every pre-muse (and
-        # pre-worker) behaviour is otherwise unchanged.
         infeasible=frozenset({"muse", "worker", "associate"}),
     )
     assert cfg == ServerConfig(
@@ -439,9 +213,9 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
     assert cfg.api_key is None
 
 
-def test_new_routing_fields_default_inert_on_direct_construction() -> None:
+def test_routing_table_peer_fields_default_inert_on_direct_construction() -> None:
     # Every existing RoutingTable(...) construction in the codebase/tests
-    # omits the new fields — they must default to empty.
+    # omits these fields — they must default to empty.
     table = RoutingTable(
         backends=(Backend(name="primary", base_url="http://x:1", served_name="m"),),
         default_model="m",
@@ -449,3 +223,6 @@ def test_new_routing_fields_default_inert_on_direct_construction() -> None:
     )
     assert table.peer_proxied == frozenset()
     assert dict(table.peer_api_keys) == {}
+    assert dict(table.peer_origins) == {}
+    assert dict(table.replica_origins) == {}
+    assert dict(table.replica_api_keys) == {}

@@ -192,7 +192,30 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # which were inert for the same reason. `gateway` is again the ONLY
     # service that moved; no vLLM lane was touched. The new guard against
     # this whole class of gap is tests/test_gateway_env_passthrough_guard.py.
-    "gateway": "95fa6d9cf4eb802b1bbb8ab6489501d1202030eb9469f1e87d0e8e75933ee039",
+    #
+    # Recomputed 2026-09-11 for the mesh-brain-join plan (t4): `gateway`
+    # gained the six `LOBES_MESH_*` passthroughs (KEY/NAME/SEEDS/LEDGER_PATH
+    # empty defaults; HEARTBEAT_S=60 / MISSED_MAX=3 carry their parser
+    # defaults) and its FIRST `volumes:` block — the approval ledger's
+    # read-write bind mount (spec c9; the host side defaults to
+    # ./mesh-ledger.json in the deployment dir, the container side to
+    # /home/gateway/mesh-ledger.json under the unprivileged gateway user).
+    # `gateway` is again the ONLY service that moved — all twelve other
+    # non-primary services stayed byte-identical, which is this tripwire
+    # proving the blast radius. See tests/test_mesh_templates.py.
+    #
+    # Recomputed 2026-09-11 for t4 follow-up (volume defect fix): the gateway's
+    # only volume changed from a file bind (P:P ledger) to a directory bind
+    # (./mesh:/home/gateway/mesh), and the LOBES_MESH_LEDGER_PATH passthrough
+    # gained a default (/home/gateway/mesh/ledger.json). LOBES_MESH_DIR is
+    # also added to the passthrough. See tests/test_mesh_templates.py.
+    #
+    # Recomputed for t14 (env peer family retirement): `gateway` LOST the
+    # <PREFIX>_PEER_ORIGIN/_PEER_PROXY/_PEER_API_KEY and the plural
+    # <PREFIX>_PEER_ORIGINS/_PEER_API_KEYS passthrough lines for all ten role
+    # prefixes — build_config no longer reads any of them. `gateway` is again
+    # the ONLY service that moved.
+    "gateway": "d7c052144f00e8c69702251ff71542bed53286a9f534cd752be9d3511180bece",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

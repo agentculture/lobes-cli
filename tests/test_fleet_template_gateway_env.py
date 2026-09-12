@@ -163,18 +163,13 @@ _FINGERPRINT_SUFFIXES = (
 
 
 class TestReplicaPoolPassthrough:
-    """Issue #199, t3: the plural peer family, GATEWAY_SELF_ORIGIN, and the
-    declared lane fingerprint must all reach the gateway container as plain
-    ``${VAR:-}`` passthroughs — a key with no compose line silently never
-    reaches the gateway (the 2026-07-17 MUSE_* incident)."""
-
-    def test_plural_peer_family_present_and_empty_default(self) -> None:
-        env = _gateway_env_map()
-        for prefix in _ROLE_PREFIXES:
-            for suffix in ("PEER_ORIGINS", "PEER_API_KEYS"):
-                key = f"{prefix}_{suffix}"
-                assert key in env, f"{key} missing from gateway environment"
-                assert env[key] == f"${{{key}:-}}", f"{key} must default to empty"
+    """Issue #199, t3: GATEWAY_SELF_ORIGIN and the declared lane fingerprint
+    must reach the gateway container as plain ``${VAR:-}`` passthroughs — a
+    key with no compose line silently never reaches the gateway (the
+    2026-07-17 MUSE_* incident). Retired (t14): the plural peer family
+    (``*_PEER_ORIGINS``/``*_PEER_API_KEYS``) this class also used to check
+    the passthrough of is gone from the compose template along with the
+    parsing that ever read it — there is nothing left to check there."""
 
     def test_gateway_self_origin_present_and_empty_default(self) -> None:
         env = _gateway_env_map()
@@ -194,52 +189,13 @@ class TestReplicaPoolPassthrough:
 
 _ENV_EXAMPLE = _TEMPLATES / "fleet" / "env.example"
 
-
-class TestEnvExampleDocumentsTheReplicaPool:
-    """``env.example`` must document the plural peer family next to the
-    singular block, with the empty-slot rule and the per-box note — and
-    never with a real fleet hostname (only neutral ``peer-*.example``
-    placeholders)."""
-
-    def test_plural_block_documented_near_singular_block(self) -> None:
-        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
-        singular_idx = text.index("PRIMARY_PEER_ORIGIN=")
-        plural_idx = text.index("PRIMARY_PEER_ORIGINS=")
-        self_origin_idx = text.index("GATEWAY_SELF_ORIGIN=")
-        assert singular_idx < plural_idx < self_origin_idx
-
-    def test_empty_slot_rule_documented(self) -> None:
-        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
-        section = text[text.index("Replica pool") : text.index("GATEWAY_SELF_ORIGIN=")]
-        assert "empty" in section.lower()
-        assert "startup" in section.lower()
-        assert "error" in section.lower()
-
-    def test_per_box_differs_note_documented(self) -> None:
-        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
-        section = text[text.index("Replica pool") : text.index("GATEWAY_SELF_ORIGIN=")]
-        assert "differs per box" in section.lower()
-        assert "never list your own" in section.lower() or "never itself" in section.lower()
-
-    def test_no_real_fleet_hostname_in_the_new_replica_pool_section(self) -> None:
-        text = _ENV_EXAMPLE.read_text(encoding="utf-8")
-        section = text[text.index("Replica pool") : text.index("Follow the referral: proxy-lobes")]
-        forbidden = ("spark", "thor", "orin", "tail0be7e0")
-        lowered = section.lower()
-        for token in forbidden:
-            assert token not in lowered, f"{token!r} must not appear in the replica pool section"
-
-
-class TestComposeTemplateReplicaPoolSectionHasNoRealHostname:
-    def test_no_real_fleet_hostname_in_the_new_compose_lines(self) -> None:
-        text = _FLEET_COMPOSE.read_text(encoding="utf-8")
-        section = text[
-            text.index("Replica-pool plural peer family") : text.index("Declared lane fingerprint")
-        ]
-        forbidden = ("spark", "thor", "orin", "tail0be7e0")
-        lowered = section.lower()
-        for token in forbidden:
-            assert token not in lowered, f"{token!r} must not appear in the replica pool block"
+# Retired (t14): TestEnvExampleDocumentsTheReplicaPool and
+# TestComposeTemplateReplicaPoolSectionHasNoRealHostname used to live here,
+# asserting that env.example and docker-compose.yml documented/passed
+# through the plural peer family (PRIMARY_PEER_ORIGIN(S)/PEER_API_KEY(S)).
+# Both files no longer carry that section at all — the family is deleted
+# from the code and its templates, not merely undocumented — so there is
+# nothing left for either class to assert.
 
 
 class TestPortsMappingDistinguishesPublishedFromInternal:

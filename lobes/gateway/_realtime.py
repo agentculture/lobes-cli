@@ -16,11 +16,14 @@ inside the bridge owns framing, ping/pong, and close. That keeps the stdlib
 proxy free of a protocol it has no reason to parse.
 
 **No cross-box WebSocket** (spec boundary c13, issue #149). The #129
-proxy-lobes forwarder is POST-only. A dropped ``stt`` lane refuses the
-handshake with the honest ``role_infeasible`` 404 naming its peer — *even when
-the operator armed* ``STT_PEER_PROXY``, because a half-served WebSocket that
-silently crossed a box boundary would break the loop-guard and attribution
-guarantees the proxy lane provides for POSTs.
+proxy-lobes forwarder — and, since t13, the mesh — are POST-only. A dropped
+``stt`` lane refuses the handshake with the honest ``role_infeasible`` 404
+naming its peer (from ``table.peer_origins`` on a directly-constructed table,
+or the mesh's ``mesh_stt_origin`` referral — see :func:`plan_realtime_upgrade`)
+— *even when* ``table.peer_proxied`` names it (the retired ``STT_PEER_PROXY``
+env opt-in, t14; only settable on a hand-built table today), because a
+half-served WebSocket that silently crossed a box boundary would break the
+loop-guard and attribution guarantees the proxy lane provides for POSTs.
 """
 
 from __future__ import annotations
@@ -127,7 +130,9 @@ def is_websocket_upgrade(headers: Iterable[tuple[str, str]]) -> bool:
     return upgrade == "websocket" and "upgrade" in tokens
 
 
-def plan_realtime_upgrade(table, cfg, path: str, headers: Iterable[tuple[str, str]]):
+def plan_realtime_upgrade(
+    table, cfg, path: str, headers: Iterable[tuple[str, str]], *, mesh_stt_origin: str | None = None
+):
     """Decide what to do with a ``/v1/realtime`` request. Pure.
 
     Returns a :class:`TunnelTarget` to tunnel, or a :class:`RealtimeRefusal`.
@@ -146,7 +151,7 @@ def plan_realtime_upgrade(table, cfg, path: str, headers: Iterable[tuple[str, st
             kind="role_infeasible",
             status=404,
             role=REALTIME_ROLE,
-            peer_origin=getattr(table, "peer_origins", {}).get(REALTIME_ROLE),
+            peer_origin=getattr(table, "peer_origins", {}).get(REALTIME_ROLE) or mesh_stt_origin,
         )
     if not cfg.audio_url:
         return RealtimeRefusal(kind="audio_not_configured", status=404)

@@ -184,3 +184,8 @@
 {"ts":"2026-08-31T11:32:23.322083+00:00","type":"pr_reply","pr":241,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-08-31T11:32:23.334864+00:00","type":"pr_batch_replied","pr":241,"count":9,"resolved":0}
 {"ts":"2026-08-31T11:32:24.138700+00:00","type":"pr_webhook_posted","pr":241,"event":"pr_replied"}
+{"ts":"2026-09-11T23:39:40.157659+00:00","type":"pr_opened","pr":252,"title":"Mesh-brain join: every member is the brain \u2014 dynamic membership replaces the env peer family (0.76.0)"}
+{"ts":"2026-09-11T23:39:41.549746+00:00","type":"pr_review_triggered","pr":252,"command":"/agentic_review"}
+{"ts":"2026-09-11T23:39:42.782038+00:00","type":"pr_webhook_posted","pr":252,"event":"pr_opened"}
+{"ts":"2026-09-11T23:40:45.880897+00:00","type":"readiness_arrived","pr":252,"waited_secs":60}
+{"ts":"2026-09-11T23:40:50.479370+00:00","type":"pr_read","pr":252,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}

@@ -39,11 +39,6 @@ from lobes.gateway._config import (
     FEASIBLE_ENV,
     NEVER_PROXIED_BACKENDS,
     OPT_IN_BACKENDS,
-    PEER_API_KEY_ENV,
-    PEER_API_KEYS_ENV,
-    PEER_ORIGIN_ENV,
-    PEER_ORIGINS_ENV,
-    PEER_PROXY_ENV,
     build_config,
 )
 from lobes.gateway._pressure_policy import decide
@@ -414,47 +409,45 @@ def test_a_deployment_declaring_no_associate_config_is_otherwise_unchanged() -> 
 
 # ---------------------------------------------------------------------------
 # Criterion 6 — the <PREFIX>_* env vocabulary (#199), extended to a tenth
+#
+# Retired (t14): PEER_ORIGIN_ENV/PEER_PROXY_ENV/PEER_API_KEY_ENV/
+# PEER_ORIGINS_ENV/PEER_API_KEYS_ENV are gone along with the env peer family
+# they described — associate cannot "carry" a channel that no longer exists.
+# FEASIBLE_ENV is unaffected (a pure hardware/shape fact, never env-peer
+# derived) and still carries associate's entry.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "channel,suffix",
-    [
-        (FEASIBLE_ENV, "FEASIBLE"),
-        (PEER_ORIGIN_ENV, "PEER_ORIGIN"),
-        (PEER_PROXY_ENV, "PEER_PROXY"),
-        (PEER_API_KEY_ENV, "PEER_API_KEY"),
-        (PEER_ORIGINS_ENV, "PEER_ORIGINS"),
-        (PEER_API_KEYS_ENV, "PEER_API_KEYS"),
-    ],
-)
-def test_associate_carries_every_channel_the_other_roles_carry(channel: dict, suffix: str) -> None:
-    assert channel["associate"] == f"ASSOCIATE_{suffix}"
+def test_associate_carries_the_feasible_channel_the_other_roles_carry() -> None:
+    assert FEASIBLE_ENV["associate"] == "ASSOCIATE_FEASIBLE"
 
 
 def test_associate_is_not_exempted_from_proxying() -> None:
     # `hand`'s d1 reversal emptied this set; associate must not re-open it.
     assert "associate" not in NEVER_PROXIED_BACKENDS
-    assert set(PEER_ORIGIN_ENV) == set(FEASIBLE_ENV) - NEVER_PROXIED_BACKENDS
 
 
 def test_associate_resolves_a_peer_served_name_so_its_proxy_knob_is_not_inert() -> None:
-    # The 0.54.6 worker lesson: a role wired through _config's peer dicts but
-    # missing from server.py's two peer tables proxies SILENTLY NOTHING.
+    # The 0.54.6 worker lesson: a role wired through _config's (now-retired)
+    # peer dicts but missing from server.py's two peer tables proxies
+    # SILENTLY NOTHING. _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT are NOT part of
+    # the t14 retirement (see server.py's own comment on them) — they still
+    # resolve a served id for a mesh-pooled role's /v1/models advertisement.
     assert S._PEER_SERVED_NAME_ENV["associate"] == "ASSOCIATE_SERVED_NAME"
     # issue #244, t2: this resolves through associate's OWN role_hint now,
     # not worker's — see test_associates_default_survives_a_worker_checkpoint_promotion.
     assert S._PEER_ROLE_HINT["associate"] == "associate"
 
 
-def test_associate_replica_pool_channels_are_declared_positionally() -> None:
+def test_associate_replica_pool_env_knobs_are_now_inert() -> None:
+    # Retired (t14): ASSOCIATE_PEER_ORIGINS/ASSOCIATE_PEER_API_KEYS used to
+    # populate table.replica_origins/replica_api_keys positionally; that
+    # parsing is gone — the mesh RoutingSnapshot (t13) is the pool candidate
+    # source now, and these env vars do nothing.
     env = _base_env(
         ASSOCIATE_PEER_ORIGINS="http://a.local:8001,http://b.local:8001",
         ASSOCIATE_PEER_API_KEYS="key-a,key-b",
     )
     table, _cfg = build_config(env)
-    assert table.replica_origins["associate"] == (
-        "http://a.local:8001",
-        "http://b.local:8001",
-    )
-    assert table.replica_api_keys["associate"] == ("key-a", "key-b")
+    assert "associate" not in table.replica_origins
+    assert "associate" not in table.replica_api_keys

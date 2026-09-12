@@ -436,9 +436,9 @@ def gateway_with_key(monkeypatch):
     planned: list[str] = []
     real_plan = R.plan_realtime_upgrade
 
-    def counting_plan(table, cfg, path, headers):
+    def counting_plan(table, cfg, path, headers, **kwargs):
         planned.append(path)
-        return real_plan(table, cfg, path, headers)
+        return real_plan(table, cfg, path, headers, **kwargs)
 
     monkeypatch.setattr(S, "plan_realtime_upgrade", counting_plan, raising=False)
     cfg = ServerConfig(

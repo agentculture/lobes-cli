@@ -166,7 +166,10 @@ def test_two_declared_replicas_offline_view() -> None:
     assert fp["kv_cache_dtype"] == "fp8"
     # RUNTIME has no <PREFIX>_RUNTIME env knob (t2) — never invented from the
     # catalog (c33/h25), so it stays honestly unknown.
-    assert fp["runtime"] == "unknown"
+    # The engine is a registry fact (RoleInfo.runtime), not a catalog guess about
+    # the served id, so the offline fingerprint carries it (mesh verification
+    # needs a known runtime; 2026-09-12 live finding).
+    assert fp["runtime"] == "vllm"
 
 
 def test_offline_view_reports_no_capacity_and_uncalibrated_weight() -> None:
@@ -353,3 +356,44 @@ def test_offline_fingerprint_reads_tool_call_parser_suffix():
         {"TOOL_CALL_PARSER": "qwen3_coder_thinking"}, {"model": "m", "context": 1}
     )
     assert fp["tool_parser"] == "qwen3_coder_thinking"
+
+
+# ============================================================================
+# review #252 finding 10: mesh_enabled must publish a fingerprint for an
+# ordinary locally-hosted role, even with no declared replica pool.
+# ============================================================================
+
+
+def test_no_pool_no_mesh_still_has_no_fingerprint() -> None:
+    """mesh_enabled defaults to False — every pre-mesh caller is unaffected."""
+    table = _table()  # replica_origins defaults to {}
+    payload = _base_payload(table)
+    after = annotate_replicas(copy.deepcopy(payload), table)
+    assert "fingerprint" not in after["cortex"]
+
+
+def test_mesh_enabled_publishes_fingerprint_for_ordinary_hosted_role() -> None:
+    """A member with no declared *_PEER_ORIGINS pool anywhere (the common
+    single-box case) must still publish a fingerprint once the mesh is
+    enabled — otherwise a peer's /capabilities probe can never verify it
+    (verify_member_roles skips any probed entry with no 'fingerprint' key)."""
+    table = _table()  # no replica_origins declared at all
+    payload = _base_payload(table)
+    assert payload["cortex"]["loaded"] is True
+
+    after = annotate_replicas(copy.deepcopy(payload), table, mesh_enabled=True)
+
+    assert "fingerprint" in after["cortex"]
+    assert after["cortex"]["fingerprint"]["served_id"] == _CORTEX_ID
+
+
+def test_mesh_enabled_does_not_fabricate_fingerprint_for_unhosted_role() -> None:
+    """mesh_enabled must not publish a fingerprint for a role this box does
+    not actually host (loaded=False) — only real, locally-hosted roles."""
+    table = _table(infeasible=("multimodal",))
+    payload = _base_payload(table)
+    assert payload["senses"]["loaded"] is False
+
+    after = annotate_replicas(copy.deepcopy(payload), table, mesh_enabled=True)
+
+    assert "fingerprint" not in after["senses"]

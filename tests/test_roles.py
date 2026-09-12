@@ -1086,11 +1086,23 @@ def test_an_operator_declared_window_wins_over_the_null() -> None:
 
 def test_a_peer_supplied_window_wins_over_the_null() -> None:
     """The #220 peer advert still beats the null for a proxied role."""
-    env = _full_env() | {
-        "WORKER_FEASIBLE": "false",
-        "WORKER_PEER_ORIGIN": "http://peer.test:8000",
-        "WORKER_PEER_PROXY": "true",
-    }
-    worker = _registry(env, peer_context={"worker": 128000})["worker"]
+    # Retired (t14): WORKER_PEER_ORIGIN/WORKER_PEER_PROXY no longer populate
+    # table.peer_origins/peer_proxied — build the table directly instead.
+    import dataclasses
+
+    env = _full_env() | {"WORKER_FEASIBLE": "false"}
+    table, server = build_config(env)
+    table = dataclasses.replace(
+        table,
+        peer_origins={"worker": "http://peer.test:8000"},
+        peer_proxied=frozenset({"worker"}),
+    )
+    worker = build_role_registry(
+        table,
+        server,
+        env=env,
+        gateway_url=_DEFAULT_TEST_GATEWAY_URL,
+        peer_context={"worker": 128000},
+    )["worker"]
     assert not worker.feasible  # proxying never makes this box a host
     assert worker.context == 128000

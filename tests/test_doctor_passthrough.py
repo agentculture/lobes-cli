@@ -47,14 +47,14 @@ class TestMissingPassthroughIsFlagged:
         _scaffold_fleet(tmp_path)
         monkeypatch.setenv("LOBES_DIR", str(tmp_path))
         monkeypatch.setattr(_compose, "docker_available", lambda: True)
-        _env.set_env(tmp_path / ".env", "PRIMARY_PEER_ORIGINS", "http://peer-a.example:8000")
-        _drop_compose_line(tmp_path / _compose.COMPOSE_FILE, "PRIMARY_PEER_ORIGINS")
+        _env.set_env(tmp_path / ".env", "PRIMARY_QUANTIZATION", "compressed-tensors")
+        _drop_compose_line(tmp_path / _compose.COMPOSE_FILE, "PRIMARY_QUANTIZATION")
 
         payload = _doctor_json(capsys)
         ids = {c["id"]: c for c in payload["checks"]}
         check = ids["gateway_passthrough"]
         assert check["passed"] is False
-        assert "PRIMARY_PEER_ORIGINS" in check["message"]
+        assert "PRIMARY_QUANTIZATION" in check["message"]
         # A compose gap is healed by re-scaffolding, never doctor --fix.
         assert "init --apply" in check["remediation"]
 
@@ -62,9 +62,9 @@ class TestMissingPassthroughIsFlagged:
         _scaffold_fleet(tmp_path)
         monkeypatch.setenv("LOBES_DIR", str(tmp_path))
         monkeypatch.setattr(_compose, "docker_available", lambda: True)
-        _env.set_env(tmp_path / ".env", "PRIMARY_PEER_ORIGINS", "http://peer-a.example:8000")
+        _env.set_env(tmp_path / ".env", "PRIMARY_QUANTIZATION", "compressed-tensors")
         compose_path = tmp_path / _compose.COMPOSE_FILE
-        _drop_compose_line(compose_path, "PRIMARY_PEER_ORIGINS")
+        _drop_compose_line(compose_path, "PRIMARY_QUANTIZATION")
         before = compose_path.read_bytes()
 
         _doctor_json(capsys, "--fix", "--apply")
@@ -126,12 +126,13 @@ class TestKeyEnumerationCoversAllTenPrefixes:
             "TTS",
         }
 
-    def test_plural_peer_family_and_self_origin_are_relevant_keys(self):
+    def test_self_origin_and_fingerprint_suffixes_are_relevant_keys(self):
+        # Retired (t14): the plural peer family (*_PEER_ORIGINS/*_PEER_API_KEYS)
+        # this test also used to check is gone from _gateway_relevant_keys —
+        # nothing left to assert there.
         keys = set(doctor_module._gateway_relevant_keys())
         assert "GATEWAY_SELF_ORIGIN" in keys
         for prefix in doctor_module._GATEWAY_ROLE_PREFIXES:
-            assert f"{prefix}_PEER_ORIGINS" in keys
-            assert f"{prefix}_PEER_API_KEYS" in keys
             assert f"{prefix}_QUANTIZATION" in keys
             assert f"{prefix}_KV_CACHE_DTYPE" in keys
             assert f"{prefix}_REASONING_PARSER" in keys
@@ -187,12 +188,10 @@ def test_passthrough_in_override_overlay_counts(tmp_path, monkeypatch):
     )
     (tmp_path / "docker-compose.override.yml").write_text(
         "services:\n  gateway:\n    environment:\n"
-        "      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
+        "      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}\n",
         encoding="utf-8",
     )
-    (tmp_path / ".env").write_text(
-        "PRIMARY_PEER_ORIGINS=http://peer-a.example:8000\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8")
     monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
     result = D._gateway_passthrough_check(tmp_path)
     assert result["passed"] is True, result
@@ -205,16 +204,14 @@ def test_passthrough_under_another_service_does_not_count(tmp_path, monkeypatch)
     (tmp_path / "docker-compose.yml").write_text(
         "services:\n  gateway:\n    environment:\n      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}\n"
         "  vllm-primary:\n    environment:\n"
-        "      - PRIMARY_PEER_ORIGINS=${PRIMARY_PEER_ORIGINS:-}\n",
+        "      - PRIMARY_QUANTIZATION=${PRIMARY_QUANTIZATION:-}\n",
         encoding="utf-8",
     )
-    (tmp_path / ".env").write_text(
-        "PRIMARY_PEER_ORIGINS=http://peer-a.example:8000\n", encoding="utf-8"
-    )
+    (tmp_path / ".env").write_text("PRIMARY_QUANTIZATION=compressed-tensors\n", encoding="utf-8")
     monkeypatch.setattr(D._compose, "is_fleet", lambda _d: True)
     result = D._gateway_passthrough_check(tmp_path)
     assert result["passed"] is False, result
-    assert "PRIMARY_PEER_ORIGINS" in result["message"]
+    assert "PRIMARY_QUANTIZATION" in result["message"]
 
 
 def test_gateway_environment_block_scan():

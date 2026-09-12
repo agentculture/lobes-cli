@@ -40,16 +40,7 @@ from lobes.gateway import _replicas as replicas_mod
 from lobes.gateway import _routing as routing_mod
 from lobes.gateway import _selection as selection_mod
 from lobes.gateway import server as S
-from lobes.gateway._config import (
-    FEASIBLE_ENV,
-    NEVER_PROXIED_BACKENDS,
-    OPT_IN_BACKENDS,
-    PEER_API_KEY_ENV,
-    PEER_API_KEYS_ENV,
-    PEER_ORIGIN_ENV,
-    PEER_ORIGINS_ENV,
-    PEER_PROXY_ENV,
-)
+from lobes.gateway._config import FEASIBLE_ENV, NEVER_PROXIED_BACKENDS, OPT_IN_BACKENDS
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import render_shape
@@ -141,65 +132,13 @@ _EXPECTED_FEASIBLE_ENV = {
     "tts": "TTS_FEASIBLE",
 }
 
-_EXPECTED_PEER_ORIGIN_ENV = {
-    "primary": "PRIMARY_PEER_ORIGIN",
-    "multimodal": "MULTIMODAL_PEER_ORIGIN",
-    "muse": "MUSE_PEER_ORIGIN",
-    "worker": "WORKER_PEER_ORIGIN",
-    "hand": "HAND_PEER_ORIGIN",
-    "embed": "EMBED_PEER_ORIGIN",
-    "rerank": "RERANK_PEER_ORIGIN",
-    "stt": "STT_PEER_ORIGIN",
-    "tts": "TTS_PEER_ORIGIN",
-}
-
-_EXPECTED_PEER_PROXY_ENV = {
-    "primary": "PRIMARY_PEER_PROXY",
-    "multimodal": "MULTIMODAL_PEER_PROXY",
-    "muse": "MUSE_PEER_PROXY",
-    "worker": "WORKER_PEER_PROXY",
-    "hand": "HAND_PEER_PROXY",
-    "embed": "EMBED_PEER_PROXY",
-    "rerank": "RERANK_PEER_PROXY",
-    "stt": "STT_PEER_PROXY",
-    "tts": "TTS_PEER_PROXY",
-}
-
-_EXPECTED_PEER_API_KEY_ENV = {
-    "primary": "PRIMARY_PEER_API_KEY",
-    "multimodal": "MULTIMODAL_PEER_API_KEY",
-    "muse": "MUSE_PEER_API_KEY",
-    "worker": "WORKER_PEER_API_KEY",
-    "hand": "HAND_PEER_API_KEY",
-    "embed": "EMBED_PEER_API_KEY",
-    "rerank": "RERANK_PEER_API_KEY",
-    "stt": "STT_PEER_API_KEY",
-    "tts": "TTS_PEER_API_KEY",
-}
-
-_EXPECTED_PEER_ORIGINS_ENV = {
-    "primary": "PRIMARY_PEER_ORIGINS",
-    "multimodal": "MULTIMODAL_PEER_ORIGINS",
-    "muse": "MUSE_PEER_ORIGINS",
-    "worker": "WORKER_PEER_ORIGINS",
-    "hand": "HAND_PEER_ORIGINS",
-    "embed": "EMBED_PEER_ORIGINS",
-    "rerank": "RERANK_PEER_ORIGINS",
-    "stt": "STT_PEER_ORIGINS",
-    "tts": "TTS_PEER_ORIGINS",
-}
-
-_EXPECTED_PEER_API_KEYS_ENV = {
-    "primary": "PRIMARY_PEER_API_KEYS",
-    "multimodal": "MULTIMODAL_PEER_API_KEYS",
-    "muse": "MUSE_PEER_API_KEYS",
-    "worker": "WORKER_PEER_API_KEYS",
-    "hand": "HAND_PEER_API_KEYS",
-    "embed": "EMBED_PEER_API_KEYS",
-    "rerank": "RERANK_PEER_API_KEYS",
-    "stt": "STT_PEER_API_KEYS",
-    "tts": "TTS_PEER_API_KEYS",
-}
+# Retired (t14): PEER_ORIGIN_ENV/PEER_PROXY_ENV/PEER_API_KEY_ENV/
+# PEER_ORIGINS_ENV/PEER_API_KEYS_ENV and their _EXPECTED_* fixtures here are
+# gone along with the dicts themselves — build_config no longer parses any
+# env peer channel (the mesh RoutingSnapshot, t13, is the candidate source
+# now). _PEER_SERVED_NAME_ENV / _PEER_ROLE_HINT below are NOT part of that
+# retirement (they resolve a served id from the unrelated <PREFIX>_SERVED_NAME
+# knob, still consulted for a mesh-pooled role's /v1/models advertisement).
 
 _EXPECTED_PEER_SERVED_NAME_ENV = {
     "primary": "PRIMARY_SERVED_NAME",
@@ -226,11 +165,6 @@ _EXPECTED_PEER_ROLE_HINT = {
     "actual,expected,name",
     [
         (FEASIBLE_ENV, _EXPECTED_FEASIBLE_ENV, "FEASIBLE_ENV"),
-        (PEER_ORIGIN_ENV, _EXPECTED_PEER_ORIGIN_ENV, "PEER_ORIGIN_ENV"),
-        (PEER_PROXY_ENV, _EXPECTED_PEER_PROXY_ENV, "PEER_PROXY_ENV"),
-        (PEER_API_KEY_ENV, _EXPECTED_PEER_API_KEY_ENV, "PEER_API_KEY_ENV"),
-        (PEER_ORIGINS_ENV, _EXPECTED_PEER_ORIGINS_ENV, "PEER_ORIGINS_ENV"),
-        (PEER_API_KEYS_ENV, _EXPECTED_PEER_API_KEYS_ENV, "PEER_API_KEYS_ENV"),
         (S._PEER_SERVED_NAME_ENV, _EXPECTED_PEER_SERVED_NAME_ENV, "server._PEER_SERVED_NAME_ENV"),
         (S._PEER_ROLE_HINT, _EXPECTED_PEER_ROLE_HINT, "server._PEER_ROLE_HINT"),
     ],

@@ -266,6 +266,9 @@ def test_shape_override_of_undeclared_role_is_fully_permissive() -> None:
 def test_builtin_shape_names_lists_every_shipped_shape() -> None:
     names = builtin_shape_names()
     assert set(names) == {
+        # The consumer-only member (mesh-brain-join t5): hosts=[] — the first
+        # built-in shape that hosts nothing at all.
+        "gateway-only",
         "machine-as-brain",
         "spark-lobe",
         "thor-lobe",

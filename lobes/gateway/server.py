@@ -43,12 +43,14 @@ outbound header forwarding to local backends is unchanged.
 
 **The proxy data plane** (proxy-lobes t6, issues #115/#127) is the third lobe
 state — awake (hosted) / asleep (referral-only 404) / **PROXY**: a dropped
-role whose operator armed ``<PREFIX>_PEER_PROXY`` (``table.peer_proxied``) is
-answered by FORWARDING the request to the operator-declared peer origin,
-replacing the referral 404 for exactly those names and nothing else. See the
-"proxy data plane" section below for the loop guard, the pairwise-credential
-swap, the failure modes, and why proxied requests bypass the LOCAL pressure
-policy.
+role opted in to proxying (``table.peer_proxied``) is answered by FORWARDING
+the request to the declared peer origin, replacing the referral 404 for
+exactly those names and nothing else. See the "proxy data plane" section
+below for the loop guard, the pairwise-credential swap, the failure modes,
+and why proxied requests bypass the LOCAL pressure policy. Retired (t14): the
+env peer family that used to populate ``table.peer_proxied`` is gone — the
+mesh RoutingSnapshot (t13) is the candidate source now — so this field is
+always empty in practice; the mechanics below are unchanged and dormant.
 """
 
 from __future__ import annotations
@@ -73,6 +75,31 @@ from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
+from lobes.gateway._mesh_config import MeshConfigError
+from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
+from lobes.gateway._mesh_routes import (
+    MeshRoutes,
+    announcement_from_capabilities,
+)
+from lobes.gateway._mesh_routes import build_mesh_routes as _build_mesh_routes
+from lobes.gateway._mesh_routes import (
+    dispatch_mesh,
+)
+from lobes.gateway._mesh_routes import is_mesh_route as _is_mesh_route
+from lobes.gateway._mesh_routes import require_self_origin as _require_self_origin
+from lobes.gateway._mesh_routes import start_mesh as _start_mesh
+from lobes.gateway._mesh_routing import (
+    MESH_MEMBER_HEADER,
+    MeshRoutingView,
+    RoutingSnapshot,
+    SnapshotHolder,
+    as_routing_snapshot,
+    build_snapshot,
+    compute_role_placement,
+    find_suffixed_lane,
+    mesh_markers,
+)
+from lobes.gateway._mesh_wire import Announcement
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._realtime import (
@@ -118,6 +145,7 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
+from lobes.roles import BACKEND_ROLE, role_registry_from_env
 
 # NOTE: lobes.roles is imported lazily inside capabilities_payload() below, not
 # here at module scope. lobes.roles itself imports lobes.gateway._config (for
@@ -147,6 +175,22 @@ _HOP_BY_HOP = frozenset(
         "content-length",
     }
 )
+
+
+# --- mesh snapshot helpers --------------------------------------------------
+
+
+def _first_stt_origin(snapshot: "RoutingSnapshot | None") -> str | None:
+    """Return the first verified stt origin, or first announced-only stt origin."""
+    if snapshot is None:
+        return None
+    origins = snapshot.member_origins("stt")
+    if origins:
+        return origins[0]
+    for m in snapshot.members:
+        if "stt" in m.announced_roles:
+            return m.origin
+    return None
 
 
 # --- request-body helpers (pure, testable) ---------------------------------
@@ -683,7 +727,11 @@ def _model_not_found_body(model: str) -> bytes:
 
 
 def _role_infeasible_body(
-    requested: str | None, backend_name: str, peer_origin: str | None = None
+    requested: str | None,
+    backend_name: str,
+    peer_origin: str | None = None,
+    *,
+    suffixed_names: "tuple[str, ...] | None" = None,
 ) -> bytes:
     """4xx body for a request pinned to a HARDWARE-infeasible backend (t6).
 
@@ -696,8 +744,10 @@ def _role_infeasible_body(
     :func:`lobes.gateway._routing.infeasible_owner`.
 
     ``peer_origin`` is the opt-in honest referral (mesh-brain t3, issue
-    #112): the OPERATOR-DECLARED origin of the peer box that hosts this role
-    (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`). When set, the message
+    #112): the origin of the peer box that hosts this role, now sourced from
+    a verified mesh member rather than the retired env peer family (t14; the
+    per-backend ``<PREFIX>_PEER_ORIGIN`` var that used to populate this no
+    longer exists — see ``lobes.gateway._config``'s "Retired" comment). When set, the message
     names it and a machine-readable ``hosted_by`` key is added — a referral
     for the CALLER to dial directly; a REFERRAL-ONLY gateway never forwards
     the request there (data-plane forwarding exists only for names the
@@ -723,6 +773,17 @@ def _role_infeasible_body(
     error["code"] = "role_infeasible"
     if peer_origin:
         error["hosted_by"] = peer_origin
+    # Suffixed-lane naming (t8, issue #237): a raw id/role hosted ONLY as
+    # disagreeing mesh members is never silently resolved to one of them —
+    # the 404 instead lists every suffixed name so the caller can pick one
+    # explicitly. Deliberately no `hosted_by` here: naming one member would
+    # be exactly the silent pick this exists to avoid.
+    if suffixed_names:
+        error["suffixed_lanes"] = list(suffixed_names)
+        error["message"] += (
+            " It is hosted by mesh members whose fingerprints disagree — "
+            f"address one directly: {', '.join(suffixed_names)}."
+        )
     return json.dumps({"error": error}).encode("utf-8")
 
 
@@ -744,8 +805,9 @@ def _busy_body(requested_tier: str) -> bytes:
 # --- the proxy data plane: follow the referral (proxy-lobes t6, #115/#127) --
 
 # The THIRD lobe state — awake / asleep / PROXY. A role this box dropped
-# (``table.infeasible``) whose operator declared a peer origin AND armed the
-# ``<PREFIX>_PEER_PROXY`` knob (``table.peer_proxied``, t1) is answered by
+# (``table.infeasible``) that is opted in to proxying (``table.peer_proxied``,
+# t1 — RETIRED SOURCE, t14: this used to be armed by a per-backend env knob;
+# the mesh RoutingSnapshot is the candidate/forward source now) is answered by
 # FORWARDING the request to that peer instead of the referral 404. The forward
 # reuses the existing relay machinery unchanged (a synthetic Backend whose
 # base_url is the operator-declared origin → open_upstream → buffered JSON or
@@ -808,8 +870,8 @@ PROXIED_BY_HEADER = "X-Lobes-Proxied-By"
 #   same sticky choice.
 #
 # Both response markers appear ONLY on a pooled role's answers (h1: a
-# deployment with no ``*_PEER_ORIGINS`` is byte-identical to the pre-pool
-# release, headers included).
+# deployment with no ``*_PEER_ORIGINS`` and no mesh-verified member for the
+# role is byte-identical to the pre-pool release, headers included).
 SERVED_BY_HEADER = "X-Lobes-Served-By"
 ROUTE_REASON_HEADER = "X-Lobes-Route-Reason"
 AFFINITY_HEADER = "X-Lobes-Affinity"
@@ -892,14 +954,19 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
 # fallback lobes.roles uses to NAME an unwired role's model.
 #
-# MUST stay in step with :data:`lobes.gateway._config.PEER_PROXY_ENV`: a role
-# the config layer can proxy but that resolves NO served name here is dropped
-# by :func:`peer_specs_from_table` at its ``if not served_name`` guard, so the
-# proxy goes silently inert — no peer probe, no ``/v1/models`` entry, no
+# Unlike the retired PEER_ORIGIN/PEER_PROXY/PEER_API_KEY family (t14), this
+# dict and :data:`_PEER_SERVED_NAME_ENV` above are NOT retired: they still
+# resolve a served id for a mesh-pooled role's ``/v1/models`` advertisement
+# (see :func:`pooled_backends`'s mesh branch and its call site around
+# ``_peer_served_name`` below), independent of any env-declared peer. A role
+# that resolves NO served name here is dropped by :func:`peer_specs_from_table`
+# at its ``if not served_name`` guard, so the (now-dormant, env-only) proxy
+# path goes silently inert — no peer probe, no ``/v1/models`` entry, no
 # :func:`_proxied_owner` match. That is exactly how ``worker`` shipped in
-# 0.54.6: wired through _config.py's three peer dicts but missing from these
-# two, so ``WORKER_PEER_PROXY=true`` did nothing on a box that only REACHES
-# worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve off).
+# 0.54.6: wired through _config.py's three (now-deleted) peer dicts but
+# missing from these two, so its proxy knob did nothing on a box that only
+# REACHES worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve
+# off).
 # ``stt``/``tts`` are proxyable too but resolve via _peer_served_name's
 # fixed-sidecar early return, not these tables.
 # tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name
@@ -966,10 +1033,13 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
 # the pool branch further down. That one may forward a role this box HOSTS
 # because a peer replica is better placed; this one places a role this box
 # hosts NOWHERE, across the replicas that do. It has to run BEFORE the
-# referral/proxy branch, because that branch forwards to the SINGULAR
-# `<PREFIX>_PEER_ORIGIN` and would consume every request before any placement
-# could happen — the exact behaviour measured on the Orin on 2026-08-30,
-# where all traffic pinned to one of two equally-good peers.
+# referral/proxy branch, because that branch forwards to a single declared
+# peer origin and would consume every request before any placement could
+# happen — the exact behaviour measured on the Orin on 2026-08-30, where all
+# traffic pinned to one of two equally-good peers. (Historical: at the time
+# that was the SINGULAR ``<PREFIX>_PEER_ORIGIN`` env family; t14 retired that
+# family — the origin now comes from the mesh RoutingSnapshot instead, and
+# the ordering requirement is unchanged.)
 #
 # It keeps every guard the singular branch has:
 #
@@ -989,7 +1059,10 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
 
 
 def pooled_backends(
-    table: RoutingTable, replica_snapshot: ReplicaSnapshot | None
+    table: RoutingTable,
+    replica_snapshot: ReplicaSnapshot | None,
+    *,
+    mesh_snapshot: RoutingSnapshot | None = None,
 ) -> frozenset[str]:
     """Backend names this box PLACES across replicas instead of pinning to one.
 
@@ -999,21 +1072,82 @@ def pooled_backends(
     a box that places a role but does not list it, or lists one it would not
     place, is lying in one direction or the other.
 
-    A name qualifies on four facts, all of them live: this box does not host
-    it, it has declared plural origins, it has the singular origin the
-    fall-through and ``hosted_by`` both need, and at least one declared
-    replica is right now compatible and ready. The last is what makes the
-    listing self-healing — every peer going unready drops the entry again.
+    A name qualifies via EITHER of two independent sources (t13, W9b): the
+    table-declared one — this box does not host it, ``table.replica_origins``
+    names plural replicas for it, ``table.peer_origins`` has the singular
+    origin the fall-through and ``hosted_by`` both need, and at least one
+    declared replica is right now compatible and ready (self-healing — every
+    peer going unready drops the entry again) — or the mesh one: this box
+    does not host it (it is in ``table.infeasible``) AND the mesh's own
+    :class:`~lobes.gateway._mesh_routing.RoutingSnapshot` has at least one
+    member verified for the role. In a normal deployment the table-declared
+    source is permanently empty: t14 deleted the ``<PREFIX>_PEER_ORIGIN(S)``
+    env parsing that used to populate ``table.replica_origins``/
+    ``peer_origins``, so ``build_config`` never fills them any more — that
+    branch fires only for a hand-built :class:`RoutingTable` (tests, or a
+    future non-env source). The mesh source is what actually pools a role
+    today: it reads ``table.infeasible`` (a pure hardware/shape fact) and
+    :func:`~lobes.gateway._mesh_routing.compute_role_placement`'s
+    ``plain_origins`` — the fingerprint-agreement-filtered subset of
+    ``verified_roles``, never the raw union (two members that each verify a
+    role but DISAGREE with each other on its fingerprint must never be
+    pooled under the one plain name — that ambiguity is exactly what the
+    suffixed-lane naming, issue #237, exists to keep out of the ranked pool).
+    Both sources are unioned: a hand-built table's replica origins still
+    behave exactly as they did pre-mesh (t14 only deleted the env parsing
+    that fed them, not this branch), and the mesh is a first-class, additive
+    source rather than an overlay gated behind an env-only precondition.
     """
-    if replica_snapshot is None or not table.replica_origins:
+    if replica_snapshot is None and mesh_snapshot is None:
         return frozenset()
-    return frozenset(
-        name
-        for name in table.replica_origins
-        if name in table.infeasible
-        and table.peer_origins.get(name)
-        and any(s.compatible and s.ready and not s.local for s in replica_snapshot(name))
-    )
+
+    def _mesh_roles() -> frozenset[str]:
+        """Backend names THIS BOX LACKS that the mesh has verified members for."""
+        from lobes.roles import BACKEND_ROLE
+
+        result: list[str] = []
+        for backend_name in table.infeasible:
+            role = BACKEND_ROLE.get(backend_name, backend_name)
+            local_fp = _local_backend_fingerprint(replica_snapshot, backend_name)
+            placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+            if placement.plain_origins:
+                result.append(backend_name)
+        return frozenset(result)
+
+    if replica_snapshot is not None:
+        original = frozenset(
+            name
+            for name in table.replica_origins
+            if name in table.infeasible
+            and table.peer_origins.get(name)
+            and any(s.compatible and s.ready and not s.local for s in replica_snapshot(name))
+        )
+    else:
+        original = frozenset()
+    if mesh_snapshot is None:
+        return original
+
+    # Mesh-augmented: roles the mesh verified even though no local replica
+    # is ready and no plural/singular env origins are declared at all.
+    mesh = _mesh_roles()
+    return original | mesh
+
+
+def _mesh_member_marker(
+    mesh_snapshot: RoutingSnapshot | None, origin: str
+) -> list[tuple[str, str]]:
+    """``X-Lobes-Mesh-Member`` header for the mesh member serving ``origin``.
+
+    Extracted from :func:`_peer_only_forward` (S3776) — same behaviour, just
+    named: an origin the mesh snapshot does not recognise (or no snapshot at
+    all) yields no marker, exactly as the inline loop did.
+    """
+    if mesh_snapshot is None:
+        return []
+    for m in mesh_snapshot.members:
+        if m.origin == origin:
+            return [(MESH_MEMBER_HEADER, m.name)]
+    return []
 
 
 def _peer_only_forward(
@@ -1027,6 +1161,7 @@ def _peer_only_forward(
     *,
     requested: str | None,
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: RoutingSnapshot | None = None,
     counter: DispatchCounter | None = None,
 ) -> GatewayResponse | None:
     """Place one request across the replicas of a role this box does not host.
@@ -1040,8 +1175,11 @@ def _peer_only_forward(
     backend_name = infeasible_owner(table, requested)
     # `pooled_backends` carries every precondition — dropped here, plural
     # origins, the singular origin the fall-through needs, and a compatible
-    # ready replica. A name it omits takes the pre-change path untouched.
-    if backend_name is None or backend_name not in pooled_backends(table, replica_snapshot):
+    # ready replica (mesh-augmented, W9). A name it omits takes the
+    # pre-change path untouched.
+    if backend_name is None or backend_name not in pooled_backends(
+        table, replica_snapshot, mesh_snapshot=mesh_snapshot
+    ):
         return None
     if _arriving_hop_marker(req_headers) is not None:
         return None  # single hop: let _proxied_owner answer 508 as it always has
@@ -1050,6 +1188,7 @@ def _peer_only_forward(
         backend_name,
         req_headers,
         replica_snapshot=replica_snapshot,
+        mesh_snapshot=mesh_snapshot,
         # There is no local replica to be busy: `local_busy` only ever excludes
         # a LOCAL candidate (`_selection._is_selectable`), so False is not an
         # assumption about this box's load — it is the absence of a local
@@ -1060,7 +1199,17 @@ def _peer_only_forward(
     if not origin:
         return None
     spec = (peer_specs or {}).get(backend_name)
-    markers = [(ROUTE_REASON_HEADER, placement.selection.reason)] + _route_load_header(placement)
+    # Name the serving MESH member (t13, mirrors `_pool_marker_headers`'s
+    # non-local branch) — an origin the mesh snapshot knows about that env
+    # never declared a peer for still gets `X-Lobes-Mesh-Member`, so a caller
+    # can tell a mesh-sourced forward from an env-peer one exactly like the
+    # hosted-pool path already can.
+    member_marker = _mesh_member_marker(mesh_snapshot, origin)
+    markers = (
+        [(ROUTE_REASON_HEADER, placement.selection.reason)]
+        + member_marker
+        + _route_load_header(placement)
+    )
     target = _ForwardTarget(
         name=backend_name,
         # The served id a peer is asked for is the SAME one the singular
@@ -1069,7 +1218,7 @@ def _peer_only_forward(
         # pooled-but-unproxied role) the body is forwarded verbatim below.
         origin=origin,
         served_name=spec.served_name if spec is not None else (requested or ""),
-        api_key=_replica_api_key(table, backend_name, origin),
+        api_key=_pool_replica_api_key(table, backend_name, origin, mesh_snapshot),
     )
     # COUNT the dispatch, exactly as `_pool_attempt` does for a hosted pool.
     # Probed load is up to one refresh interval stale, so without this every
@@ -1374,6 +1523,42 @@ def _proxy_to_peer(
     return response
 
 
+def _peer_5xx_response(
+    up: "_Upstream",
+    spec: _ForwardTarget,
+    peer_backend: Backend,
+    proxied_by: tuple[str, str],
+) -> GatewayResponse:
+    """Map a ``>= 500`` peer response, special-casing a 508 proxy_loop.
+
+    Extracted from :func:`_relay_to_target` (Sonar S3776). This also retires
+    a second, later ``if up.status == 508`` branch in that function: because
+    508 satisfies ``>= 500`` and this branch always returns, that later
+    branch could never execute — dead code from the moment both were added,
+    not a behaviour change to remove it.
+    """
+    if up.status == 508:
+        # Special-case 508: if the peer returned proxy_loop, relay it
+        # verbatim rather than laundering it into a retryable 503.
+        raw = up.read_all()
+        up.close()
+        try:
+            err_data = json.loads(raw)
+            if isinstance(err_data, dict) and err_data.get("error", {}).get("type") == "proxy_loop":
+                return GatewayResponse(
+                    status=508,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
+                    body=raw,
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # Not a proxy_loop error — treat as generic 503.
+        return _peer_unavailable_response(spec, [f"{peer_backend.name}: HTTP {up.status}"])
+    attempts = [f"{peer_backend.name}: HTTP {up.status}"]
+    up.close()
+    return _peer_unavailable_response(spec, attempts)
+
+
 def _relay_to_target(
     cfg: ServerConfig,
     spec: _ForwardTarget,
@@ -1411,9 +1596,7 @@ def _relay_to_target(
     except UpstreamError as exc:
         return _peer_unavailable_response(spec, [str(exc)])
     if up.status >= 500:
-        attempts = [f"{peer_backend.name}: HTTP {up.status}"]
-        up.close()
-        return _peer_unavailable_response(spec, attempts)
+        return _peer_5xx_response(up, spec, peer_backend, proxied_by)
     if up.status == 404:
         # The one 4xx that must be INSPECTED (mirroring the strict-retry path's
         # read-the-body rationale): a role_infeasible 404 is a misdeclared
@@ -1461,7 +1644,34 @@ def _strip_peer_pool_markers(headers: list[tuple[str, str]]) -> list[tuple[str, 
     return [(k, v) for k, v in headers if k.lower() not in _PEER_POOL_MARKERS]
 
 
-def _feasibility_response(table: RoutingTable, requested: str | None) -> GatewayResponse | None:
+def _mesh_referral_origin(mesh_snapshot: "RoutingSnapshot | None", backend_name: str) -> str | None:
+    """The origin of a verified mesh member hosting ``backend_name``, or ``None``.
+
+    The referral 404's honesty source (t14): the retired env peer family
+    (``table.peer_origins``, always empty now — see the "Retired" comment on
+    :data:`lobes.gateway._config.NEVER_PROXIED_BACKENDS`) used to be the only
+    way ``hosted_by`` was ever populated. The mesh RoutingSnapshot (t13) is
+    the replacement source — when at least one mesh member has VERIFIED this
+    role (its own ``/capabilities`` fingerprint agrees with every other
+    member that also verifies it, :func:`~lobes.gateway._mesh_routing.
+    compute_role_placement`'s ``plain_origins``), the first such origin is
+    the referral; with no mesh, or no verified member, ``None`` — the
+    pre-mesh, pre-referral body, byte for byte.
+    """
+    if mesh_snapshot is None:
+        return None
+    from lobes.roles import BACKEND_ROLE
+
+    role = BACKEND_ROLE.get(backend_name, backend_name)
+    placement = compute_role_placement(mesh_snapshot, role)
+    return placement.plain_origins[0] if placement.plain_origins else None
+
+
+def _feasibility_response(
+    table: RoutingTable,
+    requested: str | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
+) -> GatewayResponse | None:
     """404 ``role_infeasible`` iff ``requested``'s owning backend is declared
     hardware-infeasible by this deployment's per-machine profile (task t6);
     ``None`` when there is no such gate to apply. Shared by both the
@@ -1472,20 +1682,24 @@ def _feasibility_response(table: RoutingTable, requested: str | None) -> Gateway
     infeasible_name = infeasible_owner(table, requested)
     if infeasible_name is None:
         return None
-    # Opt-in honest referral (mesh-brain t3): when the operator declared the
-    # peer that hosts this role (table.peer_origins), the 404 names it — as an
-    # ANNOTATION only. The request is still answered HERE, terminally; a
-    # referral-only role is never forwarded (the proxy data plane, t6, only
-    # fires for names in table.peer_proxied, which handle_post routes to
-    # _proxy_to_peer BEFORE this gate — so every 404 built here stays
-    # byte-identical to the pre-proxy contract). No declaration → the
-    # pre-referral body, byte for byte.
+    # Opt-in honest referral (mesh-brain t3): when a peer hosts this role,
+    # the 404 names it — as an ANNOTATION only. The request is still
+    # answered HERE, terminally; a referral-only role is never forwarded
+    # (the proxy data plane, t6, only fires for names in
+    # ``table.peer_proxied``, which handle_post routes to _proxy_to_peer
+    # BEFORE this gate — so every 404 built here stays byte-identical to the
+    # pre-proxy contract). The env peer family that used to be the only
+    # source of this origin is retired (t14; ``table.peer_origins`` is
+    # always empty now) — the mesh RoutingSnapshot (t13) is the source
+    # instead, via :func:`_mesh_referral_origin`. No declaration and no
+    # verified mesh member → the pre-referral body, byte for byte.
+    peer_origin = table.peer_origins.get(infeasible_name) or _mesh_referral_origin(
+        mesh_snapshot, infeasible_name
+    )
     return GatewayResponse(
         status=404,
         headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-        body=_role_infeasible_body(
-            requested, infeasible_name, table.peer_origins.get(infeasible_name)
-        ),
+        body=_role_infeasible_body(requested, infeasible_name, peer_origin),
     )
 
 
@@ -1502,13 +1716,19 @@ def _role_is_pooled(
     table: RoutingTable,
     requested: str | None,
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> bool:
-    """Is this tier-alias request POOLED — declared peers AND a live snapshot?
+    """Is this tier-alias request POOLED — declared peers AND a live snapshot,
+    OR a mesh-verified plain-exposed member (t13)?
 
     The one input deviation ``d1`` needs to decide whether a host-level
     pressure verdict may refuse this request. Both halves matter: a
     declared-but-unsnapshotted role (every pre-pool call shape) is not pooled,
-    because nothing here can know whether any replica has room.
+    because nothing here can know whether any replica has room. The mesh half
+    needs neither ``<PREFIX>_PEER_ORIGIN(S)`` nor a ``replica_snapshot`` —
+    only a mesh member PLAIN-exposed for this role (fingerprint-agreement
+    filtered, never a raw ``verified_roles`` union — see
+    :func:`_pool_selection`), independent of the env source.
 
     Deviation ``d5`` narrowed this helper. It used to return the local
     replica's load and published capacity too, and :func:`_resolve_tier` fed
@@ -1523,14 +1743,24 @@ def _role_is_pooled(
 
     Reading the snapshot is a dict lookup; no socket is opened here.
     """
-    if replica_snapshot is None:
-        return False
     # The served name the tier WOULD resolve to, computed through the same pure
     # function with the override flag set so it resolves regardless of the
     # verdict still being decided. Mirrors `_pooled_busy_dispatch`.
     served = resolve_tier_request(requested, _WARM_SAMPLE, True, table)["served_name"]
     ordered = order_backends(table, served) if served else []
-    return bool(ordered) and bool(table.replica_origins.get(ordered[0].name))
+    if not ordered:
+        return False
+    backend_name = ordered[0].name
+    if replica_snapshot is not None and table.replica_origins.get(backend_name):
+        return True
+    if mesh_snapshot is None:
+        return False
+    from lobes.roles import BACKEND_ROLE
+
+    role = BACKEND_ROLE.get(backend_name, backend_name)
+    local_fp = _local_backend_fingerprint(replica_snapshot, backend_name)
+    placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+    return bool(placement.plain_origins)
 
 
 def _resolve_tier(
@@ -1539,6 +1769,7 @@ def _resolve_tier(
     pressure: dict[str, float],
     override: bool,
     replica_snapshot: ReplicaSnapshot | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]], bool]:
     """The tier-alias branch of :func:`handle_post`: hardware feasibility gate,
     then pressure-aware busy shedding (#85, narrowed by ``d1``), then the
@@ -1583,7 +1814,7 @@ def _resolve_tier(
     The ``shed_signal`` naming which fact justified a shed is available from
     the same verdict for t5 to surface on a trace.
     """
-    early = _feasibility_response(table, requested)
+    early = _feasibility_response(table, requested, mesh_snapshot)
     if early is not None:
         return early, None, [], False
 
@@ -1591,7 +1822,7 @@ def _resolve_tier(
         pressure.get("swap_used_percent", 0.0),
         pressure.get("iowait_percent", 0.0),
         requested,
-        pooled=_role_is_pooled(table, requested, replica_snapshot),
+        pooled=_role_is_pooled(table, requested, replica_snapshot, mesh_snapshot),
     )
     # `X-Lobes-Override` outranks every load condition (never the feasibility
     # gate above); an overridden request is not shed, exactly as before.
@@ -1617,7 +1848,9 @@ def _resolve_tier(
 
 
 def _resolve_plain_model(
-    table: RoutingTable, requested: str | None
+    table: RoutingTable,
+    requested: str | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> tuple[GatewayResponse | None, str | None]:
     """The non-tier branch of :func:`handle_post`: unknown-id 404 (h23), then
     the hardware feasibility gate, then the resolved served name.
@@ -1632,7 +1865,7 @@ def _resolve_plain_model(
             body=_model_not_found_body(requested),
         )
         return response, None
-    early = _feasibility_response(table, requested)
+    early = _feasibility_response(table, requested, mesh_snapshot)
     if early is not None:
         return early, None
     return None, resolve_model(table, requested)
@@ -1666,8 +1899,9 @@ def _resolve_plain_model(
 #   with no local replica is the pre-existing `_proxied_owner` case and still
 #   answers 508 `proxy_loop`.
 #
-# With no `<PREFIX>_PEER_ORIGINS` declared, `_pool_selection` returns None
-# before touching the snapshot and not one byte of the response changes (h1).
+# With no `<PREFIX>_PEER_ORIGINS` declared AND no mesh-verified member for
+# the role, `_pool_selection` returns None before touching the snapshot and
+# not one byte of the response changes (h1).
 
 
 def _replica_api_key(table: RoutingTable, backend_name: str, origin: str) -> str:
@@ -1704,20 +1938,131 @@ def _replica_api_key(table: RoutingTable, backend_name: str, origin: str) -> str
     return ""
 
 
+def _pool_replica_api_key(
+    table: RoutingTable,
+    backend_name: str,
+    origin: str,
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> str:
+    """Outbound credential for one pooled replica ``origin`` (t13).
+
+    An env-declared replica keeps :func:`_replica_api_key`'s existing
+    resolution (its own slot, or the inherited singular credential)
+    unchanged. An origin :func:`_replica_api_key` has nothing for BECAUSE it
+    is a MESH-sourced candidate — no ``<PREFIX>_PEER_ORIGIN(S)`` ever named it
+    — signs with the mesh join key instead, the same credential every other
+    mesh-forward code path in this module already uses (never the caller's
+    own bearer, which is stripped before every forward). A mesh-disabled box,
+    or an origin that is neither an env replica nor a known mesh member,
+    still gets ``""`` — no Authorization at all, exactly the pre-mesh
+    behaviour.
+    """
+    key = _replica_api_key(table, backend_name, origin)
+    if key:
+        return key
+    if mesh_snapshot is None or not any(m.origin == origin for m in mesh_snapshot.members):
+        return ""
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        return ""
+    return (mesh_cfg.key if mesh_cfg.enabled else "") or ""
+
+
+def _merge_mesh_candidates(
+    candidates: list["ReplicaState"],
+    mesh_snapshot: "RoutingSnapshot | None",
+    mesh_plain_origins: tuple[str, ...],
+) -> list["ReplicaState"]:
+    """W9a/t13: merge mesh candidates as zero-load, neutrally-ranked replicas.
+
+    Extracted from :func:`_pool_selection` (Sonar S3776) — identical
+    behaviour, just named: mesh candidates are injected only when mesh is
+    enabled and the backend's role has PLAIN-exposed members.
+    """
+    if mesh_snapshot is None:
+        return candidates
+    for m in mesh_snapshot.members:
+        if m.origin in mesh_plain_origins:
+            candidates.append(
+                ReplicaState(
+                    origin=m.origin,
+                    local=False,
+                    ready=True,
+                    busy=False,
+                    health="ok",
+                    running=0,
+                    waiting=0,
+                    fingerprint=None,
+                    compatible=True,
+                    reason="",
+                    last_seen=0.0,
+                    weight=8.0,
+                    calibrated=True,
+                )
+            )
+    return candidates
+
+
+def _maybe_synth_local_candidate(
+    candidates: list["ReplicaState"],
+    mesh_plain_origins: tuple[str, ...],
+    backend_name: str,
+    table: RoutingTable,
+    local_busy: bool,
+) -> list["ReplicaState"]:
+    """Synthesize the local candidate for a mesh-only pool (Sonar S3776).
+
+    Extracted from :func:`_pool_selection` — identical behaviour. A box that
+    HOSTS the role is a pool member too. Local replica states come from the
+    replica caches, which only exist for env-declared pools — so on a
+    mesh-only host the local lane was never a candidate and every request
+    was forwarded to a peer with reason "sole-ready" (live Spark reranker,
+    2026-09-12). `select_replica` gives the synthesized candidate the tie
+    (local wins ties) and ranks it like any replica otherwise.
+    """
+    if (
+        mesh_plain_origins
+        and not any(getattr(c, "local", False) for c in candidates)
+        and backend_name not in table.infeasible
+        and any(b.name == backend_name for b in table.backends)
+    ):
+        candidates.append(
+            ReplicaState(
+                origin=table.self_origin or "local",
+                local=True,
+                ready=True,
+                busy=local_busy,
+                health="ok",
+                running=0,
+                waiting=0,
+                fingerprint=None,
+                compatible=True,
+                reason="local lane (mesh pool)",
+                last_seen=0.0,
+                weight=8.0,
+                calibrated=False,
+            )
+        )
+    return candidates
+
+
 def _pool_selection(
     table: RoutingTable,
     backend_name: str,
     req_headers: list[tuple[str, str]],
     *,
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: RoutingSnapshot | None = None,
     local_busy: bool,
     exclude: Collection[str] = (),
 ) -> "_Placement | None":
     """Run the selection policy for one pooled backend, or ``None``.
 
-    ``None`` means **this request is not pooled at all** — no snapshot provider
-    injected, or no ``<PREFIX>_PEER_ORIGINS`` declared for the owning backend —
-    and the caller must take the pre-pool path with no markers whatsoever (h1).
+    ``None`` means **this request is not pooled at all** — neither
+    ``<PREFIX>_PEER_ORIGINS`` nor a mesh-verified member exists for the
+    owning backend's role — and the caller must take the pre-pool path with
+    no markers whatsoever (h1).
 
     ``exclude`` (t8, spec c15/h12) drops replica ORIGINS the current request
     has already dispatched to and lost pre-dispatch, so the retry re-runs the
@@ -1729,8 +2074,29 @@ def _pool_selection(
     Reading the snapshot is a dict lookup: no socket is ever opened here (the
     probes run on :class:`~lobes.gateway._replicas.ReplicaCache`'s background
     threads), so a hung peer can never delay local dispatch.
+
+    When *mesh_snapshot* is provided and mesh has PLAIN-exposed members for
+    this backend's role (:func:`~lobes.gateway._mesh_routing.compute_role_placement`'s
+    ``plain_origins`` — the fingerprint-agreement-filtered subset of
+    ``verified_roles``; a member whose fingerprint disagrees with the
+    reference is never merged in here, only reachable via its own suffixed
+    lane), mesh candidates are merged into the candidate set so that
+    ``select_replica`` ranks across both local replicas and mesh-verified
+    peers — INDEPENDENT of whether ``<PREFIX>_PEER_ORIGINS`` is declared at
+    all (t13): a mesh-only box (no env peer origins, no local ``replica_snapshot``
+    provider) still reaches this merge, because the entry guard below no
+    longer requires the env source to be present.
     """
-    if replica_snapshot is None or not table.replica_origins.get(backend_name):
+    from lobes.roles import BACKEND_ROLE
+
+    role = BACKEND_ROLE.get(backend_name, backend_name)
+    mesh_plain_origins: tuple[str, ...] = ()
+    if mesh_snapshot is not None:
+        local_fp = _local_backend_fingerprint(replica_snapshot, backend_name)
+        mesh_plain_origins = compute_role_placement(
+            mesh_snapshot, role, local_fingerprint=local_fp
+        ).plain_origins
+    if not table.replica_origins.get(backend_name) and not mesh_plain_origins:
         return None
     if _arriving_hop_marker(req_headers) is not None:
         # Single hop (c4/h4): a request a peer already forwarded is served
@@ -1742,9 +2108,13 @@ def _pool_selection(
         # policy (#85) — never a second forward.
         return _Placement(Selection(None, True, REASON_SOLE_READY), ())
     affinity = (_request_header(req_headers, AFFINITY_HEADER) or "").strip()
-    candidates = replica_snapshot(backend_name)
+    candidates = list(replica_snapshot(backend_name)) if replica_snapshot is not None else []
+    candidates = _merge_mesh_candidates(candidates, mesh_snapshot, mesh_plain_origins)
+    candidates = _maybe_synth_local_candidate(
+        candidates, mesh_plain_origins, backend_name, table, local_busy
+    )
     if exclude:
-        candidates = tuple(c for c in candidates if c.origin not in exclude)
+        candidates = [c for c in candidates if c.origin not in exclude]
     return _Placement(
         select_replica(
             candidates,
@@ -1810,6 +2180,26 @@ def _stamp_pool_headers(table: RoutingTable, reason: str) -> list[tuple[str, str
         (SERVED_BY_HEADER, table.self_origin or _SELF_ORIGIN_FALLBACK),
         (ROUTE_REASON_HEADER, reason),
     ]
+
+
+def _local_mesh_member_marker() -> list[tuple[str, str]]:
+    """``X-Lobes-Mesh-Member`` naming THIS box, when the mesh join is armed.
+
+    Best-effort and mesh-scoped only (item B, t9): a mesh-disabled box (no
+    ``LOBES_MESH_KEY``) or one with no declared ``LOBES_MESH_NAME`` gets no
+    marker at all — never a fabricated name — and a malformed mesh config
+    (:class:`~lobes.gateway._mesh_config.MeshConfigError`) is swallowed the
+    same way every other on-demand ``_build_mesh_config()`` call site in this
+    module already tolerates it, so a local pooled answer is never turned
+    into an error by this purely cosmetic header.
+    """
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        return []
+    if not mesh_cfg.enabled or not mesh_cfg.name:
+        return []
+    return [(MESH_MEMBER_HEADER, mesh_cfg.name)]
 
 
 # --- the pooled dispatch loop (t8, issue #199) ------------------------------
@@ -1886,18 +2276,35 @@ def _pool_exhausted_response(
     )
 
 
+@dataclass(frozen=True)
+class _RequestCtx:
+    """The six facts every dispatch-chain function needs about ONE inbound
+    request, invariant across the whole pool retry loop.
+
+    Introduced (Sonar S107) to fold ``table``/``cfg``/``path``/``req_headers``/
+    ``body``/``open_upstream`` — previously six separate leading positional
+    parameters on :func:`_pool_dispatch`, :func:`_pool_attempt` and
+    :func:`_dial_selected` — into one object, after ``mesh_snapshot`` (t7/t8)
+    became each function's 14th parameter. Purely mechanical: every caller
+    and callee stays inside this module.
+    """
+
+    table: RoutingTable
+    cfg: ServerConfig
+    path: str
+    req_headers: list[tuple[str, str]]
+    body: bytes
+    open_upstream: OpenUpstream
+
+
 def _pool_dispatch(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
     tier_headers: list[tuple[str, str]],
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: RoutingSnapshot | None = None,
     local_busy: bool,
     dial_local: LocalDial | None,
     counter: DispatchCounter | None = None,
@@ -1905,7 +2312,8 @@ def _pool_dispatch(
     """Place and dispatch one pooled request, retrying pre-dispatch failures.
 
     Returns ``None`` when the request is **not pooled at all** (no snapshot
-    provider, or no ``<PREFIX>_PEER_ORIGINS`` for ``backend_name``) — the
+    provider, or neither ``<PREFIX>_PEER_ORIGINS`` nor a mesh-verified member
+    exists for ``backend_name``'s role — see :func:`_pool_selection`) — the
     caller must then take the pre-pool path with no markers whatsoever (h1).
     Returns :class:`_PoolFallthrough` when the role IS pooled but nothing was
     selectable and therefore nothing was dispatched. Otherwise returns the
@@ -1918,10 +2326,11 @@ def _pool_dispatch(
     dispatched = 0
     while True:
         placement = _pool_selection(
-            table,
+            ctx.table,
             backend_name,
-            req_headers,
+            ctx.req_headers,
             replica_snapshot=replica_snapshot,
+            mesh_snapshot=mesh_snapshot,
             local_busy=local_busy,
             exclude=excluded,
         )
@@ -1938,12 +2347,7 @@ def _pool_dispatch(
             break
         dispatched += 1
         response, failure = _pool_attempt(
-            table,
-            cfg,
-            path,
-            req_headers,
-            body,
-            open_upstream,
+            ctx,
             backend_name=backend_name,
             served=served,
             placement=placement,
@@ -1951,6 +2355,7 @@ def _pool_dispatch(
             dispatched=dispatched,
             dial_local=dial_local,
             counter=counter,
+            mesh_snapshot=mesh_snapshot,
         )
         if response is not None:
             return response
@@ -1962,12 +2367,7 @@ def _pool_dispatch(
 
 
 def _pool_attempt(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
@@ -1976,6 +2376,7 @@ def _pool_attempt(
     dispatched: int,
     dial_local: LocalDial | None,
     counter: DispatchCounter | None = None,
+    mesh_snapshot: RoutingSnapshot | None = None,
 ) -> tuple[GatewayResponse | None, list[str]]:
     """One dispatch to one selected replica.
 
@@ -1999,23 +2400,19 @@ def _pool_attempt(
     """
     selection = placement.selection
     origin = selection.origin or ""
-    markers = _pool_marker_headers(table, placement, dispatched)
+    markers = _pool_marker_headers(ctx.table, placement, dispatched, mesh_snapshot=mesh_snapshot)
     release = (counter or _uncounted)(backend_name, origin)
     answer: GatewayResponse | None = None
     try:
         answer, failures = _dial_selected(
-            table,
-            cfg,
-            path,
-            req_headers,
-            body,
-            open_upstream,
+            ctx,
             backend_name=backend_name,
             served=served,
             selection=selection,
             markers=markers,
             tier_headers=tier_headers,
             dial_local=dial_local,
+            mesh_snapshot=mesh_snapshot,
         )
         if answer is None:
             return None, [f"{origin}: {failure}" for failure in failures]
@@ -2034,12 +2431,7 @@ def _pool_attempt(
 
 
 def _dial_selected(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
@@ -2047,6 +2439,7 @@ def _dial_selected(
     markers: list[tuple[str, str]],
     tier_headers: list[tuple[str, str]],
     dial_local: LocalDial | None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> tuple[GatewayResponse | None, list[str]]:
     """Dial the one replica ``selection`` chose — local owner or peer forward.
 
@@ -2059,17 +2452,19 @@ def _dial_selected(
             return None, []
         return dial_local(markers + tier_headers)
     forwarded = _proxy_to_peer(
-        cfg,
+        ctx.cfg,
         _ForwardTarget(
             name=backend_name,
             origin=selection.origin or "",
             served_name=served,
-            api_key=_replica_api_key(table, backend_name, selection.origin or ""),
+            api_key=_pool_replica_api_key(
+                ctx.table, backend_name, selection.origin or "", mesh_snapshot
+            ),
         ),
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        ctx.path,
+        ctx.req_headers,
+        ctx.body,
+        ctx.open_upstream,
         extra_response_headers=markers,
     )
     if not forwarded.peer_unavailable:
@@ -2118,15 +2513,44 @@ def _uncounted(_backend_name: str, _origin: str) -> "Callable[[], None]":
 
 
 def _pool_marker_headers(
-    table: RoutingTable, placement: "_Placement", dispatched: int
+    table: RoutingTable,
+    placement: "_Placement",
+    dispatched: int,
+    *,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> list[tuple[str, str]]:
     """The pool markers for one attempt: served-by (local only) + reason +
-    the capacity/utilisation the placement used (t5) + attempts."""
+    the capacity/utilisation the placement used (t5) + attempts.
+
+    When the chosen replica is a non-local MESH member (t8, #237), also adds
+    ``X-Lobes-Mesh-Member`` naming it — the same marker the mesh-forward and
+    suffixed-lane paths stamp, so every pooled/proxied/suffixed mesh answer
+    carries one consistent header regardless of which code path served it.
+
+    A LOCAL pick is named too (item B, t9): when this box's own mesh join is
+    enabled and has a declared ``LOBES_MESH_NAME``, that name is stamped here
+    as well, so every mesh answer — local or forwarded — names its serving
+    member, not just the forwarded ones. A mesh-disabled or unnamed box keeps
+    the pre-existing markers unchanged (no ``MeshConfigError`` ever escapes
+    this best-effort lookup).
+    """
     selection = placement.selection
     load = _route_load_header(placement)
     if selection.local:
-        return _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
-    return [(ROUTE_REASON_HEADER, selection.reason)] + load + _attempts_header(dispatched)
+        base = _stamp_pool_headers(table, selection.reason) + load + _attempts_header(dispatched)
+        return base + _local_mesh_member_marker()
+    member_marker: list[tuple[str, str]] = []
+    if mesh_snapshot is not None and selection.origin:
+        for m in mesh_snapshot.members:
+            if m.origin == selection.origin:
+                member_marker = [(MESH_MEMBER_HEADER, m.name)]
+                break
+    return (
+        [(ROUTE_REASON_HEADER, selection.reason)]
+        + member_marker
+        + load
+        + _attempts_header(dispatched)
+    )
 
 
 def _pooled_busy_dispatch(
@@ -2139,6 +2563,7 @@ def _pooled_busy_dispatch(
     *,
     requested: str,
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: RoutingSnapshot | None = None,
     busy_response: GatewayResponse,
     local_busy: bool,
     counter: DispatchCounter | None = None,
@@ -2159,7 +2584,13 @@ def _pooled_busy_dispatch(
     so a trace can tell "shed because nothing was free" from "shed because this
     box was never pooled".
     """
-    if not local_busy or replica_snapshot is None:
+    # t13: no longer requires `replica_snapshot` (the env-sourced ReplicaCache
+    # provider) to be present — a mesh-only box (no `<PREFIX>_PEER_ORIGINS`
+    # anywhere) has no such cache at all, but `_pool_dispatch`/`_pool_selection`
+    # below still find mesh candidates for the busy role via `mesh_snapshot`
+    # and no-op safely (`replica_snapshot is None` → an empty local candidate
+    # list) when neither source has anything.
+    if not local_busy:
         return None
     # The served name the tier WOULD have resolved to. `_resolve_tier` returned
     # None for it (the busy short-circuit happens before resolution), so it is
@@ -2172,16 +2603,12 @@ def _pooled_busy_dispatch(
     if not ordered:
         return None
     outcome = _pool_dispatch(
-        table,
-        cfg,
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        _RequestCtx(table, cfg, path, req_headers, body, open_upstream),
         backend_name=ordered[0].name,
         served=served,
         tier_headers=[],
         replica_snapshot=replica_snapshot,
+        mesh_snapshot=mesh_snapshot,
         local_busy=True,
         dial_local=None,
         counter=counter,
@@ -2422,6 +2849,7 @@ def _resolve_served_or_early(
     pressure: dict[str, float] | None,
     override: bool,
     replica_snapshot: ReplicaSnapshot | None,
+    mesh_snapshot: RoutingSnapshot | None = None,
     dispatch_counter: DispatchCounter | None = None,
 ) -> tuple[GatewayResponse | None, str | None, list[tuple[str, str]], bool]:
     """Resolve ``requested`` to its served backend name, or a short-circuit.
@@ -2445,7 +2873,7 @@ def _resolve_served_or_early(
         # re-routed to a different, feasible gear via the tier system's normal
         # upward-fallback substitution.
         early, served, tier_headers, local_busy = _resolve_tier(
-            table, requested, pressure, override, replica_snapshot
+            table, requested, pressure, override, replica_snapshot, mesh_snapshot
         )
         if early is not None:
             # t8 (spec c7/h6): a POOLED role that this box is too loaded to
@@ -2462,6 +2890,7 @@ def _resolve_served_or_early(
                 open_upstream,
                 requested=requested,
                 replica_snapshot=replica_snapshot,
+                mesh_snapshot=mesh_snapshot,
                 busy_response=early,
                 local_busy=local_busy,
                 counter=dispatch_counter,
@@ -2481,7 +2910,7 @@ def _resolve_served_or_early(
     # runs AFTER the unknown-model check (a genuinely never-advertised id
     # still gets model_not_found, not role_infeasible) but BEFORE
     # resolving/dialing a backend.
-    early, served = _resolve_plain_model(table, requested)
+    early, served = _resolve_plain_model(table, requested, mesh_snapshot)
     return early, served, tier_headers, local_busy
 
 
@@ -2498,6 +2927,7 @@ def handle_post(
     peer_specs: Mapping[str, PeerSpec] | None = None,
     replica_snapshot: ReplicaSnapshot | None = None,
     dispatch_counter: DispatchCounter | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> GatewayResponse:
     """Resolve the model to its ONE owning backend and try it exactly once.
 
@@ -2581,21 +3011,25 @@ def handle_post(
     (every pre-t6 call site, and any deployment with no proxy config).
 
     The replica pool (``replica_snapshot``, cortex-replica-pool t7, issue
-    #199): AFTER the model has resolved to its single owning backend and
-    BEFORE that backend is dialed, a role with a declared
-    ``<PREFIX>_PEER_ORIGINS`` set is placed by :func:`_pool_selection` —
-    local or one declared peer replica of the SAME role, chosen from an O(1)
-    cached snapshot. This is not a hole in #91: a peer enters the candidate set
-    only when its live-probed fingerprint matches the local lane's, so a caller
-    who asked for cortex is never answered by a different model — only by an
-    identical one on another box. The alias and the raw served id take the
-    identical path, because selection keys off the OWNING BACKEND NAME both
-    resolve to (c31). An arriving ``X-Lobes-Proxied`` request skips selection
-    entirely and is served locally (c4/h4). Pooled answers carry
+    #199; ``mesh_snapshot``, t13): AFTER the model has resolved to its single
+    owning backend and BEFORE that backend is dialed, a role with either a
+    declared ``<PREFIX>_PEER_ORIGINS`` set (a hand-built table only — t14
+    deleted the env parsing that used to populate this in a real deployment)
+    OR at least one mesh-verified plain-exposed member is placed by
+    :func:`_pool_selection` — local, a declared peer replica, or a mesh
+    replica of the SAME role, chosen from an O(1) cached snapshot. This is
+    not a hole in #91: a peer enters the candidate set only when its
+    live-probed fingerprint matches the local lane's, so a caller who asked
+    for cortex is never answered by a different model — only by an identical
+    one on another box. The alias and the raw served id take the identical
+    path, because selection keys off the OWNING BACKEND NAME both resolve to
+    (c31). An arriving ``X-Lobes-Proxied`` request skips selection entirely
+    and is served locally (c4/h4). Pooled answers carry
     ``X-Lobes-Served-By`` (local) or ``X-Lobes-Proxied-By`` (forwarded), both
     with ``X-Lobes-Route-Reason``. With ``replica_snapshot`` ``None`` (every
-    pre-pool call site) or no ``*_PEER_ORIGINS`` declared, not one byte of any
-    response changes — success or error path (h1).
+    pre-pool call site), no ``*_PEER_ORIGINS`` declared, and no mesh
+    (``mesh_snapshot`` ``None`` or nothing verified for the role), not one
+    byte of any response changes — success or error path (h1).
 
     t8 gives that placement its failure semantics (:func:`_pool_dispatch`): a
     replica that fails PRE-DISPATCH (refused / timed out / 5xx before any
@@ -2619,6 +3053,7 @@ def handle_post(
         open_upstream,
         requested=requested,
         replica_snapshot=replica_snapshot,
+        mesh_snapshot=mesh_snapshot,
         counter=dispatch_counter,
     )
     if pooled is not None:
@@ -2636,7 +3071,8 @@ def handle_post(
             # stays byte-identical (h1/h5).
             fallthrough = (
                 [(ROUTE_REASON_HEADER, REASON_NONE)]
-                if proxied_name in pooled_backends(table, replica_snapshot)
+                if proxied_name
+                in pooled_backends(table, replica_snapshot, mesh_snapshot=mesh_snapshot)
                 else []
             )
             return _proxy_to_peer(
@@ -2648,6 +3084,156 @@ def handle_post(
                 open_upstream,
                 extra_response_headers=fallthrough,
             )
+    # --- mesh dispatch (W7 / W8) -------------------------------------------
+    # When a RoutingSnapshot is present, the mesh can supply verified members
+    # for roles that THIS BOX LACKS (W7) or augment the pool with peers for
+    # roles THIS BOX HOSTS (W8).  Check the mesh BEFORE _resolve_served_or_early
+    # so that the mesh intercepts the 404 that _feasibility_response produces
+    # for infeasible roles.  This is a no-op when mesh_snapshot is None,
+    # preserving the pre-mesh behaviour byte-for-byte.
+    if mesh_snapshot is not None:
+        from lobes.roles import BACKEND_ROLE, ROLE_BACKEND, ROLES
+
+        # Suffixed-lane direct addressing (t8, issue #237): "{role}-{member}"
+        # always resolves straight to that member's origin, independent of
+        # whether the plain role name is currently placeable at all — a
+        # caller that already knows which member it wants is never blocked
+        # by a fingerprint disagreement among the others.
+        if requested:
+            lane = find_suffixed_lane(mesh_snapshot, requested, ROLES)
+            if lane is not None:
+                arriving = _arriving_hop_marker(req_headers)
+                if arriving is not None:
+                    target = _ForwardTarget(
+                        name=lane.role, origin=lane.origin, served_name=requested
+                    )
+                    return GatewayResponse(
+                        status=_PROXY_LOOP_STATUS,
+                        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                        body=_proxy_loop_body(arriving, target),
+                    )
+                try:
+                    mesh_cfg = _build_mesh_config()
+                except MeshConfigError:
+                    mesh_cfg = None
+                join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+                # Finding 1 (review #252): `requested` is the GATEWAY-ONLY
+                # suffixed alias ("cortex-thor") this box minted for direct
+                # addressing — the destination member never declared that
+                # name as one it serves, so rewriting the outbound body's
+                # `model` to it (via `rewrite=True` below) sent the
+                # destination a model id it does not recognise. Resolve to
+                # the destination's canonical backend name instead — the
+                # exact convention the plain (non-suffixed) mesh forward a
+                # few lines below already uses (`served_name=owned_backend`)
+                # — so both mesh-forward paths hand every destination a name
+                # it actually serves. The suffixed name is kept only for THIS
+                # box's own routing/response metadata (MESH_MEMBER_HEADER
+                # below still names the member unambiguously).
+                target = _ForwardTarget(
+                    name=lane.role,
+                    origin=lane.origin,
+                    served_name=ROLE_BACKEND.get(lane.role, lane.role),
+                    api_key=join_key,
+                )
+                return _proxy_to_peer(
+                    cfg,
+                    target,
+                    path,
+                    req_headers,
+                    body,
+                    open_upstream,
+                    rewrite=True,
+                    extra_response_headers=(
+                        [(PROXIED_BY_HEADER, lane.origin)]
+                        + mesh_markers(mesh_snapshot, lane.role, chosen_origin=lane.origin)
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, lane.member),
+                        ]
+                    ),
+                )
+
+        # Resolve the model to its owning backend name using infeasible_owner
+        # (which reuses resolve_model internally and handles role aliases like
+        # "cortex" → backend name).  If this box lacks the backend (either
+        # infeasible or unwired), check if mesh can forward.
+        owned_backend = infeasible_owner(table, requested)
+        if owned_backend is not None:
+            role = BACKEND_ROLE.get(owned_backend, owned_backend)
+            local_fp = _local_backend_fingerprint(replica_snapshot, owned_backend)
+            placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+            mesh_origins = placement.plain_origins
+            if not mesh_origins and placement.suffixed:
+                # Every verified member disagrees on this role's fingerprint
+                # (or disagrees with this box's own local one) — the plain
+                # role name is ambiguous and is refused rather than silently
+                # picking one member (h1/h20/c46).
+                return GatewayResponse(
+                    status=404,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                    body=_role_infeasible_body(
+                        requested,
+                        owned_backend,
+                        suffixed_names=placement.suffixed_names(),
+                    ),
+                )
+            if mesh_origins:
+                # W7: this box lacks the role.  If mesh has verified members,
+                # forward the request there instead of returning 404/502.
+                # Single-hop guard: if the request already crossed one proxy,
+                # refuse with 508 — same as _proxy_to_peer's loop check.
+                arriving = _arriving_hop_marker(req_headers)
+                if arriving is not None:
+                    target = _ForwardTarget(
+                        name=role,
+                        origin=mesh_origins[0],
+                        served_name=owned_backend,
+                    )
+                    return GatewayResponse(
+                        status=_PROXY_LOOP_STATUS,
+                        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                        body=_proxy_loop_body(arriving, target),
+                    )
+                # Select the first verified member.
+                member_origin = mesh_origins[0]
+                member_name = None
+                for m in mesh_snapshot.members:
+                    if m.origin == member_origin:
+                        member_name = m.name
+                        break
+                member_name = member_name or member_origin
+
+                try:
+                    mesh_cfg = _build_mesh_config()
+                except MeshConfigError:
+                    mesh_cfg = None
+                join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+                target = _ForwardTarget(
+                    name=role,
+                    origin=member_origin,
+                    served_name=owned_backend,
+                    api_key=join_key,
+                )
+                resp = _proxy_to_peer(
+                    cfg,
+                    target,
+                    path,
+                    req_headers,
+                    body,
+                    open_upstream,
+                    rewrite=True,
+                    extra_response_headers=(
+                        [(PROXIED_BY_HEADER, member_origin)]
+                        + mesh_markers(mesh_snapshot, role, chosen_origin=member_origin)
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, member_name),
+                        ]
+                    ),
+                )
+                return resp
+
     early, served, tier_headers, local_busy = _resolve_served_or_early(
         table,
         cfg,
@@ -2659,10 +3245,158 @@ def handle_post(
         pressure=pressure,
         override=override,
         replica_snapshot=replica_snapshot,
+        mesh_snapshot=mesh_snapshot,
         dispatch_counter=dispatch_counter,
     )
     if early is not None:
         return early
+
+    if mesh_snapshot is not None and served is not None:
+        # Resolve the owning role for this backend name.  The mapping is
+        # imported lazily because lobes.roles creates an import cycle with
+        # this package's __init__.py — it only "worked" when something else
+        # happened to import lobes.gateway first.
+        from lobes.roles import BACKEND_ROLE
+
+        role = BACKEND_ROLE.get(served, served)
+        # Order backends to see if this box actually hosts the role.  An
+        # empty list means the backend is either infeasible (declared off by
+        # the per-machine profile) or completely unwired — either way, this
+        # box cannot serve it locally.
+        ordered_here = order_backends(table, served)
+        if not ordered_here:
+            # W7: this box lacks the role.  If mesh has verified members,
+            # forward the request there instead of returning 404/502.
+            local_fp = _local_backend_fingerprint(replica_snapshot, served)
+            placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+            mesh_origins = placement.plain_origins
+            if not mesh_origins and placement.suffixed:
+                return GatewayResponse(
+                    status=404,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                    body=_role_infeasible_body(
+                        requested,
+                        served,
+                        suffixed_names=placement.suffixed_names(),
+                    ),
+                )
+            if mesh_origins:
+                # Single-hop guard: if the request already crossed one proxy,
+                # refuse with 508 — same as _proxy_to_peer's loop check.
+                arriving = _arriving_hop_marker(req_headers)
+                if arriving is not None:
+                    target = _ForwardTarget(
+                        name=role,
+                        origin=mesh_origins[0],
+                        served_name=served,
+                    )
+                    return GatewayResponse(
+                        status=_PROXY_LOOP_STATUS,
+                        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                        body=_proxy_loop_body(arriving, target),
+                    )
+                # Select the first verified member (already verified by the
+                # probe; no further capability check needed here).
+                member_origin = mesh_origins[0]
+                member_name = None
+                for m in mesh_snapshot.members:
+                    if m.origin == member_origin:
+                        member_name = m.name
+                        break
+                member_name = member_name or member_origin
+
+                try:
+                    mesh_cfg = _build_mesh_config()
+                except MeshConfigError:
+                    mesh_cfg = None
+                join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+                target = _ForwardTarget(
+                    name=role,
+                    origin=member_origin,
+                    served_name=served,
+                    api_key=join_key,
+                )
+                resp = _proxy_to_peer(
+                    cfg,
+                    target,
+                    path,
+                    req_headers,
+                    body,
+                    open_upstream,
+                    rewrite=True,
+                    extra_response_headers=(
+                        [(PROXIED_BY_HEADER, member_origin)]
+                        + mesh_markers(mesh_snapshot, role, chosen_origin=member_origin)
+                        + [
+                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                            (MESH_MEMBER_HEADER, member_name),
+                        ]
+                    ),
+                )
+                return resp
+            # No verified mesh member — this box lacks the role and no peer
+            # can serve it either.  Let the normal flow produce the 404.
+        else:
+            # W8: this box hosts the role and mesh has verified members.
+            # Merge local and mesh candidates so select_replica can rank
+            # across the whole pool.  The existing _pool_dispatch path then
+            # chooses local or peer as normal.
+
+            def _make_mesh_candidates(
+                snap: "RoutingSnapshot | None",
+                role_name: str,
+                *,
+                plain_origins: "tuple[str, ...]" = (),
+            ) -> list[ReplicaState]:
+                """Build ReplicaState objects for members placeable PLAIN.
+
+                Only origins :func:`~lobes.gateway._mesh_routing.compute_role_placement`
+                put in the plain pool are merged here — a member whose
+                fingerprint disagrees is exposed only under its suffixed
+                name (t8, #237) and must never silently join the ranked
+                plain-pool candidate set.
+                """
+                out: list[ReplicaState] = []
+                if snap is None:
+                    return out
+                for m in snap.members:
+                    if role_name in m.verified_roles and m.origin in plain_origins:
+                        out.append(
+                            ReplicaState(
+                                origin=m.origin,
+                                local=False,
+                                ready=True,
+                                busy=False,
+                                health="ok",
+                                running=0,
+                                waiting=0,
+                                fingerprint=None,
+                                compatible=True,
+                                reason="",
+                                last_seen=0.0,
+                                weight=8.0,
+                                calibrated=True,
+                            )
+                        )
+                return out
+
+            local_fp_for_merge = _local_backend_fingerprint(replica_snapshot, served)
+            merge_placement = compute_role_placement(
+                mesh_snapshot, role, local_fingerprint=local_fp_for_merge
+            )
+            mesh_cands = _make_mesh_candidates(
+                mesh_snapshot, role, plain_origins=merge_placement.plain_origins
+            )
+            if mesh_cands:
+
+                def _merged_snapshot(backend_name: str):
+                    local = replica_snapshot(backend_name) if replica_snapshot else ()
+                    if backend_name == served:
+                        return tuple(local) + tuple(mesh_cands)
+                    return local
+
+                replica_snapshot = _merged_snapshot
+
     ordered = order_backends(table, served)
     if not ordered:
         # DEGENERATE case ONLY: no backend owns `served` AND none owns
@@ -2697,16 +3431,12 @@ def handle_post(
 
     # --- replica pool (t7/t8, #199): local-vs-peer placement, before dialing ---
     outcome = _pool_dispatch(
-        table,
-        cfg,
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        _RequestCtx(table, cfg, path, req_headers, body, open_upstream),
         backend_name=ordered[0].name,
         served=served,
         tier_headers=tier_headers,
         replica_snapshot=replica_snapshot,
+        mesh_snapshot=mesh_snapshot,
         local_busy=local_busy,
         dial_local=dial_local,
         counter=dispatch_counter,
@@ -2767,6 +3497,7 @@ def handle_audio_request(
     open_upstream: OpenUpstream,
     *,
     audio_ready_probe: Callable[[], bool | None] | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> GatewayResponse:
     """Route one ``/v1/audio/*`` POST — per-ROLE since issue #129.
 
@@ -2802,10 +3533,11 @@ def handle_audio_request(
             rewrite=False,  # path-routed lane: multipart/TTS JSON verbatim
         )
     if role is not None and role in table.infeasible:
+        peer_origin = table.peer_origins.get(role) or _mesh_referral_origin(mesh_snapshot, role)
         return GatewayResponse(
             status=404,
             headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-            body=_role_infeasible_body(role, role, table.peer_origins.get(role)),
+            body=_role_infeasible_body(role, role, peer_origin),
         )
     audio_ready = audio_ready_probe() if audio_ready_probe is not None else None
     return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
@@ -3151,6 +3883,34 @@ def probe_audio_ready(
         return None
 
 
+def _local_backend_fingerprint(
+    replica_snapshot: "ReplicaSnapshot | None",
+    backend_name: str,
+) -> "object | None":
+    """This box's OWN fingerprint for *backend_name*, or ``None`` if unhosted.
+
+    ``replica_snapshot`` here is the ``handle_post``-shaped callable (backend
+    name -> that backend's replica tuple), NOT the role-keyed mapping
+    :func:`_pooled_peer_advert` reads — the two channels use the same
+    underlying data with different keys, so this looks up by BACKEND. The
+    local entry (``.local is True``) is this box's own served fingerprint —
+    the reference :func:`~lobes.gateway._mesh_routing.compute_role_placement`
+    uses to decide which mesh members agree with what THIS box actually
+    serves. ``None`` when there is no snapshot, no entry for the backend, or
+    no local replica in it (this box does not host it at all).
+    """
+    if replica_snapshot is None:
+        return None
+    try:
+        states = replica_snapshot(backend_name)
+    except Exception:  # nosec B110 — best-effort: a broken snapshot never blocks placement
+        return None
+    for state in states or ():
+        if getattr(state, "local", False):
+            return getattr(state, "fingerprint", None)
+    return None
+
+
 def _pooled_peer_advert(
     table: RoutingTable,
     replica_snapshot: "Mapping[str, tuple[ReplicaState, ...]] | None",
@@ -3200,6 +3960,7 @@ def capabilities_payload(
     backend_ready: Mapping[str, bool | None] | None = None,
     peer_context: Mapping[str, int | None] | None = None,
     replica_snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> dict:
     """The nine first-class roles (issue #81), resolved via the shared registry.
 
@@ -3247,6 +4008,7 @@ def capabilities_payload(
     # deferred imports — see the module-level NOTE
     from lobes.roles import (
         ROLES,
+        annotate_mesh_naming,
         annotate_peer_referrals,
         annotate_replicas,
         build_role_registry,
@@ -3295,7 +4057,24 @@ def capabilities_payload(
     # it is published even for a role whose own peer list is empty. With no
     # pool declared and no snapshot, `annotate_replicas` is a no-op for every
     # role and the payload stays byte-identical to the pre-pool contract (h1).
-    return annotate_replicas(payload, table, replica_snapshot)
+    # Finding 10 (review #252): tell annotate_replicas whether the mesh is
+    # enabled at all so an ordinary hosted role — no declared replica pool,
+    # the common single-box case — still publishes a fingerprint for a
+    # peer's verification probe to compare against.
+    payload = annotate_replicas(
+        payload, table, replica_snapshot, mesh_enabled=mesh_snapshot is not None
+    )
+    # Suffixed-lane naming (t8, issue #237): the additive per-role
+    # `member`/`suffixed_lanes` keys, from the mesh routing snapshot when this
+    # process has one. With mesh disabled (`mesh_snapshot is None`, every
+    # pre-t8 deployment) this is a no-op and the payload stays byte-identical.
+    local_fingerprints = {
+        role: next((s for s in (replica_snapshot or {}).get(role, ()) if s.local), None)
+        for role in ROLES
+    }
+    return annotate_mesh_naming(
+        payload, as_routing_snapshot(mesh_snapshot), local_fingerprints=local_fingerprints
+    )
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to
@@ -3362,6 +4141,9 @@ class _Handler(BaseHTTPRequestHandler):
     # handler and in the unit suites — every rejection then logs plainly,
     # exactly as it did before this existed.
     rejection_log: RejectionLog | None = None
+    # Mesh routes (t6, #237). `None` when mesh is disabled — same treatment as
+    # other optional per-server state below.
+    mesh_routes: MeshRoutes | None = None
     # The proxied roles' peer specs (proxy-lobes t6, #115/#127), keyed by
     # backend name — built once by peer_specs_from_table and shared with the
     # ReadinessCache's peer-probe thread (see serve). None/empty → the proxy
@@ -3386,6 +4168,12 @@ class _Handler(BaseHTTPRequestHandler):
     # from `replica_caches` by :func:`dispatch_counter`; None → nothing is
     # counted, exactly as the pre-t5 pool behaved.
     dispatch_counter: DispatchCounter | None = None
+    # Mesh routing snapshot (W7/W8, mesh-brain). None when mesh is disabled
+    # or not yet ready — same treatment as other optional per-server state.
+    # Passed to :func:`handle_post` so the mesh dispatch path can select
+    # verified members for roles this box lacks (W7) or augment the pool
+    # with peers for roles this box hosts (W8).
+    mesh_snapshot: "RoutingSnapshot | None" = None
     # HTTP/1.1 so we can stream with chunked transfer encoding.
     protocol_version = "HTTP/1.1"
 
@@ -3399,11 +4187,23 @@ class _Handler(BaseHTTPRequestHandler):
         gateway. With a key set, the credential must be a well-formed
         ``Bearer`` token that matches it timing-safely — see
         :func:`bearer_token_matches`.
+
+        Mesh-enabled servers additionally accept the mesh join key so that
+        mesh-authenticated callers can reach data-plane routes without needing
+        a separate gateway key.
         """
         api_key = self.server_config.api_key
         if api_key is None:
             return True
-        return bearer_token_matches(api_key, self.headers.get("Authorization"))
+        if bearer_token_matches(api_key, self.headers.get("Authorization")):
+            return True
+        # Mesh join key: when mesh is enabled and the mesh config carries a
+        # key, accept it so mesh-authenticated callers can reach data-plane
+        # routes (mesh-brain-join t6).
+        mr = getattr(self, "mesh_routes", None)
+        if mr is not None and mr.config.key is not None:
+            return bearer_token_matches(mr.config.key, self.headers.get("Authorization"))
+        return False
 
     def _rejection_source(self) -> str:
         """The peer address to name in the rejection log (#228).
@@ -3483,8 +4283,39 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     # --- GET: /health, /status, /v1/models, /v1/models/supported ---
+    def _dispatch_mesh_get(self, route: str) -> bool:
+        """Handle ``route`` as a ``GET /mesh/*`` route; ``True`` if it answered.
+
+        Extracted from :meth:`do_GET` (Sonar S3776) — identical behaviour.
+        Mesh routes (t6) are gated on the join key by the mesh handler; when
+        mesh is disabled no thread starts and every ``/mesh/*`` path falls
+        through untouched (returns ``False``) to the normal 404 below.
+        """
+        if not (_is_mesh_route(route) and self.mesh_routes is not None):
+            return False
+        result = dispatch_mesh(self, self.mesh_routes)
+        if result is not None:
+            status, headers, body = result
+            self._send_simple(status, headers, body)
+            return True
+        # Finding 20: mesh enabled but unknown mesh route → 404, not fall-through.
+        self._send_simple(
+            404,
+            [("Content-Type", _CONTENT_TYPE_JSON)],
+            json.dumps({"error": {"message": f"not found: {route}", "type": "not_found"}}).encode(),
+        )
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
+        if self._dispatch_mesh_get(route):
+            return
+        # Read mesh snapshot once at the top of every request (W2).
+        mesh_snapshot = as_routing_snapshot(
+            self.mesh_snapshot_holder.current()
+            if getattr(self, "mesh_snapshot_holder", None) is not None
+            else None
+        )
         # Inbound auth (opt-in, #127): the GET /v1/* namespace is DATA PLANE —
         # the model listings are part of the OpenAI surface callers script
         # against. /health, /capabilities and /status stay KEYLESS by design
@@ -3499,7 +4330,7 @@ class _Handler(BaseHTTPRequestHandler):
             # sits AFTER the auth gate above by design: the bearer check must
             # cost a rejected handshake zero planning, zero upstream sockets,
             # and zero session state.
-            self._handle_realtime()
+            self._handle_realtime(mesh_stt_origin=_first_stt_origin(mesh_snapshot))
         elif route == "/health":
             # `version` is the deployed lobes-cli release THIS gateway process was
             # built from (`__version__`, read off installed package metadata inside
@@ -3521,18 +4352,20 @@ class _Handler(BaseHTTPRequestHandler):
             pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
             self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
-            self._get_v1_models()
+            self._get_v1_models(mesh_snapshot=mesh_snapshot)
         elif route == "/v1/models/supported":
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         elif route == "/capabilities":
-            self._get_capabilities()
+            self._get_capabilities(mesh_snapshot=mesh_snapshot)
         else:
             self._send_json(404, _not_found_body(route))
 
     # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
-    def _handle_realtime(self) -> None:  # pragma: no cover - opens a socket; see below
+    def _handle_realtime(
+        self, mesh_stt_origin: str | None = None
+    ) -> None:  # pragma: no cover - opens a socket; see below
         """Tunnel a realtime WebSocket session to the local bridge.
 
         The refusal paths and the byte pump are unit-tested in
@@ -3547,7 +4380,11 @@ class _Handler(BaseHTTPRequestHandler):
         strand it (spec claim c26).
         """
         decision = plan_realtime_upgrade(
-            self.table, self.server_config, self.path, list(self.headers.items())
+            self.table,
+            self.server_config,
+            self.path,
+            list(self.headers.items()),
+            mesh_stt_origin=mesh_stt_origin,
         )
         if isinstance(decision, RealtimeRefusal):
             self._refuse_realtime(decision)
@@ -3634,7 +4471,7 @@ class _Handler(BaseHTTPRequestHandler):
                 ),
             )
 
-    def _get_v1_models(self) -> None:
+    def _get_v1_models(self, *, mesh_snapshot: "RoutingSnapshot | None" = None) -> None:
         # Advertise only backends the live readiness snapshot marks ready
         # (issue #92): a wired-but-dead backend must NOT appear here, so a
         # client can trust that a listed model id reaches a live engine. The
@@ -3667,7 +4504,15 @@ class _Handler(BaseHTTPRequestHandler):
         # (Qodo #6 on PR #233). Resolve those names the way
         # `peer_specs_from_table` does, and keep the audio lanes out for the
         # same reason it does: their ids are not requestable via `model`.
-        pooled_names = pooled_backends(self.table, replica_snapshot_provider(self.replica_caches))
+        # Finding 13 (review #252): pass the SAME mesh_snapshot /capabilities
+        # uses into pooled_backends, so a role available only through a
+        # verified mesh member (no declared *_PEER_ORIGINS anywhere) is
+        # listed here too, instead of only being placeable at request time.
+        pooled_names = pooled_backends(
+            self.table,
+            replica_snapshot_provider(self.replica_caches),
+            mesh_snapshot=mesh_snapshot,
+        )
         if pooled_names:
             resolved = dict(peer_served or {})
             for name in pooled_names:
@@ -3703,7 +4548,7 @@ class _Handler(BaseHTTPRequestHandler):
             ),
         )
 
-    def _get_capabilities(self) -> None:
+    def _get_capabilities(self, *, mesh_snapshot: "RoutingSnapshot | None" = None) -> None:
         # The #81 role→endpoint contract: NINE first-class roles resolved to
         # live metadata via the shared lobes.roles registry. The endpoint is
         # the client-reachable origin this request actually dialed (#87),
@@ -3738,11 +4583,50 @@ class _Handler(BaseHTTPRequestHandler):
                 backend_ready=backend_ready,
                 peer_context=peer_context,
                 replica_snapshot=replica_role_snapshot(self.replica_caches),
+                mesh_snapshot=mesh_snapshot,
             ),
         )
 
     # --- POST: proxy /v1/* to a backend ---
+    def _dispatch_mesh_post(self, route: str) -> bool:
+        """Handle ``route`` as a ``POST /mesh/*`` route; ``True`` if it answered.
+
+        Extracted from :meth:`do_POST` (Sonar S3776) — identical behaviour,
+        mirroring :meth:`_dispatch_mesh_get` except an unknown mesh route
+        answers 405 here (this handler only ever sees POSTs), not 404.
+        """
+        if not (_is_mesh_route(route) and self.mesh_routes is not None):
+            return False
+        result = dispatch_mesh(self, self.mesh_routes)
+        if result is not None:
+            status, headers, body = result
+            self._send_simple(status, headers, body)
+            return True
+        # Finding 20: mesh enabled but unknown mesh route → 405, not fall-through.
+        self._send_simple(
+            405,
+            [("Content-Type", _CONTENT_TYPE_JSON)],
+            json.dumps(
+                {
+                    "error": {
+                        "message": f"method not allowed: {self.command} {route}",
+                        "type": "method_not_allowed",
+                    }
+                }
+            ).encode(),
+        )
+        return True
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        route = self.path.split("?", 1)[0]
+        if self._dispatch_mesh_post(route):
+            return
+        # Read mesh snapshot once at the top of every request (W2).
+        mesh_snapshot = as_routing_snapshot(
+            self.mesh_snapshot_holder.current()
+            if getattr(self, "mesh_snapshot_holder", None) is not None
+            else None
+        )
         # Inbound auth (opt-in, #127): EVERY POST route is data plane — each
         # one is a forward to a backend (chat/completions, completions,
         # embeddings, rerank, score, audio/*). The gate runs before the body
@@ -3770,6 +4654,7 @@ class _Handler(BaseHTTPRequestHandler):
                 audio_ready_probe=lambda: (
                     probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
                 ),
+                mesh_snapshot=mesh_snapshot,
             )
         else:
             # Read pressure from the cache (O(1), never samples here) and the
@@ -3788,6 +4673,7 @@ class _Handler(BaseHTTPRequestHandler):
                 peer_specs=self.peer_specs,
                 replica_snapshot=self.replica_snapshot,
                 dispatch_counter=self.dispatch_counter,
+                mesh_snapshot=mesh_snapshot,
             )
         # The pool's in-flight release (t5) fires HERE, not where the answer
         # was built: a relayed upstream is a one-shot byte tunnel this loop
@@ -3952,12 +4838,19 @@ class _Handler(BaseHTTPRequestHandler):
 #   mislabels an unknown served id (the Orin llama.cpp case).
 #
 # Because of the second job a cache is built for a hosted lane that declares NO
-# peers of its own. That is gated on the box being pooled AT ALL: with no
-# ``*_PEER_ORIGINS`` anywhere, no cache is built, no thread is spawned, and
-# /capabilities carries no ``replicas``/``fingerprint`` key — the h1
-# byte-identity guarantee, which a "publish the fingerprint unconditionally"
-# reading would have broken. Every box in a pool declares its partners, so the
-# publication job is never actually missed.
+# peers of its own. Building the CACHE itself is gated purely on
+# ``table.replica_origins`` being non-empty ANYWHERE — with it empty (every
+# real deployment since t14 deleted the ``<PREFIX>_PEER_ORIGINS`` env parsing
+# that used to fill it; only a hand-built table can populate it now) no cache
+# is built and no thread is spawned. That used to also mean /capabilities
+# carried no ``replicas``/``fingerprint`` key at all (the original h1
+# byte-identity guarantee, before a "publish the fingerprint unconditionally"
+# reading would have broken it). Review #252 finding 10 punched one hole in
+# that: :func:`lobes.roles.annotate_replicas` now publishes an OFFLINE
+# (declared, never live-probed) fingerprint for a locally-hosted role even
+# with no cache here, whenever the mesh is enabled — a mesh peer has to be
+# able to verify a hosted role's fingerprint regardless of whether this box
+# also runs an env-declared replica pool for it.
 
 # ``<PREFIX>_<SUFFIX>`` fingerprint suffixes → the lowercase
 # :data:`lobes.gateway._replicas.DECLARED_KEYS` names. Only the tool parser's
@@ -3967,29 +4860,63 @@ class _Handler(BaseHTTPRequestHandler):
 _DECLARED_KEY_FOR_SUFFIX: Mapping[str, str] = {"TOOL_CALL_PARSER": "tool_parser"}
 
 
-def declared_lane_config(lane: Mapping[str, str]) -> dict[str, str]:
+def _lane_runtime(backend_name: str, env: Mapping[str, str] | None = None) -> str:
+    """The engine a hosted lane runs on ("vllm" / "llamacpp"), from the role
+    registry — the same source /capabilities' ``runtime`` field uses.
+
+    Without it a lane that has no declared replica pool is never live-probed,
+    every published fingerprint reads ``runtime: unknown``, and the unknown
+    rule makes mesh verification impossible (live fleet, 2026-09-12)."""
+    role = BACKEND_ROLE.get(backend_name)
+    if role is None:
+        return ""
+    try:
+        info = role_registry_from_env(env).get(role)
+    except Exception:  # nosec B110 — best-effort: never let an advert helper break wiring
+        return ""
+    return str(getattr(info, "runtime", "") or "")
+
+
+def declared_lane_config(lane: Mapping[str, str], *, runtime: str = "") -> dict[str, str]:
     """Adapt one backend's :attr:`RoutingTable.lane_fingerprints` entry to the
     key vocabulary :class:`~lobes.gateway._replicas.LocalLane` expects.
 
     Any key absent here reads back as ``unknown`` in the published
     fingerprint — never a catalog guess (c33/h25)."""
-    return {
+    declared = {
         _DECLARED_KEY_FOR_SUFFIX.get(suffix, suffix.lower()): value
         for suffix, value in lane.items()
     }
+    # A lane's engine is known from the role registry even when nothing ever
+    # live-probes it (no declared pool); a declared <PREFIX>_RUNTIME still wins.
+    if runtime and not declared.get("runtime"):
+        declared["runtime"] = runtime
+    return declared
 
 
 def _check_pool_arming(table: RoutingTable) -> None:
     """Refuse a pool that would silently drop this box's honest referral.
 
     ``hosted_by`` — the annotation that tells a caller which box actually runs
-    a role it asked for here — is read from the SINGULAR
-    ``<PREFIX>_PEER_ORIGIN`` (:func:`lobes.roles.annotate_peer_referrals`).
-    The plural channel is an ADDITION to it, never a replacement, so a
-    deployment that declared only ``<PREFIX>_PEER_ORIGINS`` would arm a pool
-    and lose the referral at the same time — and the loss would be invisible,
-    because a working pool answers 200 and nobody reads ``hosted_by`` until
-    the pool is empty. Refusing at startup is the loud version of that bug.
+    a role it asked for here — is read from ``table.peer_origins``, the
+    SINGULAR channel (:func:`lobes.roles.annotate_peer_referrals`). The
+    plural ``table.replica_origins`` is an ADDITION to it, never a
+    replacement, so a table with a plural entry but no matching singular one
+    would arm a pool and lose the referral at the same time — and the loss
+    would be invisible, because a working pool answers 200 and nobody reads
+    ``hosted_by`` until the pool is empty. Refusing at startup is the loud
+    version of that bug.
+
+    Retired (t14): both fields used to be populated from the
+    ``<PREFIX>_PEER_ORIGINS``/``<PREFIX>_PEER_ORIGIN`` env pair, so this
+    guard used to be reachable from a real deployment's ``.env``. That
+    parsing is gone — the mesh ``RoutingSnapshot`` (t13) is the pool
+    candidate source now, and it never populates these fields either — so
+    today this only guards a directly-constructed :class:`RoutingTable`
+    (tests, or a future non-env/non-mesh source that fills
+    ``replica_origins`` by hand). No operator-facing knob can trigger or fix
+    this any more; the names in the raised message describe the table's own
+    field convention, not a live env var to set.
 
     It is also what makes the empty-pool fallback well-defined: "nothing
     selectable falls through to the singular-proxy forward" (frame decision
@@ -4014,18 +4941,19 @@ def _check_pool_arming(table: RoutingTable) -> None:
         return
     # Deferred import: _config imports nothing from here, but the error type
     # belongs to the config layer that owns every other pool parse failure.
-    from lobes.gateway._config import PEER_ORIGINS_ENV, ReplicaConfigError
+    # Retired (t14): PEER_ORIGINS_ENV (the dict this used to look the exact
+    # env var name up in) is gone along with the rest of the env peer
+    # family — the names below are spelled out directly instead.
+    from lobes.gateway._config import ReplicaConfigError
 
     names = ", ".join(
-        f"{PEER_ORIGINS_ENV.get(name, name.upper() + '_PEER_ORIGINS')} without "
-        f"{name.upper()}_PEER_ORIGIN"
-        for name in missing
+        f"{name.upper()}_PEER_ORIGINS without {name.upper()}_PEER_ORIGIN" for name in missing
     )
     raise ReplicaConfigError(
         f"{names} — the plural replica channel is an addition to the singular "
         "peer channel, not a replacement: without the singular origin this box "
         "has no hosted_by to publish and nothing to fall back to when no "
-        "replica is selectable. Declare both."
+        "replica is selectable. Set both fields on the RoutingTable."
     )
 
 
@@ -4065,7 +4993,7 @@ def _cache_local_lane(
     return LocalLane(
         base_url=backend.base_url,
         served_name=backend.served_name,
-        declared=declared_lane_config(declared),
+        declared=declared_lane_config(declared, runtime=_lane_runtime(backend.name)),
         **_local_weight(capacities, backend.name),
     )
 
@@ -4227,6 +5155,8 @@ def _make_handler(
     replica_snapshot: ReplicaSnapshot | None = None,
     replica_caches: Mapping[str, ReplicaCache] | None = None,
     counter: DispatchCounter | None = None,
+    mesh_routes: MeshRoutes | None = None,
+    mesh_snapshot_holder: SnapshotHolder | None = None,
 ) -> type[_Handler]:
     bound = type(
         "_BoundHandler",
@@ -4239,6 +5169,8 @@ def _make_handler(
             # One per server, shared across handler threads (#228).
             "rejection_log": RejectionLog(),
             "peer_specs": peer_specs,
+            "mesh_routes": mesh_routes,
+            "mesh_snapshot_holder": mesh_snapshot_holder,
             # `staticmethod` is load-bearing, not decoration: `replica_snapshot`
             # is the ONLY class attribute here that is a plain function, so it
             # is the only one the descriptor protocol would turn into a BOUND
@@ -4256,6 +5188,97 @@ def _make_handler(
         },
     )
     return bound
+
+
+def build_mesh_wiring(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    readiness_cache: object | None,
+    replica_caches: dict,
+    *,
+    start: bool = True,
+    env: Mapping[str, str] | None = None,
+) -> tuple["MeshRoutes | None", "SnapshotHolder | None"]:
+    """Build (and by default start) the mesh routes + snapshot holder for serve().
+
+    Returns ``(None, None)`` when the join key is unset — nothing mesh-related
+    exists then (the byte-identical contract). Raises ``MeshConfigError`` when
+    the key is set but ``GATEWAY_SELF_ORIGIN`` is empty. ``start=False`` builds
+    everything without starting the heartbeat thread, for tests.
+    """
+    mesh_cfg = _build_mesh_config(env)
+    if not mesh_cfg.enabled:
+        return None, None
+    # Finding 1: build a real announcement from gateway data.
+    # Finding 7: wire the RejectionLog for flood collapse.
+    join_log = RejectionLog()
+    # Item C (t9): a second RejectionLog collapses repeated verification
+    # failures per-origin, mirroring join_log exactly — a flapping/
+    # unreachable peer no longer floods stderr with one line per probe.
+    verify_log = RejectionLog()
+    mesh_routes, announcement = _build_mesh_routes(
+        env=env,
+        self_origin=_require_self_origin(table.self_origin),
+        readiness_cache=readiness_cache,
+        replica_caches=replica_caches,
+        local_capacities=cfg.local_capacities,
+        declared_lane_configs={
+            b.name: declared_lane_config(
+                table.lane_fingerprints.get(b.name, {}), runtime=_lane_runtime(b.name, env)
+            )
+            for b in table.backends
+        },
+        join_log=join_log,
+        verify_log=verify_log,
+        missed_max=mesh_cfg.missed_max,
+    )
+    # Finding 11 (review #252): the request handlers and the heartbeat must
+    # read/write ONE holder. `_build_mesh_routes` may already have attached
+    # one to `mesh_routes._holder`; reuse it, and seed it BEFORE the heartbeat
+    # thread starts, so the thread never captures a stale or empty instance.
+    holder = mesh_routes._holder or SnapshotHolder(mesh_routes.roster)  # noqa: SLF001
+    mesh_routes._holder = holder  # noqa: SLF001
+    holder.replace(
+        MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
+    )
+
+    # The announcement IS this box's own /capabilities payload, filtered to the
+    # roles it hosts — so what a member announces and what a peer reads back
+    # when verifying are the same bytes by construction. Rebuilt on every
+    # POST /mesh/reannounce (lobes switch / lobes up / a lane going unhealthy)
+    # from the live readiness view (c46/h37).
+    def _capabilities_announcement() -> Announcement:
+        ready = None
+        try:
+            ready = readiness_cache.current() if readiness_cache is not None else None
+        except (
+            Exception
+        ):  # nosec B110 — best-effort: an unreadable cache announces without readiness
+            ready = None
+        # Same inputs GET /capabilities uses for the fingerprint: the live
+        # replica snapshot when a lane is probed, the offline one otherwise —
+        # so announced and advertised fingerprints are identical bytes.
+        payload = capabilities_payload(
+            table,
+            cfg,
+            env,
+            backend_ready=ready,
+            replica_snapshot=replica_role_snapshot(replica_caches),
+            mesh_snapshot=build_snapshot(mesh_routes.roster),
+        )
+        return announcement_from_capabilities(
+            mesh_cfg,
+            payload,
+            self_origin=table.self_origin,
+            local_capacities=cfg.local_capacities,
+        )
+
+    announcement = _capabilities_announcement()
+    mesh_routes.set_announcement_builder(_capabilities_announcement)
+    if start:
+        # Start the heartbeat daemon thread after the holder is seeded.
+        _start_mesh(mesh_routes, announcement)
+    return mesh_routes, holder
 
 
 def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
@@ -4305,6 +5328,13 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         capacities=cfg.local_capacities,
         capacity_kill_switch=cfg.capacity_kill_switch,
     )
+    # Mesh (t6): build the mesh routes when the join key is set; when
+    # disabled (no key) every /mesh/* path falls through to the 404 below.
+    # The wiring lives in build_mesh_wiring() so a test can exercise it with a
+    # mesh-enabled config without binding a socket — serve() itself is
+    # `pragma: no cover`, which is how a `cfg.self_origin` typo (the attribute
+    # lives on the RoutingTable) reached a live box on 2026-09-12.
+    mesh_routes, holder = build_mesh_wiring(table, cfg, readiness_cache, replica_caches)
     httpd = ThreadingHTTPServer(
         (cfg.host, cfg.port),
         _make_handler(
@@ -4316,6 +5346,8 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
             replica_snapshot_provider(replica_caches),
             replica_caches,
             dispatch_counter(replica_caches),
+            mesh_routes,
+            mesh_snapshot_holder=holder if mesh_routes is not None else None,
         ),
     )
     sys.stderr.write(f"[gateway] listening on {cfg.host}:{cfg.port}\n")
@@ -4326,3 +5358,8 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         # never blocks exit. Mirrors ReadinessCache's own stop() contract.
         for cache in replica_caches.values():
             cache.stop()
+        # Stop the mesh heartbeat thread when the server exits.
+        if mesh_routes is not None:
+            mesh_routes._stop.set()  # noqa: SLF001
+            if mesh_routes._thread is not None:  # noqa: SLF001
+                mesh_routes._thread.join(timeout=3)  # noqa: SLF001

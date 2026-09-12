@@ -86,12 +86,14 @@ Four families exist:
 | **machine-as-brain** (default) | `cortex`, `senses`, `embedder`, `reranker`, `stt`, `tts` — every role the card can serve | goldens | Zero overrides; composing it onto any card profile is a byte-identical no-op (pinned by `tests/goldens/shapes/` and `tests/test_shape_goldens.py`). This is the shape a bare `lobes init` has always rendered. |
 | **spark-lobe** | `cortex`, `embedder`, `reranker`, `stt`, `tts` — drops `senses` | validated live | 2026-07-14 on the DGX Spark GB10 (`spark-f8a9`) — full acceptance run PASS: dropped-lobe honesty (4 phases), correctness probes (cortex known-answer, embedder, reranker), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-spark-lobe-gb10.txt`. |
 | **thor-lobe** | `senses`, `embedder`, `reranker`, `stt`, `tts` — drops `cortex` | validated live | 2026-07-14 on the Jetson AGX Thor (`thor`) — full acceptance run PASS: dropped-lobe honesty, correctness probes (embedder, reranker, senses text known-answer), the advertised-implies-reachable gate (5/5), and the measured reclaimed budget. Transcript: `docs/evidence/2026-07-14-accept-thor-lobe-thor.txt`. |
-| **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or `STT_PEER_ORIGIN`/`TTS_PEER_ORIGIN`), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
+| **orin-lobe** | `senses`, `embedder`, `reranker` — drops `cortex`, and **drops `stt`/`tts` too** (the only built-in shape that hosts no audio pair) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-lobe.toml`), goldens-only. `thor-lobe`'s sm_87 sibling for the Jetson AGX Orin 64GB: `cortex` is dropped because the NVFP4 primary quantizes activations to FP4 (Blackwell-only — the `orin` card profile marks it infeasible independently), and the audio pair is dropped because the Parakeet image is built from `scitrera/dgx-spark-vllm`, whose torch carries no sm_87 kernels — measured live 2026-07-17 as 8 container restarts with "CUDA error: no kernel image is available". Audio is forwarded to a peer via the operator-declared `AUDIO_URL` (and/or the mesh join / the retired per-role audio referral knobs — see the Retired section below), never served here. Its `[overrides.senses]` restates the **card's own** budget (`gpu_mem_util=0.45` / `max_model_len=262144`) so a sibling shape's values cannot clobber it: running `--shape thor-lobe` on this card rendered Thor's 0.30 / 131072 instead, which the operator hand-patched on-box after every render (`docs/orin-profiles.md`, "Shape choice"). Those two values are the card profile's **MEASURED-PENDING hypothesis**, not a measurement of this shape — **no box has booted `orin-lobe`**; do not read this row as an Orin validation claim. |
 | **orin-cortex** | `cortex`, `hand`, `embedder`, `reranker` — drops `senses`, and drops `stt`/`tts` (same sm_87 reason as `orin-lobe`) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-cortex.toml`), goldens-only. `orin-lobe` with the two heavy lobes swapped: it hosts `cortex` **locally**, on the **llama.cpp** lane rather than vLLM. That is possible because the Blackwell line is about the NVFP4 *checkpoint format* (activations quantized to FP4), not about the role — the `orin` card profile declares `cortex` on the catalog's GGUF gear (`unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M`, `engine = llama.cpp`), which is weight-only and decodes on Ampere. `senses` is dropped because the two do not co-reside: MEASURED 2026-08-23 on the physical board, the llama.cpp cortex holds ~33 GiB at its served 262144 window (weights 15.33 + KV 16.00, at 64 KiB/token — only 16 of 65 layers hold a per-token cache) against 61.3 GiB of unified memory with **zero swap**, while `senses` holds ~27.6 GiB. The shape declares **no overrides**: `llama-server` has no utilization knob to reclaim into and the context is already at the checkpoint's native ceiling. **No box has booted this shape**, and the t1 spike behind its numbers (`docs/evidence/2026-08-23-spike-qwen38-gguf-llamacpp-orin.txt`) returned *functional GO / throughput FAIL-AS-SPECIFIED* — correct decode, full context, tool calling and `reasoning_content` all PASS, at 2.61 tok/s single-stream, below the covering plan's >= 5 tok/s gate. Do not read this row as an Orin validation claim. See [`docs/qwen3.8-27b-gguf-llamacpp.md`](qwen3.8-27b-gguf-llamacpp.md). |
 | **orin-associate** | `associate`, `hand`, `embedder`, `reranker` — drops BOTH `cortex` and `senses`, hosts the opt-in `associate` lobe instead; no `stt`/`tts` (same sm_87 reason as `orin-lobe`/`orin-cortex`) | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/orin-associate.toml`), goldens-only. The Orin's THIRD answer to the `[cortex, senses, associate]` co-residency group (lightning-on-orin plan, t9): hosts the tenth Colleague role — `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` — with the FULL declaration in its own `[overrides.associate]` (approved deviation d1: the `orin` card marks `[roles.associate] feasible = false` and keeps the numbers as documentation only, mirroring how `thor-muse`/`thor-worker` carry their opt-in lobe's declaration). The checkpoint's own `hf_quant_config.json` is W4A16_NVFP4 (weight-only) on the experts plus FP8 elsewhere — NOT the W4A4 activation quantization that rules out `cortex`/`muse`'s NVFP4 exports on sm_87 — and vLLM v0.27.1 confirmed a full Marlin fallback stack live (`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`: known-answer PASS, tool calls PASS, ~78-81 tok/s). Budget MEASURED 2026-08-25 (`docs/evidence/2026-08-25-measure-associate-budget-orin.txt`): `gpu_mem_util=0.63` (the vendor's own 0.70 was REFUSED at boot by 0.05 GiB), `max_model_len=128000`, KV pool 1,249,280 tokens / 9.76x concurrency. **No box has booted this SHAPE**, and no acceptance transcript exists for it — do not read this row as an Orin validation claim, even though the lane and budget are measured. See [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md). |
 | **orin-small** | `minor`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses` | **declared, UNVALIDATED** | Pure data, goldens-only (`tests/goldens/shapes/orin-small__{base,spark,thor}.env`, `tests/test_shape_goldens.py`). Ships for the Jetson AGX Orin 64GB reference target (mesh-brain end-state, issue #112, t2) mirroring `lobes/profiles/builtin/base.toml`'s own "conservative fallback for an unrecognised card" discipline exactly — **no physical Orin has booted this shape**, so it carries no live-validation row and no measured budget. Do not read this row as an "Orin is supported" claim; physical validation is its own follow-up. |
 | **thor-muse** | `muse`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `muse` lobe instead | **declared, UNVALIDATED, DORMANT** | Pure data (`lobes/profiles/builtin_shapes/thor-muse.toml`). Hosts the seventh Colleague role — `nvidia/Gemma-4-31B-IT-NVFP4`, the creative/ideation lobe — with the FULL muse declaration in its `[overrides.muse]` (see "Opt-in core roles" below). Its budget values (`gpu_mem_util=0.55`, `max_model_len=262144` — the full 256K native window) are **measured** (2026-07-17 live boot on the physical Thor: 26.47 GiB KV pool / 611,415 tokens / 2.33x concurrency at 262144; the 0.40 hypothesis was refused with 0.6 GiB KV) — but the shape stays **UNVALIDATED**: the full acceptance run (`scripts/accept-shape.sh`) never passed and no transcript landed under `docs/evidence/` (#108). **Now additionally DORMANT** (thor-worker-lobe plan, operator decision): the physical Thor that measured this shape's budget moved to hosting `thor-worker` instead, and no box in the mesh currently renders `thor-muse`. The file, its TOML, and its goldens stay in-tree (cite-don't-delete) — do not read this row as a "muse is served" claim, now more than ever. See [`docs/gemma-4-31b-nvfp4.md`](gemma-4-31b-nvfp4.md). |
 | **thor-worker** | `worker`, `embedder`, `reranker`, `stt`, `tts` — drops BOTH `cortex` and `senses`, hosts the opt-in `worker` lobe instead | **validated live — but on the Spark card, not the Thor (deviation d1, 2026-08-20)** | Mirrors `thor-muse`'s structure: hosts the eighth Colleague role — now `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (Lightning, not the originally-planned `unsloth/Qwen3.6-35B-A3B-NVFP4`), the fast ground-work DOER — with the FULL worker declaration in its own `[overrides.worker]` (see "Opt-in core roles" below). The plan's original target, the Jetson AGX Thor, NO-GO'd live (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt` — the Mamba-2 SSD decode path wedges on this fleet's pinned nightly); deviation d1 rendered this SAME shape file on the **Spark** card instead (`lobes init --shape thor-worker --apply --force` on `spark-f8a9`), measuring `WORKER_GPU_MEM_UTIL=0.30`, `WORKER_MAX_MODEL_LEN=65536`, KV pool 3,560,789 tokens / 54.33× concurrency, 75.1 tok/s decode (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`). See ["Shapes are card-agnostic data, proven live by d1"](#shapes-are-card-agnostic-data-proven-live-by-d1) below for what this means for the shape-name-vs-card-name assumption, and [`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`](nemotron-3.5-lightning-30b-a3b-nvfp4.md) for the full measured numbers. |
+
+| **gateway-only** | none — `hosts = []` | **declared, UNVALIDATED** | Pure data (`lobes/profiles/builtin_shapes/gateway-only.toml`), no overrides — the first built-in shape with an empty `hosts` list. The consumer-only member of a mesh-brain deployment (mesh-brain-join plan): a box that serves nothing locally and answers every role request from the mesh join's auto-wired proxying (see "The mesh join replaces per-pair referral" below), never from a local lane. **No box has booted this shape yet** — the mesh-brain-join plan's fourth-member test is its first live run; do not read this row as a validation claim. See [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain) and [`docs/machine-profiles.md`](machine-profiles.md). |
 
 ## Shapes are card-agnostic data, proven live by d1
 
@@ -202,13 +204,15 @@ machine-as-brain. Concretely:
   — booted on the Spark card via `lobes init --shape thor-worker --apply
   --force` as part of deviation d1, 2026-08-20
   (`docs/evidence/2026-08-20-accept-worker-hand-spark.txt`).
-- **`MUSE_PEER_ORIGIN` / `MUSE_PEER_PROXY` / `MUSE_PEER_API_KEY` and
-  `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` / `WORKER_PEER_API_KEY` all
-  exist** — just like every core role's referral/proxy channels, so a box
-  that doesn't host muse or worker can honestly refer (or transparently
-  proxy) callers to the box that does. In practice, as of this writing, no
-  box declares `MUSE_PEER_ORIGIN` anywhere in the mesh — `muse` is dormant,
-  not merely dropped-with-a-referral (see the support table above).
+- **Cross-box reachability for `muse` and `worker`** works the same way as
+  every core role: a box that has joined the mesh-brain (see
+  [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain))
+  and doesn't host `muse` or `worker` locally is auto-wired to whichever
+  verified mesh member does, with no per-role config to type. The retired,
+  hand-typed per-role referral/proxy channels these two roles also carry are
+  documented under the Retired section below. In practice, as of this
+  writing, no member of the mesh hosts `muse` — it is dormant, not merely
+  reachable-by-referral (see the support table above).
 
 ## Selecting a shape
 
@@ -306,170 +310,41 @@ half-served, never silently rerouted:
    service, and errors with the override file and a remediation pointing at
    re-scaffolding with a shape that hosts it.
 
-## Honest referral to the peer that hosts a dropped role (opt-in)
+## The mesh join replaces per-pair referral (opt-in)
 
-A box that dropped a role can additionally *tell callers who does host it* —
-the confirmed cross-box decision for the mesh-brain end-state (issue #112):
-**direct + referral**. Consumers address boxes directly, exactly as the
-Culture mesh does today; a box that doesn't host a role answers honestly with
-who does.
+The decisions above shipped their cross-box story first as a hand-typed,
+per-role peer channel — honest referral, then proxy-lobes, then a replica
+pool on top of it. That whole mechanism is **RETIRED** as the documented
+operator contract (see the "Retired" section near the end of this document
+for its full reference detail, kept for its measured numbers and because the
+mesh generalizes the same design rather than inventing a new one).
 
-**The peer-config surface** is one env var per core role's backend in the
-deployment's `.env`, mirroring the `*_FEASIBLE` flags (`PEER_ORIGIN_ENV` in
-`lobes/gateway/_config.py`):
+**The mesh-brain join is this repo's current answer.** Any box with the
+fleet's one shared `LOBES_MESH_KEY` (plus an operator-typed
+`LOBES_MESH_NAME` and, on a joining box, `LOBES_MESH_SEEDS`) becomes a member
+of a gossiped, hub-free roster — every member holds the same view, learned by
+announce/heartbeat rather than declared once per pair. A role a member lacks
+locally is auto-wired to whichever verified member announces it, with no
+per-role config to type at all; a role a member wants to keep off the mesh
+can be announced `private`. `lobes mesh status`/`request`/`approve`/`revoke`
+manage membership; the key alone admits, and a persisted approval ledger only
+RESTRICTS on top of that default (a lapsed or revoked name is refused, never
+an unlisted one). Full mechanism, wire detail, and the honest
+DECLARED/UNVALIDATED status are in
+[`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain),
+including the **Implementation status** note: the code has not yet fully cut
+over — the gateway still parses the retired per-role peer channel and the
+replica-pool dispatch path still reads it, pending a follow-on task
+(deviation d6).
 
-```bash
-# thor-lobe dropped cortex; the Spark hosts it:
-PRIMARY_PEER_ORIGIN=http://spark.local:8001
-# spark-lobe dropped senses; the Thor hosts it:
-MULTIMODAL_PEER_ORIGIN=http://thor.local:8001
-# (EMBED_PEER_ORIGIN / RERANK_PEER_ORIGIN — and MUSE_PEER_ORIGIN / WORKER_PEER_ORIGIN,
-# for the two opt-in core roles — exist too; stt/tts are outside the channel,
-# exactly as they are outside *_FEASIBLE. As of this writing no box declares
-# MUSE_PEER_ORIGIN anywhere — muse is dormant, not referred.)
-```
-
-The origin is a full, **operator-declared** URL. It is never derived from
-hostnames, interfaces, or anything the box could guess — the #92 lesson:
-never fabricate an absolute URL. Declaring an origin for a role the box
-*does* host annotates nothing (a referral names who hosts what this box does
-not).
-
-**What it changes** — the two honesty surfaces only:
-
-- `lobes capabilities` / `GET /capabilities`: the unhosted role's entry gains
-  `"hosted_by": "<peer origin>"` next to its `feasible: false`.
-- The `404 role_infeasible` body: the error object gains the same
-  `"hosted_by"` key and the message names the peer origin.
-
-`/v1/models` is untouched (it still simply omits the unhosted role), and with
-**zero peer config — the default — every response is byte-identical to the
-pre-referral contract** (regression-pinned in `tests/test_peer_referral.py`).
-
-**The default boundary: no data-plane proxying.** Declaring `*_PEER_ORIGIN`
-alone is an annotation for the *caller* to act on — the gateway never forwards
-a generate/embed/rerank/audio request to a peer on the strength of the origin
-alone, never probes the declared origin on the request hot path, and a
-request for an unhosted role terminates locally at the 404 with zero outbound
-connections (test-enforced). A box that *follows* its own referral on the
-caller's behalf — a proxy-lobe, advertised as proxied — is an explicit,
-separate opt-in on top of the origin declaration: see
-[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
-below. With no `*_PEER_PROXY` armed anywhere (every deployment that predates
-that feature, and every referral-only deployment today) this boundary holds
-exactly as described here.
-
-## Following the referral: proxy-lobes (opt-in)
-
-Referral answers "who hosts this?"; proxy-lobes (issues #115/#127, phase 1)
-answers the next question — "will you get it for me?" — with a third lobe
-state on top of the two above:
-
-| State | This box... | A request for the role gets |
-|---|---|---|
-| **awake** | hosts the role | served locally |
-| **asleep** (referral-only) | dropped the role, named its peer | `404 role_infeasible` + `hosted_by: <peer origin>` — the caller must dial the peer itself |
-| **proxy** | dropped the role, named its peer, *and* opted in to following the referral | forwarded to the peer; the caller never has to know it moved |
-
-**The opt-in is a second, deliberate step — q1 from the #115/#127 design
-work.** Declaring `<PREFIX>_PEER_ORIGIN` alone (above) stays **referral-only**
-— origin without the proxy knob never gets dialed, preserving the issue #112
-contract byte-for-byte. Setting the matching `<PREFIX>_PEER_PROXY=true` is
-what additionally arms the gateway to **follow its own referral** on the
-caller's behalf — and only for a name that is *also* infeasible on this box
-*and* has that declared origin; the knob is inert on its own.
-
-**The pairwise key contract.** Proxying introduces credentials in both
-directions, and they are deliberately asymmetric:
-
-- **One *inbound* key per box** — `GATEWAY_API_KEY` (fallback
-  `CULTURE_VLLM_API_KEY`), the same knob [gateway auth](gateway-fleet.md#auth-opt-in-bearer-gate)
-  uses to gate this box's own data plane.
-- **One *outbound* key per dropped-role peer** — `<PREFIX>_PEER_API_KEY`. Its
-  value is **the peer's own inbound key** (the credential *that box* requires
-  from callers), never a value this box invents, and never this box's own
-  `GATEWAY_API_KEY`.
-
-Because the outbound credential is always a *copy* of the peer's existing
-inbound key — never a secret freshly minted per relationship — key material
-scales **O(machines)**: an N-box mesh needs N inbound keys total (one per
-box), and a box proxying to M peers holds at most M copies of those peers'
-own keys. **Keys never propagate through**: the caller's own `Authorization`
-authenticated it to *this* box and is stripped before every forward; only the
-declared pairwise key (or nothing, if none is declared) travels onward. This
-is also why the referral/proxy origins assume a **tailnet-class transport**
-(Tailscale, a VPN, or an otherwise-private/trusted network between boxes) —
-the forward is plain HTTP with no TLS termination of its own, so
-confidentiality in transit is the tailnet's job, exactly as it already is for
-`CULTURE_VLLM_API_KEY` over `lobes tunnel`/cloudflared. Never point a
-`*_PEER_ORIGIN` at a box reachable only over the public internet.
-
-**Worked example — spark-lobe dropped `senses`; thor-lobe hosts it.** (Both
-hostnames below are placeholders — substitute your own tailnet/VPN names,
-never a real hostname or key in a committed file.)
-
-```bash
-# On the Spark box (spark-lobe: hosts cortex, dropped senses):
-GATEWAY_API_KEY=<spark's own inbound key>
-MULTIMODAL_PEER_ORIGIN=http://thor.example.ts.net:8000
-MULTIMODAL_PEER_PROXY=true
-MULTIMODAL_PEER_API_KEY=<thor's inbound GATEWAY_API_KEY — a copy, not a new secret>
-
-# On the Thor box (thor-lobe: hosts senses), correspondingly:
-GATEWAY_API_KEY=<thor's own inbound key — the SAME value Spark put in MULTIMODAL_PEER_API_KEY>
-```
-
-A `senses` chat request against Spark's gateway now: strips the caller's own
-`Authorization`, attaches `Bearer <thor's key>`, forwards to
-`http://thor.example.ts.net:8000`, and relays Thor's Gemma answer back with
-`X-Lobes-Proxied-By: http://thor.example.ts.net:8000` — the caller never has
-to know Thor exists. If Spark instead only set `MULTIMODAL_PEER_ORIGIN`
-(no `_PEER_PROXY`, no key), the exact same request would still 404
-`role_infeasible` naming Thor, as it did before proxy-lobes existed.
-
-**Referral-only deployments are byte-identical to before.** Every honesty
-surface, failure mode, and header this section describes is gated on
-`<PREFIX>_PEER_PROXY` being armed for that specific role. A deployment that
-never sets it — including both live `spark-lobe`/`thor-lobe` boxes as of this
-writing (referral-only) — sees no behavior change at all: same 404 body, same
-`hosted_by` annotation, same zero outbound connections.
-
-See [`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`](gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in)
-for the data-plane mechanics (marker headers, the single-hop loop guard, peer
-failure modes, pressure semantics) and
-[`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied) for
-how a proxied role shows up in the role contract.
-
-## Replica pools compose ON TOP of a state, they are not a fourth one
-
-Issue #199's cortex replica pool answers a different question than the three
-states above: not "who hosts this role" but "which of the boxes that already
-host it — as **awake**, or reachable via **proxy** — should serve THIS
-request". A pool is a property of an awake or proxied role's dispatch, not a
-new lobe state: `hosted_by` stays a string, never a list, and the awake /
-asleep (referral) / proxy vocabulary above is unchanged. Declaring
-`<PREFIX>_PEER_ORIGINS` (plural — a whole replica set, positionally paired
-with `<PREFIX>_PEER_API_KEYS`) beside the singular `<PREFIX>_PEER_ORIGIN`
-lets a box that HOSTS a role also forward some of that role's requests to an
-equally-compatible peer when it is less loaded — the mirror image of
-proxy-lobes' "I dropped this role, dial my peer for it". The same plural
-family on a box that **hosts the role nowhere** (`<PREFIX>_FEASIBLE=false`)
-makes its *proxy* state pooled too: instead of pinning every request to the
-singular `<PREFIX>_PEER_ORIGIN`, it places each one across the declared
-replicas. That still is not a fourth state — the role stays `feasible:false`,
-`hosted_by` stays the singular origin (which is why declaring the plural
-channel without it is refused at startup), and nothing selectable falls
-through to exactly the singular forward it replaced. `GET /capabilities`
-gains an additive `replicas` list per role (compatible/ready/load per
-candidate) and locally-served pooled answers gain `X-Lobes-Served-By`
-alongside the existing `X-Lobes-Proxied-By` and a new `X-Lobes-Route-Reason`
-on every pooled answer either way. See
-[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)
-for the full mechanism. **Status: DECLARED, not VALIDATED (#108), and
-cortex-only** — the Spark+Thor NVFP4 pair is the one pool with a pending live
-acceptance transcript; the Orin's llama.cpp cortex is exempt, and any other
-pooled role (senses/muse/worker/embedder/reranker/hand/stt/tts) is
-declared/unvalidated data only, exactly like `thor-muse`/`orin-small` above.
+**`lobes init --shape gateway-only`** is the shape this mechanism unlocks: a
+box that hosts NOTHING locally (`hosts = []`) and answers every role request
+purely from the mesh. It is the first built-in shape with an empty `hosts`
+list — see the support table above and
+[`docs/machine-profiles.md`](machine-profiles.md) for its row. **DECLARED,
+UNVALIDATED (#108):** no box has booted it yet; the mesh-brain-join plan's
+fourth-member test (booting it on a candidate box and requesting
+`model=cortex` through it) is its first live run.
 
 ## The co-residency tax and its measured repayment
 
@@ -579,9 +454,9 @@ correctness **live**, run the advertised-implies-reachable gate
 (`scripts/live-check.sh`), measure the reclaimed heavy-lobe budget, and leave
 a full transcript at `~/lobes-accept-<shape>-<UTC-stamp>.log`. `--restore`
 puts the previous deployment back. Phase 4b additionally checks the opt-in
-honest-referral surface (mesh-brain t3, issue #112) whenever a
-`<PREFIX>_PEER_ORIGIN` is declared on the box under test — skipped, not
-failed, with zero peer config. This is the exact command sequence behind the
+honest-referral surface (mesh-brain t3, issue #112) whenever the retired
+per-role peer-origin knob (see the Retired section below) is declared on the
+box under test — skipped, not failed, with zero peer config. This is the exact command sequence behind the
 two `#113` shape-validation transcripts in `docs/evidence/`:
 `2026-07-14-accept-spark-lobe-gb10.txt` and
 `2026-07-14-accept-thor-lobe-thor.txt`. The cross-box referral proof (a
@@ -617,12 +492,19 @@ now shipped:
    `capabilities` and its `role_infeasible` 404s name the peer that hosts an
    absent role (`hosted_by`, above). The #92 invariant holds throughout — a
    box never serves what it does not host. *Following* a referral on the
-   caller's behalf (a proxy-lobe) was a deliberate non-goal **at the time
-   this decision was recorded** — it has since landed as its own opt-in
-   extension (issues #115/#127, phase 1): see
-   [Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
-   above. Direct addressing remains the default; proxying is additive, never
-   a replacement for it.
+   caller's behalf was a deliberate non-goal **at the time this decision was
+   recorded** — it shipped first as its own hand-typed, per-role opt-in
+   extension (issues #115/#127, phase 1, now RETIRED as the documented
+   contract — see the Retired section below), and this repo's current answer
+   to it is the **mesh-brain join**: a box that joins the mesh
+   (`LOBES_MESH_KEY`/`LOBES_MESH_NAME`/`LOBES_MESH_SEEDS`) gets the same
+   auto-wired forwarding for FREE, with no per-role config to type — see
+   [`docs/gateway-fleet.md`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain).
+   Direct addressing remains the default; both the retired per-role
+   proxying and the mesh's auto-wired proxying are additive, never a
+   replacement for it. The mesh contract is DECLARED/UNVALIDATED (#108)
+   until its own cutover acceptance transcript lands — see that same section
+   for the code-vs-docs implementation-status caveat.
 2. **Cheap-gear placement = co-residence.** "One lobe per box" specializes
    the heavy *generate* lobes only — `embedder` / `reranker` / `stt` / `tts`
    may ride on every box that wants them (~0.06 util each, as today); no
@@ -649,8 +531,9 @@ now shipped:
 **Live evidence for the cross-box surface.** Decisions 1–2 (referral +
 co-residence) were validated live on the physical Jetson AGX Thor
 (2026-07-14, `docs/evidence/2026-07-14-accept-referral-thor.txt`), dialing a
-real declared peer (`PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001`,
-the box that hosts `cortex`) from a from-source gateway on the Thor with
+real declared peer (the retired singular peer-origin knob for `cortex`,
+naming the box that hosts it — see the Retired section below for its exact
+spelling) from a from-source gateway on the Thor with
 `cortex` dropped. It proved, live: `capabilities` flags `cortex
 feasible:false` and carries `hosted_by`, not hidden; every dropped-`cortex`
 alias 404s `role_infeasible` with the same `hosted_by`; the hosted roles
@@ -713,6 +596,191 @@ elsewhere:
   live boot. Physical Jetson AGX Orin 64GB validation is its own follow-up
   with its own evidence — until it lands, no doc, support table, or `lobes
   capabilities` output may claim Orin is validated.
+
+## Retired: the operator-typed peer family (`<PREFIX>_PEER_*`)
+
+Everything below this heading was the operator-facing contract for
+cross-box reachability **before** the mesh-brain join (above) replaced
+it. Kept, not deleted: the mechanisms it measured (fingerprint
+compatibility, capacity-relative selection, single-hop forwarding, the
+`X-Lobes-Proxied-By` marker convention) are exactly what the mesh's own
+verified-member pooling and auto-wired proxying build on. Every measured
+number and acceptance transcript cited below remains true of the retired
+mechanism as measured; none of it is a claim about the mesh, which is
+DECLARED/UNVALIDATED per the note above.
+
+**Operators: do not declare new peer-origin/peer-proxy/peer-api-key
+values.** Declare the mesh instead. `lobes doctor`'s `peer_family_retired`
+finding flags a deployment that still sets one of these keys. As of this
+branch the gateway still parses them (see the Implementation status note
+in `docs/gateway-fleet.md`), so an existing deployment that already
+declared them keeps working exactly as documented below until the
+follow-on code-removal task lands.
+
+### Honest referral to the peer that hosts a dropped role (opt-in)
+
+A box that dropped a role can additionally *tell callers who does host it* —
+the confirmed cross-box decision for the mesh-brain end-state (issue #112):
+**direct + referral**. Consumers address boxes directly, exactly as the
+Culture mesh does today; a box that doesn't host a role answers honestly with
+who does.
+
+**The peer-config surface** is one env var per core role's backend in the
+deployment's `.env`, mirroring the `*_FEASIBLE` flags (`PEER_ORIGIN_ENV` in
+`lobes/gateway/_config.py`):
+
+```bash
+# thor-lobe dropped cortex; the Spark hosts it:
+PRIMARY_PEER_ORIGIN=http://spark.local:8001
+# spark-lobe dropped senses; the Thor hosts it:
+MULTIMODAL_PEER_ORIGIN=http://thor.local:8001
+# (EMBED_PEER_ORIGIN / RERANK_PEER_ORIGIN — and MUSE_PEER_ORIGIN / WORKER_PEER_ORIGIN,
+# for the two opt-in core roles — exist too; stt/tts are outside the channel,
+# exactly as they are outside *_FEASIBLE. As of this writing no box declares
+# MUSE_PEER_ORIGIN anywhere — muse is dormant, not referred.)
+```
+
+The origin is a full, **operator-declared** URL. It is never derived from
+hostnames, interfaces, or anything the box could guess — the #92 lesson:
+never fabricate an absolute URL. Declaring an origin for a role the box
+*does* host annotates nothing (a referral names who hosts what this box does
+not).
+
+**What it changes** — the two honesty surfaces only:
+
+- `lobes capabilities` / `GET /capabilities`: the unhosted role's entry gains
+  `"hosted_by": "<peer origin>"` next to its `feasible: false`.
+- The `404 role_infeasible` body: the error object gains the same
+  `"hosted_by"` key and the message names the peer origin.
+
+`/v1/models` is untouched (it still simply omits the unhosted role), and with
+**zero peer config — the default — every response is byte-identical to the
+pre-referral contract** (regression-pinned in `tests/test_peer_referral.py`).
+
+**The default boundary: no data-plane proxying.** Declaring `*_PEER_ORIGIN`
+alone is an annotation for the *caller* to act on — the gateway never forwards
+a generate/embed/rerank/audio request to a peer on the strength of the origin
+alone, never probes the declared origin on the request hot path, and a
+request for an unhosted role terminates locally at the 404 with zero outbound
+connections (test-enforced). A box that *follows* its own referral on the
+caller's behalf — a proxy-lobe, advertised as proxied — is an explicit,
+separate opt-in on top of the origin declaration: see
+[Following the referral: proxy-lobes](#following-the-referral-proxy-lobes-opt-in)
+below. With no `*_PEER_PROXY` armed anywhere (every deployment that predates
+that feature, and every referral-only deployment today) this boundary holds
+exactly as described here.
+
+### Following the referral: proxy-lobes (opt-in)
+
+Referral answers "who hosts this?"; proxy-lobes (issues #115/#127, phase 1)
+answers the next question — "will you get it for me?" — with a third lobe
+state on top of the two above:
+
+| State | This box... | A request for the role gets |
+|---|---|---|
+| **awake** | hosts the role | served locally |
+| **asleep** (referral-only) | dropped the role, named its peer | `404 role_infeasible` + `hosted_by: <peer origin>` — the caller must dial the peer itself |
+| **proxy** | dropped the role, named its peer, *and* opted in to following the referral | forwarded to the peer; the caller never has to know it moved |
+
+**The opt-in is a second, deliberate step — q1 from the #115/#127 design
+work.** Declaring `<PREFIX>_PEER_ORIGIN` alone (above) stays **referral-only**
+— origin without the proxy knob never gets dialed, preserving the issue #112
+contract byte-for-byte. Setting the matching `<PREFIX>_PEER_PROXY=true` is
+what additionally arms the gateway to **follow its own referral** on the
+caller's behalf — and only for a name that is *also* infeasible on this box
+*and* has that declared origin; the knob is inert on its own.
+
+**The pairwise key contract.** Proxying introduces credentials in both
+directions, and they are deliberately asymmetric:
+
+- **One *inbound* key per box** — `GATEWAY_API_KEY` (fallback
+  `CULTURE_VLLM_API_KEY`), the same knob [gateway auth](gateway-fleet.md#auth-opt-in-bearer-gate)
+  uses to gate this box's own data plane.
+- **One *outbound* key per dropped-role peer** — `<PREFIX>_PEER_API_KEY`. Its
+  value is **the peer's own inbound key** (the credential *that box* requires
+  from callers), never a value this box invents, and never this box's own
+  `GATEWAY_API_KEY`.
+
+Because the outbound credential is always a *copy* of the peer's existing
+inbound key — never a secret freshly minted per relationship — key material
+scales **O(machines)**: an N-box mesh needs N inbound keys total (one per
+box), and a box proxying to M peers holds at most M copies of those peers'
+own keys. **Keys never propagate through**: the caller's own `Authorization`
+authenticated it to *this* box and is stripped before every forward; only the
+declared pairwise key (or nothing, if none is declared) travels onward. This
+is also why the referral/proxy origins assume a **tailnet-class transport**
+(Tailscale, a VPN, or an otherwise-private/trusted network between boxes) —
+the forward is plain HTTP with no TLS termination of its own, so
+confidentiality in transit is the tailnet's job, exactly as it already is for
+`CULTURE_VLLM_API_KEY` over `lobes tunnel`/cloudflared. Never point a
+`*_PEER_ORIGIN` at a box reachable only over the public internet.
+
+**Worked example — spark-lobe dropped `senses`; thor-lobe hosts it.** (Both
+hostnames below are placeholders — substitute your own tailnet/VPN names,
+never a real hostname or key in a committed file.)
+
+```bash
+# On the Spark box (spark-lobe: hosts cortex, dropped senses):
+GATEWAY_API_KEY=<spark's own inbound key>
+MULTIMODAL_PEER_ORIGIN=http://thor.example.ts.net:8000
+MULTIMODAL_PEER_PROXY=true
+MULTIMODAL_PEER_API_KEY=<thor's inbound GATEWAY_API_KEY — a copy, not a new secret>
+
+# On the Thor box (thor-lobe: hosts senses), correspondingly:
+GATEWAY_API_KEY=<thor's own inbound key — the SAME value Spark put in MULTIMODAL_PEER_API_KEY>
+```
+
+A `senses` chat request against Spark's gateway now: strips the caller's own
+`Authorization`, attaches `Bearer <thor's key>`, forwards to
+`http://thor.example.ts.net:8000`, and relays Thor's Gemma answer back with
+`X-Lobes-Proxied-By: http://thor.example.ts.net:8000` — the caller never has
+to know Thor exists. If Spark instead only set `MULTIMODAL_PEER_ORIGIN`
+(no `_PEER_PROXY`, no key), the exact same request would still 404
+`role_infeasible` naming Thor, as it did before proxy-lobes existed.
+
+**Referral-only deployments are byte-identical to before.** Every honesty
+surface, failure mode, and header this section describes is gated on
+`<PREFIX>_PEER_PROXY` being armed for that specific role. A deployment that
+never sets it — including both live `spark-lobe`/`thor-lobe` boxes as of this
+writing (referral-only) — sees no behavior change at all: same 404 body, same
+`hosted_by` annotation, same zero outbound connections.
+
+See [`docs/gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in`](gateway-fleet.md#proxy-lobes-the-third-lobe-state-opt-in)
+for the data-plane mechanics (marker headers, the single-hop loop guard, peer
+failure modes, pressure semantics) and
+[`docs/colleague-stack.md`](colleague-stack.md#a-third-role-state-proxied) for
+how a proxied role shows up in the role contract.
+
+### Replica pools compose ON TOP of a state, they are not a fourth one
+
+Issue #199's cortex replica pool answers a different question than the three
+states above: not "who hosts this role" but "which of the boxes that already
+host it — as **awake**, or reachable via **proxy** — should serve THIS
+request". A pool is a property of an awake or proxied role's dispatch, not a
+new lobe state: `hosted_by` stays a string, never a list, and the awake /
+asleep (referral) / proxy vocabulary above is unchanged. Declaring
+`<PREFIX>_PEER_ORIGINS` (plural — a whole replica set, positionally paired
+with `<PREFIX>_PEER_API_KEYS`) beside the singular `<PREFIX>_PEER_ORIGIN`
+lets a box that HOSTS a role also forward some of that role's requests to an
+equally-compatible peer when it is less loaded — the mirror image of
+proxy-lobes' "I dropped this role, dial my peer for it". The same plural
+family on a box that **hosts the role nowhere** (`<PREFIX>_FEASIBLE=false`)
+makes its *proxy* state pooled too: instead of pinning every request to the
+singular `<PREFIX>_PEER_ORIGIN`, it places each one across the declared
+replicas. That still is not a fourth state — the role stays `feasible:false`,
+`hosted_by` stays the singular origin (which is why declaring the plural
+channel without it is refused at startup), and nothing selectable falls
+through to exactly the singular forward it replaced. `GET /capabilities`
+gains an additive `replicas` list per role (compatible/ready/load per
+candidate) and locally-served pooled answers gain `X-Lobes-Served-By`
+alongside the existing `X-Lobes-Proxied-By` and a new `X-Lobes-Route-Reason`
+on every pooled answer either way. See
+[`docs/gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only`](gateway-fleet.md#replica-pools-one-lobe-n-replicas-opt-in-cortex-validated-only)
+for the full mechanism. **Status: DECLARED, not VALIDATED (#108), and
+cortex-only** — the Spark+Thor NVFP4 pair is the one pool with a pending live
+acceptance transcript; the Orin's llama.cpp cortex is exempt, and any other
+pooled role (senses/muse/worker/embedder/reranker/hand/stt/tts) is
+declared/unvalidated data only, exactly like `thor-muse`/`orin-small` above.
 
 ## See also
 

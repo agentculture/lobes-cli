@@ -1175,42 +1175,58 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     contract has exactly one implementation. Mutates ``payload`` in place (and
     returns it for convenience): for each gateway-fronted role whose entry says
     ``feasible: false`` (this box does not host it — the #113 dropped-lobe
-    channel) AND whose backend has an OPERATOR-DECLARED peer origin in
-    ``table.peer_origins`` (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`,
-    mesh-brain t3), a ``hosted_by`` key naming that origin is added.
+    channel) AND whose backend has a declared peer origin in
+    ``table.peer_origins`` (mesh-brain t3), a ``hosted_by`` key naming that
+    origin is added.
+
+    Retired (t14): ``table.peer_origins``/``table.peer_proxied`` used to be
+    populated from a per-backend ``<PREFIX>_PEER_ORIGIN``/``<PREFIX>_PEER_PROXY``
+    env pair (the config-layer names for that parsing —
+    ``PEER_ORIGIN_ENV``, ``PEER_PROXY_ENV``, and the ``_peer_proxied`` helper
+    that derived ``table.peer_proxied`` from them — are gone from
+    ``lobes.gateway._config`` along with it). ``build_config`` never fills
+    either field from env any more, so on a real deployment this function is
+    a no-op for EVERY role — the honest source for "which mesh member hosts
+    this unhosted role" is now the mesh ``member`` annotation
+    (:func:`annotate_mesh_naming`) and, at request time, the 404 body's own
+    mesh-sourced referral (:func:`lobes.gateway.server._mesh_referral_origin`).
+    What follows still describes this function's actual logic, reachable
+    today only via a directly-constructed :class:`RoutingTable` (tests, or a
+    future non-env source).
 
     Everything else is untouched — a hosted role is never annotated (even if
     an origin is declared for it: a referral says who hosts what THIS box does
     not), an unhosted role with no declared peer stays exactly as it was, and
-    with ``table.peer_origins`` empty (the default) the payload is
-    byte-identical to the pre-referral contract. The origin is metadata for
-    the CALLER to dial directly; THIS FUNCTION never forwards a request to
-    it — it only annotates. A name whose operator ALSO armed
-    ``<PREFIX>_PEER_PROXY`` (see the THIRD state below) IS forwarded, but by
-    the data-plane proxy branch in :mod:`lobes.gateway.server`
-    (:func:`~lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
-    #115/#127), never by this pure/offline annotator. Audio roles (stt/tts)
-    joined the channel in issue #129 — first-class entries in
-    ``ROLE_BACKEND`` and ``FEASIBLE_ENV``/``PEER_*_ENV`` — so a declared-off
-    audio lane with a declared peer gets the same ``hosted_by``/``proxied``
-    annotations as any dropped core role.
+    with ``table.peer_origins`` empty (the default, and now the only
+    reachable state via env) the payload is byte-identical to the
+    pre-referral contract. The origin is metadata for the CALLER to dial
+    directly; THIS FUNCTION never forwards a request to it — it only
+    annotates. A name whose table ALSO carries it in ``peer_proxied`` (see the
+    THIRD state below) IS forwarded, but by the data-plane proxy branch in
+    :mod:`lobes.gateway.server` (:func:`~lobes.gateway.server._proxy_to_peer`,
+    proxy-lobes t6, issues #115/#127), never by this pure/offline annotator.
+    Audio roles (stt/tts) joined the channel in issue #129 — first-class
+    entries in ``ROLE_BACKEND`` and the (now-retired) per-backend feasibility/
+    peer channels — so a declared-off audio lane with a declared peer gets
+    the same ``hosted_by``/``proxied`` annotations as any dropped core role.
 
-    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127).**
-    Referral above says "ask the peer yourself"; a role whose backend name is
-    ALSO in ``table.peer_proxied`` (the operator's ``<PREFIX>_PEER_PROXY``
-    opt-in — :data:`lobes.gateway._config.PEER_PROXY_ENV`, t1) is one this box
-    has committed to answering ON THE PEER'S BEHALF — the gateway itself
-    FORWARDS the request via the data-plane proxy branch
-    (:func:`lobes.gateway.server._proxy_to_peer`, landed in t6; this module
-    itself stays pure/offline and dials nothing — it only adds the marker
-    below). That is a materially different claim from a bare referral, so it
-    gets its own explicit marker,
+    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127,
+    RETIRED SOURCE t14).** Referral above says "ask the peer yourself"; a role
+    whose backend name is ALSO in ``table.peer_proxied`` (used to be armed by
+    the operator's ``<PREFIX>_PEER_PROXY`` env opt-in, now only settable on a
+    directly-constructed table) is one this box has committed to answering ON
+    THE PEER'S BEHALF — the gateway itself FORWARDS the request via the
+    data-plane proxy branch (:func:`lobes.gateway.server._proxy_to_peer`,
+    landed in t6; this module itself stays pure/offline and dials nothing —
+    it only adds the marker below). That is a materially different claim from
+    a bare referral, so it gets its own explicit marker,
     ``"proxied": true``, added ALONGSIDE (never instead of) ``hosted_by`` — the
     origin named there is unchanged: it is still "whoever ultimately serves
     this", now additionally reachable by asking THIS box too.
-    ``table.peer_proxied`` is a subset of ``table.infeasible`` ∩
-    ``table.peer_origins`` by construction (:func:`lobes.gateway._config.
-    _peer_proxied`), so a proxied role always also gets ``hosted_by`` — the
+    ``table.peer_proxied`` is constructed as a subset of ``table.infeasible``
+    ∩ ``table.peer_origins`` (the invariant the retired ``_peer_proxied``
+    helper used to enforce for an env-built table; a hand-built table must
+    keep it itself), so a proxied role always also gets ``hosted_by`` — the
     three states are told apart by KEY PRESENCE alone, never by a sentinel
     value:
 
@@ -1286,6 +1302,11 @@ def _offline_fingerprint(declared: Mapping[str, str], entry: Mapping[str, object
     }
     for field_name, suffix in _FINGERPRINT_DECLARED_FIELDS:
         fingerprint[field_name] = declared.get(suffix, _REPLICA_UNKNOWN)
+    # The engine is a registry fact (`entry["runtime"]`, "vllm"/"llamacpp"),
+    # not a live probe: without it every offline fingerprint read
+    # runtime=unknown and mesh verification could never pass (2026-09-12).
+    if fingerprint.get("runtime") in (None, "", _REPLICA_UNKNOWN):
+        fingerprint["runtime"] = entry.get("runtime") or _REPLICA_UNKNOWN
     return fingerprint
 
 
@@ -1374,6 +1395,8 @@ def annotate_replicas(
     payload: dict[str, dict],
     table: RoutingTable,
     snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
+    *,
+    mesh_enabled: bool = False,
 ) -> dict[str, dict]:
     """Add the additive per-role ``fingerprint``/``replicas`` keys (#199, t6).
 
@@ -1429,6 +1452,17 @@ def annotate_replicas(
     Existing keys are never touched: ``feasible``/``proxied``/``hosted_by``/
     ``ready``/``loaded`` keep their documented type and single-owner meaning
     exactly as :func:`annotate_peer_referrals` left them.
+
+    ``mesh_enabled`` (review #252 finding 10): when true, publish a
+    fingerprint for every LOCALLY HOSTED role too, even with no declared
+    replica pool and no snapshot for it. Mesh verification
+    (:func:`~lobes.gateway._mesh_routing.verify_member_roles`) compares an
+    announced fingerprint against this box's own ``/capabilities`` — before
+    this, an "ordinary" member (the common case: no ``*_PEER_ORIGINS`` pool
+    declared anywhere) published no ``fingerprint`` key at all for a hosted
+    role, so it could never be verified by a peer's probe no matter how
+    correct the announcement was. ``False`` (the default, every pre-mesh and
+    mesh-disabled deployment) leaves this function's gate exactly as before.
     """
     resolved_snapshot: Mapping[str, tuple[ReplicaState, ...]] = snapshot or {}
     for role, backend in ROLE_BACKEND.items():
@@ -1437,7 +1471,8 @@ def annotate_replicas(
             continue
         declared_peers = table.replica_origins.get(backend, ())
         role_snapshot = resolved_snapshot.get(role, ())
-        if not declared_peers and not role_snapshot:
+        locally_hosted = bool(entry.get("loaded"))
+        if not declared_peers and not role_snapshot and not (mesh_enabled and locally_hosted):
             continue  # no replica pool declared or probed for this role
         local_state = next((s for s in role_snapshot if s.local), None)
         if local_state is not None and local_state.fingerprint is not None:
@@ -1449,6 +1484,95 @@ def annotate_replicas(
             entry["replicas"] = [_replica_row_from_state(s) for s in role_snapshot]
         else:
             entry["replicas"] = _offline_replica_rows(table, backend, fingerprint)
+    return payload
+
+
+def _resolve_local_fingerprint(
+    local_fingerprints: Mapping[str, ReplicaState],
+    role: str,
+) -> object | None:
+    """This box's own fingerprint for *role*, unwrapped from a replica state.
+
+    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
+    behaviour: a bare fingerprint-like object passes through unchanged, a
+    replica state is unwrapped to its ``.fingerprint``.
+    """
+    local_fp = local_fingerprints.get(role)
+    if hasattr(local_fp, "fingerprint"):
+        return local_fp.fingerprint
+    return local_fp
+
+
+def _annotate_plain_member(
+    entry: dict,
+    placement: object,
+    local_fp: object | None,
+    mesh_snapshot: object | None,
+) -> None:
+    """Name the ONE mesh member serving *entry*'s plain pool answer, in place.
+
+    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
+    behaviour: a locally-hosted role (``loaded`` or a local fingerprint is
+    known) stays self-served and never gets a ``member`` key; otherwise the
+    first mesh member whose origin is in ``placement.plain_origins`` is
+    named, mirroring the original loop's ``break``.
+    """
+    if not placement.plain_origins or entry.get("member"):
+        return
+    served_locally = bool(entry.get("loaded")) or local_fp is not None
+    if served_locally:
+        return
+    for m in getattr(mesh_snapshot, "members", ()):
+        if m.origin in placement.plain_origins:
+            entry["member"] = m.name
+            return
+
+
+def annotate_mesh_naming(
+    payload: dict[str, dict],
+    mesh_snapshot: "object | None",
+    *,
+    local_fingerprints: Mapping[str, ReplicaState] | None = None,
+) -> dict[str, dict]:
+    """Add the additive per-role ``member``/``suffixed_lanes`` keys (t8, #237).
+
+    Sibling of :func:`annotate_peer_referrals`/:func:`annotate_replicas` —
+    same "mutate in place, no-op with nothing to annotate" discipline, so a
+    non-mesh deployment (``mesh_snapshot is None``, every pre-t8 caller)
+    keeps a byte-identical payload.
+
+    Consumed by the CLI's ``lobes capabilities`` renderer (wire contract,
+    task t10): ``member`` names the ONE member currently serving this box's
+    plain pool answer for the role when this box does not host it locally
+    but a mesh member does (mirrors the existing ``hosted_by``/proxied
+    shape); ``suffixed_lanes`` lists every ``"{role}-{member}"`` name a
+    fingerprint disagreement exposed for the role, so an operator can see —
+    and address — a disagreeing member even when the plain role name itself
+    is not currently placeable.
+
+    ``local_fingerprints`` is an optional per-ROLE mapping to this box's own
+    served :class:`~lobes.gateway._replicas.Fingerprint` (or replica state
+    carrying one) — when a role is hosted locally, that is the reference
+    :func:`~lobes.gateway._mesh_routing.compute_role_placement` compares
+    every mesh member against. Omitted (the common local-fingerprint-less
+    case) simply falls back to the peers-agree-with-each-other rule.
+    """
+    if mesh_snapshot is None:
+        return payload
+
+    from lobes.gateway._mesh_routing import compute_role_placement
+
+    local_fingerprints = local_fingerprints or {}
+    for role, entry in payload.items():
+        if not isinstance(entry, dict):
+            continue
+        local_fp = _resolve_local_fingerprint(local_fingerprints, role)
+        placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
+        if placement.suffixed:
+            entry["suffixed_lanes"] = list(placement.suffixed_names())
+        # Name the member only when THIS box does not itself serve the
+        # plain pool answer — a locally-hosted role stays self-served.
+        _annotate_plain_member(entry, placement, local_fp, mesh_snapshot)
     return payload
 
 

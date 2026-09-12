@@ -29,6 +29,7 @@ JSON contract: ``{healthy, checks:[{id, passed, severity, message, remediation}]
 from __future__ import annotations
 
 import argparse
+import os
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
@@ -41,8 +42,7 @@ from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
-from lobes.gateway._config import FEASIBLE_ENV, ReplicaConfigError, build_config
-from lobes.gateway.server import _check_pool_arming
+from lobes.gateway._config import FEASIBLE_ENV
 from lobes.profiles.render import ROLE_ENV_PREFIX
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
@@ -276,28 +276,25 @@ def _version_skew_check(port: int, deploy_dir: Path | None) -> dict:
 # --- gateway passthrough (issue #199, t3) -----------------------------------
 #
 # The role-prefix set every per-role gateway env family (FEASIBLE, the
-# singular/plural peer channels, the declared lane fingerprint) is keyed on.
-# Derived from FEASIBLE_ENV rather than hand-typed so this list can never
-# drift from the prefixes lobes.gateway._config already recognises.
+# declared lane fingerprint — and, before t14 retired it, the singular/plural
+# peer channels below) is keyed on. Derived from FEASIBLE_ENV rather than
+# hand-typed so this list can never drift from the prefixes
+# lobes.gateway._config already recognises.
 _GATEWAY_ROLE_PREFIXES: tuple[str, ...] = tuple(
     key[: -len("_FEASIBLE")] for key in FEASIBLE_ENV.values()
 )
 
 # Per-role env suffixes the gateway service is expected to pass through:
-# FEASIBLE (the existing shape/feasibility flag), the singular "refer to one
-# peer" pair (PEER_ORIGIN/PEER_API_KEY, issue #112/#115/#127), and the
-# plural "pool of replicas" pair (PEER_ORIGINS/PEER_API_KEYS, issue #199).
-# PEER_PROXY is a boolean opt-in knob, not a peer identity, but it rides the
-# exact same per-role channel and is just as silently inert if the gateway
-# container never receives it — included for the same reason.
-_GATEWAY_PEER_SUFFIXES: tuple[str, ...] = (
-    "FEASIBLE",
-    "PEER_ORIGIN",
-    "PEER_ORIGINS",
-    "PEER_PROXY",
-    "PEER_API_KEY",
-    "PEER_API_KEYS",
-)
+# FEASIBLE (the shape/feasibility flag). Retired (t14): this used to also
+# cover the singular "refer to one peer" pair (PEER_ORIGIN/PEER_API_KEY,
+# issue #112/#115/#127), the plural "pool of replicas" pair (PEER_ORIGINS/
+# PEER_API_KEYS, issue #199), and the PEER_PROXY opt-in knob — all deleted
+# from build_config's parsing and the compose template's passthrough alike,
+# so there is nothing left to check the passthrough of. A leftover
+# `<PREFIX>_PEER_*` key in a deployment's `.env` is caught by
+# `_peer_family_retired_check` below instead, never by this passthrough
+# guard.
+_GATEWAY_PEER_SUFFIXES: tuple[str, ...] = ("FEASIBLE",)
 
 # The declared lane fingerprint (issue #199): the same five knobs a role's
 # own vLLM service is started with, mirrored to the gateway so GET
@@ -457,56 +454,185 @@ def _gateway_passthrough_check(deploy_dir: Path) -> dict:
     )
 
 
-# --- gateway pool-arming trap (issues #199/#244, t6) -------------------------
+# Retired (t14): the "gateway pool-arming trap" check (`_pool_arming_check`,
+# issues #199/#244 t6) used to rebuild a RoutingTable from a deployment's own
+# `.env` via `build_config` and call `lobes.gateway.server._check_pool_arming`
+# against it, offline, to catch a plural-without-singular peer misconfig
+# before a real gateway container refused to boot. Both env channels that
+# check was validating (`<PREFIX>_PEER_ORIGINS` / `<PREFIX>_PEER_ORIGIN`) are
+# gone from `build_config` — a rebuilt table can no longer carry either one,
+# so the check could only ever report "nothing missing". `peer_family_retired`
+# below is what now catches a leftover `<PREFIX>_PEER_*` key in `.env`;
+# `_check_pool_arming` itself stays in lobes.gateway.server for a
+# directly/mesh-constructed RoutingTable (see that function's own docstring).
 
 
-def _pool_arming_check(deploy_dir: Path) -> dict:
-    """Reuse the gateway's own startup guard, offline, against deployed ``.env``.
+# --- peer-family retirement + mesh checks (mesh-vs-peer plan, t9) -----------
+#
+# The mesh (LOBES_MESH_KEY/NAME/SEEDS/…) replaced the operator-typed
+# <PREFIX>_PEER_ORIGIN/_PEER_ORIGINS/_PEER_PROXY/_PEER_API_KEY/_PEER_API_KEYS
+# family — the parsing for that family is gone from lobes.gateway._config and
+# lobes.gateway._routing (this task), so a deployed .env that still carries
+# one of those keys is now silently inert rather than merely legacy. All
+# three checks below are READ-ONLY findings: none is ever touched by --fix,
+# because none of them is a missing-file/key heal — they name an operator
+# action (delete a stale key, fix a shell export, re-scaffold compose) that
+# --fix's append-only contract cannot safely automate.
 
-    ``lobes.gateway.server._check_pool_arming`` refuses to BOOT a deployment
-    that declares the PLURAL replica-pool family (``<PREFIX>_PEER_ORIGINS``)
-    for a DROPPED role (``<PREFIX>_FEASIBLE=false``) without ALSO declaring
-    the SINGULAR ``<PREFIX>_PEER_ORIGIN`` — the referral channel a pool would
-    otherwise silently lose (see that function's own docstring for why the
-    guard exists). That guard is CORRECT and this check does not relax it;
-    it only makes the same misconfiguration catchable BEFORE a real gateway
-    container refuses to start, by building the exact same
-    :class:`~lobes.gateway._routing.RoutingTable` the gateway would from
-    this box's own ``.env`` and calling the exact same guard function — no
-    duplicated logic, no sockets, no container involved.
+#: The five suffixes the retired peer family used, spelled out here (rather
+#: than imported from lobes.gateway._config, whose PEER_*_ENV dicts this task
+#: deletes) so this finding survives the parsing removal it is reporting on.
+_RETIRED_PEER_SUFFIXES: tuple[str, ...] = (
+    "PEER_ORIGIN",
+    "PEER_ORIGINS",
+    "PEER_PROXY",
+    "PEER_API_KEY",
+    "PEER_API_KEYS",
+)
 
-    Fleet-only, like ``gateway_passthrough``: the legacy single-model
-    scaffold declares no per-role peer channels at all, so there is nothing
-    to check.
+
+def _peer_family_retired_check(deploy_dir: Path) -> dict | None:
+    """A leftover ``<PREFIX>_PEER_*`` key in ``.env`` — dead since this task
+    removed the parsing that ever read it.
+
+    Returns ``None`` (no finding) when nothing leftover is set — the common
+    case for every deployment that never declared the retired family, and for
+    one already migrated to the mesh.
+    """
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    leftover = sorted(
+        f"{prefix}_{suffix}"
+        for prefix in _GATEWAY_ROLE_PREFIXES
+        for suffix in _RETIRED_PEER_SUFFIXES
+        if (deployed.get(f"{prefix}_{suffix}") or "").strip()
+    )
+    if not leftover:
+        return None
+    shown = ", ".join(leftover[:8])
+    more = "" if len(leftover) <= 8 else f" (+{len(leftover) - 8} more)"
+    return _check(
+        "peer_family_retired",
+        False,
+        "warn",
+        f"{len(leftover)} retired <PREFIX>_PEER_* key(s) still set in .env: {shown}{more}",
+        "delete the key; declare the mesh via LOBES_MESH_KEY/NAME/SEEDS",
+    )
+
+
+#: The one mesh key doctor compares between the invoking shell and ``.env`` —
+#: the shared secret every mesh member must present identically (mirrors the
+#: precedent set by _VERSION_PIN_KEY: one named, load-bearing key, not a
+#: denylist-scrubbed dump of the whole shell environment).
+_MESH_KEY_ENV_VAR = "LOBES_MESH_KEY"
+_MESH_KEY_PREFIX = "LOBES_MESH_"
+
+
+def _mesh_key_shell_mismatch_check(env_path: Path) -> dict | None:
+    """The invoking shell exports ``LOBES_MESH_KEY`` differing from ``.env``'s.
+
+    A real footgun: an operator's shell profile (or an ad-hoc ``export``)
+    carrying a stale/different mesh key never changes what the DEPLOYED
+    gateway container reads (that comes only from ``.env`` via compose's
+    ``env_file``), but it silently breaks any CLI verb this shell invokes
+    that dials the mesh directly with its own process environment. Returns
+    ``None`` (no finding) when the shell has not set the key at all, or when
+    both sides agree.
+    """
+    shell_value = (os.environ.get(_MESH_KEY_ENV_VAR) or "").strip()
+    if not shell_value:
+        return None
+    env_value = (_env.read_env(env_path, _MESH_KEY_ENV_VAR) or "").strip()
+    if not env_value or shell_value == env_value:
+        return None
+    return _check(
+        "mesh_key_shell_mismatch",
+        False,
+        "warn",
+        f"the invoking shell's {_MESH_KEY_ENV_VAR} differs from this deployment's .env",
+        f"export the same {_MESH_KEY_ENV_VAR} the deployment's .env carries "
+        "(or update .env to match) so CLI verbs and the deployed gateway agree "
+        "on the mesh secret",
+    )
+
+
+def _mesh_key_secrets_env_only_check(deploy_dir: Path) -> dict | None:
+    """``LOBES_MESH_KEY`` set in ``.secrets.env`` but not (also) in ``.env``.
+
+    Review #252 finding 7: ``env.example`` documents "keep it in .env or
+    .secrets.env", but the gateway service in the fleet template has
+    deliberately NO ``env_file`` (it reads only the scoped, non-secret keys
+    Compose interpolates from ``.env`` — see the comment on the ``gateway``
+    service in ``docker-compose.yml``). ``LOBES_MESH_KEY`` reaches the
+    container ONLY via that ``${LOBES_MESH_KEY:-}`` interpolation, which
+    Compose resolves from ``.env`` (and the real process environment), never
+    from ``.secrets.env``. A key placed only in ``.secrets.env`` — the
+    documented-as-valid path — silently leaves the gateway with an empty key,
+    so ``build_mesh_config()`` selects its disabled configuration with no
+    error at all. Returns ``None`` (no finding) for the legacy single-model
+    scaffold, when neither file sets the key, or when ``.env`` already has it.
     """
     if not _compose.is_fleet(deploy_dir):
-        return _check(
-            "pool_arming",
-            True,
-            "info",
-            "pool arming check applies to fleet deployments only",
-        )
-    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
-    try:
-        table, _cfg = build_config(deployed)
-        _check_pool_arming(table)
-    except ReplicaConfigError as err:
-        return _check(
-            "pool_arming",
-            False,
-            "error",
-            str(err),
-            "declare the singular <PREFIX>_PEER_ORIGIN alongside the plural "
-            "<PREFIX>_PEER_ORIGINS for every dropped role in the pool (or "
-            "drop the plural family until this box is actually ready to pool "
-            "that role) — never relax lobes.gateway.server._check_pool_arming "
-            "itself",
-        )
+        return None
+    env_value = (_env.read_env(deploy_dir / _compose.ENV_FILE, _MESH_KEY_ENV_VAR) or "").strip()
+    if env_value:
+        return None
+    secrets_path = deploy_dir / ".secrets.env"
+    if not secrets_path.is_file():
+        return None
+    secrets_value = (_env.read_env(secrets_path, _MESH_KEY_ENV_VAR) or "").strip()
+    if not secrets_value:
+        return None
     return _check(
-        "pool_arming",
-        True,
-        "info",
-        "no dropped role declares a replica pool without its singular peer origin",
+        "mesh_key_secrets_env_only",
+        False,
+        "warn",
+        f"{_MESH_KEY_ENV_VAR} is set in .secrets.env but not in .env — the gateway "
+        "service has no env_file and reads this key only via Compose interpolation "
+        "of .env, so the mesh will start DISABLED with no error",
+        f"also set {_MESH_KEY_ENV_VAR} in .env (the file Compose interpolates "
+        "${...} from), not only in .secrets.env",
+    )
+
+
+def _passthrough_missing_check(deploy_dir: Path) -> dict | None:
+    """A ``LOBES_MESH_*`` key set in ``.env`` but absent from the gateway
+    service's ``environment:`` block in ``docker-compose.yml`` — the same
+    2026-07-17 MUSE_* trap :func:`_gateway_passthrough_check` guards against,
+    scoped to the mesh key family this task introduces reporting for.
+
+    Fleet-only (mirrors ``_gateway_passthrough_check``'s own gate): the legacy
+    single-model scaffold has no gateway service at all. Returns ``None`` (no
+    finding) when no ``LOBES_MESH_*`` key is set, or every set one has a
+    passthrough somewhere in the scanned compose/overlay files.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return None
+    deployed = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
+    mesh_keys = sorted(
+        key
+        for key in deployed
+        if key.startswith(_MESH_KEY_PREFIX) and (deployed.get(key) or "").strip()
+    )
+    if not mesh_keys:
+        return None
+    compose_text = "\n".join(
+        _gateway_environment_block((deploy_dir / name).read_text(encoding="utf-8"))
+        for name in _PASSTHROUGH_COMPOSE_FILES
+        if (deploy_dir / name).is_file()
+    )
+    missing = [key for key in mesh_keys if not _has_passthrough(compose_text, key)]
+    if not missing:
+        return None
+    shown = ", ".join(missing[:8])
+    more = "" if len(missing) <= 8 else f" (+{len(missing) - 8} more)"
+    return _check(
+        "passthrough_missing",
+        False,
+        "warn",
+        f"{len(missing)} LOBES_MESH_* .env key(s) set but missing a gateway "
+        f"passthrough in docker-compose*.yml: {shown}{more}",
+        "re-scaffold docker-compose.yml from the packaged template "
+        "('lobes init --apply') — doctor never patches compose directly",
     )
 
 
@@ -961,6 +1087,69 @@ def _repin_version(deploy_dir: Path) -> list[str]:
     return [f"{verb} {_VERSION_PIN_KEY}={__version__}{was}"]
 
 
+def _fleet_only_checks(deploy_dir: Path) -> tuple[list[dict], dict[str, object]]:
+    """Fleet-only checks (issue #119) plus the resulting ``fix_plan``.
+
+    Extracted from :func:`_diagnose` (Sonar S3776) — identical behaviour.
+    The legacy single-model scaffold has no per-role profile render, so this
+    is only ever called when :func:`_compose.is_fleet` is true.
+    """
+    checks: list[dict] = []
+    files_check, missing_files = _scaffold_files_check(deploy_dir)
+    stale_check, missing_env = _profile_staleness_check(deploy_dir)
+    passthrough_check = _gateway_passthrough_check(deploy_dir)
+    checks.extend([files_check, stale_check, passthrough_check])
+    # Only emitted when this box actually HOSTS the associate lane.
+    auth_gate = _associate_auth_gate_check(deploy_dir)
+    if auth_gate is not None:
+        checks.append(auth_gate)
+    mesh_passthrough_check = _passthrough_missing_check(deploy_dir)
+    if mesh_passthrough_check is not None:
+        checks.append(mesh_passthrough_check)
+    mesh_secrets_only_check = _mesh_key_secrets_env_only_check(deploy_dir)
+    if mesh_secrets_only_check is not None:
+        checks.append(mesh_secrets_only_check)
+    fix_plan = {"files": missing_files, "env": missing_env}
+    return checks, fix_plan
+
+
+def _deploy_dir_diagnostics(deploy_dir: Path) -> tuple[list[dict], int, dict[str, object] | None]:
+    """Every check that needs a resolved deployment dir, plus port/fix_plan.
+
+    Extracted from :func:`_diagnose` (Sonar S3776) — identical behaviour:
+    the env-coherence, peer-retirement, mesh-key, fleet-only and lock-drift
+    checks below all read the SAME scaffolded deployment, so they were one
+    nested block in the original function; here they are one function call.
+    """
+    checks: list[dict] = []
+    env_path = deploy_dir / _compose.ENV_FILE
+    checks.append(_env_coherence_check(env_path))
+    port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
+    # Peer-family retirement + mesh checks (t9) — read-only, apply to
+    # every scaffolded deployment (not fleet-gated: a leftover PEER_* key
+    # or a shell/`.env` mesh-key mismatch is meaningful even on the
+    # legacy single-model scaffold's .env).
+    peer_retired_check = _peer_family_retired_check(deploy_dir)
+    if peer_retired_check is not None:
+        checks.append(peer_retired_check)
+    mesh_mismatch_check = _mesh_key_shell_mismatch_check(env_path)
+    if mesh_mismatch_check is not None:
+        checks.append(mesh_mismatch_check)
+    # Scaffold integrity + profile staleness (issue #119) — fleet-only:
+    # the legacy single-model scaffold has no per-role profile render.
+    fix_plan: dict[str, object] | None = None
+    if _compose.is_fleet(deploy_dir):
+        fleet_checks, fix_plan = _fleet_only_checks(deploy_dir)
+        checks.extend(fleet_checks)
+    # Committed deployment lock (deployment-lock-per-box plan, t8) — not
+    # fleet-gated: a lock is orthogonal to topology, and a deployment that
+    # has never adopted the practice gets no finding at all.
+    lock_check = _lock_drift_check(deploy_dir)
+    if lock_check is not None:
+        checks.append(lock_check)
+    return checks, port, fix_plan
+
+
 def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks: list[dict] = [_docker_check()]
 
@@ -976,28 +1165,8 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     port = 8000
     fix_plan: dict[str, object] | None = None
     if deploy_dir is not None:
-        env_path = deploy_dir / _compose.ENV_FILE
-        checks.append(_env_coherence_check(env_path))
-        port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
-        # Scaffold integrity + profile staleness (issue #119) — fleet-only:
-        # the legacy single-model scaffold has no per-role profile render.
-        if _compose.is_fleet(deploy_dir):
-            files_check, missing_files = _scaffold_files_check(deploy_dir)
-            stale_check, missing_env = _profile_staleness_check(deploy_dir)
-            passthrough_check = _gateway_passthrough_check(deploy_dir)
-            pool_arming_check = _pool_arming_check(deploy_dir)
-            checks.extend([files_check, stale_check, passthrough_check, pool_arming_check])
-            # Only emitted when this box actually HOSTS the associate lane.
-            auth_gate = _associate_auth_gate_check(deploy_dir)
-            if auth_gate is not None:
-                checks.append(auth_gate)
-            fix_plan = {"files": missing_files, "env": missing_env}
-        # Committed deployment lock (deployment-lock-per-box plan, t8) — not
-        # fleet-gated: a lock is orthogonal to topology, and a deployment that
-        # has never adopted the practice gets no finding at all.
-        lock_check = _lock_drift_check(deploy_dir)
-        if lock_check is not None:
-            checks.append(lock_check)
+        dir_checks, port, fix_plan = _deploy_dir_diagnostics(deploy_dir)
+        checks.extend(dir_checks)
 
     checks.append(_health_check(port))
     checks.append(_version_skew_check(port, deploy_dir))

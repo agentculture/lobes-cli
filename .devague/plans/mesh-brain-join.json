@@ -1,0 +1,991 @@
+{
+  "slug": "mesh-brain-join",
+  "title": "mesh-brain-join",
+  "frame_slug": "mesh-brain-join",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-11T11:30:15Z",
+  "updated": "2026-09-11T23:38:38Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes mesh-brain: a home fleet of robots and boxes running lobes-cli forms one brain. Any machine with a key, or an operator approval (timed or permanent), joins the mesh at runtime, announces the roles, models and purpose it serves, and can draw on every lobe in the mesh even if it serves nothing itself. A configurable heartbeat (default once a minute) keeps it connected. Two machines serving the same role share one concurrency pool out of the box, so a second Spark joining Spark+Thor+Orin doubles the cortex pool or brings a new model.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The announcement holds on real hardware: a fourth box (or one of the three re-joined) forms the mesh by key alone, with no peer block typed on any other member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "Home-fleet operators and the robots/agents that consume lobes: a new box (e.g. a second DGX Spark) should join and contribute without hand-editing every peer's .env.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Both audiences are exercised: an operator joins a box with one env var, and a robot client (Qwen Code or curl with model=<role>) reaches every mesh role through its local gateway.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Mesh membership becomes RUNTIME-MUTABLE gateway state: a box admitted by key or by operator approval (timed or permanent) is added to the peer set of a RUNNING gateway with no restart. Today RoutingTable is frozen at process start (lobes/gateway/_routing.py:44 frozen dataclass; server.py:4230-4258 bakes it onto the handler) and ReplicaCache._peers is a tuple fixed at __init__ (_replicas.py:719) with no add/remove-peer method.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "A member restarted or disconnected disappears from every other member's roster after a bounded number of missed heartbeats and requests for its roles either pool elsewhere or 404 role_infeasible naming no hosted_by \u2014 never hang.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "The mutable routing state is a copy-on-write snapshot swapped atomically; the request path never takes a lock across a dial, and an in-flight request keeps the snapshot it started with.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "The heartbeat is one more background daemon thread started in serve() (lobes/gateway/server.py:4261-4328), following the PressureCache/ReadinessCache/ReplicaCache pattern (Event.wait(interval) loop, _tier_request.py:223-229), interval configurable with a 60 s default. It cannot live in the CLI: every verb is exec-once and no daemon/systemd/cron surface exists (lobes/cli/__init__.py:82-152; repo grep).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The heartbeat thread never blocks the request path and its interval is read from one env key with a 60 s default; a hung peer delays no other peer's probe.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "A joining box ANNOUNCES served roles, models and purpose by pushing the same payload GET /capabilities already publishes per role (RoleInfo: model/runtime/context/quant/responsibilities/forbidden_responsibilities/fingerprint/replicas, lobes/roles.py:471-568) to a NEW inbound mesh endpoint on the receiving gateway. Today the gateway has only do_GET/do_POST with no registration or heartbeat route (server.py:3486-3532, 3745-3811); discovery is pull-only (each box probes declared peers every 5 s, _replicas.py:150).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A keyless heartbeat or join request can never add a member to the roster: only an announcement bearing the join key enters it, so an unauthenticated box can detect the mesh and ask, but cannot inject fake capacity.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "A consumer-only box (serves nothing, draws from the mesh) ships as a built-in gateway-only shape. The schema already allows hosts=[] with no cardinality check (lobes/profiles/shapes.py:175, 206-284) and shape_services renders exactly ('gateway',) (shape_render.py:381-410); no built-in shape does this today, and _routing.py:432-436 still assumes 'a built table always has a primary backend'.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A gateway-only member (hosts=[]) boots, joins, and serves every mesh role by proxy with a routing table that has no local primary backend.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Two members serving the same role pool automatically: the pool set is derived from membership instead of the hand-typed <PREFIX>_PEER_ORIGINS list, while admission still passes compare_fingerprints (served id, quantization, max_model_len, runtime; unknown never pools \u2014 _replicas.py:196-201, 602-626) and dispatch keeps the in-flight reconciliation plus estimated_wait=(running+waiting)/weight ranking (_replicas.py:891-1013, _selection.py:203-217).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "Pool membership is derived only from announcements that passed the fingerprint gate; a member whose lane fingerprint changes (lobes switch) leaves the pool within one interval.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Every new gateway env key lands on the gateway service's explicit environment passthrough list (lobes/templates/fleet/docker-compose.yml:1784-2088; the silent-inert trap is documented at :2055-2058), in lobes/templates/fleet/env.example, and \u2014 for any new secret key name \u2014 in scripts/scan_deployment_secrets.py:37-38, which only knows the existing *_PEER_* vocabulary.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "Every new env key appears on the gateway compose passthrough, in env.example, and (for secrets) in the secrets scan; a key set in .env but missing from the list is caught by lobes doctor's passthrough check.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Membership state is RUNTIME state, never a rendered .env key: the roster is in-memory soft state rebuilt from heartbeats, and only the approval ledger persists, in a git-ignored runtime file under the deployment dir bind-mounted into the gateway (the gateway service has no volumes today \u2014 docker-compose.yml gateway block \u2014 so this is its first). The deployment lock allowlist (lobes/runtime/_lock.py:44-49, 96-125) and tests/goldens (regen.py:1-24) stay untouched.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Roster and approval ledger live under the deployment dir in a git-ignored runtime file that the lock never captures and the goldens never render.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "Mesh-brain is a NEW opt-in axis: with nothing declared, every response stays byte-identical to today and no heartbeat runs. Pinned by tests/test_gateway_pool.py:269 (test_no_pool_declared_is_byte_identical), tests/test_gateway_config_proxy.py:402, tests/test_gateway_proxy.py:674 and :718.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "With no join key set, no heartbeat thread starts and no mesh route answers anything but 404; the four byte-identical tests keep passing unchanged.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "Forwarding stays single-hop: a request arriving with X-Lobes-Proxied that would depart again is refused 508 proxy_loop (server.py:762-780, 874). Membership never makes forwarding transitive.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "A proxied request that would need a second hop is refused 508 exactly as today, including when the roster (not a typed origin) chose the peer.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "No cross-role or cross-model substitution (issue #91; order_backends returns one owner, never a chain, _routing.py:398-437) and no pooling without fingerprint agreement \u2014 a self-declared 'I serve cortex' is admitted to a pool only when its live fingerprint matches.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "No request is ever answered by a different served id than the one addressed; a suffixed lane is never used to satisfy a plain-role request.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "boundary",
+      "text": "The X-Lobes-Route-Reason vocabulary is closed (lobes/gateway/_selection.py:110-125; burned once by a meaning change). Mesh routing information travels in NEW headers, following the X-Lobes-Route-Load precedent (server.py:846-855).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "X-Lobes-Route-Reason values remain the closed set in _selection.py:110-125; mesh provenance travels in new X-Lobes-Mesh-* headers.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "lobes/profiles/render.py, shape_render.py and schema.py never render peer identity, capacity or self-origin \u2014 none of PEER/MAX_ACTIVE/SELF_ORIGIN exist in those modules today and the #92 rule is restated at 30+ sites (e.g. _config.py:264, 450, 608; orin.toml:525-533). Membership feeds the gateway at runtime, not the renderer.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "render.py, shape_render.py and schema.py contain no mesh, roster, peer or self-origin logic after the change.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "No mesh credential ever enters deployment.lock.toml or deployments/: keys stay in .env / .secrets.env / runtime state, and the secrets-scan CI job (.github/workflows/tests.yml:83-114) learns any new key name.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "No committed file under deployments/, docs/evidence/ or tests/goldens/ contains a join key value; the scan fails on a fixture that does.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Role-name conflict handling: a member's lane for role R joins the plain 'R' pool only on fingerprint agreement (served id, quantization, max_model_len, runtime \u2014 compare_fingerprints, _replicas.py:602-626); on disagreement it is exposed as 'R-<machine-name>', a new served alias listed on /v1/models and /capabilities of every member, addressable like any role and never silently substituted for plain 'R'. <machine-name> is the member's own declared name, never a hostname derived by a peer.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A suffixed lane '{role}-{machine}' appears on every member's /v1/models and /capabilities within one heartbeat interval and answers requests with X-Lobes-Proxied-By naming its host.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "Auto-wired proxying: for every role a member does not host, the gateway forwards model=<role> to a ready member that announced it (single hop, X-Lobes-Proxied-By preserved), replacing the <PREFIX>_FEASIBLE=false + PEER_ORIGIN + PEER_PROXY hand wiring. This applies to hand too \u2014 no never-proxied carve-out (NEVER_PROXIED_BACKENDS is already empty, _config.py:224).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "Every role a member lacks is served by proxy from a ready member that announced it, chosen by the same replica selection as pooling, with hand included.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "Migration: the live Spark, Thor and Orin move off their hand-typed peer blocks onto the join key. Because the family is REPLACED, an .env still carrying <PREFIX>_PEER_* keys must be refused or warned loudly by lobes doctor rather than silently ignored, and the join-key variable name is added to scripts/scan_deployment_secrets.py so it can never land in deployments/.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "After cutover, lobes doctor on each of the three boxes reports zero *_PEER_* keys; an .env that still carries one produces a named finding rather than silence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Private roles (cheap, additive): a member's announcement carries an optional per-role private flag (one boolean beside the existing RoleInfo fields, lobes/roles.py:471-568); a private role is omitted from what the member broadcasts, so it never enters any peer's roster, pool, or auto-proxy, while staying addressable locally. No new endpoint, no new state beyond the announcement payload.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "A role announced private is absent from every other member's roster, /v1/models and /capabilities, yet answers locally.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "after_state",
+      "text": "A new box runs 'lobes init --apply' with the mesh join key in its .env and 'lobes serve --apply'; within one heartbeat interval every other member lists its roles on /v1/models and /capabilities, same-role compatible lanes pool automatically, differing lanes appear as '{role}-{machine-name}', and roles the new box lacks are reachable on its own gateway by proxy. Removing the box (or the key) makes it vanish from every roster after missed heartbeats and the mesh keeps serving with what remains.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "Observed end-to-end on the live fleet, with the roster listing captured before and after the join and after the removal.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "before_state",
+      "text": "Joining today means hand-editing every member's .env with per-role peer origin, proxy and key blocks that name every other box (O(boxes x roles)), copying each peer's inbound key by hand, and recreating every gateway; a stale entry (the Orin still pooling cortex on the Thor, which no longer hosts it) is only visible from a live diff.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "The pre-cutover state is captured verbatim before any change (the three .env peer blocks, redacted keys, and the stale Orin pool entry).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "why_it_matters",
+      "text": "Robots and home boxes should share cognitive load by being switched on, not by an operator threading peer blocks through N .env files: a second Spark should double the cortex pool or bring a new model the moment it joins, and losing a member should cost capacity, never correctness.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "Adding a member never requires editing any other member's files.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "success_signal",
+      "text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Each numbered signal is measured on the live fleet, with the number recorded, and any that fails is recorded as failed rather than dropped.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "Roster is SOFT, in-memory state rebuilt from heartbeats (no file, survives nothing, needs nothing); only the approval LEDGER (member name, approved-by, expiry) persists, in a git-ignored runtime file under the deployment dir bind-mounted into the gateway via a new compose volume \u2014 the first volume the gateway service has ever had (docker-compose.yml gateway block has none today).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "After a gateway restart the roster is empty until the next heartbeats arrive, while the ledger file is unchanged; no roster content is ever written to disk.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce LOBES_MESH_SEEDS (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (tail0be7e0.ts.net) where multicast does not cross nodes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "A joining box with LOBES_MESH_SEEDS naming one live member learns every other member without any other box being edited; with no seeds and no key, nothing dials out.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "Member-to-member forwarding authenticates with the join key as bearer: each member's inbound gate accepts EITHER its own GATEWAY_API_KEY (clients) OR the mesh join key (members), replacing the per-box PEER_API_KEY copy (_replicas.py:283 attaches Authorization from the declared peer key today). The caller's own Authorization is still stripped before forwarding.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "No member ever sends a client's bearer to another member; every forwarded request carries the join key and nothing else in Authorization.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "boundary",
+      "text": "Auto-wired proxying covers POST lanes only; GET /v1/realtime (WebSocket tunnel) stays local-only exactly as today \u2014 the proxy-lobes forwarder is POST-only (lobes/gateway/_realtime.py:19, docs/realtime-pipeline.md:688).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "GET /v1/realtime on a member that lacks stt returns 404 role_infeasible even while another member announces stt.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Documentation and catalog follow the replacement in the same PR: docs/gateway-fleet.md, deployment-shapes.md, colleague-stack.md, openai-api.md, secret-rotation.md, env.example, lobes explain, and CLAUDE.md describe the join-key mesh and retire the *_PEER_* family (cite-don't-delete: the old sections move under a 'Retired' heading); deployments/jetson-agx-thor__thor-worker is re-captured because its verbatim compose carries the old passthrough list (no capture verb: call lobes.runtime._lock.capture_lock directly).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "No doc outside a 'Retired' heading references *_PEER_ORIGIN, *_PEER_PROXY, *_PEER_API_KEY or *_PEER_ORIGINS after the change; the re-captured Thor catalog entry passes the secrets scan.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "Member identity: LOBES_MESH_NAME, a short operator-typed name required whenever the join key is set (no default from hostname \u2014 variation.py:1-13 records why hostname is never identity). It is the '{role}-{machine-name}' suffix source and the ledger key; a join whose name collides with a live, differently-originated member is refused with mesh_name_conflict.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "A member with the join key but no LOBES_MESH_NAME refuses to start the mesh thread with a named error rather than deriving a name.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "Timed approval is enforced by IDENTITY, not by the key: every member's ledger (gossiped with the roster) records name -> expiry; an announcement from a lapsed or revoked name is refused by every member even when it carries the join key, and 'lobes mesh approve' on any one member propagates to all within one interval. Rotating the join key itself remains a fleet-wide restart, documented in docs/secret-rotation.md.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "A lapsed name is refused by a member that never processed the approve call directly, proving the ledger gossips.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "Trust but verify: an announcement is a HINT. A receiver adds a role to a pool or to auto-proxy only after its own probe of the announcer's GET /capabilities confirms the announced fingerprint and ready \u2014 the live-probed-never-config-derived rule (#220) survives; a mismatch between announcement and probe marks the member 'unverified' in lobes mesh status and routes nothing to it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "A member whose probe disagrees with its announcement receives zero forwarded requests and shows 'unverified' in lobes mesh status.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "Announcements carry a schema version; a receiver ignores unknown fields from a newer member and refuses an incompatible major with mesh_schema_incompatible (named in lobes mesh status), so a fleet upgraded one box at a time never silently drops members.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "A member two minor versions ahead, sending one unknown field, is admitted; a different major is refused with a named error visible in status.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "Fingerprint changes re-announce immediately: lobes switch / lobes up / a lane going unhealthy trigger an announcement at once, not at the next 60 s tick; receivers re-verify (F8) and move the lane between the plain pool and its suffixed name; in-flight requests complete on the lane they started on.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h37",
+      "kind": "honesty",
+      "text": "The interval between lobes switch completing on member A and member B reflecting the new lane is bounded by B's probe refresh (5 s), not by the heartbeat interval.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "CLI surface: 'lobes mesh status' (members, last-heartbeat age, approval expiry, verified/unverified, roles incl. suffixed and private), 'lobes mesh request' (keyless ask from a box without the key), 'lobes mesh approve <name> [--for <duration>]' and 'lobes mesh revoke <name>' \u2014 the write verbs dry-run by default with --apply, registered like the fleet noun (lobes/cli/_commands/fleet.py:169-213). lobes capabilities renders members and suffixed lanes; every mesh answer carries X-Lobes-Mesh-Member naming the serving member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "lobes mesh approve without --apply changes nothing and prints the plan; every mesh answer carries X-Lobes-Mesh-Member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c48",
+      "kind": "requirement",
+      "text": "Raw served-id addressing (deployed consumers pin ids, e.g. culture.yaml model: vllm-local/<id>): a raw id resolves to the local lane if hosted, else to the plain pool for that id; a raw id that exists only on suffixed (fingerprint-divergent) lanes 404s role_infeasible with hosted_by listing the suffixed names rather than picking one.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h39",
+      "kind": "honesty",
+      "text": "A raw id hosted on divergent lanes only is never answered by one of them; the 404 body lists every suffixed name.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "The keyless detect and join-request endpoints are bounded: at most N pending join requests (default 8) with a TTL, one request per origin, rate-limited, and rejections logged through the collapsed _authlog pattern so a scanner cannot flood logs or memory. Detect returns only 'a mesh exists, name of this member, schema version' \u2014 never the roster.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h40",
+      "kind": "honesty",
+      "text": "Under a flood of keyless join requests memory stays bounded at N pending entries and the log shows one collapsed line, not one per request.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c50",
+      "kind": "boundary",
+      "text": "The join key is read from .env / .secrets.env via the compose passthrough only; lobes doctor warns when the invoking shell exports a different value (the Thor ~/.bashrc trap, issue #209), since compose interpolates shell env ahead of .env.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h41",
+      "kind": "honesty",
+      "text": "doctor reports a named finding when the shell's LOBES_MESH_KEY differs from the .env value.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c52",
+      "kind": "requirement",
+      "text": "Cutover rollback: before touching a box, its ~/.lobes is copied to ~/.lobes.pre-mesh-<UTC timestamp> and the previous MODEL_GEAR_VERSION recorded; rollback = copy back + recreate the gateway with the four -f compose files (Spark) / env -u GATEWAY_API_KEY (Thor). The evidence transcript names the backup path per box.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h42",
+      "kind": "honesty",
+      "text": "The backup directory exists on every box before its .env is modified, and the transcript names it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c53",
+      "kind": "requirement",
+      "text": "Containment of a misbehaving member: announced capacity passes the existing resolve_capacity clamp (CAPACITY_CLAMP_MAX=64, _replicas.py:455-497); a flapping member (joins/leaves > 3 times in 10 intervals) is held out for one interval with reason mesh_flapping in status; nothing a member announces can remove another member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h43",
+      "kind": "honesty",
+      "text": "A fake announcement with capacity 10^6 ranks with weight <= 64; a flapping member is held out for one interval and shown as mesh_flapping.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Mesh config: parse LOBES_MESH_KEY / LOBES_MESH_NAME / LOBES_MESH_SEEDS / LOBES_MESH_HEARTBEAT_S (60) / LOBES_MESH_MISSED_MAX (3) / LOBES_MESH_LEDGER_PATH into a frozen MeshConfig in a new module",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/_mesh_config.py: build_mesh_config(env) returns enabled=False with every field default when LOBES_MESH_KEY is unset; no other module's config output changes (existing build_config tests pass unchanged)",
+        "key set without LOBES_MESH_NAME raises MeshConfigError naming the missing key; name is never derived from hostname",
+        "seeds parse as a comma list with trailing slashes trimmed; heartbeat and missed-max reject non-positive values with a named error"
+      ],
+      "deps": [],
+      "covers": [
+        "c42",
+        "h33",
+        "c13"
+      ],
+      "instruction": "New file only. Mirror the style of _config.py's _replica_origins/_self_origin parsers (verbatim, never derived). Tests in tests/test_mesh_config.py. Do not touch _config.py in this task."
+    },
+    {
+      "id": "t2",
+      "summary": "Announcement wire: schema-versioned Announcement dataclass + encode/decode in a new module, carrying name, origin, schema_version, and per-role RoleInfo fields plus fingerprint, capacity and a private flag",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/_mesh_wire.py: decode(encode(a)) == a; unknown extra fields are ignored; a different major schema version raises MeshSchemaIncompatible with both versions in the message",
+        "a role marked private=True is dropped by Announcement.public() so it never leaves the box; the flag defaults to False",
+        "the per-role payload reuses lobes/roles.py RoleInfo fields (model/runtime/context/quant/responsibilities/forbidden_responsibilities) \u2014 no parallel field vocabulary"
+      ],
+      "deps": [],
+      "covers": [
+        "c5",
+        "c45",
+        "h36",
+        "c32"
+      ],
+      "instruction": "Pure dataclasses + json, stdlib only, no I/O. Tests in tests/test_mesh_wire.py. The fingerprint fields must match _replicas.py DISQUALIFYING_FIELDS (served_id, quantization, max_model_len, runtime)."
+    },
+    {
+      "id": "t3",
+      "summary": "Roster + ledger: in-memory Roster (members by name, last_seen, missed count, verified/unverified, flapping hold-out, name-conflict refusal, capacity clamp) and a persisted approval Ledger (name -> approved_by, expiry) with gossip merge, in a new module",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/_mesh_roster.py: a member is dropped after LOBES_MESH_MISSED_MAX consecutive missed ticks, not before; a restart yields an empty roster while the ledger file is byte-identical",
+        "two announcements with the same name from different origins: the second is refused with mesh_name_conflict; same origin re-announcing updates in place",
+        "ledger.merge(peer_ledger) makes a lapsed name refused on a member that never saw the approve call; an expired entry is refused with mesh_approval_expired even when the join key is presented",
+        "announced capacity passes resolve_capacity (weight <= CAPACITY_CLAMP_MAX); a member that joins/leaves more than 3 times in 10 ticks is held out one tick with reason mesh_flapping; no announcement can remove another member"
+      ],
+      "deps": [],
+      "covers": [
+        "c37",
+        "h28",
+        "c9",
+        "h11",
+        "c43",
+        "h34",
+        "c53",
+        "h43",
+        "h4"
+      ],
+      "instruction": "Pure state machine with an injected clock (like _segmenter.py's style) so tests need no sleeps. Ledger persists as JSON at LOBES_MESH_LEDGER_PATH; write via temp file + rename. Reuse _replicas.resolve_capacity, do not copy it. Tests in tests/test_mesh_roster.py."
+    },
+    {
+      "id": "t4",
+      "summary": "Templates and scan plumbing: gateway compose passthrough for every LOBES_MESH_* key, the gateway's first bind mount for the ledger file, env.example docs for the keys, LOBES_MESH_KEY in scan_deployment_secrets.py, .gitignore for the runtime ledger",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/templates/fleet/docker-compose.yml gateway environment: lists every key from _mesh_config; a rendered compose with LOBES_MESH_LEDGER_PATH set mounts the file read-write into the gateway",
+        "scripts/scan_deployment_secrets.py flags LOBES_MESH_KEY=<value> in a fixture under tests/fixtures/deployments and CI secrets-scan fails on it",
+        "tests/goldens regenerate unchanged except template-defaults.env, which gains only the new keys' defaults"
+      ],
+      "deps": [],
+      "covers": [
+        "c8",
+        "h10",
+        "c18",
+        "h17"
+      ],
+      "instruction": "Files: docker-compose.yml, env.example, scan_deployment_secrets.py, .gitignore, tests/fixtures. Do NOT edit doctor.py here (t8 owns it). Follow the passthrough comment block at docker-compose.yml:2055-2058."
+    },
+    {
+      "id": "t5",
+      "summary": "Gateway-only shape: a built-in 'gateway-only' shape (hosts=[]) with goldens, and relax _routing.py's 'a built table always has a primary backend' assumption so a table with no local backend builds and routes only by mesh",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/profiles/builtin_shapes/gateway-only.toml renders services ('gateway',) on every card and every core role FEASIBLE=false; goldens added for spark/thor/orin/base",
+        "build_config on an env with no local backend returns a RoutingTable whose order_backends yields nothing locally and no exception; existing tests pass",
+        "grep gate test: none of MESH, PEER, SELF_ORIGIN appear in lobes/profiles/*.py"
+      ],
+      "deps": [],
+      "covers": [
+        "c6",
+        "c17",
+        "h16"
+      ],
+      "instruction": "Shape TOML mirrors orin-small.toml's structure with hosts=[]. Touch _routing.py:432-436 only. Add tests/test_shape_gateway_only.py."
+    },
+    {
+      "id": "t6",
+      "summary": "Mesh endpoints + heartbeat thread: GET /mesh/detect (keyless, minimal), POST /mesh/join (keyless, bounded, collapsed log), POST /mesh/announce and GET /mesh/roster and POST /mesh/approve|revoke (join-key bearer); inbound gate accepts the join key for members; heartbeat daemon thread in serve() announcing to seeds + roster members with an immediate re-announce hook",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "with LOBES_MESH_KEY unset: no mesh thread starts, every /mesh/* path 404s, and the four byte-identical tests pass unchanged",
+        "GET /mesh/detect returns only member name, schema version and 'mesh': true \u2014 never a member list; POST /mesh/join is capped at 8 pending entries with a TTL, one per origin, and a 100-request flood logs one collapsed line",
+        "POST /mesh/announce without the join key is 401 and never touches the roster; with it, the member appears in GET /mesh/roster (401 without the key)",
+        "heartbeat thread reads its interval from MeshConfig (60 s default), uses Event.wait, and a peer whose socket hangs past the timeout delays no other peer; reannounce_now() is callable from the request path without blocking",
+        "a member with one seed learns every member listed in the seed's roster on the first tick"
+      ],
+      "deps": [
+        "t1",
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c4",
+        "h7",
+        "h2",
+        "c38",
+        "h29",
+        "c39",
+        "h30",
+        "c49",
+        "h40",
+        "h12"
+      ],
+      "instruction": "New module lobes/gateway/_mesh_routes.py with the handlers; server.py gains only the route dispatch lines, the gate change (_authorized accepts join key), and the thread start in serve(). Follow _tier_request.py:223-229 for the loop and _authlog.py for collapsed logging. Tests with fake openers as in test_gateway_peer_advert.py:33-49."
+    },
+    {
+      "id": "t7",
+      "summary": "Membership-driven routing (core): copy-on-write routing snapshot swapped atomically from the roster; pools and auto-proxy derived from verified members (probe /capabilities must match the announcement before any forward); hand proxied like any role; realtime stays local-only; single-hop 508 preserved",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the request path reads one immutable snapshot per request; a roster change mid-request never affects it; no lock is held across a dial",
+        "two fake members announcing cortex with equal fingerprints form one pool selected by select_replica; a member whose /capabilities probe disagrees with its announcement gets zero forwards and is marked unverified",
+        "model=hand on a member lacking hand forwards with X-Lobes-Proxied-By; GET /v1/realtime on a member lacking stt is 404 role_infeasible while another member announces stt",
+        "A lacking R -> B (roster says B has R) -> B lacks R too: A's request returns 508 proxy_loop and C is never dialled; a forwarded request carries Bearer <join key> and never the client's bearer",
+        "a member dropped from the roster leaves the pool on the next snapshot; requests for its only role 404 role_infeasible with no hosted_by within one snapshot, never hang"
+      ],
+      "deps": [
+        "t6",
+        "t5"
+      ],
+      "covers": [
+        "c3",
+        "h25",
+        "c7",
+        "h9",
+        "c28",
+        "h18",
+        "c44",
+        "h35",
+        "c40",
+        "h31",
+        "c14",
+        "h13"
+      ],
+      "instruction": "Build the snapshot in a new lobes/gateway/_mesh_routing.py from Roster + existing ReplicaCache/ReadinessCache probes; server.py's _peer_only_forward/_proxied_owner/_pool_dispatch consult the snapshot instead of table.replica_origins/peer_origins. Keep X-Lobes-Route-Reason values unchanged. Tests in tests/test_mesh_routing.py."
+    },
+    {
+      "id": "t8",
+      "summary": "Naming and exposure: '{role}-{machine-name}' suffixed lanes on fingerprint disagreement, listed on /v1/models and /capabilities of every member; raw served-id on divergent lanes only 404s listing the suffixed names; private roles never exposed; immediate re-announce on lobes switch/up/unhealthy; X-Lobes-Mesh-Member on every mesh answer",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "two members announce cortex with different quantization: every member lists cortex-<nameA> and cortex-<nameB>; model=cortex returns 404 role_infeasible with hosted_by empty, never one of them",
+        "a raw id hosted only as suffixed lanes 404s with a body listing every suffixed name; hosted locally it is served locally",
+        "a role announced private is absent from a peer's roster, /v1/models and /capabilities and still answers locally",
+        "changing a fake member's quantization moves it from the plain pool to a suffixed lane within one probe refresh (5 s), not one heartbeat; X-Lobes-Route-Reason set unchanged (assert against _selection.py's constant); X-Lobes-Mesh-Member present on pooled, proxied and suffixed answers"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c27",
+        "h1",
+        "c48",
+        "h39",
+        "h20",
+        "c46",
+        "h37",
+        "c15",
+        "h14",
+        "c16",
+        "h15"
+      ],
+      "instruction": "Extend _mesh_routing.py and the /v1/models + capabilities_payload builders in server.py/roles.py. The reannounce hook from t6 is triggered from the readiness cache's health transition and from lobes switch/up via a POST to the local /mesh/reannounce (join key). Tests in tests/test_mesh_naming.py."
+    },
+    {
+      "id": "t9",
+      "summary": "Retire the *_PEER_* family in code + doctor: delete PEER_ORIGIN/ORIGINS/PROXY/API_KEY(S) parsing and ReplicaConfigError paths from _config.py/_routing.py; doctor gains three findings: leftover *_PEER_* keys, shell LOBES_MESH_KEY differing from .env, and mesh passthrough coverage",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "grep of lobes/ for PEER_ORIGIN, PEER_PROXY, PEER_API_KEY returns only 'Retired' comments; the four byte-identical tests and every existing gateway test pass (rewritten where they declared peers)",
+        "lobes doctor on an .env carrying PRIMARY_PEER_ORIGIN reports a named finding peer_family_retired listing each key; on a clean .env reports nothing",
+        "lobes doctor reports mesh_key_shell_mismatch when the invoking shell's LOBES_MESH_KEY differs from .env, and passthrough_missing when a LOBES_MESH_* key is absent from the compose gateway block"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c29",
+        "h19",
+        "c50",
+        "h41"
+      ],
+      "instruction": "Cite-don't-delete applies to docs (t10), not to dead parsing code: remove it. Update tests/test_gateway_proxy.py, test_gateway_pool.py, test_gateway_config_proxy.py, test_gateway_peer_only_pool.py to build peers through fake roster announcements instead of env keys. doctor.py is owned by this task alone."
+    },
+    {
+      "id": "t10",
+      "summary": "CLI: 'lobes mesh status|request|approve <name> [--for <duration>]|revoke <name>' (write verbs dry-run, --apply commits) plus lobes capabilities rendering members, suffixed and private lanes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/cli/_commands/mesh.py registered like fleet's noun; 'lobes mesh approve x' without --apply prints the plan and changes nothing; with --apply POSTs /mesh/approve with the join key",
+        "'lobes mesh status' golden against a fake roster shows name, last-heartbeat age, approval expiry, verified/unverified/flapping and roles; 'lobes mesh request' works with no join key set",
+        "lobes capabilities shows each role's serving member and any suffixed lanes; offline fallback still renders from .env with ready=False"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c47",
+        "h38"
+      ],
+      "instruction": "Files: cli/_commands/mesh.py (new), cli/__init__.py (register), capabilities.py (render). Do not touch server.py. Tests in tests/test_cli_mesh.py."
+    },
+    {
+      "id": "t11",
+      "summary": "Docs and catalog follow the replacement: gateway-fleet.md, deployment-shapes.md, colleague-stack.md, openai-api.md, secret-rotation.md (join-key rotation = fleet-wide restart), env.example, lobes explain, CLAUDE.md; old peer sections moved under 'Retired'; deployments/jetson-agx-thor__thor-worker re-captured; version bump",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "grep of docs/ and lobes/explain for PEER_ORIGIN|PEER_PROXY|PEER_API_KEY|PEER_ORIGINS outside a '## Retired' heading returns nothing; markdownlint passes",
+        "deployments/jetson-agx-thor__thor-worker/ re-captured via lobes.runtime._lock.capture_lock against the new template; secrets-scan passes; VARIATION.md unchanged in its Measured result section",
+        "pyproject version bumped minor with a CHANGELOG entry naming the retired family and the new keys"
+      ],
+      "deps": [
+        "t9",
+        "t10"
+      ],
+      "covers": [
+        "c41",
+        "h32"
+      ],
+      "instruction": "Use the doc-test-alignment checklist. Re-capture the Thor entry from the repo (no CLI verb exists). Bump with python3 .claude/skills/version-bump/scripts/bump.py minor (pipe the changelog JSON on stdin)."
+    },
+    {
+      "id": "t12",
+      "summary": "Live cutover and validation on Spark + Thor + Orin: baseline capture, per-box backups, migrate all three onto the join key with LOBES_MESH_NAME/SEEDS, boot the gateway-only shape on the Orin as a fourth-member test, measure the five success signals, file the evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/2026-MM-DD-baseline-mesh-cutover.txt captures each box's redacted *_PEER_* block and the stale Orin pool entry BEFORE any change; ~/.lobes.pre-mesh-<UTC> exists on every box and is named in the transcript",
+        "after cutover: zero *_PEER_* keys on any box (lobes doctor 0 findings on all three); a member removed and re-added with the key alone is listed by all others within <= 120 s; no other member's ~/.lobes changed (diff shown)",
+        "4 concurrent model=cortex requests to one member are served by two compatible members (both X-Lobes-Served-By and X-Lobes-Proxied-By observed); model=hand and model=cortex from the Thor answer 200 by proxy; Qwen Code reaches a role through the local gateway",
+        "stopping one member's gateway: others answer 200 for their roles within <= 120 s and 404 role_infeasible in < 10 s for a role only it had; with LOBES_MESH_KEY removed on one box its responses are byte-identical to 0.75.x",
+        "the gateway-only shape boots on one box and serves model=cortex by proxy; each success signal (1)-(5) has its measured value and PASS/FAIL, failures recorded not dropped"
+      ],
+      "deps": [
+        "t11",
+        "t14"
+      ],
+      "covers": [
+        "c1",
+        "h5",
+        "c2",
+        "h6",
+        "c33",
+        "h21",
+        "c34",
+        "h22",
+        "c35",
+        "h23",
+        "c36",
+        "h24",
+        "c52",
+        "h42",
+        "h8"
+      ],
+      "instruction": "ssh thor@thor / ssh orin@orin; on the Thor run every compose command under env -u GATEWAY_API_KEY; on the Spark always pass all four -f compose files; install the lobes CLI on Thor and Orin first (uv tool install) and fix the Orin MODEL_GEAR_VERSION pin. Downtime approved. Follow docs/model-switch-playbook.md's evidence format."
+    },
+    {
+      "id": "t13",
+      "summary": "Swap the peer SOURCE to the mesh: pools and forward targets are built from the mesh RoutingSnapshot with no env-declared peer origins; the pool selection no longer exits early when table.replica_origins is empty; end-to-end tests with NO <PREFIX>_PEER_* keys in any fixture; byte-identical tests intact",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_mesh_routing_wiring.py fixtures contain no *_PEER_* key; announce -> verify -> forward and two-member pool tests pass against fake member HTTP servers with only LOBES_MESH_* and GATEWAY_SELF_ORIGIN set",
+        "_pool_selection / pooled_backends / _peer_only_forward / _pooled_busy_dispatch build candidates from the mesh snapshot when no env peer origins exist; with env peer keys ALSO present behaviour is unchanged (the six existing peer-key test files still pass unmodified in this task)",
+        "with LOBES_MESH_KEY unset and no peer keys the four byte-identical tests pass unchanged; a lobes-only box with the key and one seed forwards model=<lacked role> with X-Lobes-Proxied-By and X-Lobes-Mesh-Member"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c29",
+        "h19",
+        "c7",
+        "h9",
+        "c28",
+        "h18",
+        "c13",
+        "h12"
+      ],
+      "instruction": "Associate's facts (2026-09-12): base candidates come from table.replica_origins (env) and mesh members are overlaid in _pool_selection (~lines 2020-2034); _pool_selection returns None early when replica_snapshot is None or table.replica_origins.get(backend_name) is falsy, so a mesh-only box never reaches the overlay. Make the mesh snapshot a first-class source: candidates = local lane (if hosted) + verified mesh members with matching fingerprint, independent of env origins; keep env origins working in this task (t14 deletes them). Do not touch lobes/profiles, templates, docs."
+    },
+    {
+      "id": "t14",
+      "summary": "Delete the env peer-family parsing (PEER_ORIGIN_ENV, PEER_ORIGINS_ENV, PEER_PROXY_ENV, PEER_API_KEY_ENV, PEER_API_KEYS_ENV, their ReplicaConfigError paths, peer_specs_from_table env inputs, _PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT if env-only) and rewrite the six test files that declared peers through env keys to declare them through fake mesh announcements; doctor's _pool_arming_check retired",
+      "origin": "user",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "grep of lobes/ for PEER_ORIGIN, PEER_PROXY, PEER_API_KEY returns only 'Retired' comments; the four byte-identical tests pass; full suite green",
+        "tests/test_gateway_proxy.py, test_gateway_pool.py, test_gateway_config_proxy.py, test_gateway_peer_only_pool.py, test_gateway_peer_advert.py, test_associate_*.py set no *_PEER_* key and still prove single-hop 508, bearer swap, pool placement, referral 404 shape via fake mesh members",
+        "lobes doctor peer_family_retired still fires on leftover keys; _pool_arming_check and ReplicaConfigError import removed from doctor.py"
+      ],
+      "deps": [
+        "t13"
+      ],
+      "covers": [
+        "c29",
+        "h19",
+        "c50",
+        "h41",
+        "c13",
+        "h12"
+      ],
+      "instruction": "Only after t13 is merged. Keep ReplicaCache/select_replica/capacity clamp; remove only the env SOURCE. Where a test asserted a config-object shape for the retired dicts, delete the test rather than keep a dead assertion."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "Heterogeneous same-role pools balance by slot count, not service rate (#232): the Spark/Thor cortex pool may serve slower under load than pinning; success signal (3) checks placement, not throughput.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "The gateway-only shape has never booted on a physical Orin (#108); t12's fourth-member test is its first live run and may surface a routing assumption t5 did not relax.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Raw-id requests under local pressure are not forwarded (#215); the mesh pool inherits that until #215 lands \u2014 a follow-up, not part of this plan.",
+      "kind": "follow_up",
+      "task_id": "t7",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "t6, t7, t8 and t9 all edit server.py and must be built serially (they are chained by dependencies); do not widen those waves.",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "Cutover downtime: consumers mid-request during a gateway recreate see connection errors; approved by the operator, to be scheduled in a quiet window and noted in the transcript.",
+      "kind": "follow_up",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "The mesh runtime directory bind mount (default ./mesh beside the compose) is auto-created by Docker as root-owned on the first gateway recreate; the unprivileged gateway (uid 10001) cannot write the ledger until the operator chowns it. Cutover (t12) must chown on all three boxes; a later task could have lobes init pre-create it.",
+      "kind": "follow_up",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "Wire contract for t8: lobes mesh status (t10, merged) renders roster members from fields last_seen_age, expiry, verified, flapping, roles, and lobes capabilities renders per-role member and suffixed_lanes \u2014 t8 must emit exactly these names on GET /mesh/roster and /capabilities (or t10's renderer is amended in the same wave).",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "Observability gap found by the associate facts pass on t7: verification probe failures in _mesh_routes.py (_heartbeat_loop verify pass, verify_members probe and future loop) are swallowed by bare 'except Exception: pass' with no log, so an 'unverified' member gives the operator no reason. t9 adds one collapsed log line per failing origin (RejectionLog pattern) and a 'reason' on the roster entry that lobes mesh status shows.",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r9",
+      "text": "Found by t8's own report: the flapping hold-out (c53/h43) lives only in Roster.join, which no live handler calls \u2014 /mesh/announce drives Roster.announce, so flapping is inert on the real path and GET /mesh/roster reports a roster-wide False. t9 wires flap tracking per name into the announce path.",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r10",
+      "text": "Found by the associate facts pass on t8: a pooled request served LOCALLY carries no X-Lobes-Mesh-Member, while the spec says every mesh answer names its serving member \u2014 for a local pick that is this box's own LOBES_MESH_NAME. t9 adds it.",
+      "kind": "follow_up",
+      "task_id": "t9",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r11",
+      "text": "Post-t14: lobes.roles.annotate_peer_referrals still reads table.peer_origins (always empty) for /capabilities hosted_by; the CLI shows the serving member via t8's member field, but the JSON hosted_by is never mesh-sourced. Follow-up: make annotate_peer_referrals consult the mesh snapshot.",
+      "kind": "follow_up",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

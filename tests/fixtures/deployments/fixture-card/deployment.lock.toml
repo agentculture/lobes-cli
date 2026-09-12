@@ -22,4 +22,4 @@ PRIMARY_SERVED_NAME = "fixture/Fixture-Primary"
 [files]
 "Dockerfile.gateway" = "sha256:4f861ca8392deb4794aad1043792cfe9d0212c159458d14e39dfaae849027868"
 "docker-compose.override.yml" = "sha256:645ec3533382e96a78f1969bfe6f7b72cfe863df829ad7857f1a5fdead1744e8"
-"docker-compose.yml" = "sha256:de6964335cbcac68db7c3e29ef5103ef9231b35ae9064dbf8b1f89a2e537528a"
+"docker-compose.yml" = "sha256:3be022ea5690b7db6760ee06e1cfb1639231d4f78d8876ce6f59c41aa4384278"
