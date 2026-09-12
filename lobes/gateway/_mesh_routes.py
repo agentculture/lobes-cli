@@ -555,39 +555,7 @@ class MeshRoutes:
         except Exception:  # nosec B110 — a duck-typed holder never breaks ingest
             return
         prev = getattr(view, "snapshot", None)
-        verified: dict[str, frozenset[str]] = {}
-        reasons: dict[str, str] = {}
-        ready: dict[str, frozenset[str]] = {}
-        contexts: dict[str, dict[str, int]] = {}
-        if prev is not None:
-            prev_anns = dict(prev.announcements)
-            for m in prev.members:
-                if not m.probed:
-                    continue
-                # A probe result belongs to the announcement it verified. If
-                # the announcement changed since (a new fingerprint arrived
-                # by reply or heartbeat), carrying the old verified set onto
-                # the new lanes would make an unverified fingerprint routable
-                # until the next pass — the refresh-path twin of the guard in
-                # _drop_results_for_changed_announcements. Such a member goes
-                # back to pending; the verify-now pass is already scheduled.
-                before = prev_anns.get(m.origin)
-                now = self._announcements.get(m.origin)
-                if before is not None and now is not None:
-                    if _role_fingerprints(before) != _role_fingerprints(now):
-                        continue
-                elif before is not now:
-                    continue
-                # ready_roles carries the "probed" trace even when empty (t1).
-                ready[m.origin] = frozenset(m.ready_roles)
-                if m.verified_roles:
-                    verified[m.origin] = frozenset(m.verified_roles)
-                if m.unverified_reason is not None:
-                    reasons[m.origin] = m.unverified_reason
-                # Qodo thread 2: the probed context travels with the rest of
-                # the probe result, exactly like ready_roles.
-                if m.role_context:
-                    contexts[m.origin] = dict(m.role_context)
+        verified, reasons, ready, contexts = _carry_forward_probe_results(prev, self._announcements)
         snap = build_snapshot(
             self.roster,
             announcements=self._announcements,
@@ -2070,6 +2038,59 @@ def _log_pending_members(
 def _role_fingerprints(ann: Announcement) -> dict[str, object]:
     """The ``role -> fingerprint`` map a probe result is only valid against."""
     return {role: info.fingerprint for role, info in ann.roles.items()}
+
+
+def _probe_result_still_current(
+    origin: str,
+    prev_anns: Mapping[str, "Announcement"],
+    current_anns: Mapping[str, "Announcement"],
+) -> bool:
+    """Does a probe result taken against ``prev_anns[origin]`` still describe
+    ``current_anns[origin]``?  False when the fingerprints changed (the
+    refresh-path twin of :func:`_drop_results_for_changed_announcements`)."""
+    before = prev_anns.get(origin)
+    now = current_anns.get(origin)
+    if before is not None and now is not None:
+        return _role_fingerprints(before) == _role_fingerprints(now)
+    return before is now
+
+
+def _carry_forward_probe_results(
+    prev: "RoutingSnapshot | None",
+    current_anns: Mapping[str, "Announcement"],
+) -> tuple[
+    dict[str, frozenset[str]],
+    dict[str, str],
+    dict[str, frozenset[str]],
+    dict[str, dict[str, int]],
+]:
+    """The per-origin probe maps to hand ``build_snapshot`` on a refresh.
+
+    Every PROBED member of *prev* whose announcement is unchanged carries its
+    verified / reason / ready / context data forward; ``ready`` is recorded
+    even when empty because it is the "probed" trace (t1).  A member whose
+    announcement's fingerprints changed since its probe is left out on
+    purpose — it returns to pending until the verify-now pass the change
+    already scheduled re-probes it.
+    """
+    verified: dict[str, frozenset[str]] = {}
+    reasons: dict[str, str] = {}
+    ready: dict[str, frozenset[str]] = {}
+    contexts: dict[str, dict[str, int]] = {}
+    if prev is None:
+        return verified, reasons, ready, contexts
+    prev_anns = dict(prev.announcements)
+    for m in prev.members:
+        if not m.probed or not _probe_result_still_current(m.origin, prev_anns, current_anns):
+            continue
+        ready[m.origin] = frozenset(m.ready_roles)
+        if m.verified_roles:
+            verified[m.origin] = frozenset(m.verified_roles)
+        if m.unverified_reason is not None:
+            reasons[m.origin] = m.unverified_reason
+        if m.role_context:
+            contexts[m.origin] = dict(m.role_context)
+    return verified, reasons, ready, contexts
 
 
 def _drop_results_for_changed_announcements(
