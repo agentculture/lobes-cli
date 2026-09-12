@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import urllib.error
 import urllib.request
 
@@ -185,10 +186,15 @@ def _parse_duration_seconds(raw: str) -> float:
             message=f"--for {raw!r} is not a valid duration",
             remediation="use a number of seconds, or suffix with s/m/h/d (e.g. '24h')",
         ) from exc
-    if value <= 0:
+    # Finding 16 (review #252): `value <= 0` alone accepts nan (every
+    # comparison against nan is False, so it slips past this "reject
+    # non-positive" gate) and inf (positive, so it passes outright) — a
+    # `--for` presented as a finite duration must not silently mint an
+    # immediately-expired (nan) or effectively-permanent (inf) approval.
+    if not math.isfinite(value) or value <= 0:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message=f"--for {raw!r} must be a positive duration",
+            message=f"--for {raw!r} must be a positive, finite duration",
             remediation="use a number of seconds, or suffix with s/m/h/d (e.g. '24h')",
         )
     return value * multiplier
