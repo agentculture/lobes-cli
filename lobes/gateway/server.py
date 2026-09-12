@@ -2042,6 +2042,35 @@ def _pool_selection(
                         calibrated=True,
                     )
                 )
+    # A box that HOSTS the role is a pool member too. Local replica states come
+    # from the replica caches, which only exist for env-declared pools — so on
+    # a mesh-only host the local lane was never a candidate and every request
+    # was forwarded to a peer with reason "sole-ready" (live Spark reranker,
+    # 2026-09-12). Synthesize the local candidate; `select_replica` gives it
+    # the tie (local wins ties) and ranks it like any replica otherwise.
+    if (
+        mesh_plain_origins
+        and not any(getattr(c, "local", False) for c in candidates)
+        and backend_name not in table.infeasible
+        and any(b.name == backend_name for b in table.backends)
+    ):
+        candidates.append(
+            ReplicaState(
+                origin=table.self_origin or "local",
+                local=True,
+                ready=True,
+                busy=local_busy,
+                health="ok",
+                running=0,
+                waiting=0,
+                fingerprint=None,
+                compatible=True,
+                reason="local lane (mesh pool)",
+                last_seen=0.0,
+                weight=8.0,
+                calibrated=False,
+            )
+        )
     if exclude:
         candidates = [c for c in candidates if c.origin not in exclude]
     return _Placement(

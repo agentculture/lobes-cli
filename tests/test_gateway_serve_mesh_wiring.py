@@ -119,3 +119,60 @@ def test_verification_is_identity_so_unknown_matches_unknown() -> None:
     assert fingerprints_identical(a, b)
     assert not fingerprints_identical(a, c)
     assert not fingerprints_identical(a, None)
+
+
+def test_a_mesh_only_host_keeps_its_own_lane_in_the_pool() -> None:
+    """Regression: with no env-declared pool there is no replica cache, so the
+    local lane was never a candidate and every reranker request on the live
+    Spark was forwarded to the Thor with reason 'sole-ready'."""
+    from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routing import build_snapshot
+    from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo
+    from lobes.gateway.server import _pool_selection
+
+    env = {
+        "RERANK_URL": "http://vllm-rerank:8000",
+        "RERANK_SERVED_NAME": "Qwen/Qwen3-Reranker-0.6B",
+        "RERANK_QUANTIZATION": "none",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+    }
+    table, cfg = build_config(env)
+    fp = Fingerprint(
+        served_id="Qwen/Qwen3-Reranker-0.6B",
+        quantization="none",
+        max_model_len=8192,
+        runtime="vllm",
+    )
+    ann = Announcement(
+        name="peer",
+        origin="http://peer.local:8000",
+        schema_version="1",
+        roles={
+            "reranker": RoleInfo(
+                model="Qwen/Qwen3-Reranker-0.6B",
+                runtime="vllm",
+                context=8192,
+                quant="none",
+                responsibilities=(),
+                forbidden_responsibilities=(),
+                fingerprint=fp,
+            )
+        },
+    )
+    roster = Roster()
+    roster.announce("peer", "http://peer.local:8000", None, now=0.0)
+    snap = build_snapshot(
+        roster,
+        announcements={"http://peer.local:8000": ann},
+        verified_roles={"http://peer.local:8000": frozenset({"reranker"})},
+    )
+    placement = _pool_selection(
+        table, "rerank", req_headers=[], replica_snapshot=None, mesh_snapshot=snap, local_busy=False
+    )
+    assert placement is not None
+    origins = {c.origin for c in placement.candidates}
+    assert "http://peer.local:8000" in origins
+    assert "http://me.local:8000" in origins, "the hosting box's own lane must be a candidate"
+    assert any(c.local for c in placement.candidates)
