@@ -29,7 +29,7 @@ BASELINE (PR #253, `docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`):
 | G. cold gateway-only member joins | dev541 | started 11:20:09Z; pending lines at 11:20:10Z; all three peers probed + verified by 11:20:29Z (20 s) |
 | H. roster sentinel | dev541+ | never-probed members read probed:false + unverified_reason "not_yet_probed"; `lobes mesh status` prints "(not probed)" |
 
-Not measured / still open: the Retry-After value against a slow-but-reachable probe (the paused-peer demo covers the in-flight case); concurrent recreates; raw checkpoint-id addressing through a non-hosting front (#236, see below); the verification-FAILURE log line still reuses the rejection log's `auth: rejected` wording (pre-existing, t9 item C).
+Not measured / still open: the Retry-After value against a slow-but-reachable probe (the paused-peer demo covers the in-flight case); concurrent recreates; raw checkpoint-id addressing through a non-hosting front (#236, see below); the verification-FAILURE log line still reuses the rejection log's `auth: rejected` wording (pre-existing, t9 item C; filed as #255). Follow-ups umbrella: #256 (#236 + #255).
 
 ## Re-image transcripts (per build)
 ### reimage-spark

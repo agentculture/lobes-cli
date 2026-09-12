@@ -130,5 +130,5 @@ Lapse ledger evidence:
 - `t14` residue — done on the branch (`f25b53e`): docstrings and comments now describe routing via the mesh; deliberately historical mentions (Retired (t14), dated findings, issue numbers) kept; `_check_pool_arming` kept because a hand-built RoutingTable can still reach it.
 - Announce only loaded lanes — the Orin announces five hosted-but-not-running lanes; harmless with per-role verification, still noise on every peer.
 - Cortex proxy 200 — closed: the dev532 re-validation obtained a chat completion through the Thor → Spark forward (earlier runs were shed 429 by the Spark's own pressure policy).
-- `/capabilities` JSON `hosted_by` — closed by PR #254 (mesh-sourced since 0.77.0); service-rate weighting for heterogeneous pools (#232); the raw-id pressure gate (#215); the `./mesh` mount is root-owned on first recreate (chmod applied by hand on all three boxes).
+- `/capabilities` JSON `hosted_by` — closed by PR #254 (mesh-sourced since 0.77.0; its own follow-ups are #256: #236 raw ids, #255 verify-log wording); service-rate weighting for heterogeneous pools (#232); the raw-id pressure gate (#215); the `./mesh` mount is root-owned on first recreate (chmod applied by hand on all three boxes).
 - Colleague lane architecture (colleague#495/#496/#497) and the associate facts-pass fixes (associate#3/#4) — filed, outside this plan.

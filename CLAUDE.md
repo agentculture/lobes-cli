@@ -775,7 +775,8 @@ is a fleet-wide restart**, not a per-pair credential swap — see
 > roster. Still open: raw checkpoint-id addressing through a non-hosting front
 > is #236 (pre-existing; the live capabilities suite's two raw-id checks fail
 > for it on every mesh member), and the verification-failure log line still
-> reuses the rejection log's `auth: rejected` wording.
+> reuses the rejection log's `auth: rejected` wording (#255). Both are tracked
+> together as the PR #254 follow-ups in **#256**.
 >
 > **Implementation status.** The code-level removal of the retired peer
 > family is done (t14): the gateway no longer parses any of the retired
