@@ -746,8 +746,6 @@ def compute_role_placement(
         (``None`` when this box does not host the role at all — the
         peers-agree-with-each-other fallback applies).
     """
-    import dataclasses
-
     from lobes.gateway._replicas import compare_fingerprints
 
     candidates = _collect_role_candidates(snapshot, role)
@@ -799,8 +797,14 @@ def compute_role_placement(
                 role=role, plain_origins=(), suffixed=suffixed, pending_origins=pending
             )
 
-    return dataclasses.replace(
-        _split_candidates_by_reference(role, candidates, reference),
+    # S5886: build the placement through RolePlacement's own constructor
+    # rather than `dataclasses.replace`, whose return type is the generic
+    # DataclassInstance (the same treatment `Announcement.public()` got).
+    split = _split_candidates_by_reference(role, candidates, reference)
+    return RolePlacement(
+        role=split.role,
+        plain_origins=split.plain_origins,
+        suffixed=split.suffixed,
         pending_origins=pending,
     )
 

@@ -92,6 +92,7 @@ _JSON: str = "application/json"
 _NAME_REQUIRED_MSG: str = "name is required"
 _INVALID_KEY_MSG: str = "Invalid API key."
 _ANNOUNCE_PATH: str = "/mesh/announce"
+_CAPABILITIES_PATH: str = "/capabilities"
 
 
 # --- shared route-handler helpers (S3776: extracted from the handlers below) -
@@ -1500,6 +1501,55 @@ def _broadcast_announcement(
                     pass
 
 
+def _run_heartbeat_pass(
+    routes: "MeshRoutes",
+    announcement_bytes: bytes,
+    stop_event: threading.Event,
+    seeds: "tuple[str, ...] | list[str]",
+    holder: "SnapshotHolder | None",
+    force_verify: bool,
+) -> None:
+    """Run ONE heartbeat pass: tick, verify if dirty, then broadcast.
+
+    Extracted from :func:`_heartbeat_loop` so each half stays within the
+    project's cognitive-complexity budget; the sequencing is unchanged.
+    *force_verify* is the loop's first iteration (see the comment below).
+    """
+    to_send, verify_dirty = _tick_and_collect(routes, announcement_bytes, holder)
+    # t2: the first iteration always verifies.  It used to `continue`
+    # here, so on a box that started with members already in its roster
+    # (a restored roster, a seeded peer) nothing was probed until a whole
+    # heartbeat interval had passed — a boot window at least one tick
+    # long, for no reason.
+    if force_verify:
+        verify_dirty = True
+
+    # Verification pass OUTSIDE the lock: network I/O never holds it.
+    if verify_dirty:
+        try:
+            _run_verify_pass(routes, holder)
+        except Exception:  # nosec B110 — verification is best-effort
+            pass
+
+    if to_send is None:
+        return
+
+    member_origins = _collect_member_origins(routes)
+    # Find 10: use named per-dial budget, not missed_max * 10.
+    dial_timeout = _DIAL_TIMEOUT_S
+
+    _maybe_fetch_seed_roster(routes, seeds, dial_timeout)
+    _broadcast_announcement(
+        to_send,
+        seeds,
+        member_origins,
+        stop_event,
+        dial_timeout,
+        routes.config.key,
+        routes=routes,
+    )
+
+
 def _heartbeat_loop(
     routes: "MeshRoutes",
     announcement_bytes: bytes,
@@ -1538,40 +1588,8 @@ def _heartbeat_loop(
         else:
             continue
 
-        to_send, verify_dirty = _tick_and_collect(routes, announcement_bytes, holder)
-        # t2: the first iteration always verifies.  It used to `continue`
-        # here, so on a box that started with members already in its roster
-        # (a restored roster, a seeded peer) nothing was probed until a whole
-        # heartbeat interval had passed — a boot window at least one tick
-        # long, for no reason.
-        if first_iteration:
-            verify_dirty = True
+        _run_heartbeat_pass(routes, announcement_bytes, stop_event, seeds, holder, first_iteration)
         first_iteration = False
-
-        # Verification pass OUTSIDE the lock: network I/O never holds it.
-        if verify_dirty:
-            try:
-                _run_verify_pass(routes, holder)
-            except Exception:  # nosec B110 — verification is best-effort
-                pass
-
-        if to_send is None:
-            continue
-
-        member_origins = _collect_member_origins(routes)
-        # Find 10: use named per-dial budget, not missed_max * 10.
-        dial_timeout = _DIAL_TIMEOUT_S
-
-        _maybe_fetch_seed_roster(routes, seeds, dial_timeout)
-        _broadcast_announcement(
-            to_send,
-            seeds,
-            member_origins,
-            stop_event,
-            dial_timeout,
-            routes.config.key,
-            routes=routes,
-        )
 
 
 def _seed_connection(
@@ -1595,49 +1613,62 @@ def _seed_connection(
     return conn, path, {"Content-Type": _JSON}
 
 
+def _record_discovered_roles(routes: "MeshRoutes | None", morigin: str, roles: object) -> None:
+    """Remember the roles a seed listed for *morigin* (d1).
+
+    Provisional, so the pending (503) path can name a member we hold no
+    announcement for yet. Never routed, never verified from; a real
+    announcement wins (see build_snapshot's discovered_roles).
+    """
+    if routes is None or not isinstance(roles, list):
+        return
+    routes._discovered_roles[morigin] = tuple(  # noqa: SLF001
+        sorted(r for r in roles if isinstance(r, str) and r)
+    )
+
+
+def _merge_one_seed_member(roster: "Roster", routes: "MeshRoutes | None", member: object) -> None:
+    """Discovery-merge ONE entry of a seed's ``members`` list into *roster*."""
+    if not isinstance(member, dict):
+        return
+    mname = member.get("name", "")
+    morigin = member.get("origin", "")
+    if routes is not None and mname == routes.config.name:
+        # A peer's roster lists US; never merge ourselves in.
+        return
+    if not mname or not morigin:
+        return
+
+    _record_discovered_roles(routes, morigin, member.get("roles"))
+    # DISCOVERY only: a peer's roster tells us a member exists; it
+    # is not a heartbeat FROM that member. `discover` never
+    # refreshes a known name (a stopped Thor stayed alive 4+ min,
+    # live 2026-09-12) and is refused during the post-drop
+    # hold-down (the pass that dropped it re-learned it from the
+    # Orin and the survivors revived it forever, dev526). Roster
+    # takes its own lock; wrapping it in that same lock deadlocked
+    # the heartbeat live (Orin).
+    newly_discovered = mname not in roster.members()
+    roster.discover(mname, morigin, None, now=time.monotonic())
+    # t2: a member we have never seen before is, by definition,
+    # never-probed — ask the loop for an immediate pass rather than
+    # leaving it inside the boot window until the next tick.  Only
+    # NEW names set the event: a seed roster re-lists every known
+    # member on every fetch, and waking on those would make the
+    # verify-now event fire once per tick per seed forever.
+    if newly_discovered and routes is not None:
+        routes._verify_event.set()  # noqa: SLF001
+        routes._verify_now_event.set()  # noqa: SLF001
+        # d2: in the routing view now, pending on its discovered roles.
+        routes.refresh_routing_view()
+
+
 def _merge_seed_members(roster: "Roster", routes: "MeshRoutes | None", members: object) -> None:
     """Discovery-merge a seed's ``members`` list into *roster* (finding 3)."""
     if not isinstance(members, list):
         return
     for member in members:
-        if not isinstance(member, dict):
-            continue
-        mname = member.get("name", "")
-        morigin = member.get("origin", "")
-        if routes is not None and mname == routes.config.name:
-            # A peer's roster lists US; never merge ourselves in.
-            continue
-        if mname and morigin:
-            # d1: remember the roles the seed listed for it — provisional, so
-            # the pending (503) path can name a member we hold no announcement
-            # for yet. Never routed, never verified from; a real announcement
-            # wins (see build_snapshot's discovered_roles).
-            roles = member.get("roles")
-            if routes is not None and isinstance(roles, list):
-                routes._discovered_roles[morigin] = tuple(  # noqa: SLF001
-                    sorted(r for r in roles if isinstance(r, str) and r)
-                )
-            # DISCOVERY only: a peer's roster tells us a member exists; it
-            # is not a heartbeat FROM that member. `discover` never
-            # refreshes a known name (a stopped Thor stayed alive 4+ min,
-            # live 2026-09-12) and is refused during the post-drop
-            # hold-down (the pass that dropped it re-learned it from the
-            # Orin and the survivors revived it forever, dev526). Roster
-            # takes its own lock; wrapping it in that same lock deadlocked
-            # the heartbeat live (Orin).
-            newly_discovered = mname not in roster.members()
-            roster.discover(mname, morigin, None, now=time.monotonic())
-            # t2: a member we have never seen before is, by definition,
-            # never-probed — ask the loop for an immediate pass rather than
-            # leaving it inside the boot window until the next tick.  Only
-            # NEW names set the event: a seed roster re-lists every known
-            # member on every fetch, and waking on those would make the
-            # verify-now event fire once per tick per seed forever.
-            if newly_discovered and routes is not None:
-                routes._verify_event.set()  # noqa: SLF001
-                routes._verify_now_event.set()  # noqa: SLF001
-                # d2: in the routing view now, pending on its discovered roles.
-                routes.refresh_routing_view()
+        _merge_one_seed_member(roster, routes, member)
 
 
 def _rebuild_routing_after_revocations(
@@ -1834,7 +1865,7 @@ def _probe_member_capabilities(
     try:
         get_caps = _default_peer_opener
         status, body = get_caps(
-            origin.rstrip("/") + "/capabilities",
+            origin.rstrip("/") + _CAPABILITIES_PATH,
             probe_timeout,
             key,
         )
@@ -1926,7 +1957,7 @@ def _run_verification_probes(
             reason_by_origin[origin] = reason
             ready_by_origin[origin] = ready
             if reason is not None and verify_log is not None:
-                line = verify_log.record(origin, "GET", "/capabilities", reason)
+                line = verify_log.record(origin, "GET", _CAPABILITIES_PATH, reason)
                 if line is not None:
                     sys.stderr.write(f"[gateway] mesh verify {mname}: {line}\n")
 
@@ -1963,7 +1994,7 @@ def _log_pending_members(
         # The RejectionLog is used for its THROTTLE only; its own line reads
         # "auth: rejected ..." (it was built for 401s) and misled the first
         # live run, so the wording here is ours.
-        line = verify_log.record(f"{origin}#pending", "GET", "/capabilities", "not_yet_probed")
+        line = verify_log.record(f"{origin}#pending", "GET", _CAPABILITIES_PATH, "not_yet_probed")
         if line is not None:
             sys.stderr.write(
                 f"[gateway] mesh pending {mname}: {origin} not yet probed — requests for its "

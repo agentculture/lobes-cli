@@ -802,7 +802,8 @@ def test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies
         assert "seedbox" in members, "seed never entered the roster from its reply"
         assert members["seedbox"].probed, "seed was not probed within 5 s of start"
         assert "associate" in members["seedbox"].verified_roles
-        assert probes and probes[0][1] - t0 < 5.0
+        assert probes
+        assert probes[0][1] - t0 < 5.0
     finally:
         routes._stop.set()
         peer_srv.shutdown()

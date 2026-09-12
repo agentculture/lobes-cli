@@ -44,7 +44,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1873,7 +1873,9 @@ class TestProbeReadyRoles:
         ).encode()
         holder = _Holder()
         with patch.object(
-            readiness_mod, "_default_peer_opener", lambda url, timeout, key: (200, payload)
+            readiness_mod,
+            "_default_peer_opener",
+            MagicMock(return_value=(200, payload)),
         ):
             verify_members(routes, holder, join_key="sk-test", timeout=0.5)
         member = next(m for m in holder.current().snapshot.members if m.origin == origin)
@@ -1891,7 +1893,9 @@ class TestProbeReadyRoles:
         routes._announcements[origin] = _peer_ann("peerbox", origin)
         holder = _Holder()
         with patch.object(
-            readiness_mod, "_default_peer_opener", lambda url, timeout, key: (200, b"{}")
+            readiness_mod,
+            "_default_peer_opener",
+            MagicMock(return_value=(200, b"{}")),
         ):
             verify_members(routes, holder, join_key="sk-test", timeout=0.5)
         member = next(m for m in holder.current().snapshot.members if m.origin == origin)
@@ -1919,7 +1923,8 @@ class TestAnnounceReplyCarriesOwnAnnouncement:
         payload = json.loads(resp)
         assert "announcement" in payload
         got = decode(json.dumps(payload["announcement"]).encode())
-        assert got.name == decode(own).name and got.origin == decode(own).origin
+        assert got.name == decode(own).name
+        assert got.origin == decode(own).origin
 
     def test_announce_reply_omits_announcement_when_none_stored(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -1929,7 +1934,8 @@ class TestAnnounceReplyCarriesOwnAnnouncement:
         status, _headers, resp = routes.announce(
             _fake_handler("/mesh/announce", "POST", body, _bearer())
         )
-        assert status == 200 and "announcement" not in json.loads(resp)
+        assert status == 200
+        assert "announcement" not in json.loads(resp)
 
     def test_ingesting_a_reply_stores_the_peer_and_asks_for_an_immediate_verify(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -2012,7 +2018,8 @@ class TestProbeIgnoresProxiedEntries:
             _origin, verified, ready, reason = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
-            assert "associate" in verified and reason is None
+            assert "associate" in verified
+            assert reason is None
             assert ready == frozenset({"associate"}), ready
         finally:
             srv.shutdown()
@@ -2045,7 +2052,8 @@ class TestProbeIgnoresProxiedEntries:
                 },
             )
             _o, verified, ready, _r = _probe_member_capabilities(("peer", origin, ann), None, 2.0)
-            assert verified == frozenset() and ready == frozenset()
+            assert verified == frozenset()
+            assert ready == frozenset()
         finally:
             srv.shutdown()
 
@@ -2071,7 +2079,8 @@ class TestRoutingViewRefreshesOnIngest:
         assert routes.ingest_reply_announcement(reply)
         snap = holder.current().snapshot
         m = {x.name: x for x in snap.members}["thor"]
-        assert m.probed is False and "associate" in m.announced_roles
+        assert m.probed is False
+        assert "associate" in m.announced_roles
 
     def test_seed_discovery_puts_the_member_in_the_view_with_discovered_roles(self) -> None:
         from lobes.gateway._mesh_routes import _merge_seed_members
@@ -2084,7 +2093,8 @@ class TestRoutingViewRefreshesOnIngest:
         )
         snap = holder.current().snapshot
         m = {x.name: x for x in snap.members}["orin"]
-        assert m.probed is False and m.announced_roles == ("associate",)
+        assert m.probed is False
+        assert m.announced_roles == ("associate",)
 
     def test_refresh_carries_forward_probe_results(self) -> None:
         from lobes.gateway._mesh_routing import MeshRoutingView, build_snapshot
@@ -2110,7 +2120,6 @@ class TestRoutingViewRefreshesOnIngest:
         snap = holder.current().snapshot
         by = {x.name: x for x in snap.members}
         assert by["thor"].probed is True
-        assert by["thor"].verified_roles == ("associate",) and by["thor"].ready_roles == (
-            "associate",
-        )
+        assert by["thor"].verified_roles == ("associate",)
+        assert by["thor"].ready_roles == ("associate",)
         assert by["orin"].probed is False
