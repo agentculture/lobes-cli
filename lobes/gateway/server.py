@@ -5039,6 +5039,57 @@ def _make_handler(
     return bound
 
 
+def build_mesh_wiring(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    readiness_cache: object | None,
+    replica_caches: dict,
+    *,
+    start: bool = True,
+    env: Mapping[str, str] | None = None,
+) -> tuple["MeshRoutes | None", "SnapshotHolder | None"]:
+    """Build (and by default start) the mesh routes + snapshot holder for serve().
+
+    Returns ``(None, None)`` when the join key is unset — nothing mesh-related
+    exists then (the byte-identical contract). Raises ``MeshConfigError`` when
+    the key is set but ``GATEWAY_SELF_ORIGIN`` is empty. ``start=False`` builds
+    everything without starting the heartbeat thread, for tests.
+    """
+    mesh_cfg = _build_mesh_config(env)
+    if not mesh_cfg.enabled:
+        return None, None
+    # Finding 1: build a real announcement from gateway data.
+    # Finding 7: wire the RejectionLog for flood collapse.
+    join_log = RejectionLog()
+    # Item C (t9): a second RejectionLog collapses repeated verification
+    # failures per-origin, mirroring join_log exactly — a flapping/
+    # unreachable peer no longer floods stderr with one line per probe.
+    verify_log = RejectionLog()
+    mesh_routes, announcement = _build_mesh_routes(
+        env=env,
+        self_origin=_require_self_origin(table.self_origin),
+        readiness_cache=readiness_cache,
+        replica_caches=replica_caches,
+        local_capacities=cfg.local_capacities,
+        declared_lane_configs={
+            b.name: declared_lane_config(table.lane_fingerprints.get(b.name, {}))
+            for b in table.backends
+        },
+        join_log=join_log,
+        verify_log=verify_log,
+        missed_max=mesh_cfg.missed_max,
+    )
+    if start:
+        # Start the heartbeat daemon thread after the server is bound.
+        _start_mesh(mesh_routes, announcement)
+    # Wire the mesh snapshot holder so every request reads one frozen copy.
+    mesh_routes._holder = holder = SnapshotHolder(mesh_routes.roster)
+    holder.replace(
+        MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
+    )
+    return mesh_routes, holder
+
+
 def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     """Bind and serve forever (the long-lived gateway process)."""
     # One pressure cache per process: a background daemon thread refreshes it so
@@ -5088,34 +5139,11 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     )
     # Mesh (t6): build the mesh routes when the join key is set; when
     # disabled (no key) every /mesh/* path falls through to the 404 below.
-    mesh_routes: MeshRoutes | None = None
-    if _build_mesh_config().enabled:
-        # Finding 1: build a real announcement from gateway data.
-        # Finding 7: wire the RejectionLog for flood collapse.
-        join_log = RejectionLog()
-        # Item C (t9): a second RejectionLog collapses repeated verification
-        # failures per-origin, mirroring join_log exactly — a flapping/
-        # unreachable peer no longer floods stderr with one line per probe.
-        verify_log = RejectionLog()
-        mesh_routes, announcement = _build_mesh_routes(
-            self_origin=_require_self_origin(cfg.self_origin),
-            readiness_cache=readiness_cache,
-            replica_caches=replica_caches,
-            local_capacities=cfg.local_capacities,
-            declared_lane_configs={
-                b.name: declared_lane_config(b.lane_fingerprints) for b in table.backends
-            },
-            join_log=join_log,
-            verify_log=verify_log,
-            missed_max=_build_mesh_config().missed_max,
-        )
-        # Start the heartbeat daemon thread after the server is bound.
-        _start_mesh(mesh_routes, announcement)
-        # Wire the mesh snapshot holder so every request reads one frozen copy.
-        mesh_routes._holder = holder = SnapshotHolder(mesh_routes.roster)
-        holder.replace(
-            MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
-        )
+    # The wiring lives in build_mesh_wiring() so a test can exercise it with a
+    # mesh-enabled config without binding a socket — serve() itself is
+    # `pragma: no cover`, which is how a `cfg.self_origin` typo (the attribute
+    # lives on the RoutingTable) reached a live box on 2026-09-12.
+    mesh_routes, holder = build_mesh_wiring(table, cfg, readiness_cache, replica_caches)
     httpd = ThreadingHTTPServer(
         (cfg.host, cfg.port),
         _make_handler(
