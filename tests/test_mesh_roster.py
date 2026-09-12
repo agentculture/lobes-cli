@@ -42,25 +42,25 @@ class _TickClock:
 # --- fixtures ----------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture
 def clock() -> _TickClock:
     return _TickClock()
 
 
-@pytest.fixture()
+@pytest.fixture
 def tmp_path_clean(tmp_path: Path) -> Path:
     """Return ``tmp_path`` (guaranteed empty for each test)."""
     return tmp_path
 
 
-@pytest.fixture()
+@pytest.fixture
 def ledger_path(tmp_path_clean: Path) -> Path:
     p = tmp_path_clean / "ledger.json"
     p.write_text("{}", encoding="utf-8")
     return p
 
 
-@pytest.fixture()
+@pytest.fixture
 def roster(clock: _TickClock, ledger_path: Path) -> MeshRoster:
     return MeshRoster(clock=clock, ledger_path=str(ledger_path))
 
@@ -126,8 +126,9 @@ class TestCriterion2:
         self, roster: MeshRoster, clock: _TickClock
     ) -> None:
         roster.announce("alice", "origin-a", 4, now=clock())
+        now = clock()
         with pytest.raises(MeshNameConflict, match="alice"):
-            roster.announce("alice", "origin-b", 4, now=clock())
+            roster.announce("alice", "origin-b", 4, now=now)
 
     def test_same_origin_updates_in_place(self, roster: MeshRoster, clock: _TickClock) -> None:
         roster.announce("alice", "origin-a", 4, now=clock())
@@ -195,8 +196,9 @@ class TestCriterion4:
         roster.join("alice", "origin-a", 4, now=clock())
         roster.leave("alice")
         # 4th join should be refused with flapping
+        now = clock()
         with pytest.raises(MeshFlapping):
-            roster.join("alice", "origin-a", 4, now=clock())
+            roster.join("alice", "origin-a", 4, now=now)
 
     def test_announcement_cannot_remove_another(
         self, roster: MeshRoster, clock: _TickClock
@@ -287,8 +289,9 @@ class TestEdgeCases:
         assert roster.members() == []
 
     def test_join_requires_approval(self, roster: MeshRoster, clock: _TickClock) -> None:
+        now = clock()
         with pytest.raises(MeshApprovalExpired):
-            roster.join("alice", "origin-a", 4, now=clock())
+            roster.join("alice", "origin-a", 4, now=now)
 
     def test_leave_nonexistent_silent(self, roster: MeshRoster, clock: _TickClock) -> None:
         roster.leave("alice")  # should not raise
@@ -361,8 +364,9 @@ class TestFlappingHoldOut:
         roster.join("alice", "origin-a", 4, now=clock())
         roster.leave("alice")
         # 4th join → flapping hold-out
+        now = clock()
         with pytest.raises(MeshFlapping):
-            roster.join("alice", "origin-a", 4, now=clock())
+            roster.join("alice", "origin-a", 4, now=now)
         # After one tick, hold-out should expire
         clock.tick()
         roster.join("alice", "origin-a", 4, now=clock())
@@ -416,8 +420,9 @@ class TestAnnounceGated:
     def test_revoked_name_is_refused(self, roster: MeshRoster, clock: _TickClock) -> None:
         roster.approve("alice", "admin", 9999.0, now=clock())
         roster.revoke("alice", now=clock())
+        now = clock()
         with pytest.raises(MeshApprovalExpired):
-            roster.announce_gated("alice", "http://alice.local", None, now=clock())
+            roster.announce_gated("alice", "http://alice.local", None, now=now)
         assert not roster.is_joined("alice")
 
     def test_approved_name_admits(self, roster: MeshRoster, clock: _TickClock) -> None:
@@ -434,8 +439,9 @@ class TestAnnounceGated:
         roster.approve("alice", "admin", 9999.0, now=clock())
         roster.announce_gated("alice", "http://alice.local", None, now=clock())
         roster.revoke("alice", now=clock())
+        now = clock()
         with pytest.raises(MeshApprovalExpired):
-            roster.announce_gated("alice", "http://alice.local", None, now=clock())
+            roster.announce_gated("alice", "http://alice.local", None, now=now)
 
 
 # ---------------------------------------------------------------------------

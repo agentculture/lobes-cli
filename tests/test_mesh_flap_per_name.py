@@ -48,8 +48,9 @@ class TestAnnouncePathFlapsPerName:
         for i in range(3):
             roster.announce("alice", f"http://alice-{i}.example", 1.0, now=clock())
             roster.leave("alice")
+        now = clock()
         with pytest.raises(MeshFlapping):
-            roster.announce("alice", "http://alice-3.example", 1.0, now=clock())
+            roster.announce("alice", "http://alice-3.example", 1.0, now=now)
 
     def test_a_different_name_is_never_held_out_by_alices_flapping(self) -> None:
         clock = _TickClock()
@@ -57,8 +58,9 @@ class TestAnnouncePathFlapsPerName:
         for i in range(3):
             roster.announce("alice", f"http://alice-{i}.example", 1.0, now=clock())
             roster.leave("alice")
+        now = clock()
         with pytest.raises(MeshFlapping):
-            roster.announce("alice", "http://alice-3.example", 1.0, now=clock())
+            roster.announce("alice", "http://alice-3.example", 1.0, now=now)
 
         # bob has never flapped — announcing him must succeed cleanly, which
         # the OLD roster-wide counter would have refused too (it held out
@@ -72,8 +74,9 @@ class TestAnnouncePathFlapsPerName:
         for i in range(3):
             roster.announce("alice", f"http://alice-{i}.example", 1.0, now=clock())
             roster.leave("alice")
+        now = clock()
         with pytest.raises(MeshFlapping):
-            roster.announce("alice", "http://alice-3.example", 1.0, now=clock())
+            roster.announce("alice", "http://alice-3.example", 1.0, now=now)
         clock.tick()
         roster.announce("alice", "http://alice-4.example", 1.0, now=clock())
         assert roster.is_joined("alice")

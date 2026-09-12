@@ -131,7 +131,7 @@ def _private_role() -> RoleInfo:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def announcement() -> Announcement:
     """An Announcement with two public lanes (one calibrated, one not)."""
     return Announcement(
@@ -212,8 +212,9 @@ class TestSchemaIncompatible:
     def test_major_mismatch(self, announcement: Announcement) -> None:
         obj = json.loads(encode(announcement))
         obj["schema_version"] = "2.0.0"  # different major
+        payload = json.dumps(obj).encode()
         with pytest.raises(MeshSchemaIncompatible) as exc_info:
-            decode(json.dumps(obj).encode())
+            decode(payload)
         # Both versions must appear in the message.
         msg = str(exc_info.value)
         assert str(SCHEMA_MAJOR) in msg  # expected major
@@ -419,8 +420,9 @@ class TestMalformedRole:
         a = _minimal()
         obj = json.loads(encode(a))
         del obj["roles"]["cortex"]["fingerprint"]
+        payload = json.dumps(obj).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps(obj).encode())
+            decode(payload)
 
     def test_decode_malformed_role_is_not_bare_key_error(self) -> None:
         """The raised ValueError must not itself BE a KeyError — a caller
@@ -428,12 +430,10 @@ class TestMalformedRole:
         a = _minimal()
         obj = json.loads(encode(a))
         del obj["roles"]["cortex"]["model"]
-        try:
-            decode(json.dumps(obj).encode())
-        except ValueError as exc:
-            assert not isinstance(exc, KeyError)
-        else:
-            pytest.fail("expected ValueError")
+        payload = json.dumps(obj).encode()
+        with pytest.raises(ValueError) as exc_info:
+            decode(payload)
+        assert not isinstance(exc_info.value, KeyError)
 
 
 # ---------------------------------------------------------------------------
@@ -473,36 +473,41 @@ class TestMalformedTopLevel:
     an uncaught TypeError/AttributeError/KeyError."""
 
     def test_non_object_body_raises_value_error(self) -> None:
+        payload = json.dumps([1, 2, 3]).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps([1, 2, 3]).encode())
+            decode(payload)
 
     def test_roles_not_a_mapping_raises_value_error(self) -> None:
         a = _minimal()
         obj = json.loads(encode(a))
         obj["roles"] = ["not", "a", "mapping"]
+        payload = json.dumps(obj).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps(obj).encode())
+            decode(payload)
 
     def test_missing_name_raises_value_error(self) -> None:
         a = _minimal()
         obj = json.loads(encode(a))
         del obj["name"]
+        payload = json.dumps(obj).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps(obj).encode())
+            decode(payload)
 
     def test_missing_origin_raises_value_error(self) -> None:
         a = _minimal()
         obj = json.loads(encode(a))
         del obj["origin"]
+        payload = json.dumps(obj).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps(obj).encode())
+            decode(payload)
 
     def test_role_entry_not_a_mapping_raises_value_error(self) -> None:
         a = _minimal()
         obj = json.loads(encode(a))
         obj["roles"]["cortex"] = "not a mapping"
+        payload = json.dumps(obj).encode()
         with pytest.raises(ValueError):
-            decode(json.dumps(obj).encode())
+            decode(payload)
 
     def test_none_of_these_raise_a_bare_attribute_or_key_error(self) -> None:
         """Every malformed body above must raise ValueError specifically —
@@ -520,11 +525,5 @@ class TestMalformedTopLevel:
             mutate(obj)
             bad_bodies.append(obj)
         for obj in bad_bodies:
-            try:
+            with pytest.raises(ValueError):
                 decode(json.dumps(obj).encode())
-            except ValueError:
-                pass
-            except (AttributeError, KeyError, TypeError) as exc:
-                pytest.fail(f"expected ValueError, escaped {type(exc).__name__}: {exc}")
-            else:
-                pytest.fail("expected ValueError to be raised")

@@ -684,7 +684,8 @@ def test_mesh_status_cli_renders_the_populated_roster_row(capsys):
         },
     ]
     out = _render_roster_table(members)
-    assert "nameA" in out and "nameB" in out
+    assert "nameA" in out
+    assert "nameB" in out
     assert "12s" in out
     assert "3599s" in out
     assert "verified" in out

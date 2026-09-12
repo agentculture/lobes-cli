@@ -413,7 +413,9 @@ def test_mesh_status_golden_table_against_fake_roster(fake_mesh, capsys) -> None
     out = capsys.readouterr().out
 
     # name
-    assert "spark" in out and "thor" in out and "orin" in out
+    assert "spark" in out
+    assert "thor" in out
+    assert "orin" in out
     # last-heartbeat age
     assert "12s" in out
     assert "301s" in out
@@ -425,7 +427,8 @@ def test_mesh_status_golden_table_against_fake_roster(fake_mesh, capsys) -> None
     assert "unverified" in out
     assert "flapping" in out
     # roles
-    assert "cortex" in out and "senses" in out
+    assert "cortex" in out
+    assert "senses" in out
     assert "worker" in out
 
 

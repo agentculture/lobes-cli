@@ -85,14 +85,16 @@ def test_enabled_false_fields_are_none_or_empty() -> None:
 
 
 def test_key_set_without_name_raises_mesh_config_error() -> None:
+    env = _noop_env(LOBES_MESH_KEY="sk-abc")
     with pytest.raises(MeshConfigError, match="LOBES_MESH_NAME"):
-        build_mesh_config(_noop_env(LOBES_MESH_KEY="sk-abc"))
+        build_mesh_config(env)
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_key_set_name_blank_raises_mesh_config_error(blank: str) -> None:
+    env = _noop_env(LOBES_MESH_KEY="sk-abc", LOBES_MESH_NAME=blank)
     with pytest.raises(MeshConfigError, match="LOBES_MESH_NAME"):
-        build_mesh_config(_noop_env(LOBES_MESH_KEY="sk-abc", LOBES_MESH_NAME=blank))
+        build_mesh_config(env)
 
 
 def test_name_is_never_derived_from_hostname() -> None:
@@ -212,10 +214,9 @@ def test_heartbeat_custom_positive() -> None:
 
 @pytest.mark.parametrize("value", ["0", "-1", "-10", "abc"])
 def test_heartbeat_rejects_non_positive(value: str) -> None:
+    env = _noop_env(LOBES_MESH_KEY="sk-x", LOBES_MESH_NAME="b", LOBES_MESH_HEARTBEAT_S=value)
     with pytest.raises(MeshHeartbeatError):
-        build_mesh_config(
-            _noop_env(LOBES_MESH_KEY="sk-x", LOBES_MESH_NAME="b", LOBES_MESH_HEARTBEAT_S=value)
-        )
+        build_mesh_config(env)
 
 
 # ============================================================================
@@ -237,10 +238,9 @@ def test_missed_max_custom_positive() -> None:
 
 @pytest.mark.parametrize("value", ["0", "-1", "abc"])
 def test_missed_max_rejects_non_positive(value: str) -> None:
+    env = _noop_env(LOBES_MESH_KEY="sk-x", LOBES_MESH_NAME="b", LOBES_MESH_MISSED_MAX=value)
     with pytest.raises(MeshMissedMaxError):
-        build_mesh_config(
-            _noop_env(LOBES_MESH_KEY="sk-x", LOBES_MESH_NAME="b", LOBES_MESH_MISSED_MAX=value)
-        )
+        build_mesh_config(env)
 
 
 # ============================================================================
