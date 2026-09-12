@@ -1120,12 +1120,11 @@ def _heartbeat_loop(
     """
     seeds = routes.config.seeds
     # Finding 4: pace on the full interval, not min(interval, 1.0).
-    deadline: float = 0.0
-
+    deadline: float | None = None
     while not stop_event.is_set():
         # Compute the next deadline.
         woken_by_reannounce = False
-        if deadline == 0.0:
+        if deadline is None:
             deadline = time.monotonic() + interval
         else:
             # Wait in ≤1s increments against the deadline.
@@ -1321,13 +1320,11 @@ def _fetch_seed_roster(
                                 mname = member.get("name", "")
                                 morigin = member.get("origin", "")
                                 if mname and morigin:
-                                    if routes is not None:
-                                        with roster._lock:
-                                            roster.announce(
-                                                mname, morigin, None, now=time.monotonic()
-                                            )
-                                    else:
-                                        roster.announce(mname, morigin, None, now=time.monotonic())
+                                    # Roster.announce takes roster._lock itself;
+                                    # wrapping it in that same lock deadlocked the
+                                    # heartbeat on the first NON-EMPTY seed roster
+                                    # (live Orin, 2026-09-12: /mesh/roster hung forever).
+                                    roster.announce(mname, morigin, None, now=time.monotonic())
 
                     # Finding 9 (review #252): merge the peer's LEDGER too, not
                     # just its membership records — the ledger is what a

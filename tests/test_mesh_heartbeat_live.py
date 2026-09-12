@@ -159,3 +159,85 @@ def test_a_slow_peer_probe_never_blocks_the_roster_or_inbound_announces() -> Non
         routes._stop.set()
         srv.shutdown()
         slow.shutdown()
+
+
+def test_a_non_empty_seed_roster_is_merged_without_deadlocking_the_roster() -> None:
+    """Regression: the seed merge wrapped Roster.announce in the roster's own
+    non-reentrant lock — the heartbeat deadlocked on the first real seed roster
+    (live Orin, 2026-09-12) and /mesh/roster hung forever."""
+    import io
+
+    from lobes.gateway._mesh_routes import _fetch_seed_roster
+
+    class Seed(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(
+                {
+                    "members": [
+                        {"name": "peerbox", "origin": "http://peer.local:8000", "capacity": 1.0}
+                    ],
+                    "ledger": {},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), Seed)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    seed = f"http://127.0.0.1:{srv.server_address[1]}"
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "unsloth/Qwen3.8-27B-NVFP4",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+    }
+    table, cfg = build_config(env)
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    done: list = []
+
+    def run():
+        _fetch_seed_roster([seed], "sk-test", routes.roster, timeout=3.0, routes=routes)
+        done.append(True)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(5.0)
+    try:
+        assert done, "seed roster merge deadlocked"
+        assert "peerbox" in routes.roster.members()
+
+        class Req:
+            rfile = io.BytesIO(b"")
+            headers = {"Authorization": "Bearer sk-test", "Content-Length": "0"}
+            client_address = ("127.0.0.1", 1)
+
+        t0 = time.monotonic()
+        status, _h, body = routes.roster_list(Req())
+        assert status == 200 and (time.monotonic() - t0) < 1.0
+        assert any(m["name"] == "peerbox" for m in json.loads(body)["members"])
+    finally:
+        srv.shutdown()
+
+
+def test_announced_and_advertised_fingerprints_carry_a_known_runtime() -> None:
+    """Regression: without a declared pool the lane is never live-probed, so every
+    fingerprint read runtime=unknown and the unknown rule made verification
+    impossible on the live fleet (2026-09-12)."""
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "unsloth/Qwen3.8-27B-NVFP4",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+    }
+    table, cfg = build_config(env)
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    fresh = routes._announcement_builder()
+    assert fresh.roles["cortex"].fingerprint.runtime == "vllm"

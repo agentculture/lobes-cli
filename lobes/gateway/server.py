@@ -144,6 +144,7 @@ from lobes.gateway._tier_request import (
     is_tier_alias,
     resolve_tier_request,
 )
+from lobes.roles import BACKEND_ROLE, role_registry_from_env
 
 # NOTE: lobes.roles is imported lazily inside capabilities_payload() below, not
 # here at module scope. lobes.roles itself imports lobes.gateway._config (for
@@ -4774,16 +4775,38 @@ class _Handler(BaseHTTPRequestHandler):
 _DECLARED_KEY_FOR_SUFFIX: Mapping[str, str] = {"TOOL_CALL_PARSER": "tool_parser"}
 
 
-def declared_lane_config(lane: Mapping[str, str]) -> dict[str, str]:
+def _lane_runtime(backend_name: str, env: Mapping[str, str] | None = None) -> str:
+    """The engine a hosted lane runs on ("vllm" / "llamacpp"), from the role
+    registry — the same source /capabilities' ``runtime`` field uses.
+
+    Without it a lane that has no declared replica pool is never live-probed,
+    every published fingerprint reads ``runtime: unknown``, and the unknown
+    rule makes mesh verification impossible (live fleet, 2026-09-12)."""
+    role = BACKEND_ROLE.get(backend_name)
+    if role is None:
+        return ""
+    try:
+        info = role_registry_from_env(env).get(role)
+    except Exception:  # nosec B110 — best-effort: never let an advert helper break wiring
+        return ""
+    return str(getattr(info, "runtime", "") or "")
+
+
+def declared_lane_config(lane: Mapping[str, str], *, runtime: str = "") -> dict[str, str]:
     """Adapt one backend's :attr:`RoutingTable.lane_fingerprints` entry to the
     key vocabulary :class:`~lobes.gateway._replicas.LocalLane` expects.
 
     Any key absent here reads back as ``unknown`` in the published
     fingerprint — never a catalog guess (c33/h25)."""
-    return {
+    declared = {
         _DECLARED_KEY_FOR_SUFFIX.get(suffix, suffix.lower()): value
         for suffix, value in lane.items()
     }
+    # A lane's engine is known from the role registry even when nothing ever
+    # live-probes it (no declared pool); a declared <PREFIX>_RUNTIME still wins.
+    if runtime and not declared.get("runtime"):
+        declared["runtime"] = runtime
+    return declared
 
 
 def _check_pool_arming(table: RoutingTable) -> None:
@@ -4873,7 +4896,7 @@ def _cache_local_lane(
     return LocalLane(
         base_url=backend.base_url,
         served_name=backend.served_name,
-        declared=declared_lane_config(declared),
+        declared=declared_lane_config(declared, runtime=_lane_runtime(backend.name)),
         **_local_weight(capacities, backend.name),
     )
 
@@ -5103,7 +5126,9 @@ def build_mesh_wiring(
         replica_caches=replica_caches,
         local_capacities=cfg.local_capacities,
         declared_lane_configs={
-            b.name: declared_lane_config(table.lane_fingerprints.get(b.name, {}))
+            b.name: declared_lane_config(
+                table.lane_fingerprints.get(b.name, {}), runtime=_lane_runtime(b.name, env)
+            )
             for b in table.backends
         },
         join_log=join_log,
@@ -5123,7 +5148,9 @@ def build_mesh_wiring(
     # rebuilds the announcement from the SAME live inputs, so a fingerprint
     # change reaches peers on their next probe rather than never (c46/h37).
     lane_configs = {
-        b.name: declared_lane_config(table.lane_fingerprints.get(b.name, {}))
+        b.name: declared_lane_config(
+            table.lane_fingerprints.get(b.name, {}), runtime=_lane_runtime(b.name, env)
+        )
         for b in table.backends
     }
     mesh_routes.set_announcement_builder(

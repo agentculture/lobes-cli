@@ -234,7 +234,10 @@ class Roster:
     ) -> None:
         self._clock = clock or (lambda: 0.0)
         self._roster = {}
-        self._lock = threading.Lock()  # Protects _roster, _approved_here, _flap_*
+        # RLock: announce()/tick()/members() are also called from paths that
+        # already hold this lock (seed-roster merge, gated announce) — a plain
+        # Lock deadlocked the heartbeat live on 2026-09-12.
+        self._lock = threading.RLock()  # Protects _roster, _approved_here, _flap_*
         self._ledger = Ledger(path=ledger_path, clock=self._clock)
         self._approved_here: set[str] = set()  # names explicitly approved on this node
         # PER-NAME flap tracking (item A, t9) — was a single roster-wide
