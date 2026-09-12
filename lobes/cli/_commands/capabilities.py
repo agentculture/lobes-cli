@@ -327,6 +327,53 @@ def _loaded_cell(info: dict) -> str:
     return "yes" if info["loaded"] else "no"
 
 
+def _render_infeasible_lines(info: dict) -> list[str]:
+    """The ``** infeasible **`` block for one role row, or ``[]`` when feasible.
+
+    Extracted from :func:`_render_table` (Sonar S3776) — identical text and
+    precedence: a proxied-and-hosted role explains the proxy, an unproxied
+    hosted one names the peer to dial directly, and a feasible role (the
+    common case) contributes nothing.
+    """
+    if info.get("feasible", True) is not False:
+        return []
+    lines = ["          ** infeasible on this machine — never served here **"]
+    # Third lobe state (proxy-lobes t6, issues #115/#127): this box
+    # FOLLOWS its own referral — requests to this gateway are forwarded
+    # to the hosting peer, so callers stay single-endpoint. Distinct
+    # wording from the referral-only case below, which remains an
+    # address the CALLER must dial directly (this box 404s).
+    if info.get("proxied") and info.get("hosted_by"):
+        lines.append(f"          proxied via this gateway from peer: {info['hosted_by']}")
+    # Opt-in honest referral (mesh-brain t3): the operator-declared
+    # peer origin that hosts this unhosted role, when one is set. An
+    # address to dial DIRECTLY — this box never proxies to it.
+    elif info.get("hosted_by"):
+        lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
+    return lines
+
+
+def _render_mesh_lines(info: dict) -> list[str]:
+    """The additive mesh-member/suffixed-lane lines for one role row.
+
+    Extracted from :func:`_render_table` (Sonar S3776) — identical
+    behaviour. Mesh-brain-join (task t10, c47/h38): the mesh member actually
+    serving this role, and any '{role}-{machine}' suffixed lanes a
+    fingerprint disagreement exposed (task t8 wires these onto the live
+    gateway payload). Both are ADDITIVE — a non-mesh gateway or the offline
+    .env-derived fallback simply never has these keys, so ``.get`` renders
+    nothing extra rather than guessing.
+    """
+    lines: list[str] = []
+    member = info.get("member")
+    if member:
+        lines.append(f"          served by mesh member: {member}")
+    suffixed = info.get("suffixed_lanes")
+    if suffixed:
+        lines.append(f"          suffixed lanes: {', '.join(suffixed)}")
+    return lines
+
+
 def _render_table(registry: dict[str, dict], source: str) -> str:
     header = f"{'role':<9} {'model':<48} {'context':>8}  {'loaded':<8}  endpoint"
     lines: list[str] = []
@@ -351,33 +398,9 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         # yet infeasible on this box), so the explicit line stays.
         # `.get` defaults True so an older/foreign payload missing this key
         # (pre-t6 gateway, or a hand-built fixture) never raises.
-        if info.get("feasible", True) is False:
-            lines.append("          ** infeasible on this machine — never served here **")
-            # Third lobe state (proxy-lobes t6, issues #115/#127): this box
-            # FOLLOWS its own referral — requests to this gateway are forwarded
-            # to the hosting peer, so callers stay single-endpoint. Distinct
-            # wording from the referral-only case below, which remains an
-            # address the CALLER must dial directly (this box 404s).
-            if info.get("proxied") and info.get("hosted_by"):
-                lines.append(f"          proxied via this gateway from peer: {info['hosted_by']}")
-            # Opt-in honest referral (mesh-brain t3): the operator-declared
-            # peer origin that hosts this unhosted role, when one is set. An
-            # address to dial DIRECTLY — this box never proxies to it.
-            elif info.get("hosted_by"):
-                lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
+        lines.extend(_render_infeasible_lines(info))
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
-        # Mesh-brain-join (task t10, c47/h38): the mesh member actually
-        # serving this role, and any '{role}-{machine}' suffixed lanes a
-        # fingerprint disagreement exposed (task t8 wires these onto the
-        # live gateway payload). Both are ADDITIVE — a non-mesh gateway or
-        # the offline .env-derived fallback simply never has these keys, so
-        # `.get` renders nothing extra rather than guessing.
-        member = info.get("member")
-        if member:
-            lines.append(f"          served by mesh member: {member}")
-        suffixed = info.get("suffixed_lanes")
-        if suffixed:
-            lines.append(f"          suffixed lanes: {', '.join(suffixed)}")
+        lines.extend(_render_mesh_lines(info))
     return "\n".join(lines)
 
 
