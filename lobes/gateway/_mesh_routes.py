@@ -61,7 +61,7 @@ from lobes.gateway._mesh_wire import (
 
 if TYPE_CHECKING:
     from lobes.gateway._mesh_roster import Roster
-    from lobes.gateway._mesh_routing import SnapshotHolder
+    from lobes.gateway._mesh_routing import RoutingSnapshot, SnapshotHolder
 
 
 # --- internal data ----------------------------------------------------------
