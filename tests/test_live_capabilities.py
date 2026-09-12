@@ -92,6 +92,7 @@ import os
 import struct
 import subprocess  # nosec B404 — invokes this repo's own `python -m lobes`, no shell
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -200,6 +201,199 @@ def _classify(p: _Probe) -> tuple[bool, str]:
     if 400 <= p.status < 500:
         return True, f"{p.status} (request rejected — path exists, reachable)"
     return False, f"{p.status} backend error (no honest Retry-After — dishonest relay)"
+
+
+# ---------------------------------------------------------------------------
+# Mesh boot-window rule (mesh-boot-window-and-capabilities-advert, c7) — a
+# just-verified role can 503 with a role_unverified body during the boot
+# window; the honest gate retries that, it does not fail on it.
+# ---------------------------------------------------------------------------
+_ROLE_UNVERIFIED_MAX_ATTEMPTS = 3
+# BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS fallback when Retry-After is absent
+# or unparseable — mirrors the server-side default named in the shared
+# contract, never invented independently here.
+_DEFAULT_ROLE_UNVERIFIED_RETRY_AFTER = 5.0
+
+
+def _is_role_unverified(p: _Probe) -> bool:
+    """True iff ``p`` is the 503 ``role_unverified`` boot-window answer.
+
+    Body shape: ``{"error": {"message", "type": "role_unverified", "code":
+    "role_unverified", "hosted_by": <pending origin>}}``. Any other 503 body
+    (or a non-503 status) is NOT this case and must fall through to
+    :func:`_classify` unchanged.
+    """
+    if p.status != 503:
+        return False
+    try:
+        body = json.loads(p.body)
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    error = body.get("error")
+    return isinstance(error, dict) and error.get("type") == "role_unverified"
+
+
+def _retry_after_seconds(retry_after: str | None) -> float:
+    """Parse a ``Retry-After`` header value in seconds; fall back when absent/bad."""
+    if retry_after is None:
+        return _DEFAULT_ROLE_UNVERIFIED_RETRY_AFTER
+    try:
+        return float(retry_after)
+    except ValueError:
+        return _DEFAULT_ROLE_UNVERIFIED_RETRY_AFTER
+
+
+def _dial_with_role_unverified_retry(
+    dial_once,
+    *,
+    max_attempts: int = _ROLE_UNVERIFIED_MAX_ATTEMPTS,
+    sleep_fn=time.sleep,
+) -> _Probe:
+    """Call ``dial_once`` (a zero-arg redial) up to ``max_attempts`` times.
+
+    Retries only while the probe reads as the mesh boot-window's
+    ``role_unverified`` 503, honouring that probe's own ``Retry-After``
+    between attempts. Any other outcome — including a role_unverified probe
+    that is still current on the final attempt — is returned as-is; this
+    wrapper never itself judges reachability, :func:`_classify` still does.
+    """
+    probe = dial_once()
+    attempts = 1
+    while _is_role_unverified(probe) and attempts < max_attempts:
+        sleep_fn(_retry_after_seconds(probe.retry_after))
+        probe = dial_once()
+        attempts += 1
+    return probe
+
+
+def _classify_with_role_unverified_retry(dial_once) -> tuple[bool, str]:
+    """``_classify``, but boot-window ``role_unverified`` 503s are retried first."""
+    return _classify(_dial_with_role_unverified_retry(dial_once))
+
+
+# ---------------------------------------------------------------------------
+# Pooled-role proxy acceptance (mesh-boot-window-and-capabilities-advert, c7)
+# — a pooled role's /capabilities entry carries ``members: [names]`` and no
+# ``hosted_by``; the honest X-Lobes-Proxied-By is any one of those members'
+# origins, discovered via GET /mesh/roster.
+# ---------------------------------------------------------------------------
+def _member_origins(roster: object, names) -> set[str]:
+    """Resolve mesh member ``names`` to their announced origins via the roster."""
+    members = roster.get("members") if isinstance(roster, dict) else None
+    origins: set[str] = set()
+    if isinstance(members, list):
+        for m in members:
+            if isinstance(m, dict) and m.get("name") in names and m.get("origin"):
+                origins.add(m["origin"])
+    return origins
+
+
+def _accepted_proxy_origins(info: dict, roster: dict) -> set[str]:
+    """The set of origins a proxied role's ``X-Lobes-Proxied-By`` may honestly equal.
+
+    A plain ``hosted_by`` (exactly one origin) wins when present; a pooled
+    role instead carries ``members`` (no ``hosted_by``), resolved through the
+    mesh roster. Neither present means no proxying was declared at all.
+    """
+    hosted_by = info.get("hosted_by")
+    if hosted_by:
+        return {hosted_by}
+    members = info.get("members")
+    if isinstance(members, list) and members:
+        return _member_origins(roster, set(members))
+    return set()
+
+
+# ---------------------------------------------------------------------------
+# Offline self-check — proves the two rules above without a live fleet. This
+# runs at MODULE IMPORT time (i.e. whenever pytest collects this file), not
+# as a pytest item, so it is exercised even though every test below is gated
+# on LOBES_SMOKE_BASE_URL. A regression here fails collection loudly; it
+# never silently skips.
+# ---------------------------------------------------------------------------
+def _offline_selfcheck() -> None:
+    # Rule 2: role_unverified retries up to 3 attempts, honouring Retry-After,
+    # then hands the final probe to _classify unchanged.
+    unverified_body = json.dumps(
+        {
+            "error": {
+                "message": "not yet probed",
+                "type": "role_unverified",
+                "code": "role_unverified",
+            }
+        }
+    ).encode()
+    calls: list[int] = []
+
+    def flaky_then_ok():
+        calls.append(1)
+        if len(calls) < 3:
+            return _Probe(503, "1.5", unverified_body, None)
+        return _Probe(200, None, b"{}", None)
+
+    sleeps: list[float] = []
+    probe = _dial_with_role_unverified_retry(flaky_then_ok, sleep_fn=sleeps.append)
+    assert probe.status == 200, "expected the third attempt's 200 to win"
+    assert len(calls) == 3, "expected exactly 3 dial attempts (bounded)"
+    assert sleeps == [1.5, 1.5], "expected each retry to honour Retry-After"
+    ok, verdict = _classify_with_role_unverified_retry(lambda: _Probe(200, None, b"{}", None))
+    assert ok, f"final 200 must classify reachable, got {verdict!r}"
+
+    # Bounded: a role_unverified probe that never resolves still stops at 3.
+    always_unverified_calls: list[int] = []
+
+    def always_unverified():
+        always_unverified_calls.append(1)
+        return _Probe(503, None, unverified_body, None)
+
+    always_sleeps: list[float] = []
+    probe = _dial_with_role_unverified_retry(always_unverified, sleep_fn=always_sleeps.append)
+    assert len(always_unverified_calls) == 3, "must stop at max_attempts, not loop forever"
+    assert always_sleeps == [
+        _DEFAULT_ROLE_UNVERIFIED_RETRY_AFTER,
+        _DEFAULT_ROLE_UNVERIFIED_RETRY_AFTER,
+    ], "missing Retry-After must fall back to the documented default"
+    ok, verdict = _classify(probe)
+    assert not ok, "a still-503 role_unverified on the final attempt is not reachable"
+
+    # A 503 that is NOT role_unverified must never be retried by this path.
+    other_503_calls: list[int] = []
+
+    def other_503():
+        other_503_calls.append(1)
+        return _Probe(503, "5", b'{"error": {"type": "backend_dead"}}', None)
+
+    _dial_with_role_unverified_retry(other_503, sleep_fn=lambda _s: None)
+    assert len(other_503_calls) == 1, "a non-role_unverified 503 must dial exactly once"
+
+    # Rule 1: hosted_by (single plain origin) wins outright.
+    single = {"hosted_by": "http://thor:8000", "members": None}
+    assert _accepted_proxy_origins(single, {}) == {"http://thor:8000"}
+
+    # A pooled role (members, no hosted_by) resolves through the roster.
+    pooled = {"hosted_by": None, "members": ["thor", "spark"]}
+    roster = {
+        "members": [
+            {"name": "thor", "origin": "http://thor:8000"},
+            {"name": "spark", "origin": "http://spark:8000"},
+            {"name": "orin", "origin": "http://orin:8000"},
+        ]
+    }
+    accepted = _accepted_proxy_origins(pooled, roster)
+    assert accepted == {"http://thor:8000", "http://spark:8000"}
+    assert "http://orin:8000" not in accepted, "a non-member origin must never be accepted"
+
+    # Neither hosted_by nor members present: nothing is an honest proxy origin.
+    assert _accepted_proxy_origins({}, roster) == set()
+
+    # An empty/unreachable roster resolves a pooled role to no accepted
+    # origins at all (fails closed, never silently accepts anything).
+    assert _accepted_proxy_origins(pooled, {}) == set()
+
+
+_offline_selfcheck()
 
 
 def _dial(method: str, url: str, *, data=None, content_type=None, timeout: int) -> _Probe:
@@ -342,11 +536,37 @@ def model_ids() -> list[str]:
     return [entry["id"] for entry in data.get("data", [])]
 
 
+@pytest.fixture(scope="module")
+def mesh_roster() -> dict:
+    """``GET /mesh/roster`` — best-effort; a box with no mesh joined has none.
+
+    Unlike ``caps``/``model_ids`` this is not a hard requirement of every
+    deployment (mesh-brain join is opt-in), so an absent/unreachable/404
+    roster degrades to ``{}`` rather than failing the gate — a pooled role's
+    proxied-origin check below is the only consumer, and it fails closed
+    (accepts nothing) on an empty roster rather than silently passing.
+    """
+    p = _http("GET", _url("/mesh/roster"), timeout=_META_TIMEOUT)
+    if p.status != 200:
+        return {}
+    try:
+        data = json.loads(p.body)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Check 1 — advertised-ready roles are reachable (#92, #96, #89).
 # ---------------------------------------------------------------------------
 def test_advertised_ready_roles_are_reachable(caps: dict) -> None:
-    """Every role advertised ``ready=true`` must answer its own ``endpoint+path``."""
+    """Every role advertised ``ready=true`` must answer its own ``endpoint+path``.
+
+    A 503 ``role_unverified`` (the mesh boot window's honest "not yet probed"
+    answer) is retried up to 3 attempts, honouring its own ``Retry-After``,
+    before being handed to ``_classify`` — see
+    ``_classify_with_role_unverified_retry``.
+    """
     reachable: list[str] = []
     faults: list[str] = []
     for role in ROLES:
@@ -354,7 +574,9 @@ def test_advertised_ready_roles_are_reachable(caps: dict) -> None:
         if not info.get("ready"):
             continue  # only ready roles carry the "advertised implies reachable" promise
         url = (info.get("endpoint") or "").rstrip("/") + (info.get("path") or "")
-        ok, verdict = _classify(_role_dial(role, info))
+        ok, verdict = _classify_with_role_unverified_retry(
+            lambda role=role, info=info: _role_dial(role, info)
+        )
         line = f"  {role:9} {url:42} -> {verdict}"
         (reachable if ok else faults).append(line)
     assert not faults, (
@@ -512,7 +734,7 @@ def test_deployed_gateway_version_matches_cli() -> None:
 # invariant — its 404 is the honest answer), and at least one generate lobe
 # must remain discoverable, or the box serves no brain at all.
 # ---------------------------------------------------------------------------
-def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
+def test_colleague_discovers_and_dials_generate_roles(caps: dict, mesh_roster: dict) -> None:
     """Given only the gateway origin, resolve the hosted generate lobes and get answers.
 
     Three honest states per generate lobe (#113/#115): HOSTED (dial it, get an
@@ -520,7 +742,10 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
     (``proxied: true`` in the contract — this box forwards to the declared
     peer, so the honest response is an ANSWER carrying the
     ``X-Lobes-Proxied-By`` marker naming ``hosted_by``, never a silent local
-    serve and never a bare 404).
+    serve and never a bare 404). A pooled role instead carries ``members``
+    (a mesh replica set, no single ``hosted_by``) — the honest marker is any
+    one of those members' origins, resolved via ``GET /mesh/roster``
+    (``_accepted_proxy_origins``).
     """
     answers: list[str] = []
     faults: list[str] = []
@@ -545,11 +770,14 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
                 # non-2xx (peer down -> 503, peer shed -> 429) is still an
                 # honest, marked relay — noted, never a local-gate fault.
                 hosted_by = info.get("hosted_by") or ""
-                if probe.proxied_by != hosted_by:
+                label = hosted_by or ",".join(info.get("members") or []) or "<undeclared>"
+                accepted = _accepted_proxy_origins(info, mesh_roster)
+                if not accepted or probe.proxied_by not in accepted:
                     faults.append(
                         f"  {role}: flagged proxied:true but the response's "
-                        f"X-Lobes-Proxied-By is {probe.proxied_by!r}, not the declared "
-                        f"peer {hosted_by!r} (#115/#127)"
+                        f"X-Lobes-Proxied-By is {probe.proxied_by!r}, not among the "
+                        f"declared peer(s) {label!r} (accepted origins: {sorted(accepted)!r}) "
+                        "(#115/#127)"
                     )
                 elif probe.status is not None and 200 <= probe.status < 300:
                     try:
@@ -558,17 +786,17 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict) -> None:
                         choices = None
                     if not choices:
                         faults.append(
-                            f"  {role}: proxied answer from {hosted_by} was {probe.status} "
+                            f"  {role}: proxied answer from {label} was {probe.status} "
                             f"but had no 'choices'. Body: {probe.body[:200]!r}"
                         )
                     else:
                         answers.append(
-                            f"  {role}: dropped by shape, PROXIED to {hosted_by} — got a "
+                            f"  {role}: dropped by shape, PROXIED to {label} — got a "
                             "marked answer (correct)"
                         )
                 else:
                     answers.append(
-                        f"  {role}: proxied to {hosted_by}, peer relayed "
+                        f"  {role}: proxied to {label}, peer relayed "
                         f"{probe.status!r} with the marker — honest relay"
                     )
                 continue
