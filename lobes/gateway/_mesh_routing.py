@@ -305,13 +305,18 @@ def build_snapshot(
         member *origins* (URLs); values are the :class:`Announcement` objects.
         Without these, members appear with empty role lists.
     verified_roles:
-        Per-origin sets of roles verified by a ``/capabilities`` probe.  A member
-        whose *verified_roles* does NOT match its *announced_roles* (as a
-        superset check — all announced roles must be present in verified_roles)
-        is marked **unverified**: its ``verified_roles`` tuple is empty and it
-        will receive zero forwards.  When a member has no announcement but
-        *does* have verified_roles, those roles are carried as both announced
-        and verified (the member is fully verified).
+        Per-origin sets of roles verified by a ``/capabilities`` probe.
+        Verification is PER ROLE: a member's ``verified_roles`` is the subset
+        of its *announced_roles* the probe verified (identical fingerprint AND
+        ready), and only those roles receive forwards.  A member none of whose
+        announced roles verifies is **unverified** (empty tuple).  This used to
+        be all-or-nothing — every announced role had to verify or the member
+        got nothing — which threw away the live Orin's one running lane
+        (``associate``) because it also announced five hosted-but-not-ready
+        lanes (2026-09-12, dev527: ``orin[v=False, roles=0]`` on every peer).
+        When a member has no announcement but *does* have verified_roles,
+        those roles are carried as both announced and verified (the member is
+        fully verified).
 
     Returns
     -------
@@ -342,16 +347,10 @@ def build_snapshot(
         else:
             announced = ()
 
-        # Verification: all announced roles must be present in the probe result.
+        # Verification is per role: keep the announced roles the probe verified.
         verified_set = ver_map.get(origin)
         if verified_set is not None and announced:
-            # Full verification: every announced role must be in the probe result.
-            announced_set = frozenset(announced)
-            if not announced_set.issubset(verified_set):
-                # Probe disagrees with announcement → unverified.
-                verified = ()
-            else:
-                verified = announced
+            verified = tuple(r for r in announced if r in verified_set)
         elif verified_set is not None and not announced:
             # No announcement but probe data exists → fully verified from probe.
             verified = tuple(sorted(verified_set))

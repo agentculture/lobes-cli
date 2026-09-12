@@ -869,3 +869,35 @@ class TestWireFingerprintConversion:
         compatible, reason = compare_fingerprints(zero_fp, real_fp)
         assert compatible is False
         assert "max_model_len" in reason
+
+
+def test_verification_is_per_role_not_all_or_nothing():
+    """Live dev527 (2026-09-12): the Orin announced six hosted lanes with only
+    ``associate`` running; the all-or-nothing rule left it with zero verified
+    roles on every peer. A member keeps exactly the announced roles the probe
+    verified, and is unverified only when none of them does."""
+    from lobes.gateway._mesh_routing import build_snapshot, origins_for_role
+
+    roles = {
+        "associate": _role("associate", fingerprint=_fp(served_id="nvidia/Lightning")),
+        "hand": _role("hand", fingerprint=_fp(served_id="LiquidAI/LFM2.5-1.2B-Instruct")),
+        "embedder": _role("embedder", fingerprint=_fp(served_id="Qwen/Qwen3-Embedding-0.6B")),
+    }
+    roster = _FakeRoster([("orin", "http://orin.local:8000", 1.0)])
+    ann_map = {"http://orin.local:8000": _ann("orin", "http://orin.local:8000", roles)}
+    snap = build_snapshot(
+        roster,
+        announcements=ann_map,
+        verified_roles={"http://orin.local:8000": frozenset(["associate"])},
+    )
+    member = next(m for m in snap.members if m.origin == "http://orin.local:8000")
+    assert member.verified_roles == ("associate",)
+    assert origins_for_role(snap, "associate") == ("http://orin.local:8000",)
+    assert origins_for_role(snap, "hand") == ()
+    # Nothing verified → still unverified, exactly as before.
+    snap2 = build_snapshot(
+        roster,
+        announcements=ann_map,
+        verified_roles={"http://orin.local:8000": frozenset(["cortex"])},
+    )
+    assert next(m for m in snap2.members).verified_roles == ()
