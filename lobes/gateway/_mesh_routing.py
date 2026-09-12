@@ -271,6 +271,28 @@ def _wire_fingerprint_to_replica(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_member_roles(
+    ann: "Announcement | None",
+    verified_set: "frozenset[str] | None",
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(announced, verified) role tuples for one member (Sonar S3776).
+
+    Extracted from :func:`build_snapshot`'s per-member loop — identical
+    return semantics: verification is PER ROLE (the subset of *announced*
+    roles the probe verified), a member with no announcement but existing
+    probe data is treated as fully verified from that probe, and a member
+    with neither is unverified (empty tuple).
+    """
+    announced = tuple(ann.roles.keys()) if ann is not None else ()
+    if verified_set is not None and announced:
+        return announced, tuple(r for r in announced if r in verified_set)
+    if verified_set is not None and not announced:
+        # No announcement but probe data exists → fully verified from probe.
+        return announced, tuple(sorted(verified_set))
+    # No probe data → unverified.
+    return announced, ()
+
+
 def build_snapshot(
     roster: "Roster",
     *,
@@ -340,23 +362,7 @@ def build_snapshot(
 
         origin = rec.origin
         roster_origins.add(origin)
-        # Announcement roles.
-        ann: Announcement | None = ann_map.get(origin)
-        if ann is not None:
-            announced = tuple(ann.roles.keys())
-        else:
-            announced = ()
-
-        # Verification is per role: keep the announced roles the probe verified.
-        verified_set = ver_map.get(origin)
-        if verified_set is not None and announced:
-            verified = tuple(r for r in announced if r in verified_set)
-        elif verified_set is not None and not announced:
-            # No announcement but probe data exists → fully verified from probe.
-            verified = tuple(sorted(verified_set))
-        else:
-            # No probe data → unverified.
-            verified = ()
+        announced, verified = _resolve_member_roles(ann_map.get(origin), ver_map.get(origin))
 
         members.append(
             MemberInfo(
@@ -599,6 +605,59 @@ def _role_fingerprint(
     return _wire_fingerprint_to_replica(info.fingerprint)
 
 
+def _collect_role_candidates(
+    snapshot: RoutingSnapshot, role: str
+) -> list[tuple[str, str, "ReplicaFingerprint | None"]]:
+    """Verified-for-``role`` members as ``(name, origin, fingerprint)``.
+
+    Extracted from :func:`compute_role_placement` (Sonar S3776) — identical
+    behaviour: a member that never verified ``role`` is skipped outright, and
+    a verified member with no announced fingerprint for it (a private role
+    stripped by ``Announcement.public()``) still becomes a candidate with a
+    ``None`` fingerprint.
+    """
+    ann_by_origin = dict(snapshot.announcements)
+    candidates: list[tuple[str, str, "ReplicaFingerprint | None"]] = []
+    for member in snapshot.members:
+        if role not in member.verified_roles:
+            continue
+        ann = ann_by_origin.get(member.origin)
+        fp = _role_fingerprint(ann, role) if ann is not None else None
+        candidates.append((member.name, member.origin, fp))
+    return candidates
+
+
+def _split_candidates_by_reference(
+    role: str,
+    candidates: list[tuple[str, str, "ReplicaFingerprint | None"]],
+    reference: "ReplicaFingerprint | None",
+) -> RolePlacement:
+    """Sort verified candidates into plain vs. suffixed lanes against *reference*.
+
+    Extracted from :func:`compute_role_placement` (Sonar S3776) — identical
+    behaviour: a candidate whose fingerprint compares compatible with
+    *reference* is exposed plain, every other one gets its own suffixed lane.
+    """
+    from lobes.gateway._replicas import compare_fingerprints
+
+    plain: list[str] = []
+    suffixed_list: list[SuffixedLane] = []
+    for name, origin, fp in candidates:
+        compatible, _reason = compare_fingerprints(reference, fp)
+        if compatible:
+            plain.append(origin)
+        else:
+            suffixed_list.append(
+                SuffixedLane(
+                    name=suffixed_lane_name(role, name),
+                    role=role,
+                    member=name,
+                    origin=origin,
+                )
+            )
+    return RolePlacement(role=role, plain_origins=tuple(plain), suffixed=tuple(suffixed_list))
+
+
 def compute_role_placement(
     snapshot: RoutingSnapshot,
     role: str,
@@ -620,15 +679,7 @@ def compute_role_placement(
     """
     from lobes.gateway._replicas import compare_fingerprints
 
-    ann_by_origin = dict(snapshot.announcements)
-
-    candidates: list[tuple[str, str, "ReplicaFingerprint | None"]] = []
-    for member in snapshot.members:
-        if role not in member.verified_roles:
-            continue
-        ann = ann_by_origin.get(member.origin)
-        fp = _role_fingerprint(ann, role) if ann is not None else None
-        candidates.append((member.name, member.origin, fp))
+    candidates = _collect_role_candidates(snapshot, role)
 
     if not candidates:
         return RolePlacement(role=role, plain_origins=(), suffixed=())
@@ -669,23 +720,7 @@ def compute_role_placement(
             )
             return RolePlacement(role=role, plain_origins=(), suffixed=suffixed)
 
-    plain: list[str] = []
-    suffixed_list: list[SuffixedLane] = []
-    for name, origin, fp in candidates:
-        compatible, _reason = compare_fingerprints(reference, fp)
-        if compatible:
-            plain.append(origin)
-        else:
-            suffixed_list.append(
-                SuffixedLane(
-                    name=suffixed_lane_name(role, name),
-                    role=role,
-                    member=name,
-                    origin=origin,
-                )
-            )
-
-    return RolePlacement(role=role, plain_origins=tuple(plain), suffixed=tuple(suffixed_list))
+    return _split_candidates_by_reference(role, candidates, reference)
 
 
 def find_suffixed_lane(

@@ -1127,6 +1127,23 @@ def pooled_backends(
     return original | mesh
 
 
+def _mesh_member_marker(
+    mesh_snapshot: RoutingSnapshot | None, origin: str
+) -> list[tuple[str, str]]:
+    """``X-Lobes-Mesh-Member`` header for the mesh member serving ``origin``.
+
+    Extracted from :func:`_peer_only_forward` (S3776) — same behaviour, just
+    named: an origin the mesh snapshot does not recognise (or no snapshot at
+    all) yields no marker, exactly as the inline loop did.
+    """
+    if mesh_snapshot is None:
+        return []
+    for m in mesh_snapshot.members:
+        if m.origin == origin:
+            return [(MESH_MEMBER_HEADER, m.name)]
+    return []
+
+
 def _peer_only_forward(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -1181,12 +1198,7 @@ def _peer_only_forward(
     # never declared a peer for still gets `X-Lobes-Mesh-Member`, so a caller
     # can tell a mesh-sourced forward from an env-peer one exactly like the
     # hosted-pool path already can.
-    member_marker: list[tuple[str, str]] = []
-    if mesh_snapshot is not None:
-        for m in mesh_snapshot.members:
-            if m.origin == origin:
-                member_marker = [(MESH_MEMBER_HEADER, m.name)]
-                break
+    member_marker = _mesh_member_marker(mesh_snapshot, origin)
     markers = (
         [(ROUTE_REASON_HEADER, placement.selection.reason)]
         + member_marker
@@ -1505,6 +1517,42 @@ def _proxy_to_peer(
     return response
 
 
+def _peer_5xx_response(
+    up: "_Upstream",
+    spec: _ForwardTarget,
+    peer_backend: Backend,
+    proxied_by: tuple[str, str],
+) -> GatewayResponse:
+    """Map a ``>= 500`` peer response, special-casing a 508 proxy_loop.
+
+    Extracted from :func:`_relay_to_target` (Sonar S3776). This also retires
+    a second, later ``if up.status == 508`` branch in that function: because
+    508 satisfies ``>= 500`` and this branch always returns, that later
+    branch could never execute — dead code from the moment both were added,
+    not a behaviour change to remove it.
+    """
+    if up.status == 508:
+        # Special-case 508: if the peer returned proxy_loop, relay it
+        # verbatim rather than laundering it into a retryable 503.
+        raw = up.read_all()
+        up.close()
+        try:
+            err_data = json.loads(raw)
+            if isinstance(err_data, dict) and err_data.get("error", {}).get("type") == "proxy_loop":
+                return GatewayResponse(
+                    status=508,
+                    headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
+                    body=raw,
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # Not a proxy_loop error — treat as generic 503.
+        return _peer_unavailable_response(spec, [f"{peer_backend.name}: HTTP {up.status}"])
+    attempts = [f"{peer_backend.name}: HTTP {up.status}"]
+    up.close()
+    return _peer_unavailable_response(spec, attempts)
+
+
 def _relay_to_target(
     cfg: ServerConfig,
     spec: _ForwardTarget,
@@ -1542,30 +1590,7 @@ def _relay_to_target(
     except UpstreamError as exc:
         return _peer_unavailable_response(spec, [str(exc)])
     if up.status >= 500:
-        # Special-case 508: if the peer returned proxy_loop, relay it verbatim
-        # rather than laundering it into a retryable 503.
-        if up.status == 508:
-            raw = up.read_all()
-            up.close()
-            try:
-                err_data = json.loads(raw)
-                if (
-                    isinstance(err_data, dict)
-                    and err_data.get("error", {}).get("type") == "proxy_loop"
-                ):
-                    return GatewayResponse(
-                        status=508,
-                        headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
-                        body=raw,
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass
-            # Not a proxy_loop error — treat as generic 503.
-            attempts = [f"{peer_backend.name}: HTTP {up.status}"]
-            return _peer_unavailable_response(spec, attempts)
-        attempts = [f"{peer_backend.name}: HTTP {up.status}"]
-        up.close()
-        return _peer_unavailable_response(spec, attempts)
+        return _peer_5xx_response(up, spec, peer_backend, proxied_by)
     if up.status == 404:
         # The one 4xx that must be INSPECTED (mirroring the strict-retry path's
         # read-the-body rationale): a role_infeasible 404 is a misdeclared
@@ -1582,26 +1607,6 @@ def _relay_to_target(
         return GatewayResponse(
             status=404, headers=[proxied_by] + _strip_peer_pool_markers(up.headers), body=raw
         )
-    if up.status == 508:
-        # W9b: a 508 from upstream is a peer's own proxy_loop error.
-        # Read the body and relay verbatim when it is a proxy_loop error,
-        # preventing this box from laundering it into a retryable 503.
-        # When the body is not a proxy_loop error, treat as generic 503.
-        raw = up.read_all()
-        up.close()
-        try:
-            err_data = json.loads(raw)
-            if isinstance(err_data, dict) and err_data.get("error", {}).get("type") == "proxy_loop":
-                return GatewayResponse(
-                    status=508,
-                    headers=[("Content-Type", _CONTENT_TYPE_JSON), proxied_by],
-                    body=raw,
-                )
-        except (json.JSONDecodeError, TypeError):
-            pass
-        # Not a proxy_loop error — treat as generic 503 (peer unavailable).
-        attempts = [f"{peer_backend.name}: HTTP {up.status}"]
-        return _peer_unavailable_response(spec, attempts)
     # 2xx or any other 4xx: the peer's authoritative verdict, relayed exactly
     # like the single-owner rules relay a local backend's (#91) — including
     # the peer's own 429 pressure shed riding back to the caller.
@@ -1957,6 +1962,84 @@ def _pool_replica_api_key(
     return (mesh_cfg.key if mesh_cfg.enabled else "") or ""
 
 
+def _merge_mesh_candidates(
+    candidates: list["ReplicaState"],
+    mesh_snapshot: "RoutingSnapshot | None",
+    mesh_plain_origins: tuple[str, ...],
+) -> list["ReplicaState"]:
+    """W9a/t13: merge mesh candidates as zero-load, neutrally-ranked replicas.
+
+    Extracted from :func:`_pool_selection` (Sonar S3776) — identical
+    behaviour, just named: mesh candidates are injected only when mesh is
+    enabled and the backend's role has PLAIN-exposed members.
+    """
+    if mesh_snapshot is None:
+        return candidates
+    for m in mesh_snapshot.members:
+        if m.origin in mesh_plain_origins:
+            candidates.append(
+                ReplicaState(
+                    origin=m.origin,
+                    local=False,
+                    ready=True,
+                    busy=False,
+                    health="ok",
+                    running=0,
+                    waiting=0,
+                    fingerprint=None,
+                    compatible=True,
+                    reason="",
+                    last_seen=0.0,
+                    weight=8.0,
+                    calibrated=True,
+                )
+            )
+    return candidates
+
+
+def _maybe_synth_local_candidate(
+    candidates: list["ReplicaState"],
+    mesh_plain_origins: tuple[str, ...],
+    backend_name: str,
+    table: RoutingTable,
+    local_busy: bool,
+) -> list["ReplicaState"]:
+    """Synthesize the local candidate for a mesh-only pool (Sonar S3776).
+
+    Extracted from :func:`_pool_selection` — identical behaviour. A box that
+    HOSTS the role is a pool member too. Local replica states come from the
+    replica caches, which only exist for env-declared pools — so on a
+    mesh-only host the local lane was never a candidate and every request
+    was forwarded to a peer with reason "sole-ready" (live Spark reranker,
+    2026-09-12). `select_replica` gives the synthesized candidate the tie
+    (local wins ties) and ranks it like any replica otherwise.
+    """
+    if (
+        mesh_plain_origins
+        and not any(getattr(c, "local", False) for c in candidates)
+        and backend_name not in table.infeasible
+        and any(b.name == backend_name for b in table.backends)
+    ):
+        candidates.append(
+            ReplicaState(
+                origin=table.self_origin or "local",
+                local=True,
+                ready=True,
+                busy=local_busy,
+                health="ok",
+                running=0,
+                waiting=0,
+                fingerprint=None,
+                compatible=True,
+                reason="local lane (mesh pool)",
+                last_seen=0.0,
+                weight=8.0,
+                calibrated=False,
+            )
+        )
+    return candidates
+
+
 def _pool_selection(
     table: RoutingTable,
     backend_name: str,
@@ -2019,58 +2102,10 @@ def _pool_selection(
         return _Placement(Selection(None, True, REASON_SOLE_READY), ())
     affinity = (_request_header(req_headers, AFFINITY_HEADER) or "").strip()
     candidates = list(replica_snapshot(backend_name)) if replica_snapshot is not None else []
-    # W9a/t13: merge mesh candidates when mesh is enabled and the backend's
-    # role has PLAIN-exposed members.  Mesh candidates are injected as
-    # zero-load replicas so they rank neutrally against local replicas.
-    if mesh_snapshot is not None:
-        for m in mesh_snapshot.members:
-            if m.origin in mesh_plain_origins:
-                candidates.append(
-                    ReplicaState(
-                        origin=m.origin,
-                        local=False,
-                        ready=True,
-                        busy=False,
-                        health="ok",
-                        running=0,
-                        waiting=0,
-                        fingerprint=None,
-                        compatible=True,
-                        reason="",
-                        last_seen=0.0,
-                        weight=8.0,
-                        calibrated=True,
-                    )
-                )
-    # A box that HOSTS the role is a pool member too. Local replica states come
-    # from the replica caches, which only exist for env-declared pools — so on
-    # a mesh-only host the local lane was never a candidate and every request
-    # was forwarded to a peer with reason "sole-ready" (live Spark reranker,
-    # 2026-09-12). Synthesize the local candidate; `select_replica` gives it
-    # the tie (local wins ties) and ranks it like any replica otherwise.
-    if (
-        mesh_plain_origins
-        and not any(getattr(c, "local", False) for c in candidates)
-        and backend_name not in table.infeasible
-        and any(b.name == backend_name for b in table.backends)
-    ):
-        candidates.append(
-            ReplicaState(
-                origin=table.self_origin or "local",
-                local=True,
-                ready=True,
-                busy=local_busy,
-                health="ok",
-                running=0,
-                waiting=0,
-                fingerprint=None,
-                compatible=True,
-                reason="local lane (mesh pool)",
-                last_seen=0.0,
-                weight=8.0,
-                calibrated=False,
-            )
-        )
+    candidates = _merge_mesh_candidates(candidates, mesh_snapshot, mesh_plain_origins)
+    candidates = _maybe_synth_local_candidate(
+        candidates, mesh_plain_origins, backend_name, table, local_busy
+    )
     if exclude:
         candidates = [c for c in candidates if c.origin not in exclude]
     return _Placement(
@@ -2234,13 +2269,29 @@ def _pool_exhausted_response(
     )
 
 
+@dataclass(frozen=True)
+class _RequestCtx:
+    """The six facts every dispatch-chain function needs about ONE inbound
+    request, invariant across the whole pool retry loop.
+
+    Introduced (Sonar S107) to fold ``table``/``cfg``/``path``/``req_headers``/
+    ``body``/``open_upstream`` — previously six separate leading positional
+    parameters on :func:`_pool_dispatch`, :func:`_pool_attempt` and
+    :func:`_dial_selected` — into one object, after ``mesh_snapshot`` (t7/t8)
+    became each function's 14th parameter. Purely mechanical: every caller
+    and callee stays inside this module.
+    """
+
+    table: RoutingTable
+    cfg: ServerConfig
+    path: str
+    req_headers: list[tuple[str, str]]
+    body: bytes
+    open_upstream: OpenUpstream
+
+
 def _pool_dispatch(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
@@ -2267,9 +2318,9 @@ def _pool_dispatch(
     dispatched = 0
     while True:
         placement = _pool_selection(
-            table,
+            ctx.table,
             backend_name,
-            req_headers,
+            ctx.req_headers,
             replica_snapshot=replica_snapshot,
             mesh_snapshot=mesh_snapshot,
             local_busy=local_busy,
@@ -2288,12 +2339,7 @@ def _pool_dispatch(
             break
         dispatched += 1
         response, failure = _pool_attempt(
-            table,
-            cfg,
-            path,
-            req_headers,
-            body,
-            open_upstream,
+            ctx,
             backend_name=backend_name,
             served=served,
             placement=placement,
@@ -2313,12 +2359,7 @@ def _pool_dispatch(
 
 
 def _pool_attempt(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
@@ -2351,17 +2392,12 @@ def _pool_attempt(
     """
     selection = placement.selection
     origin = selection.origin or ""
-    markers = _pool_marker_headers(table, placement, dispatched, mesh_snapshot=mesh_snapshot)
+    markers = _pool_marker_headers(ctx.table, placement, dispatched, mesh_snapshot=mesh_snapshot)
     release = (counter or _uncounted)(backend_name, origin)
     answer: GatewayResponse | None = None
     try:
         answer, failures = _dial_selected(
-            table,
-            cfg,
-            path,
-            req_headers,
-            body,
-            open_upstream,
+            ctx,
             backend_name=backend_name,
             served=served,
             selection=selection,
@@ -2387,12 +2423,7 @@ def _pool_attempt(
 
 
 def _dial_selected(
-    table: RoutingTable,
-    cfg: ServerConfig,
-    path: str,
-    req_headers: list[tuple[str, str]],
-    body: bytes,
-    open_upstream: OpenUpstream,
+    ctx: _RequestCtx,
     *,
     backend_name: str,
     served: str,
@@ -2413,19 +2444,19 @@ def _dial_selected(
             return None, []
         return dial_local(markers + tier_headers)
     forwarded = _proxy_to_peer(
-        cfg,
+        ctx.cfg,
         _ForwardTarget(
             name=backend_name,
             origin=selection.origin or "",
             served_name=served,
             api_key=_pool_replica_api_key(
-                table, backend_name, selection.origin or "", mesh_snapshot
+                ctx.table, backend_name, selection.origin or "", mesh_snapshot
             ),
         ),
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        ctx.path,
+        ctx.req_headers,
+        ctx.body,
+        ctx.open_upstream,
         extra_response_headers=markers,
     )
     if not forwarded.peer_unavailable:
@@ -2564,12 +2595,7 @@ def _pooled_busy_dispatch(
     if not ordered:
         return None
     outcome = _pool_dispatch(
-        table,
-        cfg,
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        _RequestCtx(table, cfg, path, req_headers, body, open_upstream),
         backend_name=ordered[0].name,
         served=served,
         tier_headers=[],
@@ -3393,12 +3419,7 @@ def handle_post(
 
     # --- replica pool (t7/t8, #199): local-vs-peer placement, before dialing ---
     outcome = _pool_dispatch(
-        table,
-        cfg,
-        path,
-        req_headers,
-        body,
-        open_upstream,
+        _RequestCtx(table, cfg, path, req_headers, body, open_upstream),
         backend_name=ordered[0].name,
         served=served,
         tier_headers=tier_headers,
@@ -4250,25 +4271,32 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     # --- GET: /health, /status, /v1/models, /v1/models/supported ---
+    def _dispatch_mesh_get(self, route: str) -> bool:
+        """Handle ``route`` as a ``GET /mesh/*`` route; ``True`` if it answered.
+
+        Extracted from :meth:`do_GET` (Sonar S3776) — identical behaviour.
+        Mesh routes (t6) are gated on the join key by the mesh handler; when
+        mesh is disabled no thread starts and every ``/mesh/*`` path falls
+        through untouched (returns ``False``) to the normal 404 below.
+        """
+        if not (_is_mesh_route(route) and self.mesh_routes is not None):
+            return False
+        result = dispatch_mesh(self, self.mesh_routes)
+        if result is not None:
+            status, headers, body = result
+            self._send_simple(status, headers, body)
+            return True
+        # Finding 20: mesh enabled but unknown mesh route → 404, not fall-through.
+        self._send_simple(
+            404,
+            [("Content-Type", _CONTENT_TYPE_JSON)],
+            json.dumps({"error": {"message": f"not found: {route}", "type": "not_found"}}).encode(),
+        )
+        return True
+
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
-        # Mesh routes (t6): gate on the join key via the mesh handler; when
-        # mesh is disabled no thread starts and every /mesh/* path falls
-        # through to the normal 404 below.
-        if _is_mesh_route(route) and self.mesh_routes is not None:
-            result = dispatch_mesh(self, self.mesh_routes)
-            if result is not None:
-                status, headers, body = result
-                self._send_simple(status, headers, body)
-                return
-            # Finding 20: mesh enabled but unknown mesh route → 404, not fall-through.
-            self._send_simple(
-                404,
-                [("Content-Type", "application/json")],
-                json.dumps(
-                    {"error": {"message": f"not found: {route}", "type": "not_found"}}
-                ).encode(),
-            )
+        if self._dispatch_mesh_get(route):
             return
         # Read mesh snapshot once at the top of every request (W2).
         mesh_snapshot = as_routing_snapshot(
@@ -4548,30 +4576,38 @@ class _Handler(BaseHTTPRequestHandler):
         )
 
     # --- POST: proxy /v1/* to a backend ---
+    def _dispatch_mesh_post(self, route: str) -> bool:
+        """Handle ``route`` as a ``POST /mesh/*`` route; ``True`` if it answered.
+
+        Extracted from :meth:`do_POST` (Sonar S3776) — identical behaviour,
+        mirroring :meth:`_dispatch_mesh_get` except an unknown mesh route
+        answers 405 here (this handler only ever sees POSTs), not 404.
+        """
+        if not (_is_mesh_route(route) and self.mesh_routes is not None):
+            return False
+        result = dispatch_mesh(self, self.mesh_routes)
+        if result is not None:
+            status, headers, body = result
+            self._send_simple(status, headers, body)
+            return True
+        # Finding 20: mesh enabled but unknown mesh route → 405, not fall-through.
+        self._send_simple(
+            405,
+            [("Content-Type", _CONTENT_TYPE_JSON)],
+            json.dumps(
+                {
+                    "error": {
+                        "message": f"method not allowed: {self.command} {route}",
+                        "type": "method_not_allowed",
+                    }
+                }
+            ).encode(),
+        )
+        return True
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         route = self.path.split("?", 1)[0]
-        # Mesh routes (t6): gate on the join key via the mesh handler; when
-        # mesh is disabled no thread starts and every /mesh/* path falls
-        # through to the normal auth gate below.
-        if _is_mesh_route(route) and self.mesh_routes is not None:
-            result = dispatch_mesh(self, self.mesh_routes)
-            if result is not None:
-                status, headers, body = result
-                self._send_simple(status, headers, body)
-                return
-            # Finding 20: mesh enabled but unknown mesh route → 405, not fall-through.
-            self._send_simple(
-                405,
-                [("Content-Type", "application/json")],
-                json.dumps(
-                    {
-                        "error": {
-                            "message": f"method not allowed: {self.command} {route}",
-                            "type": "method_not_allowed",
-                        }
-                    }
-                ).encode(),
-            )
+        if self._dispatch_mesh_post(route):
             return
         # Read mesh snapshot once at the top of every request (W2).
         mesh_snapshot = as_routing_snapshot(

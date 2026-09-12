@@ -1471,6 +1471,47 @@ def annotate_replicas(
     return payload
 
 
+def _resolve_local_fingerprint(
+    local_fingerprints: Mapping[str, ReplicaState],
+    role: str,
+) -> object | None:
+    """This box's own fingerprint for *role*, unwrapped from a replica state.
+
+    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
+    behaviour: a bare fingerprint-like object passes through unchanged, a
+    replica state is unwrapped to its ``.fingerprint``.
+    """
+    local_fp = local_fingerprints.get(role)
+    if hasattr(local_fp, "fingerprint"):
+        return local_fp.fingerprint
+    return local_fp
+
+
+def _annotate_plain_member(
+    entry: dict,
+    placement: object,
+    local_fp: object | None,
+    mesh_snapshot: object | None,
+) -> None:
+    """Name the ONE mesh member serving *entry*'s plain pool answer, in place.
+
+    Extracted from :func:`annotate_mesh_naming` (Sonar S3776) — identical
+    behaviour: a locally-hosted role (``loaded`` or a local fingerprint is
+    known) stays self-served and never gets a ``member`` key; otherwise the
+    first mesh member whose origin is in ``placement.plain_origins`` is
+    named, mirroring the original loop's ``break``.
+    """
+    if not placement.plain_origins or entry.get("member"):
+        return
+    served_locally = bool(entry.get("loaded")) or local_fp is not None
+    if served_locally:
+        return
+    for m in getattr(mesh_snapshot, "members", ()):
+        if m.origin in placement.plain_origins:
+            entry["member"] = m.name
+            return
+
+
 def annotate_mesh_naming(
     payload: dict[str, dict],
     mesh_snapshot: "object | None",
@@ -1509,21 +1550,13 @@ def annotate_mesh_naming(
     for role, entry in payload.items():
         if not isinstance(entry, dict):
             continue
-        local_fp = local_fingerprints.get(role)
-        if hasattr(local_fp, "fingerprint"):
-            local_fp = local_fp.fingerprint
+        local_fp = _resolve_local_fingerprint(local_fingerprints, role)
         placement = compute_role_placement(mesh_snapshot, role, local_fingerprint=local_fp)
         if placement.suffixed:
             entry["suffixed_lanes"] = list(placement.suffixed_names())
-        if placement.plain_origins and not entry.get("member"):
-            # Name the member only when THIS box does not itself serve the
-            # plain pool answer — a locally-hosted role stays self-served.
-            served_locally = bool(entry.get("loaded")) or local_fp is not None
-            if not served_locally:
-                for m in getattr(mesh_snapshot, "members", ()):
-                    if m.origin in placement.plain_origins:
-                        entry["member"] = m.name
-                        break
+        # Name the member only when THIS box does not itself serve the
+        # plain pool answer — a locally-hosted role stays self-served.
+        _annotate_plain_member(entry, placement, local_fp, mesh_snapshot)
     return payload
 
 

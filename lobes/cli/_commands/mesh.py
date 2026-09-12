@@ -153,7 +153,9 @@ def trigger_reannounce(port: int, env: dict[str, str]) -> None:
         _post_json(
             f"http://localhost:{port}", "/mesh/reannounce", {}, headers, _GATEWAY_TIMEOUT_SECONDS
         )
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
+        # urllib.error.URLError is a subclass of OSError (S5713) — catching
+        # it separately was redundant, not a behaviour narrowing.
         emit_diagnostic(f"mesh: reannounce not delivered ({exc})")
 
 
@@ -257,7 +259,16 @@ def _render_roster_table(members: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def cmd_mesh_status(args: argparse.Namespace) -> int:
+def cmd_mesh_status(args: argparse.Namespace) -> None:
+    """Render the mesh roster. Always exit 0 (failures raise ``ModelGearError``).
+
+    S3516: every branch below used to end in an identical ``return 0`` — not
+    a bug, but the CLI dispatcher's documented callback contract
+    (:func:`lobes.cli._dispatch`: "a handler may return ``None`` (success,
+    exit 0) or an ``int`` exit code"). ``status`` never distinguishes success
+    outcomes by exit code — an unreachable roster is reported in the body,
+    not the process exit status — so this is procedure-style on purpose.
+    """
     json_mode = bool(getattr(args, "json", False))
     port, deploy_dir = _runtime_ops.resolve_port_soft(args)
     env = _runtime_ops.deployment_env_soft(args)
@@ -273,13 +284,12 @@ def cmd_mesh_status(args: argparse.Namespace) -> int:
                 "enabled on this box (LOBES_MESH_KEY unset)."
             )
             emit_result("(no roster — gateway unreachable or mesh disabled)", json_mode=False)
-        return 0
+        return
     members = payload.get("members") or []
     if json_mode:
         emit_result({"available": True, "members": members}, json_mode=True)
     else:
         emit_result(_render_roster_table(members), json_mode=False)
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -442,9 +452,9 @@ def cmd_mesh_revoke(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _no_verb(args: argparse.Namespace) -> int:
+def _no_verb(args: argparse.Namespace) -> None:
     # Bare `lobes mesh` → the read-only status (safe default, mirrors fleet).
-    return cmd_mesh_status(args)
+    cmd_mesh_status(args)
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
@@ -456,7 +466,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "mesh",
-        help="Mesh membership: status / request / approve / revoke. " "See 'lobes mesh status'.",
+        help="Mesh membership: status / request / approve / revoke. See 'lobes mesh status'.",
     )
     _add_common(p)
     p.set_defaults(func=_no_verb, json=False)

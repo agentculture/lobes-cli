@@ -1086,6 +1086,69 @@ def _repin_version(deploy_dir: Path) -> list[str]:
     return [f"{verb} {_VERSION_PIN_KEY}={__version__}{was}"]
 
 
+def _fleet_only_checks(deploy_dir: Path) -> tuple[list[dict], dict[str, object]]:
+    """Fleet-only checks (issue #119) plus the resulting ``fix_plan``.
+
+    Extracted from :func:`_diagnose` (Sonar S3776) — identical behaviour.
+    The legacy single-model scaffold has no per-role profile render, so this
+    is only ever called when :func:`_compose.is_fleet` is true.
+    """
+    checks: list[dict] = []
+    files_check, missing_files = _scaffold_files_check(deploy_dir)
+    stale_check, missing_env = _profile_staleness_check(deploy_dir)
+    passthrough_check = _gateway_passthrough_check(deploy_dir)
+    checks.extend([files_check, stale_check, passthrough_check])
+    # Only emitted when this box actually HOSTS the associate lane.
+    auth_gate = _associate_auth_gate_check(deploy_dir)
+    if auth_gate is not None:
+        checks.append(auth_gate)
+    mesh_passthrough_check = _passthrough_missing_check(deploy_dir)
+    if mesh_passthrough_check is not None:
+        checks.append(mesh_passthrough_check)
+    mesh_secrets_only_check = _mesh_key_secrets_env_only_check(deploy_dir)
+    if mesh_secrets_only_check is not None:
+        checks.append(mesh_secrets_only_check)
+    fix_plan = {"files": missing_files, "env": missing_env}
+    return checks, fix_plan
+
+
+def _deploy_dir_diagnostics(deploy_dir: Path) -> tuple[list[dict], int, dict[str, object] | None]:
+    """Every check that needs a resolved deployment dir, plus port/fix_plan.
+
+    Extracted from :func:`_diagnose` (Sonar S3776) — identical behaviour:
+    the env-coherence, peer-retirement, mesh-key, fleet-only and lock-drift
+    checks below all read the SAME scaffolded deployment, so they were one
+    nested block in the original function; here they are one function call.
+    """
+    checks: list[dict] = []
+    env_path = deploy_dir / _compose.ENV_FILE
+    checks.append(_env_coherence_check(env_path))
+    port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
+    # Peer-family retirement + mesh checks (t9) — read-only, apply to
+    # every scaffolded deployment (not fleet-gated: a leftover PEER_* key
+    # or a shell/`.env` mesh-key mismatch is meaningful even on the
+    # legacy single-model scaffold's .env).
+    peer_retired_check = _peer_family_retired_check(deploy_dir)
+    if peer_retired_check is not None:
+        checks.append(peer_retired_check)
+    mesh_mismatch_check = _mesh_key_shell_mismatch_check(env_path)
+    if mesh_mismatch_check is not None:
+        checks.append(mesh_mismatch_check)
+    # Scaffold integrity + profile staleness (issue #119) — fleet-only:
+    # the legacy single-model scaffold has no per-role profile render.
+    fix_plan: dict[str, object] | None = None
+    if _compose.is_fleet(deploy_dir):
+        fleet_checks, fix_plan = _fleet_only_checks(deploy_dir)
+        checks.extend(fleet_checks)
+    # Committed deployment lock (deployment-lock-per-box plan, t8) — not
+    # fleet-gated: a lock is orthogonal to topology, and a deployment that
+    # has never adopted the practice gets no finding at all.
+    lock_check = _lock_drift_check(deploy_dir)
+    if lock_check is not None:
+        checks.append(lock_check)
+    return checks, port, fix_plan
+
+
 def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     checks: list[dict] = [_docker_check()]
 
@@ -1101,43 +1164,8 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
     port = 8000
     fix_plan: dict[str, object] | None = None
     if deploy_dir is not None:
-        env_path = deploy_dir / _compose.ENV_FILE
-        checks.append(_env_coherence_check(env_path))
-        port = _env.parse_port(_env.read_env(env_path, "VLLM_PORT", "8000"))
-        # Peer-family retirement + mesh checks (t9) — read-only, apply to
-        # every scaffolded deployment (not fleet-gated: a leftover PEER_* key
-        # or a shell/`.env` mesh-key mismatch is meaningful even on the
-        # legacy single-model scaffold's .env).
-        peer_retired_check = _peer_family_retired_check(deploy_dir)
-        if peer_retired_check is not None:
-            checks.append(peer_retired_check)
-        mesh_mismatch_check = _mesh_key_shell_mismatch_check(env_path)
-        if mesh_mismatch_check is not None:
-            checks.append(mesh_mismatch_check)
-        # Scaffold integrity + profile staleness (issue #119) — fleet-only:
-        # the legacy single-model scaffold has no per-role profile render.
-        if _compose.is_fleet(deploy_dir):
-            files_check, missing_files = _scaffold_files_check(deploy_dir)
-            stale_check, missing_env = _profile_staleness_check(deploy_dir)
-            passthrough_check = _gateway_passthrough_check(deploy_dir)
-            checks.extend([files_check, stale_check, passthrough_check])
-            # Only emitted when this box actually HOSTS the associate lane.
-            auth_gate = _associate_auth_gate_check(deploy_dir)
-            if auth_gate is not None:
-                checks.append(auth_gate)
-            mesh_passthrough_check = _passthrough_missing_check(deploy_dir)
-            if mesh_passthrough_check is not None:
-                checks.append(mesh_passthrough_check)
-            mesh_secrets_only_check = _mesh_key_secrets_env_only_check(deploy_dir)
-            if mesh_secrets_only_check is not None:
-                checks.append(mesh_secrets_only_check)
-            fix_plan = {"files": missing_files, "env": missing_env}
-        # Committed deployment lock (deployment-lock-per-box plan, t8) — not
-        # fleet-gated: a lock is orthogonal to topology, and a deployment that
-        # has never adopted the practice gets no finding at all.
-        lock_check = _lock_drift_check(deploy_dir)
-        if lock_check is not None:
-            checks.append(lock_check)
+        dir_checks, port, fix_plan = _deploy_dir_diagnostics(deploy_dir)
+        checks.extend(dir_checks)
 
     checks.append(_health_check(port))
     checks.append(_version_skew_check(port, deploy_dir))
