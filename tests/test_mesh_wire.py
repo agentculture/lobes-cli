@@ -461,3 +461,70 @@ class TestMeshSchemaIncompatible:
         msg = str(exc_info.value)
         assert str(SCHEMA_MAJOR) in msg
         assert "3" in msg  # actual major from payload
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 15: decode() must validate structure before indexing
+# ---------------------------------------------------------------------------
+
+
+class TestMalformedTopLevel:
+    """A structurally-wrong-but-valid-JSON body must raise ValueError, never
+    an uncaught TypeError/AttributeError/KeyError."""
+
+    def test_non_object_body_raises_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            decode(json.dumps([1, 2, 3]).encode())
+
+    def test_roles_not_a_mapping_raises_value_error(self) -> None:
+        a = _minimal()
+        obj = json.loads(encode(a))
+        obj["roles"] = ["not", "a", "mapping"]
+        with pytest.raises(ValueError):
+            decode(json.dumps(obj).encode())
+
+    def test_missing_name_raises_value_error(self) -> None:
+        a = _minimal()
+        obj = json.loads(encode(a))
+        del obj["name"]
+        with pytest.raises(ValueError):
+            decode(json.dumps(obj).encode())
+
+    def test_missing_origin_raises_value_error(self) -> None:
+        a = _minimal()
+        obj = json.loads(encode(a))
+        del obj["origin"]
+        with pytest.raises(ValueError):
+            decode(json.dumps(obj).encode())
+
+    def test_role_entry_not_a_mapping_raises_value_error(self) -> None:
+        a = _minimal()
+        obj = json.loads(encode(a))
+        obj["roles"]["cortex"] = "not a mapping"
+        with pytest.raises(ValueError):
+            decode(json.dumps(obj).encode())
+
+    def test_none_of_these_raise_a_bare_attribute_or_key_error(self) -> None:
+        """Every malformed body above must raise ValueError specifically —
+        not let AttributeError/KeyError/TypeError escape uncaught, which is
+        what crashed the /mesh/announce handler before this fix."""
+        a = _minimal()
+        base = json.loads(encode(a))
+        bad_bodies = []
+        for mutate in (
+            lambda o: o.__setitem__("roles", ["x"]),
+            lambda o: o.pop("name"),
+            lambda o: o.pop("origin"),
+        ):
+            obj = json.loads(json.dumps(base))
+            mutate(obj)
+            bad_bodies.append(obj)
+        for obj in bad_bodies:
+            try:
+                decode(json.dumps(obj).encode())
+            except ValueError:
+                pass
+            except (AttributeError, KeyError, TypeError) as exc:
+                pytest.fail(f"expected ValueError, escaped {type(exc).__name__}: {exc}")
+            else:
+                pytest.fail("expected ValueError to be raised")

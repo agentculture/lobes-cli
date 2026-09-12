@@ -366,3 +366,122 @@ class TestFlappingHoldOut:
         # After one tick, hold-out should expire
         clock.tick()
         roster.join("alice", "origin-a", 4, now=clock())
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 2: tick() must name exactly the members it dropped
+# ---------------------------------------------------------------------------
+
+
+class TestTickDroppedOrigins:
+    """TickResult.dropped_origins names only the members THIS tick removed."""
+
+    def test_dropped_origins_names_only_the_dropped_member(
+        self, roster: MeshRoster, clock: _TickClock
+    ) -> None:
+        roster.announce("alice", "http://alice.local", None, now=clock())
+        roster.announce("bob", "http://bob.local", None, now=clock())
+        # Keep bob alive every tick; let alice go stale.
+        for _ in range(5):
+            clock.tick()
+            roster.announce("bob", "http://bob.local", None, now=clock())
+            result = roster.tick(clock())
+        assert result.dropped == 1
+        assert result.dropped_origins == ("http://alice.local",)
+        # Bob must still be a member — the old code popped every SURVIVOR's
+        # announcement (via the caller) on any single expiry, which is what
+        # this field exists to prevent.
+        assert roster.is_joined("bob")
+
+    def test_no_drop_yields_empty_dropped_origins(
+        self, roster: MeshRoster, clock: _TickClock
+    ) -> None:
+        roster.announce("alice", "http://alice.local", None, now=clock())
+        result = roster.tick(clock())
+        assert result.dropped == 0
+        assert result.dropped_origins == ()
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 4: announce_gated is atomic against a concurrent revoke
+# ---------------------------------------------------------------------------
+
+
+class TestAnnounceGated:
+    def test_absent_ledger_entry_admits(self, roster: MeshRoster, clock: _TickClock) -> None:
+        """Finding 5 (unchanged): no ledger entry at all still admits."""
+        roster.announce_gated("alice", "http://alice.local", None, now=clock())
+        assert roster.is_joined("alice")
+
+    def test_revoked_name_is_refused(self, roster: MeshRoster, clock: _TickClock) -> None:
+        roster.approve("alice", "admin", 9999.0, now=clock())
+        roster.revoke("alice", now=clock())
+        with pytest.raises(MeshApprovalExpired):
+            roster.announce_gated("alice", "http://alice.local", None, now=clock())
+        assert not roster.is_joined("alice")
+
+    def test_approved_name_admits(self, roster: MeshRoster, clock: _TickClock) -> None:
+        roster.approve("alice", "admin", 9999.0, now=clock())
+        roster.announce_gated("alice", "http://alice.local", None, now=clock())
+        assert roster.is_joined("alice")
+
+    def test_revoke_after_announce_gated_is_never_lost(
+        self, roster: MeshRoster, clock: _TickClock
+    ) -> None:
+        """The admission lock serializes announce_gated against revoke — a
+        revoke committed right after an admission must still be observable on
+        the very next announce_gated call (no silently-lost mutation)."""
+        roster.approve("alice", "admin", 9999.0, now=clock())
+        roster.announce_gated("alice", "http://alice.local", None, now=clock())
+        roster.revoke("alice", now=clock())
+        with pytest.raises(MeshApprovalExpired):
+            roster.announce_gated("alice", "http://alice.local", None, now=clock())
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 3: approve_and_save / revoke_and_save persist atomically
+# ---------------------------------------------------------------------------
+
+
+class TestApproveRevokeAndSave:
+    def test_approve_and_save_persists(
+        self, roster: MeshRoster, clock: _TickClock, ledger_path: Path
+    ) -> None:
+        roster.approve_and_save("alice", "admin", 9999.0, now=clock())
+        reloaded = MeshRoster(clock=_TickClock(), ledger_path=str(ledger_path))
+        assert reloaded.is_approved("alice")
+
+    def test_revoke_and_save_persists(
+        self, roster: MeshRoster, clock: _TickClock, ledger_path: Path
+    ) -> None:
+        roster.approve_and_save("alice", "admin", 9999.0, now=clock())
+        roster.revoke_and_save("alice", now=clock())
+        reloaded = MeshRoster(clock=_TickClock(), ledger_path=str(ledger_path))
+        assert not reloaded.is_approved("alice")
+
+    def test_concurrent_approve_and_save_do_not_corrupt_ledger(
+        self, roster: MeshRoster, clock: _TickClock
+    ) -> None:
+        """Finding 3: many threads approving+saving concurrently must never
+        raise (e.g. 'dictionary changed size during iteration') and every
+        approved name must end up persisted."""
+        import threading
+
+        names = [f"member-{i}" for i in range(20)]
+        errors: list[BaseException] = []
+
+        def _worker(name: str) -> None:
+            try:
+                roster.approve_and_save(name, "admin", 9999.0, now=0.0)
+            except BaseException as exc:  # noqa: BLE001 - captured for the assertion
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_worker, args=(n,)) for n in names]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert errors == []
+        for name in names:
+            assert roster.is_approved(name, now=0.0)

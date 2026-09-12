@@ -3022,7 +3022,7 @@ def handle_post(
     # for infeasible roles.  This is a no-op when mesh_snapshot is None,
     # preserving the pre-mesh behaviour byte-for-byte.
     if mesh_snapshot is not None:
-        from lobes.roles import BACKEND_ROLE, ROLES
+        from lobes.roles import BACKEND_ROLE, ROLE_BACKEND, ROLES
 
         # Suffixed-lane direct addressing (t8, issue #237): "{role}-{member}"
         # always resolves straight to that member's origin, independent of
@@ -3047,10 +3047,23 @@ def handle_post(
                 except MeshConfigError:
                     mesh_cfg = None
                 join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+                # Finding 1 (review #252): `requested` is the GATEWAY-ONLY
+                # suffixed alias ("cortex-thor") this box minted for direct
+                # addressing — the destination member never declared that
+                # name as one it serves, so rewriting the outbound body's
+                # `model` to it (via `rewrite=True` below) sent the
+                # destination a model id it does not recognise. Resolve to
+                # the destination's canonical backend name instead — the
+                # exact convention the plain (non-suffixed) mesh forward a
+                # few lines below already uses (`served_name=owned_backend`)
+                # — so both mesh-forward paths hand every destination a name
+                # it actually serves. The suffixed name is kept only for THIS
+                # box's own routing/response metadata (MESH_MEMBER_HEADER
+                # below still names the member unambiguously).
                 target = _ForwardTarget(
                     name=lane.role,
                     origin=lane.origin,
-                    served_name=requested,
+                    served_name=ROLE_BACKEND.get(lane.role, lane.role),
                     api_key=join_key,
                 )
                 return _proxy_to_peer(
@@ -3979,7 +3992,13 @@ def capabilities_payload(
     # it is published even for a role whose own peer list is empty. With no
     # pool declared and no snapshot, `annotate_replicas` is a no-op for every
     # role and the payload stays byte-identical to the pre-pool contract (h1).
-    payload = annotate_replicas(payload, table, replica_snapshot)
+    # Finding 10 (review #252): tell annotate_replicas whether the mesh is
+    # enabled at all so an ordinary hosted role — no declared replica pool,
+    # the common single-box case — still publishes a fingerprint for a
+    # peer's verification probe to compare against.
+    payload = annotate_replicas(
+        payload, table, replica_snapshot, mesh_enabled=mesh_snapshot is not None
+    )
     # Suffixed-lane naming (t8, issue #237): the additive per-role
     # `member`/`suffixed_lanes` keys, from the mesh routing snapshot when this
     # process has one. With mesh disabled (`mesh_snapshot is None`, every
@@ -4261,7 +4280,7 @@ class _Handler(BaseHTTPRequestHandler):
             pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
             self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
-            self._get_v1_models()
+            self._get_v1_models(mesh_snapshot=mesh_snapshot)
         elif route == "/v1/models/supported":
             # The full catalog of gears you can change to (loaded + the rest),
             # not just the two currently warm. Non-OpenAI shape; /v1/models stays standard.
@@ -4380,7 +4399,7 @@ class _Handler(BaseHTTPRequestHandler):
                 ),
             )
 
-    def _get_v1_models(self) -> None:
+    def _get_v1_models(self, *, mesh_snapshot: "RoutingSnapshot | None" = None) -> None:
         # Advertise only backends the live readiness snapshot marks ready
         # (issue #92): a wired-but-dead backend must NOT appear here, so a
         # client can trust that a listed model id reaches a live engine. The
@@ -4413,7 +4432,15 @@ class _Handler(BaseHTTPRequestHandler):
         # (Qodo #6 on PR #233). Resolve those names the way
         # `peer_specs_from_table` does, and keep the audio lanes out for the
         # same reason it does: their ids are not requestable via `model`.
-        pooled_names = pooled_backends(self.table, replica_snapshot_provider(self.replica_caches))
+        # Finding 13 (review #252): pass the SAME mesh_snapshot /capabilities
+        # uses into pooled_backends, so a role available only through a
+        # verified mesh member (no declared *_PEER_ORIGINS anywhere) is
+        # listed here too, instead of only being placeable at request time.
+        pooled_names = pooled_backends(
+            self.table,
+            replica_snapshot_provider(self.replica_caches),
+            mesh_snapshot=mesh_snapshot,
+        )
         if pooled_names:
             resolved = dict(peer_served or {})
             for name in pooled_names:
@@ -5082,14 +5109,18 @@ def build_mesh_wiring(
         verify_log=verify_log,
         missed_max=mesh_cfg.missed_max,
     )
-    if start:
-        # Start the heartbeat daemon thread after the server is bound.
-        _start_mesh(mesh_routes, announcement)
-    # Wire the mesh snapshot holder so every request reads one frozen copy.
-    mesh_routes._holder = holder = SnapshotHolder(mesh_routes.roster)
+    # Finding 11 (review #252): the request handlers and the heartbeat must
+    # read/write ONE holder. `_build_mesh_routes` may already have attached
+    # one to `mesh_routes._holder`; reuse it, and seed it BEFORE the heartbeat
+    # thread starts, so the thread never captures a stale or empty instance.
+    holder = mesh_routes._holder or SnapshotHolder(mesh_routes.roster)  # noqa: SLF001
+    mesh_routes._holder = holder  # noqa: SLF001
     holder.replace(
         MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
     )
+    if start:
+        # Start the heartbeat daemon thread after the holder is seeded.
+        _start_mesh(mesh_routes, announcement)
     return mesh_routes, holder
 
 

@@ -554,6 +554,45 @@ def _mesh_key_shell_mismatch_check(env_path: Path) -> dict | None:
     )
 
 
+def _mesh_key_secrets_env_only_check(deploy_dir: Path) -> dict | None:
+    """``LOBES_MESH_KEY`` set in ``.secrets.env`` but not (also) in ``.env``.
+
+    Review #252 finding 7: ``env.example`` documents "keep it in .env or
+    .secrets.env", but the gateway service in the fleet template has
+    deliberately NO ``env_file`` (it reads only the scoped, non-secret keys
+    Compose interpolates from ``.env`` — see the comment on the ``gateway``
+    service in ``docker-compose.yml``). ``LOBES_MESH_KEY`` reaches the
+    container ONLY via that ``${LOBES_MESH_KEY:-}`` interpolation, which
+    Compose resolves from ``.env`` (and the real process environment), never
+    from ``.secrets.env``. A key placed only in ``.secrets.env`` — the
+    documented-as-valid path — silently leaves the gateway with an empty key,
+    so ``build_mesh_config()`` selects its disabled configuration with no
+    error at all. Returns ``None`` (no finding) for the legacy single-model
+    scaffold, when neither file sets the key, or when ``.env`` already has it.
+    """
+    if not _compose.is_fleet(deploy_dir):
+        return None
+    env_value = (_env.read_env(deploy_dir / _compose.ENV_FILE, _MESH_KEY_ENV_VAR) or "").strip()
+    if env_value:
+        return None
+    secrets_path = deploy_dir / ".secrets.env"
+    if not secrets_path.is_file():
+        return None
+    secrets_value = (_env.read_env(secrets_path, _MESH_KEY_ENV_VAR) or "").strip()
+    if not secrets_value:
+        return None
+    return _check(
+        "mesh_key_secrets_env_only",
+        False,
+        "warn",
+        f"{_MESH_KEY_ENV_VAR} is set in .secrets.env but not in .env — the gateway "
+        "service has no env_file and reads this key only via Compose interpolation "
+        "of .env, so the mesh will start DISABLED with no error",
+        f"also set {_MESH_KEY_ENV_VAR} in .env (the file Compose interpolates "
+        "${...} from), not only in .secrets.env",
+    )
+
+
 def _passthrough_missing_check(deploy_dir: Path) -> dict | None:
     """A ``LOBES_MESH_*`` key set in ``.env`` but absent from the gateway
     service's ``environment:`` block in ``docker-compose.yml`` — the same
@@ -1089,6 +1128,9 @@ def _diagnose(compose_dir: str | None = None) -> dict[str, object]:
             mesh_passthrough_check = _passthrough_missing_check(deploy_dir)
             if mesh_passthrough_check is not None:
                 checks.append(mesh_passthrough_check)
+            mesh_secrets_only_check = _mesh_key_secrets_env_only_check(deploy_dir)
+            if mesh_secrets_only_check is not None:
+                checks.append(mesh_secrets_only_check)
             fix_plan = {"files": missing_files, "env": missing_env}
         # Committed deployment lock (deployment-lock-per-box plan, t8) — not
         # fleet-gated: a lock is orthogonal to topology, and a deployment that

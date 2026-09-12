@@ -662,3 +662,36 @@ def test_capabilities_offline_fallback_unaffected_by_mesh_rendering(tmp_path, ca
     text = capsys.readouterr().out
     assert "served by mesh member:" not in text
     assert "suffixed lanes:" not in text
+
+
+# ---------------------------------------------------------------------------
+# review #252 finding 16: --for must reject nan/inf, not just <= 0
+# ---------------------------------------------------------------------------
+
+
+class TestParseDurationFiniteness:
+    def test_rejects_nan(self) -> None:
+        from lobes.cli._commands.mesh import _parse_duration_seconds
+        from lobes.cli._errors import ModelGearError
+
+        with pytest.raises(ModelGearError):
+            _parse_duration_seconds("nan")
+
+    def test_rejects_inf(self) -> None:
+        from lobes.cli._commands.mesh import _parse_duration_seconds
+        from lobes.cli._errors import ModelGearError
+
+        with pytest.raises(ModelGearError):
+            _parse_duration_seconds("inf")
+
+    def test_rejects_negative_inf(self) -> None:
+        from lobes.cli._commands.mesh import _parse_duration_seconds
+        from lobes.cli._errors import ModelGearError
+
+        with pytest.raises(ModelGearError):
+            _parse_duration_seconds("-inf")
+
+    def test_accepts_ordinary_duration(self) -> None:
+        from lobes.cli._commands.mesh import _parse_duration_seconds
+
+        assert _parse_duration_seconds("24h") == pytest.approx(86400.0)

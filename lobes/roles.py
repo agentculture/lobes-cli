@@ -1374,6 +1374,8 @@ def annotate_replicas(
     payload: dict[str, dict],
     table: RoutingTable,
     snapshot: Mapping[str, tuple[ReplicaState, ...]] | None = None,
+    *,
+    mesh_enabled: bool = False,
 ) -> dict[str, dict]:
     """Add the additive per-role ``fingerprint``/``replicas`` keys (#199, t6).
 
@@ -1429,6 +1431,17 @@ def annotate_replicas(
     Existing keys are never touched: ``feasible``/``proxied``/``hosted_by``/
     ``ready``/``loaded`` keep their documented type and single-owner meaning
     exactly as :func:`annotate_peer_referrals` left them.
+
+    ``mesh_enabled`` (review #252 finding 10): when true, publish a
+    fingerprint for every LOCALLY HOSTED role too, even with no declared
+    replica pool and no snapshot for it. Mesh verification
+    (:func:`~lobes.gateway._mesh_routing.verify_member_roles`) compares an
+    announced fingerprint against this box's own ``/capabilities`` — before
+    this, an "ordinary" member (the common case: no ``*_PEER_ORIGINS`` pool
+    declared anywhere) published no ``fingerprint`` key at all for a hosted
+    role, so it could never be verified by a peer's probe no matter how
+    correct the announcement was. ``False`` (the default, every pre-mesh and
+    mesh-disabled deployment) leaves this function's gate exactly as before.
     """
     resolved_snapshot: Mapping[str, tuple[ReplicaState, ...]] = snapshot or {}
     for role, backend in ROLE_BACKEND.items():
@@ -1437,7 +1450,8 @@ def annotate_replicas(
             continue
         declared_peers = table.replica_origins.get(backend, ())
         role_snapshot = resolved_snapshot.get(role, ())
-        if not declared_peers and not role_snapshot:
+        locally_hosted = bool(entry.get("loaded"))
+        if not declared_peers and not role_snapshot and not (mesh_enabled and locally_hosted):
             continue  # no replica pool declared or probed for this role
         local_state = next((s for s in role_snapshot if s.local), None)
         if local_state is not None and local_state.fingerprint is not None:
