@@ -52,7 +52,7 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t9` | partial | doctor's three findings, per-name flapping on the live path, verification reasons landed (commit `9fcb000`); the env-family code deletion was declined by the agent after measuring >100 call sites and moved to t13/t14 by deviation d6 |
 | `t10` | delivered | `lobes/cli/_commands/mesh.py` (`lobes mesh status\|request\|approve\|revoke`, dry-run by default) and capabilities rendering of members and suffixed lanes; commit `e196868` |
 | `t11` | delivered | gateway-fleet.md mesh contract + Retired section, deployment-shapes.md, colleague-stack.md, openai-api.md, secret-rotation.md, env.example, `lobes explain mesh`, CLAUDE.md, catalog re-capture, 0.76.0 bump; commit `5b26b79` and the t11 series |
-| `t12` | partial | Live cutover of all three boxes onto the join key; five signals measured on the final build (`docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`): 1, 2, 4, 5 PASS, 3 measured but its literal expectation unmet; baseline and backups filed (`27a91a8`). Missing against its own criteria: the gateway-only shape was never booted on a fourth member and Qwen Code was not run through the mesh (lapse l2) |
+| `t12` | delivered (post-merge) | Live cutover of all three boxes onto the join key; five signals measured on the final build (`docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`): 1, 2, 4, 5 PASS, 3 measured but its literal expectation unmet; baseline and backups filed (`27a91a8`). The two criteria left unchecked at merge time (gateway-only fourth member, Qwen Code through the mesh; lapse l2) were measured on the released 0.76.0 the same day and both PASS |
 | `t13` | delivered | pool candidates, peer-only forward and busy dispatch sourced from the mesh RoutingSnapshot; wiring tests with zero peer keys; commit `d078cdc` |
 | `t14` | delivered | env peer parsing deleted from `_config.py`/`_routing.py`/`server.py`/`doctor.py`, 20+ test files rewritten off env keys, template/env.example/catalog/docs closed; commit `5db3c33` and the t14 series to `4cbcc63`. Residue: docstrings and comments still name the retired keys as history |
 
@@ -108,8 +108,8 @@ Quoted verbatim from the `devague summary` skeleton:
 | With no join key nothing mesh-related runs and responses are byte-identical to 0.75.x apart from the retired family's own entries | high | e5 · byte-identical tests in the suite |
 | Two members serving the same role form one pool and share load | medium | pool formed (both reranker lanes plain, e3 basis); spill-over never observed — the idle local lane stays local; the forward path was observed on dev524 only with the local lane absent |
 | Differing lanes are exposed as `{role}-{machine-name}` and the plain name stays honest | medium | observed live on dev528 (`embedder-thor`, `reranker-spark`) for a real quantization disagreement; the sole-candidate case fixed in `39a2412`; tests in `tests/test_mesh_naming.py` |
-| A gateway-only member boots, joins and serves every role by proxy | unverified | goldens only (`fcf1ff2`); never booted on a box (lapse l2) |
-| A robot client (Qwen Code) reaches every mesh role through its local gateway | unverified | only curl measured (e8); Qwen Code was validated on the retired env proxy 2026-09-11, not on the mesh (lapse l2) |
+| A gateway-only member boots, joins and serves every role the mesh hosts by proxy | high | release run on 0.76.0: spark-gw joined, verified all three in 90 s, served cortex/worker/associate/embedder/reranker by proxy (`docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt`, h8 section); `hand` 404s role_infeasible on it exactly as on every member, because no box in this fleet runs the hand lane — there is nobody to forward to |
+| A robot client (Qwen Code) reaches mesh roles its local gateway does not host | high | release run on 0.76.0: `qwen -m worker` and `qwen -m associate` against the Spark gateway (which hosts neither) fixed the test file through the Thor and the Orin (h6 section of the transcript); the other proxied roles (cortex from the Thor, embedder, reranker) were measured with curl, not with Qwen Code |
 | Cutover is rollback-safe | medium | e7: backups named per box; a rollback was never exercised |
 | Approval ledger: a lapsed or revoked name is refused and revocation gossips | medium | unit tests in `tests/test_mesh_roster.py`, `tests/test_mesh_routes.py`; not exercised live (the fleet joined on the key alone) |
 
@@ -123,8 +123,9 @@ Lapse ledger evidence:
 
 ## Remaining Work / Follow-up
 
-- `t12` gateway-only member — boot `lobes init --shape gateway-only` on a fourth box (or the Orin) and measure `model=cortex` by proxy; until then the claim stays unverified. Owner: operator, next live session.
-- `t12` Qwen Code through the mesh — run `qwen -m worker` against the Spark's gateway on the mesh build and record it; the curl half is measured.
+- (closed) gateway-only member and Qwen Code through the mesh — both measured on the 0.76.0 release run; see the transcript's release section.
+- A mesh-provided role answers 404 role_infeasible for the first ~60 s after a gateway recreate, until the first verification pass; a distinguishable 'not yet verified' answer is a follow-up.
+- `/capabilities` on a member that reaches a role only via the mesh reports it ready:false / hosted_by:null while routing works (measured on the gateway-only member) — the hosted_by follow-up now has a live instance.
 - `t12` signal 3 spill-over — generate real local load on a pooled role (or add a second cortex host) and observe `X-Lobes-Proxied-By` from a pooled member; the policy keeps an idle local lane local by design.
 - `t14` residue — done on the branch (`f25b53e`): docstrings and comments now describe routing via the mesh; deliberately historical mentions (Retired (t14), dated findings, issue numbers) kept; `_check_pool_arming` kept because a hand-built RoutingTable can still reach it.
 - Announce only loaded lanes — the Orin announces five hosted-but-not-running lanes; harmless with per-role verification, still noise on every peer.

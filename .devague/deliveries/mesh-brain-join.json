@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-12T05:19:41Z",
+  "updated": "2026-09-12T06:31:40Z",
   "deviations": [
     {
       "id": "d1",
@@ -290,6 +290,63 @@
       "status": "approved",
       "superseded": false,
       "seq": 16
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o8",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#h6 (qwen-mesh.out)",
+      "behavior_text": "qwen -m worker and qwen -m associate against the Spark gateway (which hosts neither) fixed calc.py through the Thor's and the Orin's lanes in 29 s and 66 s",
+      "contract_text": "h6: Qwen Code or curl reaches every mesh role via the local gateway",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "released 0.76.0 from PyPI on all three boxes; Qwen Code 0.23.3; the Thor's gateway log counted the forwarded completions",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T06:14:33Z",
+        "commit": "97caa12"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o9",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#h8 (gwonly.out)",
+      "behavior_text": "a gateway-only member (spark-gw, hosts=[]) joined on the key, was listed by all three members in 30 s, verified all three in 90 s, and served cortex, worker, associate, embedder and reranker by proxy from its own front",
+      "contract_text": "h8: a gateway-only member boots, joins, and serves every mesh role by proxy",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "released 0.76.0; lobes init --shape gateway-only --fleet --apply on the Spark at port 8002; torn down after the run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T06:17:43Z",
+        "commit": "97caa12"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o1",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#RELEASE RUN signals 1-4",
+      "behavior_text": "signals 1, 2, 3b, 4 PASS and 5 PASS on the PyPI 0.76.0 release (drop after 80 s, cortex proxy 200, doctor clean first try)",
+      "contract_text": "c36 signals on the released artifact",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "validate.sh + signal5.sh on 0.76.0 installed from PyPI, no dev index, no local wheel",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T06:10:09Z",
+        "commit": "97caa12"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 19
     }
   ],
   "deltas": [
