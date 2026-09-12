@@ -62,3 +62,13 @@ def test_capabilities_payload_accepts_the_holder_view_not_only_the_snapshot() ->
     assert as_routing_snapshot(None) is None
     payload = capabilities_payload(table, cfg, env, mesh_snapshot=view)
     assert "cortex" in payload
+
+
+def test_reannounce_builder_is_wired_and_rebuilds_a_fresh_announcement() -> None:
+    env = _env()
+    table, cfg = build_config(env)
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    assert routes._announcement_builder is not None
+    fresh = routes._announcement_builder()
+    assert fresh.name == "me" and fresh.origin == "http://me.local:8000"
+    assert "cortex" in fresh.roles

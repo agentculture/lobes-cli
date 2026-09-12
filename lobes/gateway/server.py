@@ -79,6 +79,7 @@ from lobes.gateway._mesh_config import MeshConfigError
 from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
     MeshRoutes,
+    _build_announcement,
 )
 from lobes.gateway._mesh_routes import build_mesh_routes as _build_mesh_routes
 from lobes.gateway._mesh_routes import (
@@ -5117,6 +5118,24 @@ def build_mesh_wiring(
     mesh_routes._holder = holder  # noqa: SLF001
     holder.replace(
         MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
+    )
+    # POST /mesh/reannounce (lobes switch / lobes up / a lane going unhealthy)
+    # rebuilds the announcement from the SAME live inputs, so a fingerprint
+    # change reaches peers on their next probe rather than never (c46/h37).
+    lane_configs = {
+        b.name: declared_lane_config(table.lane_fingerprints.get(b.name, {}))
+        for b in table.backends
+    }
+    mesh_routes.set_announcement_builder(
+        lambda: _build_announcement(
+            mesh_cfg,
+            mesh_routes.roster,
+            self_origin=table.self_origin,
+            readiness_cache=readiness_cache,
+            replica_caches=replica_caches,
+            local_capacities=cfg.local_capacities,
+            declared_lane_configs=lane_configs,
+        )
     )
     if start:
         # Start the heartbeat daemon thread after the holder is seeded.

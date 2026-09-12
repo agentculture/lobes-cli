@@ -1043,7 +1043,7 @@ def _post_announcement(
     url: str,
     body: bytes,
     timeout: float,
-    key: bytes | None = None,
+    key: bytes | str | None = None,
 ) -> None:
     """POST *body* to *url* via http.client with a hard timeout.
 
@@ -1081,7 +1081,11 @@ def _post_announcement(
     }
     # Finding 2: attach Bearer key.
     if key is not None:
-        headers["Authorization"] = f"Bearer {key.decode('utf-8')}"
+        # The join key reaches here as the str MeshConfig parsed; a bytes key is
+        # accepted too. Decoding a str raised AttributeError inside the
+        # best-effort catch on every announce — the live 2026-09-12 silent mesh.
+        key_text = key.decode("utf-8") if isinstance(key, bytes) else key
+        headers["Authorization"] = f"Bearer {key_text}"
 
     try:
         conn.request(
@@ -1524,6 +1528,10 @@ def start_mesh(
     from lobes.gateway._mesh_wire import encode as _encode
 
     announcement_bytes = _encode(announcement)
+    # Store the initial announcement on the routes so POST /mesh/reannounce has
+    # something to resend before any builder-driven rebuild (live 2026-09-12:
+    # it answered "no announcement yet" forever).
+    routes._announcement_bytes = announcement_bytes  # noqa: SLF001
 
     # Finding 17: keep the __init__ stop event (no reassignment).
     # Use routes._stop which was already created in __init__.
