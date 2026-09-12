@@ -303,3 +303,48 @@ def test_a_box_never_lists_itself_via_announce_or_seed_merge() -> None:
         assert "me" not in routes.roster.members()
     finally:
         srv.shutdown()
+
+
+def test_seed_merge_never_refreshes_a_known_member_s_liveness() -> None:
+    """Regression: a stopped member stayed alive mesh-wide because every seed
+    roster still listed it and the merge re-announced it each tick."""
+    from lobes.gateway._mesh_roster import Roster
+    from lobes.gateway._mesh_routes import _fetch_seed_roster
+
+    class Seed(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            body = json.dumps(
+                {
+                    "members": [
+                        {"name": "dead", "origin": "http://dead.local:8000", "capacity": 1.0}
+                    ],
+                    "ledger": {},
+                }
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), Seed)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    clock = {"t": 0.0}
+    roster = Roster(clock=lambda: clock["t"], missed_max=2)
+    roster.announce("dead", "http://dead.local:8000", None, now=0.0)
+    try:
+        for _ in range(4):  # four ticks, each preceded by a seed merge that still lists 'dead'
+            clock["t"] += 60.0
+            _fetch_seed_roster(
+                [f"http://127.0.0.1:{srv.server_address[1]}"],
+                "sk-test",
+                roster,
+                timeout=3.0,
+                routes=None,
+            )
+            roster.tick(now=clock["t"])
+        assert "dead" not in roster.members(), "a seed listing must not keep a silent member alive"
+    finally:
+        srv.shutdown()

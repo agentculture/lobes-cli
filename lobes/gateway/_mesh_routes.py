@@ -1391,6 +1391,13 @@ def _fetch_seed_roster(
                                 if routes is not None and mname == routes.config.name:
                                     # A peer's roster lists US; never merge ourselves in.
                                     continue
+                                if mname and mname in roster.members():
+                                    # DISCOVERY only: a peer's roster tells us a member
+                                    # exists; it is not a heartbeat FROM that member.
+                                    # Re-announcing a known name here refreshed its
+                                    # liveness every tick and a stopped Thor stayed in
+                                    # every roster for 4+ minutes (live, 2026-09-12).
+                                    continue
                                 if mname and morigin:
                                     # Roster.announce takes roster._lock itself;
                                     # wrapping it in that same lock deadlocked the
