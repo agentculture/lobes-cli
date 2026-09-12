@@ -44,7 +44,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -1735,9 +1735,79 @@ class TestVerifyNowEvent:
         deadline, woken = _wait_for_tick(t0 + 30.0, 30.0, reannounce, verify_now)
         assert woken is True
         assert (time.monotonic() - t0) < 1.0
-        # Both events are consumed by the wait.
-        assert not verify_now.is_set()
-        assert not reannounce.is_set()
+        assert deadline == t0 + 30.0
+        # Qodo thread 4: the wait REPORTS the wake and leaves both events
+        # alone; `_heartbeat_loop` consumes them at the start of the pass.
+        assert verify_now.is_set()
+
+    def test_wait_for_tick_never_erases_a_wake_it_did_not_report(self) -> None:
+        """Qodo thread 4: the lost-wake case, deterministically.
+
+        With the deadline already elapsed the wait's budget is <= 0, so it
+        never checks either event and reports ``woken=False``. The old
+        unconditional ``clear()`` erased a verify-now it had never looked at,
+        and the member that asked for it stayed unprobed until the next
+        ordinary deadline. Now the wake survives the wait.
+        """
+        from lobes.gateway._mesh_routes import _wait_for_tick
+
+        reannounce = threading.Event()
+        reannounce.set()
+        verify_now = threading.Event()
+        verify_now.set()
+        elapsed_deadline = time.monotonic() - 1.0
+        _deadline, woken = _wait_for_tick(elapsed_deadline, 30.0, reannounce, verify_now)
+        assert woken is False
+        assert verify_now.is_set()
+        assert reannounce.is_set()
+
+    def test_a_wake_set_during_a_pass_drives_the_next_iteration_at_once(self) -> None:
+        """Qodo thread 4: consumption is lossless end to end.
+
+        The loop clears both events at the START of a pass it runs, so a
+        verify-now raised after that point (an announce landing mid-pass, or
+        in the window the old `_wait_for_tick` clear used to erase) is still
+        set when the next wait looks — and that wait returns immediately
+        rather than sleeping out the 60 s heartbeat deadline.
+        """
+        from lobes.gateway import _mesh_routes as mesh_routes_mod
+
+        routes = _make_routes(
+            {
+                "LOBES_MESH_KEY": "k",
+                "LOBES_MESH_NAME": "x",
+                "LOBES_MESH_HEARTBEAT_S": "60",
+                "LOBES_MESH_MISSED_MAX": "5",
+            }
+        )
+        stop = threading.Event()
+        # (verify_now set at pass entry, wall-clock time of the pass)
+        passes: list[tuple[bool, float]] = []
+        t0 = time.monotonic()
+
+        def recording_pass(_routes, _bytes, _stop, _seeds, _holder, _force):
+            passes.append((routes._verify_now_event.is_set(), time.monotonic() - t0))
+            if len(passes) == 1:
+                # The race window: a wake raised once the pass is under way.
+                routes._verify_now_event.set()
+            else:
+                stop.set()
+
+        with patch.object(mesh_routes_mod, "_run_heartbeat_pass", recording_pass):
+            thread = threading.Thread(
+                target=mesh_routes_mod._heartbeat_loop,
+                args=(routes, b"{}", 60.0, stop, threading.Event(), None, None),
+                daemon=True,
+            )
+            thread.start()
+            thread.join(timeout=5)
+        assert not thread.is_alive(), "the loop must have run a second pass and stopped"
+        assert len(passes) == 2, f"expected exactly two passes, got {passes!r}"
+        # Both passes start with the wake events already consumed.
+        assert passes[0][0] is False
+        assert passes[1][0] is False
+        # The second pass did not wait out the 60 s deadline.
+        assert passes[1][1] < 2.0, f"second pass waited {passes[1][1]:.2f}s"
 
     def test_wait_for_tick_still_wakes_on_the_reannounce_event(self) -> None:
         from lobes.gateway._mesh_routes import _wait_for_tick
@@ -1873,7 +1943,9 @@ class TestProbeReadyRoles:
         ).encode()
         holder = _Holder()
         with patch.object(
-            readiness_mod, "_default_peer_opener", lambda url, timeout, key: (200, payload)
+            readiness_mod,
+            "_default_peer_opener",
+            MagicMock(return_value=(200, payload)),
         ):
             verify_members(routes, holder, join_key="sk-test", timeout=0.5)
         member = next(m for m in holder.current().snapshot.members if m.origin == origin)
@@ -1891,7 +1963,9 @@ class TestProbeReadyRoles:
         routes._announcements[origin] = _peer_ann("peerbox", origin)
         holder = _Holder()
         with patch.object(
-            readiness_mod, "_default_peer_opener", lambda url, timeout, key: (200, b"{}")
+            readiness_mod,
+            "_default_peer_opener",
+            MagicMock(return_value=(200, b"{}")),
         ):
             verify_members(routes, holder, join_key="sk-test", timeout=0.5)
         member = next(m for m in holder.current().snapshot.members if m.origin == origin)
@@ -1919,7 +1993,8 @@ class TestAnnounceReplyCarriesOwnAnnouncement:
         payload = json.loads(resp)
         assert "announcement" in payload
         got = decode(json.dumps(payload["announcement"]).encode())
-        assert got.name == decode(own).name and got.origin == decode(own).origin
+        assert got.name == decode(own).name
+        assert got.origin == decode(own).origin
 
     def test_announce_reply_omits_announcement_when_none_stored(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -1929,7 +2004,8 @@ class TestAnnounceReplyCarriesOwnAnnouncement:
         status, _headers, resp = routes.announce(
             _fake_handler("/mesh/announce", "POST", body, _bearer())
         )
-        assert status == 200 and "announcement" not in json.loads(resp)
+        assert status == 200
+        assert "announcement" not in json.loads(resp)
 
     def test_ingesting_a_reply_stores_the_peer_and_asks_for_an_immediate_verify(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -2009,11 +2085,39 @@ class TestProbeIgnoresProxiedEntries:
         )
         try:
             ann = _peer_ann("peer", origin)
-            _origin, verified, ready, reason = _probe_member_capabilities(
+            _origin, verified, ready, reason, contexts = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
-            assert "associate" in verified and reason is None
+            assert "associate" in verified
+            assert reason is None
             assert ready == frozenset({"associate"}), ready
+            # Qodo thread 2: a proxied entry is a relay, so its context is
+            # never captured either.
+            assert "worker" not in contexts
+        finally:
+            srv.shutdown()
+
+    def test_the_probe_captures_each_lanes_advertised_context(self) -> None:
+        """Qodo thread 2: `context` rides back from the peer's /capabilities so
+        a proxied entry can publish the SERVING window, not this box's own."""
+        from lobes.gateway._mesh_routes import _probe_member_capabilities
+
+        fp = {"served_id": "m", "quantization": "q", "max_model_len": 1, "runtime": "vllm"}
+        srv, origin = self._serve(
+            {
+                "associate": {"ready": True, "fingerprint": fp, "context": 262144},
+                "hand": {"ready": True, "fingerprint": fp, "context": None},
+                "muse": {"ready": True, "fingerprint": fp},
+                # A bool IS an int in Python; it must never become a context.
+                "reranker": {"ready": True, "fingerprint": fp, "context": True},
+            }
+        )
+        try:
+            ann = _peer_ann("peer", origin)
+            _o, _v, _r, _reason, contexts = _probe_member_capabilities(
+                ("peer", origin, ann), None, 2.0
+            )
+            assert contexts == {"associate": 262144}
         finally:
             srv.shutdown()
 
@@ -2044,8 +2148,11 @@ class TestProbeIgnoresProxiedEntries:
                     )
                 },
             )
-            _o, verified, ready, _r = _probe_member_capabilities(("peer", origin, ann), None, 2.0)
-            assert verified == frozenset() and ready == frozenset()
+            _o, verified, ready, _r, _c = _probe_member_capabilities(
+                ("peer", origin, ann), None, 2.0
+            )
+            assert verified == frozenset()
+            assert ready == frozenset()
         finally:
             srv.shutdown()
 
@@ -2071,7 +2178,8 @@ class TestRoutingViewRefreshesOnIngest:
         assert routes.ingest_reply_announcement(reply)
         snap = holder.current().snapshot
         m = {x.name: x for x in snap.members}["thor"]
-        assert m.probed is False and "associate" in m.announced_roles
+        assert m.probed is False
+        assert "associate" in m.announced_roles
 
     def test_seed_discovery_puts_the_member_in_the_view_with_discovered_roles(self) -> None:
         from lobes.gateway._mesh_routes import _merge_seed_members
@@ -2084,7 +2192,8 @@ class TestRoutingViewRefreshesOnIngest:
         )
         snap = holder.current().snapshot
         m = {x.name: x for x in snap.members}["orin"]
-        assert m.probed is False and m.announced_roles == ("associate",)
+        assert m.probed is False
+        assert m.announced_roles == ("associate",)
 
     def test_refresh_carries_forward_probe_results(self) -> None:
         from lobes.gateway._mesh_routing import MeshRoutingView, build_snapshot
@@ -2110,7 +2219,35 @@ class TestRoutingViewRefreshesOnIngest:
         snap = holder.current().snapshot
         by = {x.name: x for x in snap.members}
         assert by["thor"].probed is True
-        assert by["thor"].verified_roles == ("associate",) and by["thor"].ready_roles == (
-            "associate",
-        )
+        assert by["thor"].verified_roles == ("associate",)
+        assert by["thor"].ready_roles == ("associate",)
         assert by["orin"].probed is False
+
+    def test_refresh_carries_forward_the_probed_context(self) -> None:
+        """Qodo thread 2: the peer-advertised context travels with the rest of
+        the probe result, so a cheap view refresh never drops a proxied role
+        back to this box's own window."""
+        from lobes.gateway._mesh_routing import MeshRoutingView, build_snapshot
+
+        routes, holder = self._routes_with_holder()
+        routes.roster.announce("thor", "http://thor:8000", 1.0)
+        routes._announcements["http://thor:8000"] = _peer_ann("thor", "http://thor:8000")
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                    role_contexts={"http://thor:8000": {"associate": 262144}},
+                ),
+                peer_states={},
+            )
+        )
+        reply = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann("orin", "http://orin:8000")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(reply)
+        by = {x.name: x for x in holder.current().snapshot.members}
+        assert by["thor"].context_for("associate") == 262144
+        assert by["orin"].role_context == ()

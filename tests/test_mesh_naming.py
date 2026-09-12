@@ -868,3 +868,119 @@ def test_sole_verified_member_is_plain_even_with_an_unknown_field():
     assert one.plain_origins == ("http://a",)
     assert one.suffixed == ()
     assert isinstance(sole.members[0], MemberInfo)
+
+
+# ---------------------------------------------------------------------------
+# Qodo thread 2: a proxied entry publishes the SERVING lane's context
+# ---------------------------------------------------------------------------
+
+
+def _one_member_with_context(context, *, role="cortex", origin="http://a"):
+    roster = _FakeRoster([("nameA", origin, 1.0)])
+    ann = _ann("nameA", origin, {role: _role(role, fingerprint=_fp())})
+    return build_snapshot(
+        roster,
+        announcements={origin: ann},
+        verified_roles={origin: frozenset({role})},
+        ready_roles={origin: frozenset({role})},
+        role_contexts={origin: {role: context}} if context is not None else None,
+    )
+
+
+def _two_with_contexts(ctx_a, ctx_b, *, role="cortex"):
+    fp = _fp(quantization="NVFP4")
+    roster = _FakeRoster([("nameA", "http://a", 1.0), ("nameB", "http://b", 1.0)])
+    anns = {
+        "http://a": _ann("nameA", "http://a", {role: _role(role, fingerprint=fp)}),
+        "http://b": _ann("nameB", "http://b", {role: _role(role, fingerprint=fp)}),
+    }
+    contexts = {}
+    if ctx_a is not None:
+        contexts["http://a"] = {role: ctx_a}
+    if ctx_b is not None:
+        contexts["http://b"] = {role: ctx_b}
+    return build_snapshot(
+        roster,
+        announcements=anns,
+        verified_roles={"http://a": frozenset({role}), "http://b": frozenset({role})},
+        ready_roles={"http://a": frozenset({role}), "http://b": frozenset({role})},
+        role_contexts=contexts,
+    )
+
+
+def _proxied_payload(context=65536):
+    return {
+        "cortex": {
+            "model": "m",
+            "loaded": False,
+            "feasible": False,
+            "ready": False,
+            "context": context,
+        }
+    }
+
+
+def test_a_single_hosting_member_overwrites_the_local_context():
+    """Qodo thread 2: the entry carried this box's own env-derived 65536 for a
+    lane it does not host; the peer serves 262144 and that is what discovery
+    clients must read."""
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_with_context(262144)
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["context"] == 262144
+    assert entry["hosted_by"] == "http://a"
+
+
+def test_a_member_that_advertised_no_context_leaves_the_legacy_value():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_with_context(None)
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["context"] == 65536
+
+
+def test_a_pool_publishes_the_context_its_members_agree_on():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_with_contexts(262144, 262144)
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["members"] == ["nameA", "nameB"]
+    assert entry["context"] == 262144
+
+
+def test_a_pool_whose_members_disagree_leaves_the_context_untouched():
+    """No single honest window across the pool: publishing the first member's
+    would be the same first-match guess this fix exists to remove."""
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_with_contexts(262144, 131072)
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["members"] == ["nameA", "nameB"]
+    assert entry["context"] == 65536
+
+
+def test_a_pool_with_one_silent_member_leaves_the_context_untouched():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_with_contexts(262144, None)
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["context"] == 65536
+
+
+def test_a_locally_hosted_role_never_takes_a_peers_context():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_with_context(262144)
+    payload = {
+        "cortex": {"model": "m", "loaded": True, "feasible": True, "ready": True, "context": 65536}
+    }
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+    assert entry["context"] == 65536
+
+
+def test_mesh_disabled_payload_with_a_context_is_byte_identical():
+    from lobes.roles import annotate_mesh_naming
+
+    expected = json.dumps(_proxied_payload())
+    assert json.dumps(annotate_mesh_naming(json.loads(expected), None)) == expected

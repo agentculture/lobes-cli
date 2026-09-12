@@ -1293,7 +1293,8 @@ class TestNeverProbedMemberIsPending:
         assert error["type"] == "role_unverified"
         assert error["code"] == "role_unverified"
         assert error["hosted_by"] == self.ORIGIN
-        assert isinstance(error["message"], str) and error["message"]
+        assert isinstance(error["message"], str)
+        assert error["message"]
 
     def test_role_alias_answers_503_role_unverified(self, monkeypatch):
         resp, opener_calls = self._post(monkeypatch, "cortex")
@@ -1338,7 +1339,8 @@ class TestRoleUnverifiedHelperGuards:
         being dropped."""
         placement = self._placement(pending_origins=("http://alpha.local:8001",))
         resp = S._role_unverified_response(None, "cortex", placement, "cortex", "primary")
-        assert resp is not None and resp.status == 503
+        assert resp is not None
+        assert resp.status == 503
         headers = {k.lower(): v for k, v in resp.headers}
         assert headers["x-lobes-mesh-member"] == "http://alpha.local:8001"
         assert headers["retry-after"] == "5"

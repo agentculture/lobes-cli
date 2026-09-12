@@ -802,7 +802,8 @@ def test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies
         assert "seedbox" in members, "seed never entered the roster from its reply"
         assert members["seedbox"].probed, "seed was not probed within 5 s of start"
         assert "associate" in members["seedbox"].verified_roles
-        assert probes and probes[0][1] - t0 < 5.0
+        assert probes
+        assert probes[0][1] - t0 < 5.0
     finally:
         routes._stop.set()
         peer_srv.shutdown()
@@ -906,3 +907,134 @@ def test_a_hung_seed_does_not_delay_the_other_seeds_discovery() -> None:
         routes._stop.set()
         slow_srv.shutdown()
         fast_srv.shutdown()
+
+
+def _mutating_peer(state: dict, *, delay: float = 0.0) -> tuple[HTTPServer, str]:
+    """A fake peer whose ``/capabilities`` fingerprint follows ``state['served']``.
+
+    The served id is read when the request ARRIVES, before the artificial
+    delay, so a probe held open across an announcement swap answers with what
+    the peer was serving when the probe was launched — the exact shape of the
+    Qodo thread 3 race.
+    """
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *_a):  # noqa: D401
+            pass
+
+        def _send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if not self.path.startswith("/capabilities"):
+                self._send(b'{"members": [], "ledger": {}}')
+                return
+            served = state["served"]
+            state.setdefault("probes", []).append(served)
+            if delay:
+                time.sleep(delay)
+            self._send(
+                json.dumps(
+                    {
+                        "associate": {
+                            "ready": True,
+                            "fingerprint": {
+                                "served_id": served,
+                                "quantization": "q",
+                                "max_model_len": 1,
+                                "runtime": "vllm",
+                            },
+                        }
+                    }
+                ).encode()
+            )
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            self._send(b'{"status": "announced"}')
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+
+def _member_named(holder, name: str):
+    view = holder.current()
+    return {m.name: m for m in view.snapshot.members}[name]
+
+
+def test_an_announcement_replaced_mid_probe_stays_pending_until_the_next_pass() -> None:
+    """Qodo thread 3: a probe result never authorises a fingerprint it did
+    not see. With the peer's /capabilities held open, the stored announcement
+    is replaced with a DIFFERENT fingerprint while that probe is in flight.
+    The finishing pass must discard its result — leaving the member pending
+    (probed False), not verified against the replacement — and the very next
+    pass, with the announcement settled, must verify it."""
+    from lobes.gateway._mesh_routes import verify_members
+
+    state = {"served": "m"}
+    peer_srv, peer_origin = _mutating_peer(state, delay=1.0)
+    routes, holder = _wiring(_env(LOBES_MESH_HEARTBEAT_S=30))
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    def swap() -> None:
+        time.sleep(0.3)  # the probe is open; its body is not written yet
+        state["served"] = "m2"
+        routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m2")
+
+    try:
+        swapper = threading.Thread(target=swap, daemon=True)
+        swapper.start()
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        swapper.join(timeout=2)
+
+        member = _member_named(holder, "peerbox")
+        assert state["probes"] == ["m"], f"expected one probe of the old lane, got {state}"
+        assert member.probed is False, "a result for a replaced announcement must be discarded"
+        assert member.verified_roles == ()
+
+        # The next pass sees a settled announcement and verifies it.
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        member = _member_named(holder, "peerbox")
+        assert member.probed is True
+        assert "associate" in member.verified_roles
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
+
+
+def test_an_unchanged_reannouncement_mid_probe_still_verifies() -> None:
+    """The thread 3 guard compares per-role FINGERPRINTS, not object identity:
+    a member re-announcing the same lanes every heartbeat stores a fresh
+    Announcement object each time, and an identity check would have made it
+    permanently unverifiable."""
+    from lobes.gateway._mesh_routes import verify_members
+
+    state = {"served": "m"}
+    peer_srv, peer_origin = _mutating_peer(state, delay=0.6)
+    routes, holder = _wiring(_env(LOBES_MESH_HEARTBEAT_S=30))
+    routes.roster.announce("peerbox", peer_origin, 1.0)
+    routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    def restore() -> None:
+        time.sleep(0.2)
+        # A different OBJECT carrying the identical fingerprint.
+        routes._announcements[peer_origin] = _peer_announcement("peerbox", peer_origin, served="m")
+
+    try:
+        swapper = threading.Thread(target=restore, daemon=True)
+        swapper.start()
+        verify_members(routes, holder, join_key="sk-test", timeout=10.0)
+        swapper.join(timeout=2)
+        member = _member_named(holder, "peerbox")
+        assert member.probed is True
+        assert "associate" in member.verified_roles
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()
