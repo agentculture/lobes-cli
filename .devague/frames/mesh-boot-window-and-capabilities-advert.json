@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-12T09:14:56Z",
-  "updated": "2026-09-12T09:34:13Z",
+  "updated": "2026-09-12T10:00:39Z",
   "claims": [
     {
       "id": "c1",
@@ -689,5 +689,78 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c5",
+      "seam": "HTTP /v1/* role or raw-id request -> client, during the boot window",
+      "behavior": "a candidate announced by a never-probed member yields exactly 503 + Retry-After: 5 + error.type role_unverified + X-Lobes-Mesh-Unverified: true, naming the pending origin in hosted_by; never 404, never a hang longer than _DIAL_TIMEOUT_S; once probed it becomes either a forward (200) or the unchanged 404",
+      "source_text": "A request for a role that an announced-but-not-yet-probed member hosts answers 503, error.type/code role_unverified, Retry-After = BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS (5 s), error.hosted_by naming the pending member's origin, X-Lobes-Mesh-Member/-Origin/-Role plus X-Lobes-Mesh-Unverified via mesh_markers(unverified=True) \u2014 instead of 404 role_infeasible. Today _collect_role_candidates (_mesh_routing.py:608-625) drops every unverified member silently and server.py:3161/3268/3337 fall through to the plain 404; the 503+Retry-After builder at server.py:1414-1424 and the _error_body type list (686-703) are the shape to extend.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c6",
+      "seam": "GET /capabilities JSON -> Colleague callers and lobes capabilities",
+      "behavior": "hosted_by present implies exactly one plain origin and every forward's X-Lobes-Proxied-By equals it; a pooled role carries members and no hosted_by; ready true implies the chosen member advertised that role ready at its last probe; proxied true iff this box forwards; with the mesh disabled the payload is byte-identical to today",
+      "source_text": "GET /capabilities on a member that reaches a role only via the mesh sources hosted_by, ready and proxied from the RoutingSnapshot: hosted_by = the verified peer's announced origin ONLY when the role has exactly one plain origin; when the role is pooled across several plain origins the entry carries a members list instead and no hosted_by (q4, resolved a), so X-Lobes-Proxied-By always equals hosted_by whenever hosted_by is present; ready = the peer's per-role ready bit fetched in _probe_member_capabilities (_mesh_routes.py:1540-1554, currently discarded before MemberInfo); proxied:true. Today annotate_peer_referrals (roles.py:1169-1266) reads only the retired table.peer_origins/peer_proxied and is a no-op on every real deployment.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c4",
+      "seam": "GET /mesh/roster JSON -> lobes mesh status",
+      "behavior": "a member carries probed:false and unverified_reason not_yet_probed from admission until its first probe result lands; unverified_reason is None only after a clean probe and a string category after a failed one",
+      "source_text": "MemberInfo/the /mesh/roster payload distinguish 'never probed yet' from 'probed and clean': today unverified_reason=None means both (_mesh_routing.py:54-61 docstring; _build_member_record _mesh_routes.py:498-521), pinned by tests/test_mesh_verify_reason.py:96-108 and 127-135, which must be updated deliberately, not broken.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c21",
+      "seam": "POST /mesh/announce handler thread -> heartbeat loop thread",
+      "behavior": "the handler performs no network I/O and returns in < 50 ms regardless of peer latency; verification runs only on the loop thread, at most one pass in flight; a repeat announce from an already-probed member with an unchanged fingerprint triggers no extra probe",
+      "source_text": "Announce- and discovery-triggered verification wakes the heartbeat loop through an event (the _reannounce_event pattern, _mesh_routes.py:1108-1136) and only when the announcing member is unverified or its announcement changed; the pass itself stays single-flight on the loop thread and is never run inside the announce handler. Why: server.py:69/5338 is a ThreadingHTTPServer, so a handler-thread verify_members would overlap the loop's pass and SnapshotHolder.replace (_mesh_routing.py:419-427) is last-writer-wins \u2014 an older pass could overwrite a newer snapshot; and _collect_members_to_verify (1491-1506) probes EVERY member, so one pass per announce with N members re-announcing each heartbeat is N\u00b2 probes per heartbeat.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c3",
+      "seam": "seed-roster merge -> verification",
+      "behavior": "a member first discovered from a seed roster is probed in the same pass that discovered it, not the following one",
+      "source_text": "An inbound announce and a seed-roster discovery each trigger an immediate verification of that member: MeshRoutes.announce() (_mesh_routes.py:459-463) only sets _verify_event, which is read on the next periodic tick; _merge_seed_members (1342-1363) runs after _tick_and_collect in the same pass, so a seeded member verifies one interval later. verify_members already runs its probes outside routes._lock (dev518 note 1170-1175; test_mesh_heartbeat_live.py:80-163), so calling it out-of-band is lock-safe.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c22",
+      "seam": "GET /v1/realtime -> client",
+      "behavior": "unchanged: a declared-off stt lane answers 404 role_infeasible whatever the mesh roster says; the 503 path never applies to the WebSocket handshake",
+      "source_text": "GET /v1/realtime keeps today's 404 role_infeasible for a declared-off stt lane (never proxied, _realtime.py:20,151) and is untouched by the 503 path; a raw model-id request whose checkpoint is announced only by a never-probed member follows the SAME 503 role_unverified rule as the role alias, because the served-backend branch (server.py:3268-3283) shares the fall-through.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c10",
+      "seam": "lobes/profiles renderer -> .env and the deployment lock allowlist",
+      "behavior": "no new key is rendered or allowlisted; hosted_by values are string-equal to a peer's announced GATEWAY_SELF_ORIGIN, never a resolved address",
+      "source_text": "#92 holds: hosted_by is only ever the peer's own announced GATEWAY_SELF_ORIGIN as the roster verified it, never derived from a socket, hostname or DNS \u2014 docs/colleague-stack.md:677-680 already sanctions 'on a mesh-brain member, the origin the mesh roster verified'. The profile renderer stays mesh-blind (tests/test_shape_gateway_only.py:22-26, 318-341 grep gate) and no new .env or render-time key is added \u2014 membership is runtime state (spec: 'Membership state is RUNTIME state, never a rendered .env key').",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c24",
+      "seam": "old-version member <-> new-version member, mid-rollout",
+      "behavior": "announcements interoperate unchanged (SCHEMA_MAJOR constant); an old member treats the new member exactly as before; the Thor catalog entry is re-captured so lobes doctor reports no lock_drift after re-image",
+      "source_text": "Rollout: the fix ships only in the gateway image, so every member re-images its front (MODEL_GEAR_VERSION bump, lobes up gateway --build --apply); the announcement wire schema (SCHEMA_MAJOR) is unchanged so a mixed-version mesh interoperates during the rollout; and deployments/jetson-agx-thor__thor-worker/ is re-captured because its lock tracks the .env digest (CLAUDE.md, deployment lock section).",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
 }
