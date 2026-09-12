@@ -837,3 +837,72 @@ def test_a_seed_peer_is_pending_in_the_routing_view_while_its_first_probe_is_in_
     finally:
         routes._stop.set()
         peer_srv.shutdown()
+
+
+def test_a_hung_seed_does_not_delay_the_other_seeds_discovery() -> None:
+    """d3: seed rosters are fetched in parallel. With the FIRST seed's
+    /mesh/roster held for 4 s, the second seed's roster (which lists a
+    member with its roles) must be merged — and that member visible in the
+    routing view as pending — well inside that hold."""
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from lobes.gateway._mesh_routes import start_mesh
+
+    def _seed_server(delay: float, members: list) -> tuple[HTTPServer, str]:
+        body = json.dumps({"members": members, "ledger": {}}).encode()
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *_a):  # noqa: D401
+                pass
+
+            def _send(self, b: bytes) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+
+            def do_GET(self):
+                if self.path.startswith("/mesh/roster"):
+                    if delay:
+                        time.sleep(delay)
+                    self._send(body)
+                else:
+                    self._send(b"{}")
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length", "0"))
+                self.rfile.read(n)
+                if delay:
+                    time.sleep(delay)
+                self._send(b'{"status": "ok"}')
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv, f"http://127.0.0.1:{srv.server_address[1]}"
+
+    slow_srv, slow = _seed_server(4.0, [])
+    fast_srv, fast = _seed_server(
+        0.0, [{"name": "listed", "origin": "http://listed:8000", "roles": ["worker"]}]
+    )
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=f"{slow},{fast}")
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        seen = None
+        while time.monotonic() < t0 + 3.0:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None:
+                m = next((x for x in snap.members if x.name == "listed"), None)
+                if m is not None and not m.probed and "worker" in m.announced_roles:
+                    seen = time.monotonic() - t0
+                    break
+            time.sleep(0.02)
+        assert seen is not None, "the fast seed's member never appeared while the slow seed hung"
+        assert seen < 3.0, f"took {seen:.2f}s — the slow seed delayed the fast one"
+    finally:
+        routes._stop.set()
+        slow_srv.shutdown()
+        fast_srv.shutdown()

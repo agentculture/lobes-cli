@@ -1746,10 +1746,28 @@ def _fetch_seed_roster(
     timeout: float,
     routes: "MeshRoutes | None" = None,
 ) -> None:
-    """GET /mesh/roster from every seed and merge entries (finding 3)."""
+    """GET /mesh/roster from every seed and merge entries (finding 3).
+
+    d3: the seeds are dialed IN PARALLEL, one bounded dial each, and every
+    roster is merged the moment it arrives. Sequential fetching let one dead
+    or paused seed hold the first pass — and every other seed's discovery —
+    for its whole dial timeout (live 2026-09-12: a recreated Spark showed no
+    mesh activity for 13 s while its first seed was paused, so the d2
+    pending refresh had nothing to show and every request 404'd).
+    """
     bearer = f"Bearer {key}" if key else None
-    for seed in seeds:
-        _fetch_one_seed_roster(seed, bearer, roster, timeout, routes)
+    if not seeds:
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(seeds))) as pool:
+        futures = [
+            pool.submit(_fetch_one_seed_roster, seed, bearer, roster, timeout, routes)
+            for seed in seeds
+        ]
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                fut.result()
+            except Exception:  # nosec B110 — best-effort: a seed fetch never blocks
+                pass
 
 
 def _run_verify_pass(
