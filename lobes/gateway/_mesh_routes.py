@@ -79,6 +79,13 @@ class _PendingJoin:
 # Per-dial timeout constant – a named value, not a derived formula.
 _DIAL_TIMEOUT_S: float = 10.0
 
+# t2: how long the heartbeat's wait blocks before re-checking the second wake
+# event (`_verify_now_event`).  `Event.wait` takes one object, so the wait is
+# sliced; this is the resulting worst-case wake latency for a verify-now
+# request, and the upper bound on how long a newly announced member stays
+# inside its boot window before the first probe reaches it.
+_WAKE_SLICE_S: float = 0.05
+
 # S1192: literals repeated across route handlers, named once.
 _JSON: str = "application/json"
 _NAME_REQUIRED_MSG: str = "name is required"
@@ -210,6 +217,20 @@ class MeshRoutes:
         self._pending: list[_PendingJoin] = []
         self._announcements: dict[str, Announcement] = {}
         self._verify_event = threading.Event()
+        # t2: the boot window closes on its own.  `_verify_event` is the
+        # ordinary "the snapshot is dirty, rebuild it on the next tick" flag;
+        # `_verify_now_event` is the stronger "there is a member nobody has
+        # probed yet (or one whose fingerprint just changed) — wake the loop
+        # NOW" signal.  It is set only by `announce()` (gated: unprobed or a
+        # changed fingerprint, so a steady heartbeat storm never re-probes)
+        # and by seed discovery.  A pass still only ever RUNS on the
+        # heartbeat thread: a request handler sets the event, never probes.
+        self._verify_now_event = threading.Event()
+        # Single flight: one verification pass at a time, always on the loop
+        # thread.  Held non-blocking, so a would-be second pass is skipped
+        # rather than queued behind the first (a queued pass would just
+        # re-probe the same members with staler data).
+        self._verify_pass_lock = threading.Lock()
         self._holder: SnapshotHolder | None = None
         # Rebuild hook for POST /mesh/reannounce (t8): a callable that returns
         # a fresh Announcement reflecting this box's CURRENT state (fingerprint
@@ -456,11 +477,20 @@ class MeshRoutes:
             return error
 
         # Store the decoded announcement keyed by origin for snapshot rebuilds.
+        previous = self._announcements.get(origin)
         self._announcements[origin] = public
 
         # Mark verification as dirty so the heartbeat loop rebuilds the
         # snapshot with updated announcement data.
         self._verify_event.set()
+
+        # t2: and ask for an IMMEDIATE pass when — and only when — this
+        # announcement carries something a probe has not seen yet.  A member
+        # already probed that re-announces the same fingerprints every
+        # heartbeat changes nothing, so waking the loop for it would turn a
+        # three-member mesh announcing once a second into a probe storm.
+        if self._needs_immediate_verify(origin, previous, public):
+            self._verify_now_event.set()
 
         return (
             200,
@@ -469,6 +499,40 @@ class MeshRoutes:
                 {"status": "announced", "name": name, "schema_version": SCHEMA_MAJOR}
             ).encode(),
         )
+
+    def _member_probed(self, origin: str) -> bool:
+        """Has ANY ``/capabilities`` probe result for *origin* landed yet?
+
+        Read from the current routing snapshot (t1's ``MemberInfo.probed``).
+        No snapshot, no member, no holder — all mean "not yet", which is the
+        safe answer: it asks for one extra pass, never suppresses one.
+        """
+        holder = self._holder
+        if holder is None:
+            return False
+        try:
+            view = holder.current()
+        except Exception:  # nosec B110 — a duck-typed holder never breaks announce
+            return False
+        if view is None or getattr(view, "snapshot", None) is None:
+            return False
+        member = next((m for m in view.snapshot.members if m.origin == origin), None)
+        return bool(member is not None and member.probed)
+
+    @staticmethod
+    def _announcement_fingerprints(ann: "Announcement | None") -> dict:
+        """The per-role fingerprints of *ann* — the part a probe verifies."""
+        if ann is None:
+            return {}
+        return {role: info.fingerprint for role, info in ann.roles.items()}
+
+    def _needs_immediate_verify(
+        self, origin: str, previous: "Announcement | None", current: "Announcement"
+    ) -> bool:
+        """Should this announcement wake the loop for an immediate pass?"""
+        if not self._member_probed(origin):
+            return True
+        return self._announcement_fingerprints(previous) != self._announcement_fingerprints(current)
 
     def _build_member_record(self, mname: str, now: float, snapshot: object | None) -> dict | None:
         """Build one ``/mesh/roster`` member record, or ``None`` when the
@@ -506,6 +570,15 @@ class MeshRoutes:
         flap_count = self.roster._flap_counts.get(mname, 0)  # noqa: SLF001
         flapping = flap_count >= _FLAPPING_THRESHOLD
         unverified_reason = member_info.unverified_reason if member_info is not None else None
+        # t2 (boot window): "probed and verified nothing" and "not probed
+        # yet" both used to read verified:false / unverified_reason:null —
+        # indistinguishable, so an operator watching a box come up could not
+        # tell a broken peer from one still inside its first pass.  `probed`
+        # is the sentinel; while it is False the reason reads the plain
+        # string "not_yet_probed" instead of null.
+        probed = bool(member_info.probed) if member_info is not None else False
+        if not probed:
+            unverified_reason = "not_yet_probed"
         return {
             "name": rec.name,
             "origin": rec.origin,
@@ -515,6 +588,9 @@ class MeshRoutes:
             "verified": verified,
             "flapping": flapping,
             "roles": roles,
+            # t2: True once the FIRST probe result for this member has
+            # landed, whatever it found.
+            "probed": probed,
             # Item C (t9): a short, operator-facing reason the last
             # verification probe found nothing verified, or None on
             # a clean/never-probed member.
@@ -1109,31 +1185,48 @@ def _wait_for_tick(
     deadline: float | None,
     interval: float,
     reannounce_event: threading.Event,
+    verify_now_event: threading.Event | None = None,
 ) -> tuple[float, bool]:
-    """Sleep until *deadline* or a reannounce wake, whichever comes first.
+    """Sleep until *deadline* or a wake event, whichever comes first.
 
     Waits in ≤1s increments so the caller's ``stop_event`` check stays
-    responsive.  Returns ``(deadline, woken_by_reannounce)`` — a ``None``
+    responsive.  Returns ``(deadline, woken_by_event)`` — a ``None``
     input deadline is resolved to ``now + interval`` without waiting (the
     loop's first iteration). Finding 4: paces on the full interval, not
     ``min(interval, 1.0)``.
+
+    t2: there are now TWO wake events — ``reannounce_event`` (re-broadcast
+    this box's own announcement) and ``verify_now_event`` (a member nobody
+    has probed yet, or one whose fingerprint just changed).  ``Event.wait``
+    takes one object, so the wait is sliced: each slice blocks on the
+    reannounce event and re-checks the verify-now event, which bounds the
+    wake latency at ``_WAKE_SLICE_S`` for the verify half while keeping the
+    reannounce half instantaneous.  Both events are consumed by the wait.
     """
-    woken_by_reannounce = False
+    woken_by_event = False
     if deadline is None:
         deadline = time.monotonic() + interval
     else:
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            wait_dur = min(remaining, 1.0)
+        budget = min(deadline - time.monotonic(), 1.0)
+        while budget > 0 and not woken_by_event:
+            if verify_now_event is not None and verify_now_event.is_set():
+                woken_by_event = True
+                break
             # Finding 17 (review #252): capture wait()'s own return value
             # BEFORE clearing the event. The old code cleared first, so
             # `reannounce_event.is_set()` below was always False and an
             # immediate re-announce (POST /mesh/reannounce, `lobes
             # switch`/`up`) never ran a pass until the ordinary deadline —
             # exactly the bug the event exists to avoid.
-            woken_by_reannounce = reannounce_event.wait(timeout=wait_dur)
+            slice_dur = min(budget, _WAKE_SLICE_S)
+            woken_by_event = reannounce_event.wait(timeout=slice_dur)
+            if verify_now_event is not None and verify_now_event.is_set():
+                woken_by_event = True
+            budget -= slice_dur
     reannounce_event.clear()
-    return deadline, woken_by_reannounce
+    if verify_now_event is not None:
+        verify_now_event.clear()
+    return deadline, woken_by_event
 
 
 def _prune_dropped_announcements(
@@ -1272,6 +1365,7 @@ def _heartbeat_loop(
     stop_event: threading.Event,
     reannounce_event: threading.Event,
     holder: "SnapshotHolder | None" = None,
+    verify_now_event: threading.Event | None = None,
 ) -> None:
     """Background thread that announces the local member to seeds + roster.
 
@@ -1279,16 +1373,22 @@ def _heartbeat_loop(
     delays another.  The loop exits when *stop_event* is set.
     """
     seeds = routes.config.seeds
+    if verify_now_event is None:
+        verify_now_event = routes._verify_now_event  # noqa: SLF001
     deadline: float | None = None
+    first_iteration = True
     while not stop_event.is_set():
-        deadline, woken_by_reannounce = _wait_for_tick(deadline, interval, reannounce_event)
+        deadline, woken_by_event = _wait_for_tick(
+            deadline, interval, reannounce_event, verify_now_event
+        )
 
         if stop_event.is_set():
             break
 
-        # Check if we should run a pass: deadline elapsed or reannounce fired.
+        # Check if we should run a pass: the first iteration, the deadline
+        # elapsing, or a wake event (reannounce / verify-now).
         now = time.monotonic()
-        run_pass = (now >= deadline) or woken_by_reannounce
+        run_pass = first_iteration or (now >= deadline) or woken_by_event
 
         if run_pass:
             # Advance to next deadline.
@@ -1297,6 +1397,14 @@ def _heartbeat_loop(
             continue
 
         to_send, verify_dirty = _tick_and_collect(routes, announcement_bytes, holder)
+        # t2: the first iteration always verifies.  It used to `continue`
+        # here, so on a box that started with members already in its roster
+        # (a restored roster, a seeded peer) nothing was probed until a whole
+        # heartbeat interval had passed — a boot window at least one tick
+        # long, for no reason.
+        if first_iteration:
+            verify_dirty = True
+        first_iteration = False
 
         # Verification pass OUTSIDE the lock: network I/O never holds it.
         if verify_dirty:
@@ -1360,7 +1468,17 @@ def _merge_seed_members(roster: "Roster", routes: "MeshRoutes | None", members: 
             # Orin and the survivors revived it forever, dev526). Roster
             # takes its own lock; wrapping it in that same lock deadlocked
             # the heartbeat live (Orin).
+            newly_discovered = mname not in roster.members()
             roster.discover(mname, morigin, None, now=time.monotonic())
+            # t2: a member we have never seen before is, by definition,
+            # never-probed — ask the loop for an immediate pass rather than
+            # leaving it inside the boot window until the next tick.  Only
+            # NEW names set the event: a seed roster re-lists every known
+            # member on every fetch, and waking on those would make the
+            # verify-now event fire once per tick per seed forever.
+            if newly_discovered and routes is not None:
+                routes._verify_event.set()  # noqa: SLF001
+                routes._verify_now_event.set()  # noqa: SLF001
 
 
 def _rebuild_routing_after_revocations(
@@ -1482,10 +1600,21 @@ def _run_verify_pass(
     """
     if holder is None:
         return
+    # Single flight (t2): one pass at a time, and only ever on this thread.
+    # Held non-blocking — a second pass would re-probe the same members with
+    # staler data, so it is skipped, not queued. The verify-now event is
+    # already set by whoever asked for it, so the skipped work is not lost:
+    # the next loop iteration picks it up.
+    if not routes._verify_pass_lock.acquire(blocking=False):  # noqa: SLF001
+        # Re-raise the dirty flag so the skipped work is not lost.
+        routes._verify_event.set()  # noqa: SLF001
+        return
     try:
         verify_members(routes, holder)
     except Exception:  # nosec B110 — verification is best-effort
         pass
+    finally:
+        routes._verify_pass_lock.release()  # noqa: SLF001
 
 
 def _collect_members_to_verify(routes: "MeshRoutes") -> list[tuple[str, str, Announcement]]:
@@ -1507,8 +1636,16 @@ def _collect_members_to_verify(routes: "MeshRoutes") -> list[tuple[str, str, Ann
 
 def _probe_member_capabilities(
     member_data: tuple[str, str, Announcement], key: str | None, probe_timeout: float
-) -> tuple[str, frozenset[str], str | None]:
-    """Probe one member's /capabilities and verify roles."""
+) -> tuple[str, frozenset[str], frozenset[str], str | None]:
+    """Probe one member's /capabilities and verify roles.
+
+    Returns ``(origin, verified_roles, ready_roles, reason)``.  ``ready_roles``
+    (t2, feeding t1's ``MemberInfo.ready_roles``) is what the probe read back
+    as ``ready: true``, independent of verification — a lane can be ready and
+    serving a fingerprint that disagrees with what its box announced, and a
+    verified lane can be down.  A probe that never reached the peer reports
+    both sets empty plus a reason.
+    """
     from lobes.gateway._mesh_routing import verify_member_roles
     from lobes.gateway._readiness import _default_peer_opener
 
@@ -1521,7 +1658,7 @@ def _probe_member_capabilities(
             key,
         )
         if status != 200:
-            return origin, frozenset(), f"HTTP {status}"
+            return origin, frozenset(), frozenset(), f"HTTP {status}"
 
         payload = json.loads(body)
         # Finding 8 (review #252): GET /capabilities returns the role
@@ -1547,11 +1684,14 @@ def _probe_member_capabilities(
 
         # Compare announced vs probed fingerprints.
         verified = verify_member_roles(ann, probed_roles)
+        ready = frozenset(
+            role for role, entry in probed_roles.items() if entry.get("ready") is True
+        )
         reason = None if verified else "no announced role verified against /capabilities"
-        return origin, verified, reason
+        return origin, verified, ready, reason
 
     except Exception as exc:  # nosec B110 — best-effort: probe never blocks
-        return origin, frozenset(), type(exc).__name__
+        return origin, frozenset(), frozenset(), type(exc).__name__
 
 
 def _run_verification_probes(
@@ -1559,17 +1699,25 @@ def _run_verification_probes(
     key: str | None,
     probe_timeout: float,
     verify_log: RejectionLog | None,
-) -> tuple[dict[str, frozenset[str]], dict[str, str | None]]:
+) -> tuple[dict[str, frozenset[str]], dict[str, str | None], dict[str, frozenset[str]]]:
     """Probe every member's /capabilities in parallel and collect results.
 
     Item C (t9): every probe that fails to verify anything carries a short
     reason string instead of vanishing into a bare `except: pass`. `None`
     means "verified cleanly" — never logged, never stored on the member.
+
+    t2: returns a THIRD mapping, per-origin ready roles, and — importantly —
+    gives every origin an entry in it even when the probe found nothing ready.
+    That entry is what tells `build_snapshot` the member was probed at all: a
+    clean probe of a box whose lanes are all still loading verifies nothing
+    and records no reason, so without it the member would read exactly like
+    one nobody has dialled yet.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     verified_by_origin: dict[str, frozenset[str]] = {}
     reason_by_origin: dict[str, str | None] = {}
+    ready_by_origin: dict[str, frozenset[str]] = {}
 
     max_workers = min(8, len(members_to_verify))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -1580,18 +1728,51 @@ def _run_verification_probes(
         for fut in as_completed(futures):
             mname, origin, _ann = futures[fut]
             try:
-                origin, verified, reason = fut.result(timeout=probe_timeout)
+                origin, verified, ready, reason = fut.result(timeout=probe_timeout)
             except Exception as exc:  # nosec B110 — best-effort: drop failed probes
-                verified, reason = frozenset(), type(exc).__name__
+                verified, ready, reason = frozenset(), frozenset(), type(exc).__name__
             if verified:
                 verified_by_origin[origin] = verified
             reason_by_origin[origin] = reason
+            ready_by_origin[origin] = ready
             if reason is not None and verify_log is not None:
                 line = verify_log.record(origin, "GET", "/capabilities", reason)
                 if line is not None:
                     sys.stderr.write(f"[gateway] mesh verify {mname}: {line}\n")
 
-    return verified_by_origin, reason_by_origin
+    return verified_by_origin, reason_by_origin, ready_by_origin
+
+
+def _log_pending_members(
+    routes: "MeshRoutes",
+    holder: "SnapshotHolder",
+    members_to_verify: list[tuple[str, str, Announcement]],
+) -> None:
+    """Say once, per member, that this box is about to leave a boot window.
+
+    Item C (t9) gave failed probes a collapsed stderr line; t2 gives the
+    not-yet-probed state the same treatment, through the SAME throttled
+    RejectionLog so a mesh that is slow to verify cannot flood the log. The
+    throttle key is deliberately distinct from the failure key (`#pending`),
+    because a pending line and a failure line for one origin are different
+    facts and must not collapse into each other.
+    """
+    verify_log = routes._verify_log
+    if verify_log is None:
+        return
+    try:
+        view = holder.current()
+    except Exception:  # nosec B110 — a duck-typed holder never breaks a pass
+        return
+    if view is None or getattr(view, "snapshot", None) is None:
+        return
+    probed = {m.origin for m in view.snapshot.members if m.probed}
+    for mname, origin, _ann in members_to_verify:
+        if origin in probed:
+            continue
+        line = verify_log.record(f"{origin}#pending", "GET", "/capabilities", "not_yet_probed")
+        if line is not None:
+            sys.stderr.write(f"[gateway] mesh pending {mname}: {line}\n")
 
 
 def verify_members(
@@ -1623,7 +1804,9 @@ def verify_members(
         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
         return
 
-    verified_by_origin, reason_by_origin = _run_verification_probes(
+    _log_pending_members(routes, holder, members_to_verify)
+
+    verified_by_origin, reason_by_origin, ready_by_origin = _run_verification_probes(
         members_to_verify, key, probe_timeout, routes._verify_log
     )
 
@@ -1633,6 +1816,7 @@ def verify_members(
         announcements=routes._announcements,
         verified_roles=verified_by_origin,
         unverified_reasons={o: r for o, r in reason_by_origin.items() if r is not None},
+        ready_roles=ready_by_origin,
     )
     holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 
@@ -1662,6 +1846,7 @@ def start_mesh(
             routes._stop,  # Use the __init__ stop event.
             routes._reannounce_event,
             routes._holder,
+            routes._verify_now_event,
         ),
         name="lobes-mesh-heartbeat",
         daemon=True,
