@@ -54,6 +54,9 @@ class TestUnreachableOriginRecordsAReason:
         member = next(m for m in view.snapshot.members if m.origin == origin)
         assert member.unverified_reason is not None
         assert member.verified_roles == ()
+        # Boot window (t1): a probe that RAN and failed marks the member
+        # probed — it is unverified for real, not merely not-yet-probed.
+        assert member.probed is True
 
     def test_roster_route_exposes_unverified_reason(self) -> None:
         origin = "http://127.0.0.1:1"
@@ -106,6 +109,11 @@ class TestCleanVerificationRecordsNoReason:
         verify_members(routes, holder, join_key="sk-test", timeout=0.2)
         member = next(m for m in holder._v.snapshot.members if m.name == "lonely")
         assert member.unverified_reason is None
+        # New meaning (t1): never probed is its own state. The member reads
+        # probed False here and carries NO reason at the model level — the
+        # "not_yet_probed" string belongs to the /mesh/roster presentation.
+        assert member.probed is False
+        assert member.ready_roles == ()
 
 
 class TestDefaultVerifyLogIsNone:
@@ -133,3 +141,6 @@ def test_build_snapshot_tolerates_absent_reasons(unverified_reasons) -> None:
     roster.announce("a", "http://a.example:8000", 1.0)
     snap = build_snapshot(roster, unverified_reasons=unverified_reasons)
     assert all(m.unverified_reason is None for m in snap.members)
+    # And with no probe data of any kind, every member is never-probed.
+    assert all(m.probed is False for m in snap.members)
+    assert all(m.ready_roles == () for m in snap.members)
