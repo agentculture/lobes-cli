@@ -1164,3 +1164,43 @@ class TestDiscoveredRoles:
         a = build_snapshot(self._roster())
         b = build_snapshot(self._roster(), discovered_roles=None)
         assert a.members == b.members
+
+
+class TestRoleContext:
+    """Qodo thread 2: the peer-advertised serving window rides the snapshot."""
+
+    def test_role_context_is_threaded_from_the_probe_map(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+            role_contexts={ORIGIN_A: {"cortex": 262144, "hand": 32768}},
+        )
+        member = next(m for m in snap.members if m.origin == ORIGIN_A)
+        # Sorted by role name, never by payload iteration order.
+        assert member.role_context == (("cortex", 262144), ("hand", 32768))
+        assert member.context_for("cortex") == 262144
+        assert member.context_for("hand") == 32768
+        assert member.context_for("muse") is None
+
+    def test_role_context_defaults_to_empty_and_is_byte_identical(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        a = build_snapshot(roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)})
+        b = build_snapshot(
+            roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)}, role_contexts=None
+        )
+        assert a.members == b.members
+        assert a.members[0].role_context == ()
+        assert a.members[0].context_for("cortex") is None
+
+    def test_role_context_alone_does_not_mark_a_member_probed(self):
+        """``probed`` stays the verified/reason/ready sentinel — adding a
+        context map must not silently retire a member from the boot window."""
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            role_contexts={ORIGIN_A: {"cortex": 262144}},
+        )
+        assert snap.members[0].probed is False

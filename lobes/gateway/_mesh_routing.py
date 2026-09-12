@@ -76,6 +76,16 @@ class MemberInfo:
         never-probed member carries ``None`` HERE, at the model level: the
         ``"not_yet_probed"`` string belongs to the ``GET /mesh/roster``
         presentation, which reads ``probed`` to decide it.
+    role_context:
+        ``(role, context)`` pairs the member's own ``/capabilities`` probe
+        advertised — the SERVING window of the lane that will actually answer
+        a forwarded request.  Sorted by role name, so the tuple never depends
+        on payload iteration order, and a tuple (not a mapping) so the member
+        stays frozen and hashable.  Empty when the member has never been
+        probed, or when its probe carried no integer context for any role;
+        :meth:`context_for` is the reader.  Qodo thread 2: without this the
+        proxied ``/capabilities`` entry kept this box's own local or
+        env-derived context for a role it does not host.
     """
 
     name: str
@@ -88,6 +98,14 @@ class MemberInfo:
     # all without these) keeps its exact previous meaning.
     probed: bool = False
     ready_roles: tuple[str, ...] = ()
+    role_context: tuple[tuple[str, int], ...] = ()
+
+    def context_for(self, role: str) -> int | None:
+        """The context this member's probe advertised for *role*, or ``None``."""
+        for name, context in self.role_context:
+            if name == role:
+                return context
+        return None
 
 
 @dataclass(frozen=True)
@@ -344,6 +362,13 @@ def build_snapshot(
     # announcement is absent, so the pending (503) path can name the member;
     # never routed and never verified from — a real announcement always wins.
     discovered_roles: Mapping[str, "Sequence[str]"] | None = None,
+    # Qodo thread 2: origin -> {role: context} as the member's OWN
+    # /capabilities probe advertised it. Carried onto MemberInfo.role_context
+    # and read by lobes.roles._annotate_plain_member so a proxied entry
+    # publishes the serving lane's window instead of this box's local one.
+    # An origin absent here (or a role absent from its map) simply gets
+    # nothing, and the entry keeps whatever context it already carried.
+    role_contexts: Mapping[str, Mapping[str, int]] | None = None,
 ) -> RoutingSnapshot:
     """Build a :class:`RoutingSnapshot` from *roster* + probe data.
 
@@ -382,6 +407,7 @@ def build_snapshot(
     ver_map: dict[str, frozenset[str]] = {} if verified_roles is None else dict(verified_roles)
     reason_map: dict[str, str] = {} if unverified_reasons is None else dict(unverified_reasons)
     ready_map: dict[str, frozenset[str]] = {} if ready_roles is None else dict(ready_roles)
+    context_map: dict[str, Mapping[str, int]] = {} if role_contexts is None else dict(role_contexts)
 
     # Collect the set of known origins from the roster so we can prune stale data.
     roster_origins: set[str] = set()
@@ -414,6 +440,7 @@ def build_snapshot(
                 # none of them is the boot window.
                 probed=(origin in ver_map or origin in reason_map or origin in ready_map),
                 ready_roles=tuple(sorted(ready_map.get(origin, frozenset()))),
+                role_context=tuple(sorted(context_map.get(origin, {}).items())),
             )
         )
 

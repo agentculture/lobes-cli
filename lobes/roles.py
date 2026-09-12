@@ -1503,6 +1503,38 @@ def _resolve_local_fingerprint(
     return local_fp
 
 
+def _peer_role_context(member: object, role: str) -> int | None:
+    """The context *member*'s ``/capabilities`` probe advertised for *role*.
+
+    Duck-typed on purpose: the snapshot member is whatever the caller passed,
+    and a pre-thread-2 :class:`MemberInfo` (or a test double) without
+    ``context_for`` simply contributes nothing.
+    """
+    reader = getattr(member, "context_for", None)
+    if reader is None:
+        return None
+    value = reader(role)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _apply_peer_context(entry: dict, role: str, members: "list") -> None:
+    """Overwrite ``entry['context']`` with the serving lane's window (thread 2).
+
+    Publishes a number only when EVERY member named in the answer advertised
+    one and they all agree — the pooled case has no single honest window
+    otherwise, and picking the first member's would be the same first-match
+    guess the ``ready`` bit was already criticised for. A disagreement, a
+    missing advert, or an empty member list leaves the entry untouched, so the
+    existing local/env-derived fallback survives unchanged.
+    """
+    if not members:
+        return
+    contexts = [_peer_role_context(m, role) for m in members]
+    if any(c is None for c in contexts) or len(set(contexts)) != 1:
+        return
+    entry["context"] = contexts[0]
+
+
 def _annotate_plain_member(
     entry: dict,
     placement: object,
@@ -1531,6 +1563,18 @@ def _annotate_plain_member(
       will actually answer. Readiness is NOT verification — a member can be
       verified for a role whose lane is still warming — so this can be
       ``False`` on a perfectly placeable role.
+    * ``context`` — OVERWRITTEN with the SERVING window the chosen member's
+      own ``/capabilities`` probe advertised for the role
+      (:attr:`~lobes.gateway._mesh_routing.MemberInfo.role_context`), for the
+      same reason ``ready`` is: the registry's value is this box's local or
+      env-derived number for a lane it does not host, and a peer whose window
+      differs published a stale one to every discovery client (Qodo thread 2).
+      For a POOLED answer the members must AGREE — one window is published
+      only when every named plain member advertised the same integer;
+      otherwise there is no single honest number and the existing value is
+      left untouched, never averaged or picked from the first member. A
+      member whose probe carried no context for the role publishes nothing,
+      so the legacy fallback survives.
     * ``hosted_by`` — the chosen member's ANNOUNCED origin, iff there is
       exactly ONE plain origin. With more than one there is no single host
       to name, so ``hosted_by`` is instead REMOVED (a stale env-sourced one
@@ -1566,10 +1610,13 @@ def _annotate_plain_member(
     entry["proxied"] = True
     entry["ready"] = placement.role in getattr(chosen, "ready_roles", ())
     if len(placement.plain_origins) == 1:
+        _apply_peer_context(entry, placement.role, [chosen])
         entry["hosted_by"] = chosen.origin
         return
     entry.pop("hosted_by", None)
-    entry["members"] = [by_origin[o].name for o in placement.plain_origins if o in by_origin]
+    plain_members = [by_origin[o] for o in placement.plain_origins if o in by_origin]
+    _apply_peer_context(entry, placement.role, plain_members)
+    entry["members"] = [m.name for m in plain_members]
 
 
 def annotate_mesh_naming(

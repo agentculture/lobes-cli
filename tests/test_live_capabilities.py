@@ -257,7 +257,9 @@ def _dial_with_role_unverified_retry(
     ``role_unverified`` 503, honouring that probe's own ``Retry-After``
     between attempts. Any other outcome — including a role_unverified probe
     that is still current on the final attempt — is returned as-is; this
-    wrapper never itself judges reachability, :func:`_classify` still does.
+    wrapper never itself judges reachability. Its caller
+    :func:`_classify_with_role_unverified_retry` does, and an exhausted
+    role_unverified is a FAULT there (see its docstring).
     """
     probe = dial_once()
     attempts = 1
@@ -268,9 +270,23 @@ def _dial_with_role_unverified_retry(
     return probe
 
 
-def _classify_with_role_unverified_retry(dial_once) -> tuple[bool, str]:
-    """``_classify``, but boot-window ``role_unverified`` 503s are retried first."""
-    return _classify(_dial_with_role_unverified_retry(dial_once))
+def _classify_with_role_unverified_retry(dial_once, *, sleep_fn=time.sleep) -> tuple[bool, str]:
+    """``_classify``, but boot-window ``role_unverified`` 503s are retried first.
+
+    An exhausted boot window is a FAULT, never a pass. ``_classify`` reads any
+    503 carrying ``Retry-After`` as reachable-and-honestly-busy, and the mesh
+    contract REQUIRES ``Retry-After: 5`` on a ``role_unverified`` — so handing
+    the final probe straight to ``_classify`` would have made a role that
+    never left the boot window classify reachable. The exhausted case is
+    judged here instead, before ``_classify`` sees it.
+    """
+    probe = _dial_with_role_unverified_retry(dial_once, sleep_fn=sleep_fn)
+    if _is_role_unverified(probe):
+        return False, (
+            f"{probe.status} role_unverified after {_ROLE_UNVERIFIED_MAX_ATTEMPTS} "
+            "attempts — the role never left the mesh boot window"
+        )
+    return _classify(probe)
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +373,25 @@ def _offline_selfcheck() -> None:
     ], "missing Retry-After must fall back to the documented default"
     ok, verdict = _classify(probe)
     assert not ok, "a still-503 role_unverified on the final attempt is not reachable"
+
+    # Qodo thread 5: the contract REQUIRES `Retry-After: 5` on a
+    # role_unverified, and `_classify` reads any 503 with a Retry-After as
+    # reachable — so an exhausted boot window would have PASSED the gate.
+    # The classify wrapper must fault on it instead.
+    persistent_calls: list[int] = []
+
+    def always_unverified_with_retry_after():
+        persistent_calls.append(1)
+        return _Probe(503, "5", unverified_body, None)
+
+    ok, verdict = _classify_with_role_unverified_retry(
+        always_unverified_with_retry_after, sleep_fn=lambda _s: None
+    )
+    assert not ok, f"an exhausted role_unverified boot window must fault, got {verdict!r}"
+    assert "role_unverified" in verdict, f"the verdict must name the cause, got {verdict!r}"
+    assert (
+        len(persistent_calls) == _ROLE_UNVERIFIED_MAX_ATTEMPTS
+    ), "the classify wrapper must still retry to the bound before faulting"
 
     # A 503 that is NOT role_unverified must never be retried by this path.
     other_503_calls: list[int] = []
