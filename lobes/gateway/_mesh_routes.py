@@ -1185,13 +1185,14 @@ def _heartbeat_loop(
                     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
                         pass
 
-                # Verification pass: rebuild snapshot if verification is dirty.
-                if routes._verify_event.is_set():
+                # Only DECIDE about verification under the lock; the pass
+                # itself dials every member over the network and re-takes this
+                # lock inside verify_members — running it here starved every
+                # roster read and inbound announce for the probe timeouts
+                # (live Spark, dev518: /mesh/roster never answered).
+                verify_dirty = routes._verify_event.is_set()
+                if verify_dirty:
                     routes._verify_event.clear()
-                    try:
-                        _run_verify_pass(routes, holder)
-                    except Exception:  # nosec B110 — verification is best-effort
-                        pass
 
                 # Collect the announcement to send.
                 if routes._announcement_bytes is not None:
@@ -1201,6 +1202,14 @@ def _heartbeat_loop(
         except Exception:  # nosec B110 — best-effort: lock block never blocks
             tick_result = TickResult()
             to_send = announcement_bytes
+            verify_dirty = False
+
+        # Verification pass OUTSIDE the lock: network I/O never holds it.
+        if verify_dirty:
+            try:
+                _run_verify_pass(routes, holder)
+            except Exception:  # nosec B110 — verification is best-effort
+                pass
 
         if to_send is None:
             continue

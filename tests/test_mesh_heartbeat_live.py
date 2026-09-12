@@ -74,3 +74,88 @@ def test_heartbeat_posts_a_real_announcement_to_the_seed_with_the_join_key() -> 
     finally:
         routes._stop.set()
         srv.shutdown()
+
+
+def test_a_slow_peer_probe_never_blocks_the_roster_or_inbound_announces() -> None:
+    """Regression: the verification pass ran under routes._lock (live Spark, dev518)."""
+    import io
+
+    from lobes.gateway._mesh_wire import Announcement, Fingerprint, RoleInfo, encode
+
+    hits: list = []
+    srv, port = _seed(hits)
+    # A member whose /capabilities probe is SLOW: 2.5 s per dial.
+    slow_hits: list = []
+
+    class Slow(BaseHTTPRequestHandler):
+        def log_message(self, *_a):
+            pass
+
+        def do_GET(self):
+            slow_hits.append(self.path)
+            time.sleep(2.5)
+            body = b"{}"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    slow = HTTPServer(("127.0.0.1", 0), Slow)
+    threading.Thread(target=slow.serve_forever, daemon=True).start()
+    slow_origin = f"http://127.0.0.1:{slow.server_address[1]}"
+    env = {
+        "PRIMARY_URL": "http://vllm-primary:8000",
+        "PRIMARY_SERVED_NAME": "unsloth/Qwen3.8-27B-NVFP4",
+        "GATEWAY_SELF_ORIGIN": "http://me.local:8000",
+        "LOBES_MESH_KEY": "sk-test",
+        "LOBES_MESH_NAME": "me",
+        "LOBES_MESH_SEEDS": f"http://127.0.0.1:{port}",
+        "LOBES_MESH_HEARTBEAT_S": "1",
+    }
+    table, cfg = build_config(env)
+    routes, _holder = build_mesh_wiring(table, cfg, None, {}, env=env)
+
+    class Req:
+        def __init__(self, body: bytes):
+            self.rfile = io.BytesIO(body)
+            self.headers = {"Authorization": "Bearer sk-test", "Content-Length": str(len(body))}
+            self.client_address = ("127.0.0.1", 1)
+
+    ann = Announcement(
+        name="slowbox",
+        origin=slow_origin,
+        schema_version="1",
+        roles={
+            "associate": RoleInfo(
+                model="m",
+                runtime="vllm",
+                context=1,
+                quant="q",
+                responsibilities=(),
+                forbidden_responsibilities=(),
+                fingerprint=Fingerprint(
+                    served_id="m", quantization="q", max_model_len=1, runtime="vllm"
+                ),
+            )
+        },
+    )
+    try:
+        assert routes.announce(Req(encode(ann)))[0] == 200
+        # Let the heartbeat start a verification pass against the slow member.
+        deadline = time.monotonic() + 6.0
+        while not slow_hits and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert slow_hits, "the verification pass never probed the member"
+        # While that probe is in flight, the roster must still answer fast.
+        t0 = time.monotonic()
+        status, _h, body = routes.roster_list(Req(b""))
+        assert status == 200 and (time.monotonic() - t0) < 1.0
+        assert any(m["name"] == "slowbox" for m in json.loads(body)["members"])
+        # ...and a second inbound announce must not be blocked either.
+        t0 = time.monotonic()
+        assert routes.announce(Req(encode(ann)))[0] == 200
+        assert (time.monotonic() - t0) < 1.0
+    finally:
+        routes._stop.set()
+        srv.shutdown()
+        slow.shutdown()
