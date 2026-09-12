@@ -74,9 +74,17 @@ class _LedgerEntry:
 
 @dataclass
 class TickResult:
-    """Result returned by :meth:`Roster.tick`."""
+    """Result returned by :meth:`Roster.tick`.
+
+    ``dropped_origins`` (review #252 finding 2) names EXACTLY the members
+    this tick removed, captured before deletion — the heartbeat's
+    announcement-pruning pass must remove only these origins, never derive
+    "dropped" by diffing against the survivors (that inverted the set and
+    wiped every healthy member's announcement on any single expiry).
+    """
 
     dropped: int = 0
+    dropped_origins: tuple[str, ...] = ()
 
 
 @dataclass
@@ -107,57 +115,72 @@ class Ledger:
         self.path = path  # ``None`` means no persistence
         self._clock = clock or (lambda: 0.0)
         self.entries: dict[str, _LedgerEntry] = {}
+        # review #252 findings 3/4: one re-entrant lock serializes every
+        # entries mutation (approve/revoke/merge) against every read used for
+        # an admission decision (is_approved) and against save()'s own
+        # iteration of `entries` — a concurrent approve/revoke used to be
+        # able to interleave with another mutation or with save()'s dict
+        # iteration (ThreadingHTTPServer runs every route on its own
+        # thread), corrupting the persisted ledger or raising
+        # "dictionary changed size during iteration".
+        self._lock = threading.RLock()
         self.load()
 
     def approve(
         self, name: str, approved_by: str, expiry: float, *, now: float | None = None
     ) -> None:
         now = now if now is not None else self._clock()
-        self.entries[name] = _LedgerEntry(
-            approved_by=approved_by,
-            expiry=expiry,
-            updated_at=now,
-        )
+        with self._lock:
+            self.entries[name] = _LedgerEntry(
+                approved_by=approved_by,
+                expiry=expiry,
+                updated_at=now,
+            )
 
     def revoke(self, name: str, *, now: float | None = None, approved_by: str = "system") -> None:
         now = now if now is not None else self._clock()
-        self.entries[name] = _LedgerEntry(
-            approved_by=approved_by,
-            expiry=0.0,
-            updated_at=now,
-        )
+        with self._lock:
+            self.entries[name] = _LedgerEntry(
+                approved_by=approved_by,
+                expiry=0.0,
+                updated_at=now,
+            )
 
     def is_approved(self, name: str, *, now: float | None = None) -> bool:
         now = now if now is not None else self._clock()
-        entry = self.entries.get(name)
-        if entry is None:
-            return False
-        return entry.expiry > now
+        with self._lock:
+            entry = self.entries.get(name)
+            if entry is None:
+                return False
+            return entry.expiry > now
 
     def join_key(self, name: str) -> str | None:
         """Return ``approved_by`` if approved, else ``None``."""
-        return self.entries[name].approved_by if self.is_approved(name) else None
+        with self._lock:
+            return self.entries[name].approved_by if self.is_approved(name) else None
 
     def merge(self, peer: "Ledger") -> None:
         """Gossip-merge *peer*'s entries.  The entry with the greater
         ``updated_at`` wins (ties: keep local)."""
-        for name, entry in peer.entries.items():
-            existing = self.entries.get(name)
-            if existing is None or entry.updated_at > existing.updated_at:
-                self.entries[name] = entry
+        with self._lock:
+            for name, entry in peer.entries.items():
+                existing = self.entries.get(name)
+                if existing is None or entry.updated_at > existing.updated_at:
+                    self.entries[name] = entry
 
     def save(self) -> None:
         """Persist to *path* via temp-file + rename (atomic)."""
         if self.path is None:
             return
-        data = {
-            n: {
-                "approved_by": e.approved_by,
-                "expiry": e.expiry,
-                "updated_at": e.updated_at,
+        with self._lock:
+            data = {
+                n: {
+                    "approved_by": e.approved_by,
+                    "expiry": e.expiry,
+                    "updated_at": e.updated_at,
+                }
+                for n, e in self.entries.items()
             }
-            for n, e in self.entries.items()
-        }
         dirn = os.path.dirname(self.path) or "."
         fd, tmp = tempfile.mkstemp(dir=dirn, suffix=".tmp")
         try:
@@ -179,12 +202,13 @@ class Ledger:
             return
         with open(self.path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        for name, info in data.items():
-            self.entries[name] = _LedgerEntry(
-                approved_by=info["approved_by"],
-                expiry=info["expiry"],
-                updated_at=info.get("updated_at", 0.0),
-            )
+        with self._lock:
+            for name, info in data.items():
+                self.entries[name] = _LedgerEntry(
+                    approved_by=info["approved_by"],
+                    expiry=info["expiry"],
+                    updated_at=info.get("updated_at", 0.0),
+                )
 
 
 # --- Roster ------------------------------------------------------------------
@@ -280,6 +304,48 @@ class Roster:
             self._flap_counts[name] = flap_count + 1
             self._flap_times[name] = now
 
+    def announce_gated(
+        self, name: str, origin: str, capacity: object, *, now: float | None = None
+    ) -> None:
+        """Atomically check ledger admission, then :meth:`announce`.
+
+        review #252 finding 4: ``/mesh/announce`` used to check
+        ``ledger.is_approved`` and then call :meth:`announce` as two
+        separate, unsynchronized steps — a concurrent :meth:`revoke` could
+        commit in between, letting the in-flight request admit (or refresh)
+        a name that was just revoked. Both the ledger read and the roster
+        admission now happen under the SAME lock :meth:`revoke`/:meth:`approve`
+        use, so a revoke either fully precedes or fully follows one
+        announce — never interleaves with it.
+
+        Raises :class:`MeshApprovalExpired` when an existing ledger entry for
+        *name* is not currently in force (identical gating to :meth:`join`).
+        An ABSENT entry is "no restriction" (finding 5, unchanged): the join
+        key alone still admits.
+        """
+        now = now if now is not None else self._clock()
+        with self._ledger._lock:  # noqa: SLF001 — the shared admission lock
+            entry = self._ledger.entries.get(name)
+            if entry is not None and not self._ledger.is_approved(name, now=now):
+                raise MeshApprovalExpired(f"name {name!r} approval expired")
+            self.announce(name, origin, capacity, now=now)
+
+    def approve_and_save(
+        self, name: str, approved_by: str, expiry: float, *, now: float | None = None
+    ) -> None:
+        """:meth:`approve` + :meth:`save`, one transaction (review #252 finding 3)."""
+        with self._ledger._lock:  # noqa: SLF001
+            self.approve(name, approved_by, expiry, now=now)
+            self.save()
+
+    def revoke_and_save(
+        self, name: str, *, now: float | None = None, approved_by: str = "system"
+    ) -> None:
+        """:meth:`revoke` + :meth:`save`, one transaction (review #252 finding 3)."""
+        with self._ledger._lock:  # noqa: SLF001
+            self.revoke(name, now=now, approved_by=approved_by)
+            self.save()
+
     def tick(self, now: float | None = None) -> TickResult:
         """Check staleness; drop expired members.  Returns drop count."""
         now = now if now is not None else self._clock()
@@ -295,7 +361,9 @@ class Roster:
                 if member.missed >= local_missed_max:
                     to_remove.append(name)
 
+            dropped_origins: list[str] = []
             for name in to_remove:
+                dropped_origins.append(self._roster[name].origin)
                 del self._roster[name]
                 dropped += 1
 
@@ -309,7 +377,7 @@ class Roster:
                 ):
                     self._flap_counts[name] = 0
 
-        return TickResult(dropped=dropped)
+        return TickResult(dropped=dropped, dropped_origins=tuple(dropped_origins))
 
     def is_joined(self, name: str) -> bool:
         """Is the member currently in the roster?"""
