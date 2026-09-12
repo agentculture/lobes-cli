@@ -2,7 +2,7 @@
   "plan_slug": "mesh-brain-join",
   "schema_version": 2,
   "created": "2026-09-11T13:20:04Z",
-  "updated": "2026-09-11T21:58:46Z",
+  "updated": "2026-09-12T05:19:41Z",
   "deviations": [
     {
       "id": "d1",
@@ -100,7 +100,259 @@
       "seq": 6
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 1 (validate.sh)",
+      "behavior_text": "all three rosters complete 10 s after the Spark gateway recreate, every entry verified",
+      "contract_text": "signal 1: listed by all others within <= 120 s",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured on the live Spark/Thor/Orin fleet on 0.76.0.dev529; transcript committed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 2 (validate.sh + signal2b)",
+      "behavior_text": "peer keys=0 and doctor peer/FAIL findings=0 on spark, thor, orin after pinning the CLIs to the deployed build",
+      "contract_text": "signal 2: zero *_PEER_* keys, doctor 0 findings",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live; the pass's two doctor FAILs were gateway_version_match CLI skew, re-run clean after the CLI pin",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 3 + 3e (validate.sh, validate6-extra)",
+      "behavior_text": "reranker pooled across Spark+Thor with both lanes plain; 4 and 8 concurrent requests all served locally (local-idle); no X-Lobes-Proxied-By observed",
+      "contract_text": "signal 3: 4 concurrent requests served by both members",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live: the literal signal was NOT met \u2014 no two members host cortex in this fleet, and the reranker pool keeps an idle local lane local (spill path observed only on dev524 with the local lane absent)",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 4 (validate.sh; signal4b.out on dev527)",
+      "behavior_text": "Thor gateway stopped: left the Spark roster after 110 s; embedder (Thor-only) 503 in 0.01 s while still listed, 404 role_infeasible in 0.01 s after; Orin stayed verified; Thor rejoined verified after restart",
+      "contract_text": "signal 4: others keep serving; exclusive roles 404 within 2 intervals, never hang > 10 s",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live on dev529 (and dev527: drop 51 s, hold-down held 3 min, rejoin ~120 s)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 5 (signal5.sh)",
+      "behavior_text": "with LOBES_MESH_KEY unset /mesh/detect 404s and v1/models, capabilities, status diff vs 0.75.1 only in the retired peer family's entries and live pressure fields",
+      "contract_text": "signal 5: byte-identical to 0.75.x without a key",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live on the Spark, key commented out, gateway recreated, then restored",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signals 3c/3d, 4, end state",
+      "behavior_text": "embedder/worker/associate reachable by plain name on the Spark front by proxy (X-Lobes-Mesh-Member); suffixed names observed on dev528 (embedder-thor, reranker-spark) before the sole-candidate and passthrough fixes; a stopped member vanished from the roster and the mesh kept serving",
+      "contract_text": "c33 after-state",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live; the suffix naming was observed for real fingerprint disagreement (quantization unknown vs none) and is gone once the fingerprints agree",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "docs/evidence/2026-09-12-baseline-mesh-cutover.txt",
+      "behavior_text": "backups ~/.lobes.pre-mesh-20260911T222244Z named per box, pre-cutover peer blocks captured redacted",
+      "contract_text": "c52 rollback backups exist and are named",
+      "evidence_type": "observation",
+      "strength": "fidelity",
+      "strength_basis": "backup paths listed in the committed baseline transcript; a rollback was never exercised",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 3c",
+      "behavior_text": "curl with model=embedder/worker/associate through the Spark gateway answered 200 by proxy; Qwen Code was NOT run through the mesh in this run",
+      "contract_text": "h6: Qwen Code or curl reaches every mesh role via the local gateway",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "curl half measured live; the Qwen Code half is unchecked in this run (validated 2026-09-11 only on the retired env proxy)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o10",
+      "test_ref": "docs/evidence/2026-09-12-accept-mesh-brain-join-fleet.txt#Signal 1 + runbook appendix",
+      "behavior_text": "each box was cut over by its own runbook invocation; after the Spark's recreate the Thor and Orin listed it within 10 s with no file changed on either",
+      "contract_text": "h23: adding a member never requires editing other members' files",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live; the only cross-box edits were each box's OWN .env/override",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T03:10:31Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_gateway_serve_mesh_wiring.py + tests/test_mesh_heartbeat_live.py (293 mesh tests)",
+      "behavior_text": "mesh wiring with zero PEER keys pools/forwards from the snapshot; byte-identical tests pass with the key unset",
+      "contract_text": "c22 dynamic membership replaces the env peer family",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "uv run pytest on the nine mesh test files: 293 passed at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-12T05:10:23Z",
+        "commit": "9ce1a2adb18be0508205ebc6178a389dd9060d53"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 16
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "signal 3 was measured on the reranker (the only role two members host), not cortex; the pool keeps an idle local lane local, so both Served-By and Proxied-By in one burst needs local load the run did not generate",
+      "caused_by": [
+        "c36"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "a member dropped after missed heartbeats is held out of DISCOVERY for missed_max ticks: a peer's roster listing it never refreshes its liveness nor re-admits it during the hold-down; only a heartbeat from the member itself does (163a4ec, ffae309)",
+      "caused_by": [
+        "c33"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "verification is per role: a member keeps exactly the announced roles whose fingerprint verifies against its own /capabilities, and is unverified only when none does (3cef3ad)",
+      "caused_by": [
+        "c33"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "the {role}-{machine-name} suffix applies only when a verified candidate disagrees with this box's own lane or with another candidate; a sole verified candidate is exposed plain (39a2412)",
+      "caused_by": [
+        "c33"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "the fleet runs LOBES_MESH_MISSED_MAX=2 (deployment .env) so a lost member drops within 2 intervals; the code default stays 3",
+      "caused_by": [
+        "c36"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }

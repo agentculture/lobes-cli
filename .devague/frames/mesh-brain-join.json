@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-11T10:51:00Z",
-  "updated": "2026-09-11T11:29:57Z",
+  "updated": "2026-09-12T05:19:41Z",
   "claims": [
     {
       "id": "c1",
@@ -1302,7 +1302,129 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "n-below-claim",
+      "what": "t12 cutover skipped two of its own acceptance checks: the gateway-only shape was never booted on a fourth member (h8/o9) and Qwen Code was not run through the mesh (h6 curl half only, o8); both reported unchecked, not passed",
+      "skipped_check": "gateway-only shape boot; Qwen Code end-to-end via the mesh",
+      "refs": [
+        "t12 / o8 / o9"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "signal 4 took three builds (dev525-dev527): the first two fixes were reasoned from the code path instead of reproducing the live pass ORDER (tick, then seed merge) in a test first",
+      "skipped_check": "regression test in the live pass order before the first fix",
+      "refs": [
+        "t12 / ffae309"
+      ],
+      "origin": "llm",
+      "status": "approved"
     }
   ],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c36",
+      "seam": "mesh join / roster gossip (live fleet)",
+      "behavior": "signal 1: a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s)",
+      "source_text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c36",
+      "seam": "env peer family retired + lobes doctor",
+      "behavior": "signal 2: zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings on every box",
+      "source_text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c36",
+      "seam": "same-role pool across two members",
+      "behavior": "signal 3: with 2 members serving a compatible role, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed)",
+      "source_text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c36",
+      "seam": "member loss (gateway stopped)",
+      "behavior": "signal 4: the others answer 200 for the roles they still hold within <= 2 intervals and 404 role_infeasible (never a hang > 10 s) for a role only it had",
+      "source_text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c36",
+      "seam": "mesh inert without a key",
+      "behavior": "signal 5: with no join key set the gateway's responses are byte-identical to 0.75.x",
+      "source_text": "Measured on the live Spark+Thor+Orin fleet after cutover: (1) a member joining with the key is listed by all other members within <= 2 heartbeat intervals (<= 120 s at the 60 s default); (2) zero *_PEER_* keys remain in any member's .env and lobes doctor reports 0 findings; (3) with 2 members serving a compatible cortex, 4 concurrent requests to one member's gateway are served by both (X-Lobes-Served-By and X-Lobes-Proxied-By both observed); (4) stopping one member's gateway: the others answer 200 for the roles they still hold within <= 2 intervals, and 404 role_infeasible (never a hang > 10 s) for a role only it had; (5) with no join key set, the gateway's responses are byte-identical to 0.75.x (existing byte-identical tests still pass).",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c33",
+      "seam": "after-state on the live fleet",
+      "behavior": "a joined box's roles are listed by every member, compatible lanes pool, differing lanes appear as {role}-{machine-name}, lacked roles are reachable by proxy on its own gateway, and a removed box vanishes from every roster after missed heartbeats",
+      "source_text": "A new box runs 'lobes init --apply' with the mesh join key in its .env and 'lobes serve --apply'; within one heartbeat interval every other member lists its roles on /v1/models and /capabilities, same-role compatible lanes pool automatically, differing lanes appear as '{role}-{machine-name}', and roles the new box lacks are reachable on its own gateway by proxy. Removing the box (or the key) makes it vanish from every roster after missed heartbeats and the mesh keeps serving with what remains.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c52",
+      "seam": "cutover rollback",
+      "behavior": "~/.lobes.pre-mesh-<UTC> exists on every box before its .env is modified and the transcript names it",
+      "source_text": "Cutover rollback: before touching a box, its ~/.lobes is copied to ~/.lobes.pre-mesh-<UTC timestamp> and the previous MODEL_GEAR_VERSION recorded; rollback = copy back + recreate the gateway with the four -f compose files (Spark) / env -u GATEWAY_API_KEY (Thor). The evidence transcript names the backup path per box.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c2",
+      "seam": "robot client reaches mesh roles via the local gateway",
+      "behavior": "h6: a robot client (Qwen Code or curl with model=<role>) reaches every mesh role through its local gateway",
+      "source_text": "Home-fleet operators and the robots/agents that consume lobes: a new box (e.g. a second DGX Spark) should join and contribute without hand-editing every peer's .env.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c1",
+      "seam": "gateway-only member",
+      "behavior": "h8: a gateway-only member (hosts=[]) boots, joins, and serves every mesh role by proxy",
+      "source_text": "lobes mesh-brain: a home fleet of robots and boxes running lobes-cli forms one brain. Any machine with a key, or an operator approval (timed or permanent), joins the mesh at runtime, announces the roles, models and purpose it serves, and can draw on every lobe in the mesh even if it serves nothing itself. A configurable heartbeat (default once a minute) keeps it connected. Two machines serving the same role share one concurrency pool out of the box, so a second Spark joining Spark+Thor+Orin doubles the cortex pool or brings a new model.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c35",
+      "seam": "join without touching other members",
+      "behavior": "h23: adding a member never requires editing any other member's files",
+      "source_text": "Robots and home boxes should share cognitive load by being switched on, not by an operator threading peer blocks through N .env files: a second Spark should double the cortex pool or bring a new model the moment it joins, and losing a member should cost capacity, never correctness.",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c22",
+      "seam": "pool and proxy sourced from the mesh snapshot",
+      "behavior": "with zero *_PEER_* keys declared the gateway pools and forwards from the mesh roster; with no key set nothing mesh-related runs (byte-identical tests intact)",
+      "source_text": "Dynamic membership REPLACES the operator-typed <PREFIX>_PEER_ORIGIN(S)/_PEER_PROXY/_PEER_API_KEY(S) family. Each machine is responsible for its own declaration only (its self origin, what it serves) and needs no cross-box coordination, yet enjoys every other member's offers. This supersedes the recorded 'never discovered' decisions of #199 (spec :82) and the peer-only-pools spec s16.",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
 }
