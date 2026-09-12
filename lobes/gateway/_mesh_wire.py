@@ -133,10 +133,17 @@ class Announcement:
         """Return a new Announcement with all private roles dropped.
 
         This method never mutates *self* — it returns a fresh instance so the
-        original can still circulate on the wire.
+        original can still circulate on the wire.  Built via the explicit
+        constructor (S5886) rather than :func:`dataclasses.replace` — the
+        latter is typed to return ``DataclassInstance``, not ``Announcement``.
         """
         clean_roles = {name: info for name, info in self.roles.items() if not info.private}
-        return dataclasses.replace(self, roles=clean_roles)
+        return Announcement(
+            name=self.name,
+            origin=self.origin,
+            schema_version=self.schema_version,
+            roles=clean_roles,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +160,53 @@ def encode(a: Announcement) -> bytes:
         "roles": {name: dataclasses.asdict(info) for name, info in a.roles.items()},
     }
     return json.dumps(obj).encode("utf-8")
+
+
+def _check_schema_major(obj: dict[str, Any]) -> None:
+    """Raise :exc:`MeshSchemaIncompatible` unless *obj* declares our major."""
+    try:
+        major = int(obj["schema_version"].split(".")[0])
+    except (KeyError, ValueError, AttributeError) as exc:
+        raise MeshSchemaIncompatible(
+            f"expected major {SCHEMA_MAJOR}, cannot parse schema version"
+        ) from exc
+    if major != SCHEMA_MAJOR:
+        raise MeshSchemaIncompatible(
+            f"schema version {SCHEMA_MAJOR} expected, got {obj.get('schema_version', '<?>')}"
+        )
+
+
+def _decode_role_info(role_name: str, role_obj: Any) -> RoleInfo:
+    """Decode one ``roles`` entry into a :class:`RoleInfo`.
+
+    Every failure — a missing field, a non-dict ``fingerprint``, a bad type —
+    is normalized to :exc:`ValueError` naming the offending role.
+    """
+    if not isinstance(role_obj, dict):
+        raise ValueError(f"malformed role {role_name!r}: not a JSON object")
+    try:
+        fp_obj = role_obj["fingerprint"]
+        if not isinstance(fp_obj, dict):
+            raise ValueError(f"malformed role {role_name!r}: 'fingerprint' not a JSON object")
+        capacity = role_obj.get("capacity")
+        return RoleInfo(
+            model=role_obj["model"],
+            runtime=role_obj["runtime"],
+            context=role_obj["context"],
+            quant=role_obj["quant"],
+            responsibilities=tuple(role_obj["responsibilities"]),
+            forbidden_responsibilities=tuple(role_obj["forbidden_responsibilities"]),
+            fingerprint=Fingerprint(
+                served_id=fp_obj["served_id"],
+                quantization=fp_obj["quantization"],
+                max_model_len=fp_obj["max_model_len"],
+                runtime=fp_obj["runtime"],
+            ),
+            capacity=float(capacity) if capacity is not None else None,
+            private=bool(role_obj.get("private", False)),
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError(f"malformed role {role_name!r}: {exc}") from exc
 
 
 def decode(data: bytes) -> Announcement:
@@ -179,17 +233,7 @@ def decode(data: bytes) -> Announcement:
     if not isinstance(obj, dict):
         raise ValueError("announcement body must be a JSON object")
 
-    # --- schema version ---------------------------------------------------
-    try:
-        major = int(obj["schema_version"].split(".")[0])
-    except (KeyError, ValueError, AttributeError) as exc:
-        raise MeshSchemaIncompatible(
-            f"expected major {SCHEMA_MAJOR}, cannot parse schema version"
-        ) from exc
-    if major != SCHEMA_MAJOR:
-        raise MeshSchemaIncompatible(
-            f"schema version {SCHEMA_MAJOR} expected, got {obj.get('schema_version', '<?>')}"
-        )
+    _check_schema_major(obj)
 
     name = obj.get("name")
     origin = obj.get("origin")
@@ -202,34 +246,10 @@ def decode(data: bytes) -> Announcement:
     if not isinstance(roles_obj, dict):
         raise ValueError("announcement 'roles' must be a JSON object")
 
-    # --- role info (per-lane fingerprint + capacity) ----------------------
-    roles: dict[str, RoleInfo] = {}
-    for role_name, role_obj in roles_obj.items():
-        if not isinstance(role_obj, dict):
-            raise ValueError(f"malformed role {role_name!r}: not a JSON object")
-        try:
-            fp_obj = role_obj["fingerprint"]
-            if not isinstance(fp_obj, dict):
-                raise ValueError(f"malformed role {role_name!r}: 'fingerprint' not a JSON object")
-            capacity = role_obj.get("capacity")
-            roles[role_name] = RoleInfo(
-                model=role_obj["model"],
-                runtime=role_obj["runtime"],
-                context=role_obj["context"],
-                quant=role_obj["quant"],
-                responsibilities=tuple(role_obj["responsibilities"]),
-                forbidden_responsibilities=tuple(role_obj["forbidden_responsibilities"]),
-                fingerprint=Fingerprint(
-                    served_id=fp_obj["served_id"],
-                    quantization=fp_obj["quantization"],
-                    max_model_len=fp_obj["max_model_len"],
-                    runtime=fp_obj["runtime"],
-                ),
-                capacity=float(capacity) if capacity is not None else None,
-                private=bool(role_obj.get("private", False)),
-            )
-        except (KeyError, ValueError, TypeError) as exc:
-            raise ValueError(f"malformed role {role_name!r}: {exc}") from exc
+    roles = {
+        role_name: _decode_role_info(role_name, role_obj)
+        for role_name, role_obj in roles_obj.items()
+    }
 
     return Announcement(
         name=name,

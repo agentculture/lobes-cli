@@ -408,8 +408,11 @@ class Roster:
 
             # Clear each name's flapping count once its own hold-out window
             # has elapsed (item A: per-name, not the old single roster-wide
-            # counter).
-            for name in list(self._flap_counts):
+            # counter). No list() copy needed here (S7504): this loop only
+            # rewrites an existing key's value, never adds/removes a key, so
+            # the dict is safe to iterate directly — unlike the hold-down
+            # loop above, which does delete keys mid-iteration.
+            for name in self._flap_counts:
                 if (
                     self._flap_counts[name] > 0
                     and now >= self._flap_times.get(name, 0.0) + _FLAPPING_HOLD_TICKS
@@ -496,7 +499,7 @@ class Roster:
             self._flap_counts[name] = flap_count + 1
             self._flap_times[name] = now
 
-    def leave(self, name: str, *, now: float | None = None) -> None:
+    def leave(self, name: str) -> None:
         with self._lock:
             if name in self._roster:
                 del self._roster[name]
