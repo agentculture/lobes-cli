@@ -750,6 +750,7 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict, mesh_roster: d
     answers: list[str] = []
     faults: list[str] = []
     dialed = 0
+    proxied_ok = 0  # d2: marked answers from roles this box reaches only via the mesh
     for role in _GENERATE_ROLES:
         info = caps[role]
         if info.get("feasible") is False:
@@ -790,6 +791,7 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict, mesh_roster: d
                             f"but had no 'choices'. Body: {probe.body[:200]!r}"
                         )
                     else:
+                        proxied_ok += 1
                         answers.append(
                             f"  {role}: dropped by shape, PROXIED to {label} — got a "
                             "marked answer (correct)"
@@ -859,7 +861,10 @@ def test_colleague_discovers_and_dials_generate_roles(caps: dict, mesh_roster: d
             # Reachable but shed/warming (429/503+Retry-After). Discovery still
             # worked — the endpoint was resolved from the contract and answered.
             answers.append(f"  {role}: discovered {endpoint + path}, reachable ({verdict})")
-    if dialed == 0:
+    if dialed == 0 and proxied_ok == 0:
+        # d2: a gateway-only member (hosts=[]) legitimately has NO feasible
+        # generate lobe; it serves the brain by proxy. A fault only when
+        # nothing was dialable locally AND nothing answered by proxy.
         faults.append("  every generate lobe is flagged feasible:false — this box serves no brain")
     report = (
         "#81/#87 Colleague discovery path failed — a peer given ONLY the gateway "
