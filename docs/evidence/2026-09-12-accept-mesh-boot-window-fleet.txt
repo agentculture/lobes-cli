@@ -434,3 +434,62 @@ model-gear-vllm-embed Up 3 minutes (healthy)
 
 Deployment finding (Orin, not this PR): the Orin's .env pins ASSOCIATE_GPU_MEM_UTIL=0.80 (the orin-associate shape's measured value is 0.56); the lane only fits when it boots BEFORE the embed/rerank gears, so a plain `docker compose start vllm-associate` crash-looped 16 times ('Free memory 43.02/61.34 GiB ... less than desired 0.8, 49.08 GiB') until the gears were stopped for its boot. hand and multimodal were already exited on the Orin (2 weeks). Recovered to the pre-run state; the util value is the operator's to reconcile.
 
+
+## Orin associate lane — resilience change requested by the operator (2026-09-12, after the review round)
+The lane (shape value util 0.80, gears-first boot) crash-looped on a plain restart and died (CUDA OOM outside the KV pool, ~196 MB free) when two long prefills arrived together (the PR review prompt and a second Pi-based harness). Moved to ASSOCIATE_GPU_MEM_UTIL=0.70 + ASSOCIATE_MAX_NUM_BATCHED_TOKENS=8192 (backup .env.bak-2026-09-12-resilience); recreated with the Orin's GPU-lane compose set (base + shape + gpu.yml — the base+override set leaves the container Created, never started: nvidia csv-mode hook).
+ASSOCIATE_GPU_MEM_UTIL=0.70
+ASSOCIATE_MAX_NUM_BATCHED_TOKENS=8192
+recreate associate lane: 2026-09-12T13:07:25Z
+invoking the NVIDIA Container Runtime Hook directly (e.g. specifying the docker --gpus flag) is not supported. Please use the NVIDIA Container Runtime (e.g. specify the --runtime=nvidia flag) instead
+t+60s associate: 
+t+120s associate: 
+t+180s associate: 
+t+240s associate: 
+t+300s associate: 
+t+360s associate: 
+t+420s associate: 
+t+480s associate: 
+t+540s associate: 
+t+600s associate: 
+model-gear-vllm-rerank Up 25 minutes (healthy)
+model-gear-vllm-embed Up 10 minutes (healthy)
+start: 2026-09-12T13:18:36Z
+invoking the NVIDIA Container Runtime Hook directly (e.g. specifying the docker --gpus flag) is not supported. Please use the NVIDIA Container Runtime (e.g. specify the --runtime=nvidia flag) instead
+failed to start containers: model-gear-vllm-associate
+model-gear-vllm-associate Created
+t+60s associate: created restarts=0
+t+120s associate: created restarts=0
+t+180s associate: created restarts=0
+t+240s associate: created restarts=0
+t+300s associate: created restarts=0
+t+360s associate: created restarts=0
+t+420s associate: created restarts=0
+t+480s associate: created restarts=0
+t+540s associate: created restarts=0
+model-gear-vllm-rerank Up 36 minutes (healthy)
+model-gear-vllm-embed Up 20 minutes (healthy)
+1
+recreate (3-file set) 2026-09-12T13:28:26Z
+ Container model-gear-vllm-associate Starting 
+ Container model-gear-vllm-associate Started 
+runtime=nvidia status=running files=/home/orin/.lobes/docker-compose.yml,/home/orin/.lobes/docker-compose.shape.yml,/home/orin/.lobes/docker-compose.gpu.yml
+t+60s associate: starting restarts=0
+t+120s associate: starting restarts=0
+t+180s associate: starting restarts=0
+t+240s associate: starting restarts=0
+t+300s associate: starting restarts=0
+t+360s associate: starting restarts=0
+t+420s associate: starting restarts=0
+t+450s associate: healthy restarts=0
+(EngineCore pid=275) WARNING 09-12 13:33:31 [kv_cache_utils.py:1261] Add 1 padding layers, may waste at most 4.35% KV cache memory
+(EngineCore pid=275) INFO 09-12 13:33:31 [kv_cache_utils.py:2236] Maximum concurrency for 128,000 tokens per request: 17.54x
+(EngineCore pid=275) INFO 09-12 13:34:57 [gpu_worker.py:789] Free memory on device (43.97/61.34 GiB) on startup. Desired GPU memory utilization is (0.7, 42.94 GiB). Actual usage is 23.95 GiB for consumed memory (weights + non-torch), 1.0 GiB for peak activation, and 1.94 GiB for CUDAGraph memory. Re
+model-gear-vllm-associate Up 7 minutes (healthy)
+model-gear-vllm-rerank Up 44 minutes (healthy)
+model-gear-vllm-embed Up 28 minutes (healthy)
+## two concurrent ~11K-token requests to model=associate via the Orin gateway, 2026-09-12T13:36:29Z
+req1 HTTP 200 in 16.052623s
+req2 HTTP 200 in 16.152007s
+  req1: {"id":"chatcmpl-8685f3abe1d8e7da","object":"chat.completion","created":1789220173,"model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4","choices":[{"index":0,"message":{"role":"assistant","cont
+  req2: {"id":"chatcmpl-afc64d2b135625b4","object":"chat.completion","created":1789220173,"model":"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4","choices":[{"index":0,"message":{"role":"assistant","cont
+  lane after: healthy restarts=0
