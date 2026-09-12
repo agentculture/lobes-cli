@@ -72,3 +72,50 @@ def test_reannounce_builder_is_wired_and_rebuilds_a_fresh_announcement() -> None
     fresh = routes._announcement_builder()
     assert fresh.name == "me" and fresh.origin == "http://me.local:8000"
     assert "cortex" in fresh.roles
+
+
+def test_announcement_is_the_hosted_slice_of_this_box_s_own_capabilities() -> None:
+    """The first live cutover announced all six roles with empty served ids:
+    the announcement must be built from /capabilities, hosted roles only."""
+    from lobes.gateway.server import capabilities_payload
+
+    env = _env()
+    table, cfg = build_config(env)
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    ann = routes._announcement_builder()
+    payload = capabilities_payload(table, cfg, env, mesh_snapshot=routes._holder.current().snapshot)
+    hosted = {
+        r
+        for r, e in payload.items()
+        if isinstance(e, dict) and e.get("feasible") and e.get("fingerprint")
+    }
+    assert set(ann.roles) == hosted and "cortex" in hosted
+    fp = ann.roles["cortex"].fingerprint
+    assert fp.served_id == "unsloth/Qwen3.8-27B-NVFP4"
+    assert fp.runtime == "vllm"
+    assert fp.served_id == payload["cortex"]["fingerprint"]["served_id"]
+    assert (fp.max_model_len or 0) == int(
+        payload["cortex"]["fingerprint"].get("max_model_len") or 0
+    )
+
+
+def test_verification_is_identity_so_unknown_matches_unknown() -> None:
+    from lobes.gateway._mesh_routing import fingerprints_identical
+    from lobes.gateway._replicas import Fingerprint as RF
+
+    def rf(q: str) -> RF:
+        return RF(
+            served_id="Qwen/Qwen3-Reranker-0.6B",
+            quantization=q,
+            max_model_len=8192,
+            runtime="vllm",
+            kv_cache_dtype="unknown",
+            reasoning_parser="unknown",
+            tool_parser="unknown",
+            speculative_config="unknown",
+        )
+
+    a, b, c = rf("unknown"), rf("unknown"), rf("none")
+    assert fingerprints_identical(a, b)
+    assert not fingerprints_identical(a, c)
+    assert not fingerprints_identical(a, None)

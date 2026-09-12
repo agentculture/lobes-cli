@@ -166,7 +166,10 @@ def test_two_declared_replicas_offline_view() -> None:
     assert fp["kv_cache_dtype"] == "fp8"
     # RUNTIME has no <PREFIX>_RUNTIME env knob (t2) — never invented from the
     # catalog (c33/h25), so it stays honestly unknown.
-    assert fp["runtime"] == "unknown"
+    # The engine is a registry fact (RoleInfo.runtime), not a catalog guess about
+    # the served id, so the offline fingerprint carries it (mesh verification
+    # needs a known runtime; 2026-09-12 live finding).
+    assert fp["runtime"] == "vllm"
 
 
 def test_offline_view_reports_no_capacity_and_uncalibrated_weight() -> None:

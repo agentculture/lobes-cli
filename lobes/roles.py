@@ -1286,6 +1286,11 @@ def _offline_fingerprint(declared: Mapping[str, str], entry: Mapping[str, object
     }
     for field_name, suffix in _FINGERPRINT_DECLARED_FIELDS:
         fingerprint[field_name] = declared.get(suffix, _REPLICA_UNKNOWN)
+    # The engine is a registry fact (`entry["runtime"]`, "vllm"/"llamacpp"),
+    # not a live probe: without it every offline fingerprint read
+    # runtime=unknown and mesh verification could never pass (2026-09-12).
+    if fingerprint.get("runtime") in (None, "", _REPLICA_UNKNOWN):
+        fingerprint["runtime"] = entry.get("runtime") or _REPLICA_UNKNOWN
     return fingerprint
 
 

@@ -150,6 +150,26 @@ def as_routing_snapshot(obj: "object | None") -> "RoutingSnapshot | None":
 # ---------------------------------------------------------------------------
 
 
+def fingerprints_identical(a: object, b: object) -> bool:
+    """Field-by-field identity of two replica fingerprints (verification rule).
+
+    ``None`` / ``""`` / ``"unknown"`` / ``0`` all normalise to unknown, so an
+    unknown on both sides is a match; any other difference is not.
+    """
+    if a is None or b is None:
+        return False
+
+    def norm(v: object) -> str:
+        if v is None or v == "" or v == 0 or str(v).lower() == "unknown":
+            return "unknown"
+        return str(v)
+
+    return all(
+        norm(getattr(a, f, None)) == norm(getattr(b, f, None))
+        for f in ("served_id", "quantization", "max_model_len", "runtime")
+    )
+
+
 def verify_member_roles(
     announced: "Announcement",
     probed_roles: dict[str, dict],  # role -> {fingerprint: {...}, ready: bool|None}
@@ -184,9 +204,12 @@ def verify_member_roles(
         )
 
         # Run comparison.
-        from lobes.gateway._replicas import compare_fingerprints
-
-        compatible, _reason = compare_fingerprints(announced_replica_fp, probed_replica_fp)
+        # VERIFICATION asks "does the member serve what it announced?", so the
+        # announced and probed fingerprints must be IDENTICAL, unknowns
+        # included — a lane with no declared quantization announces
+        # `unknown` and advertises `unknown`, and that is a match. Pooling
+        # keeps the strict compare_fingerprints rule (unknown never pools).
+        compatible = fingerprints_identical(announced_replica_fp, probed_replica_fp)
         if compatible:
             verified.append(role_name)
 

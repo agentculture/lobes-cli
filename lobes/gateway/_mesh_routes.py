@@ -42,6 +42,7 @@ import sys
 import threading
 import time
 import urllib.parse
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -827,6 +828,58 @@ def _fingerprint_to_wire(
         quantization=str(fp.get("quantization", "")),
         max_model_len=int(fp.get("max_model_len", 0)),
         runtime=str(fp.get("runtime", "")),
+    )
+
+
+def announcement_from_capabilities(
+    config: MeshConfig,
+    payload: Mapping[str, Mapping[str, object]],
+    *,
+    self_origin: str,
+    local_capacities: Mapping[str, float] | None = None,
+) -> Announcement:
+    """Build this box's announcement from its OWN ``/capabilities`` payload.
+
+    A member announces exactly what it advertises — the roles it hosts here
+    (``feasible`` and carrying a ``fingerprint``, never a proxied one), with
+    the very fingerprint a peer will read back when it verifies. Building the
+    announcement from any other source is how the first live cutover ended up
+    announcing all six roles with empty served ids (2026-09-12).
+    """
+    from lobes.roles import ROLE_BACKEND
+
+    roles: dict[str, RoleInfo] = {}
+    for role, entry in payload.items():
+        if not isinstance(entry, Mapping):
+            continue
+        fp = entry.get("fingerprint")
+        if not entry.get("feasible") or not isinstance(fp, Mapping) or entry.get("proxied"):
+            continue
+        try:
+            max_len = int(fp.get("max_model_len") or 0)
+        except (TypeError, ValueError):
+            max_len = 0
+        backend = ROLE_BACKEND.get(role, role)
+        capacity = None
+        if local_capacities and backend in local_capacities:
+            capacity = local_capacities[backend]
+        roles[str(role)] = RoleInfo(
+            model=str(entry.get("model") or fp.get("served_id") or ""),
+            runtime=str(entry.get("runtime") or ""),
+            context=int(entry.get("context") or max_len or 0),
+            quant=str(entry.get("quant") or ""),
+            responsibilities=tuple(entry.get("responsibilities") or ()),
+            forbidden_responsibilities=tuple(entry.get("forbidden_responsibilities") or ()),
+            fingerprint=Fingerprint(
+                served_id=str(fp.get("served_id") or ""),
+                quantization=str(fp.get("quantization") or ""),
+                max_model_len=max_len,
+                runtime=str(fp.get("runtime") or ""),
+            ),
+            capacity=capacity,
+        )
+    return Announcement(
+        name=config.name or "", origin=self_origin, schema_version=str(SCHEMA_MAJOR), roles=roles
     )
 
 

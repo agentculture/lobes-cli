@@ -79,7 +79,7 @@ from lobes.gateway._mesh_config import MeshConfigError
 from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
     MeshRoutes,
-    _build_announcement,
+    announcement_from_capabilities,
 )
 from lobes.gateway._mesh_routes import build_mesh_routes as _build_mesh_routes
 from lobes.gateway._mesh_routes import (
@@ -99,6 +99,7 @@ from lobes.gateway._mesh_routing import (
     find_suffixed_lane,
     mesh_markers,
 )
+from lobes.gateway._mesh_wire import Announcement
 from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._realtime import (
@@ -5144,26 +5145,36 @@ def build_mesh_wiring(
     holder.replace(
         MeshRoutingView(snapshot=build_snapshot(mesh_routes.roster), peer_states={}),
     )
+
+    # The announcement IS this box's own /capabilities payload, filtered to the
+    # roles it hosts — so what a member announces and what a peer reads back
+    # when verifying are the same bytes by construction. Rebuilt on every
     # POST /mesh/reannounce (lobes switch / lobes up / a lane going unhealthy)
-    # rebuilds the announcement from the SAME live inputs, so a fingerprint
-    # change reaches peers on their next probe rather than never (c46/h37).
-    lane_configs = {
-        b.name: declared_lane_config(
-            table.lane_fingerprints.get(b.name, {}), runtime=_lane_runtime(b.name, env)
+    # from the live readiness view (c46/h37).
+    def _capabilities_announcement() -> Announcement:
+        ready = None
+        try:
+            ready = readiness_cache.current() if readiness_cache is not None else None
+        except (
+            Exception
+        ):  # nosec B110 — best-effort: an unreadable cache announces without readiness
+            ready = None
+        payload = capabilities_payload(
+            table,
+            cfg,
+            env,
+            backend_ready=ready,
+            mesh_snapshot=build_snapshot(mesh_routes.roster),
         )
-        for b in table.backends
-    }
-    mesh_routes.set_announcement_builder(
-        lambda: _build_announcement(
+        return announcement_from_capabilities(
             mesh_cfg,
-            mesh_routes.roster,
+            payload,
             self_origin=table.self_origin,
-            readiness_cache=readiness_cache,
-            replica_caches=replica_caches,
             local_capacities=cfg.local_capacities,
-            declared_lane_configs=lane_configs,
         )
-    )
+
+    announcement = _capabilities_announcement()
+    mesh_routes.set_announcement_builder(_capabilities_announcement)
     if start:
         # Start the heartbeat daemon thread after the holder is seeded.
         _start_mesh(mesh_routes, announcement)
