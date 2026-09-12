@@ -19,11 +19,14 @@ byte-identical to empty regardless of what an operator still has set in
 ``.env`` — the retired knob is now silently inert, exactly like ``lobes
 doctor``'s ``peer_family_retired`` finding describes.
 
-``/capabilities``' own ``hosted_by`` annotation
-(:func:`lobes.roles.annotate_peer_referrals`) is OUT OF SCOPE for this task
-(``lobes/roles.py`` is not an owned file) — it still reads only
-``table.peer_origins`` and therefore never carries a mesh-sourced referral.
-That is a recorded gap, not a claim of parity between the two surfaces.
+``/capabilities``' own ``hosted_by`` annotation was a recorded GAP here
+until t4: :func:`lobes.roles.annotate_peer_referrals` read only the retired
+``table.peer_origins``, so the capabilities surface never carried a
+mesh-sourced referral while the 404 body did. t4 closed it in
+:func:`lobes.roles.annotate_mesh_naming` — which runs LAST, so a
+mesh-sourced ``hosted_by`` wins over anything the (still-present,
+cite-don't-delete) env annotator would have written. The two surfaces now
+agree.
 
 Two invariants remain, now proven via a fake mesh member instead of an env
 var:
@@ -114,8 +117,16 @@ def _post(table, cfg, model: str, path: str = "/v1/chat/completions", mesh_snaps
     return resp, calls
 
 
-def _mesh_snapshot_for(role: str, origin: str = _THOR_ORIGIN, name: str = "thor"):
-    """A minimal mesh RoutingSnapshot with one member verified for *role*."""
+def _mesh_snapshot_for(
+    role: str, origin: str = _THOR_ORIGIN, name: str = "thor", *, ready: bool = False
+):
+    """A minimal mesh RoutingSnapshot with one member verified for *role*.
+
+    ``ready`` seeds ``MemberInfo.ready_roles`` (what the member's probed
+    ``/capabilities`` entry reported) — the source of a proxied entry's own
+    ``ready`` on this box's ``/capabilities`` (t4). Default ``False`` keeps
+    every pre-t4 caller of this helper unchanged.
+    """
     fp = Fingerprint(
         served_id=_SENSES_ID, quantization="NVFP4A16", max_model_len=32768, runtime="vllm"
     )
@@ -157,6 +168,7 @@ def _mesh_snapshot_for(role: str, origin: str = _THOR_ORIGIN, name: str = "thor"
             )(),
         },
         verified_roles={origin: frozenset([role])},
+        ready_roles={origin: frozenset([role])} if ready else None,
     )
 
 
@@ -249,18 +261,56 @@ def test_embed_mesh_referral_origin_resolves_correctly() -> None:
 
 
 # ============================================================================
-# /capabilities' own hosted_by annotation stays env-only (out of scope: it
-# lives in lobes.roles, not an owned file of this task) — proven inert too.
+# /capabilities' own hosted_by annotation: the retired env knob is inert, and
+# the MESH is now its source (t4). The recorded gap this section used to pin
+# — "/capabilities never carries a mesh-sourced referral" — is CLOSED.
 # ============================================================================
 
 
-def test_capabilities_hosted_by_stays_env_sourced_and_the_env_knob_is_inert() -> None:
+def test_capabilities_hosted_by_is_never_env_sourced_and_the_env_knob_is_inert() -> None:
+    # The retired `<PREFIX>_PEER_ORIGIN` knob: still set in .env, still inert.
+    # Without a mesh snapshot nothing names a host for the dropped role.
     env = _spark_lobe_env(MULTIMODAL_PEER_ORIGIN=_THOR_ORIGIN)
     table, cfg = build_config(env)
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     assert "hosted_by" not in payload["senses"]
+    assert "proxied" not in payload["senses"]
+    assert "members" not in payload["senses"]
     assert payload["senses"]["feasible"] is False
     assert payload["senses"]["ready"] is False
+
+
+def test_capabilities_hosted_by_is_mesh_sourced_for_a_dropped_role() -> None:
+    # Same inert env knob, now WITH a mesh member verified + ready for the
+    # dropped role: hosted_by comes from the mesh member's announced origin,
+    # never from the env knob (they are deliberately different strings here).
+    env = _spark_lobe_env(MULTIMODAL_PEER_ORIGIN="http://never-used.invalid:9")
+    table, cfg = build_config(env)
+    snap = _mesh_snapshot_for("senses", ready=True)
+    payload = S.capabilities_payload(
+        table, cfg, env=env, gateway_url=_GATEWAY_URL, mesh_snapshot=snap
+    )
+    senses = payload["senses"]
+    assert senses["hosted_by"] == _THOR_ORIGIN
+    assert senses["proxied"] is True
+    assert senses["ready"] is True
+    assert senses["member"] == "thor"
+    assert "members" not in senses
+    # feasible stays a hardware fact — a forward never makes the box host it.
+    assert senses["feasible"] is False
+
+
+def test_capabilities_mesh_annotation_never_touches_a_locally_hosted_role() -> None:
+    env = _spark_lobe_env()
+    table, cfg = build_config(env)
+    snap = _mesh_snapshot_for("senses", ready=True)
+    payload = S.capabilities_payload(
+        table, cfg, env=env, gateway_url=_GATEWAY_URL, mesh_snapshot=snap
+    )
+    for role in ("cortex", "embedder", "reranker"):
+        assert "hosted_by" not in payload[role], role
+        assert "members" not in payload[role], role
+        assert "member" not in payload[role], role
 
 
 def test_annotate_peer_referrals_stays_a_no_op_with_an_always_empty_table() -> None:

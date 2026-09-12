@@ -545,6 +545,159 @@ def test_capabilities_payload_noop_when_mesh_disabled():
     assert annotated == {"cortex": {"model": "x"}}
 
 
+# ---------------------------------------------------------------------------
+# t4: mesh-sourced hosted_by / members / ready / proxied on /capabilities
+# ---------------------------------------------------------------------------
+
+
+def _one_member_snapshot(*, role="cortex", ready=True, name="nameA", origin="http://a"):
+    roster = _FakeRoster([(name, origin, 1.0)])
+    ann = _ann(name, origin, {role: _role(role, fingerprint=_fp())})
+    return build_snapshot(
+        roster,
+        announcements={origin: ann},
+        verified_roles={origin: frozenset({role})},
+        ready_roles={origin: frozenset({role})} if ready else None,
+    )
+
+
+def _two_agreeing_ready(*, role="cortex", ready_b=True):
+    fp = _fp(quantization="NVFP4")
+    roster = _FakeRoster([("nameA", "http://a", 1.0), ("nameB", "http://b", 1.0)])
+    anns = {
+        "http://a": _ann("nameA", "http://a", {role: _role(role, fingerprint=fp)}),
+        "http://b": _ann("nameB", "http://b", {role: _role(role, fingerprint=fp)}),
+    }
+    ready = {"http://a": frozenset({role})}
+    if ready_b:
+        ready["http://b"] = frozenset({role})
+    return build_snapshot(
+        roster,
+        announcements=anns,
+        verified_roles={"http://a": frozenset({role}), "http://b": frozenset({role})},
+        ready_roles=ready,
+    )
+
+
+def test_one_plain_origin_emits_hosted_by_ready_and_proxied():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_snapshot(ready=True)
+    payload = {"cortex": {"model": "m", "loaded": False, "feasible": False, "ready": False}}
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    # hosted_by is string-equal to the member's announced origin in the roster
+    assert entry["hosted_by"] == "http://a"
+    assert entry["hosted_by"] == next(m.origin for m in snap.members if m.name == "nameA")
+    assert entry["proxied"] is True
+    assert entry["ready"] is True
+    assert entry["member"] == "nameA"
+    assert "members" not in entry
+    assert entry["feasible"] is False
+
+
+def test_one_plain_origin_ready_false_when_the_member_lane_is_not_ready():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_snapshot(ready=False)
+    payload = {"cortex": {"model": "m", "loaded": False, "feasible": False, "ready": False}}
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert entry["hosted_by"] == "http://a"
+    assert entry["proxied"] is True
+    assert entry["ready"] is False
+
+
+def test_two_plain_origins_emit_members_and_no_hosted_by():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_agreeing_ready()
+    payload = {"cortex": {"model": "m", "loaded": False, "feasible": False, "ready": False}}
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert entry["members"] == ["nameA", "nameB"]
+    assert "hosted_by" not in entry
+    assert entry["proxied"] is True
+    assert entry["ready"] is True
+    assert entry["member"] == "nameA"
+
+
+def test_two_plain_origins_drop_a_pre_existing_env_hosted_by():
+    # annotate_peer_referrals (cite-don't-delete) may already have written a
+    # hosted_by; with a POOL answer there is no single host to name, so the
+    # mesh annotation must remove it rather than leave a stale single origin.
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_agreeing_ready()
+    payload = {
+        "cortex": {
+            "model": "m",
+            "loaded": False,
+            "feasible": False,
+            "ready": False,
+            "hosted_by": "http://stale-env-origin",
+            "proxied": True,
+        }
+    }
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert "hosted_by" not in entry
+    assert entry["members"] == ["nameA", "nameB"]
+
+
+def test_mesh_hosted_by_overwrites_the_env_sourced_one_for_a_single_origin():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_snapshot(ready=True)
+    payload = {
+        "cortex": {
+            "model": "m",
+            "loaded": False,
+            "feasible": False,
+            "ready": False,
+            "hosted_by": "http://stale-env-origin",
+        }
+    }
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert entry["hosted_by"] == "http://a"
+
+
+def test_locally_hosted_role_gets_no_mesh_hosted_by_or_ready_override():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _one_member_snapshot(ready=True)
+    payload = {"cortex": {"model": "m", "loaded": True, "feasible": True, "ready": False}}
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert entry == {"model": "m", "loaded": True, "feasible": True, "ready": False}
+
+
+def test_mesh_disabled_payload_is_byte_identical_for_a_dropped_role():
+    from lobes.roles import annotate_mesh_naming
+
+    before = {"cortex": {"model": "m", "loaded": False, "feasible": False, "ready": False}}
+    expected = json.dumps(before)
+    got = json.dumps(annotate_mesh_naming(json.loads(expected), None))
+    assert got == expected
+
+
+def test_no_plain_origins_leaves_the_dropped_role_untouched():
+    # A disagreeing pair places nobody plain — no hosted_by, no members, no
+    # proxied claim; only the suffixed_lanes listing the t8 contract already
+    # pins.
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _two_member_snapshot(_fp(quantization="NVFP4"), _fp(quantization="FP8"))
+    payload = {"cortex": {"model": "m", "loaded": False, "feasible": False, "ready": False}}
+    entry = annotate_mesh_naming(payload, snap)["cortex"]
+
+    assert "hosted_by" not in entry
+    assert "members" not in entry
+    assert "proxied" not in entry
+    assert entry["ready"] is False
+
+
 def test_compare_fingerprints_sanity_used_by_placement():
     # Documents the primitive compute_role_placement is built on, so a
     # future change to compare_fingerprints's semantics is visible here too.
