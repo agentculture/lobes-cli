@@ -1897,3 +1897,77 @@ class TestProbeReadyRoles:
         member = next(m for m in holder.current().snapshot.members if m.origin == origin)
         assert member.probed is True
         assert member.ready_roles == ()
+
+
+class TestAnnounceReplyCarriesOwnAnnouncement:
+    """d1: POST /mesh/announce answers with the responder's own public
+    announcement, so a recreated box learns every reachable peer on its
+    first broadcast instead of waiting for each peer's next heartbeat."""
+
+    def test_announce_reply_carries_the_responders_announcement(self) -> None:
+        from lobes.gateway._mesh_wire import decode
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        own = encode(_peer_ann(routes.config.name, "http://me:8000"))
+        routes._announcement_bytes = own
+        _ensure_approved(routes, "peer1")
+        body = encode(_peer_ann("peer1", "http://peer1:8000"))
+        status, _headers, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, _bearer())
+        )
+        assert status == 200
+        payload = json.loads(resp)
+        assert "announcement" in payload
+        got = decode(json.dumps(payload["announcement"]).encode())
+        assert got.name == decode(own).name and got.origin == decode(own).origin
+
+    def test_announce_reply_omits_announcement_when_none_stored(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        routes._announcement_bytes = None
+        _ensure_approved(routes, "peer1")
+        body = encode(_peer_ann("peer1", "http://peer1:8000"))
+        status, _headers, resp = routes.announce(
+            _fake_handler("/mesh/announce", "POST", body, _bearer())
+        )
+        assert status == 200 and "announcement" not in json.loads(resp)
+
+    def test_ingesting_a_reply_stores_the_peer_and_asks_for_an_immediate_verify(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        reply = json.dumps(
+            {
+                "status": "announced",
+                "announcement": json.loads(encode(_peer_ann("thor", "http://thor:8000"))),
+            }
+        ).encode()
+        assert routes.ingest_reply_announcement(reply) is True
+        assert "thor" in routes.roster.members()
+        assert "http://thor:8000" in routes._announcements
+        assert routes._verify_now_event.is_set()
+
+    def test_ingesting_a_reply_without_announcement_is_a_noop(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        assert routes.ingest_reply_announcement(b'{"status": "ok"}') is False
+        assert routes.ingest_reply_announcement(b"not json") is False
+        assert not routes._verify_now_event.is_set()
+
+    def test_ingesting_our_own_name_is_refused(self) -> None:
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        own = routes.config.name
+        reply = json.dumps(
+            {"announcement": json.loads(encode(_peer_ann(own, "http://me:8000")))}
+        ).encode()
+        assert routes.ingest_reply_announcement(reply) is False
+        assert own not in routes.roster.members()
+
+
+class TestSeedRosterRolesAreProvisional:
+    def test_seed_merge_records_discovered_roles(self) -> None:
+        from lobes.gateway._mesh_routes import _merge_seed_members
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        _merge_seed_members(
+            routes.roster,
+            routes,
+            [{"name": "thor", "origin": "http://thor:8000", "roles": ["worker", 7]}],
+        )
+        assert routes._discovered_roles["http://thor:8000"] == ("worker",)

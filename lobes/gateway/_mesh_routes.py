@@ -56,6 +56,7 @@ from lobes.gateway._mesh_wire import (
     Fingerprint,
     MeshSchemaIncompatible,
     RoleInfo,
+    decode,
 )
 
 if TYPE_CHECKING:
@@ -208,6 +209,11 @@ class MeshRoutes:
         self.roster = roster
         self._announcement: Announcement | None = None
         self._announcement_bytes: bytes | None = None
+        # d1: roles a SEED ROSTER listed for a member we hold no announcement
+        # for yet (origin -> roles). Provisional: the pending/503 path may name
+        # the member from it; nothing is ever routed or verified from it, and a
+        # real announcement always wins in build_snapshot.
+        self._discovered_roles: dict[str, tuple[str, ...]] = {}
         self._join_log = _join_log
         self._verify_log = _verify_log
         self._stop = threading.Event()
@@ -466,13 +472,40 @@ class MeshRoutes:
         if error is not None:
             return error
         name = public.name
-        origin = public.origin
 
         if not name:
             return _name_required_response()
 
-        roster_now = self.roster.now()
-        error = self._admit_announcement(name, origin, roster_now)
+        error = self._ingest_public_announcement(public)
+        if error is not None:
+            return error
+
+        reply: dict = {"status": "announced", "name": name, "schema_version": SCHEMA_MAJOR}
+        # d1: answer with OUR OWN public announcement. A box that has just been
+        # recreated holds no peer announcements at all — the seed rosters it
+        # fetches list members and roles but carry no announcement — so its
+        # first pass had nothing to verify and its mesh-provided roles 404'd
+        # until every peer's next heartbeat (57 s measured live, 2026-09-12).
+        # Carrying the responder's announcement in the reply lets the
+        # announcer learn and verify us on the very pass that reached us.
+        # Additive: a pre-d1 announcer ignores the field.
+        own = self._own_announcement_object()
+        if own is not None:
+            reply["announcement"] = own
+        return (200, [("Content-Type", _JSON)], json.dumps(reply).encode())
+
+    def _ingest_public_announcement(
+        self, public: "Announcement"
+    ) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """Admit *public* into the roster and store it; ``None`` on success.
+
+        Shared by the inbound handler and by :meth:`ingest_reply_announcement`
+        (d1) so a peer's announcement is admitted through exactly one path
+        (self-name refusal, ledger gate, hold-down) whichever way it arrived.
+        """
+        name = public.name
+        origin = public.origin
+        error = self._admit_announcement(name, origin, self.roster.now())
         if error is not None:
             return error
 
@@ -491,14 +524,43 @@ class MeshRoutes:
         # three-member mesh announcing once a second into a probe storm.
         if self._needs_immediate_verify(origin, previous, public):
             self._verify_now_event.set()
+        return None
 
-        return (
-            200,
-            [("Content-Type", _JSON)],
-            json.dumps(
-                {"status": "announced", "name": name, "schema_version": SCHEMA_MAJOR}
-            ).encode(),
-        )
+    def _own_announcement_object(self) -> dict | None:
+        """This box's stored public announcement as a JSON object, or ``None``."""
+        raw = self._announcement_bytes
+        if raw is None:
+            return None
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    def ingest_reply_announcement(self, body: bytes | None) -> bool:
+        """Learn a peer from the ``announcement`` its announce reply carried (d1).
+
+        Returns ``True`` when a well-formed announcement was admitted and
+        stored. Anything else — no body, no field, bad JSON, an incompatible
+        schema, our own name, a lapsed approval — is ``False`` and leaves the
+        roster untouched: the reply is a courtesy, never a requirement.
+        """
+        if not body:
+            return False
+        try:
+            obj = json.loads(body)
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(obj, dict) or not isinstance(obj.get("announcement"), dict):
+            return False
+        try:
+            ann = decode(json.dumps(obj["announcement"]).encode()).public()
+        except Exception:  # nosec B110 — a malformed courtesy field is ignored
+            return False
+        if not ann.name or not ann.origin:
+            return False
+        with self._lock:
+            return self._ingest_public_announcement(ann) is None
 
     def _member_probed(self, origin: str) -> bool:
         """Has ANY ``/capabilities`` probe result for *origin* landed yet?
@@ -706,7 +768,11 @@ class MeshRoutes:
         # so revoked members get zero forwards immediately.
         with self._lock:
             self._announcements.pop(name, None)
-            snap = build_snapshot(self.roster, announcements=self._announcements)
+            snap = build_snapshot(
+                self.roster,
+                announcements=self._announcements,
+                discovered_roles=self._discovered_roles,
+            )
             if self._holder is not None:
                 from lobes.gateway._mesh_routing import MeshRoutingView
 
@@ -1118,11 +1184,12 @@ def _post_announcement(
     body: bytes,
     timeout: float,
     key: bytes | str | None = None,
-) -> None:
+) -> bytes | None:
     """POST *body* to *url* via http.client with a hard timeout.
 
-    Silently drops on any failure — a down peer is handled by tick-based
-    staleness in the roster.
+    Returns the reply body on a 200 (d1: it may carry the responder's own
+    announcement), ``None`` otherwise. Silently drops on any failure — a down
+    peer is handled by tick-based staleness in the roster.
 
     Parameters
     ----------
@@ -1161,6 +1228,7 @@ def _post_announcement(
         key_text = key.decode("utf-8") if isinstance(key, bytes) else key
         headers["Authorization"] = f"Bearer {key_text}"
 
+    reply: bytes | None = None
     try:
         conn.request(
             "POST",
@@ -1168,7 +1236,10 @@ def _post_announcement(
             body=body,
             headers=headers,
         )
-        conn.getresponse()
+        resp = conn.getresponse()
+        data = resp.read(_MAX_REPLY_BYTES)
+        if resp.status == 200:
+            reply = data
     except Exception:  # nosec B110 — best-effort: silently drop failed peer connections
         pass
     finally:
@@ -1179,6 +1250,12 @@ def _post_announcement(
             conn.close()
         except Exception:  # nosec B110 — silently ignore close errors
             pass
+    return reply
+
+
+# d1: an announce reply is small (status + one public announcement); cap the
+# read so a misbehaving peer cannot make the heartbeat thread buffer freely.
+_MAX_REPLY_BYTES = 256 * 1024
 
 
 def _wait_for_tick(
@@ -1247,7 +1324,11 @@ def _prune_dropped_announcements(
 
         for origin in tick_result.dropped_origins:
             routes._announcements.pop(origin, None)
-        snap = build_snapshot(routes.roster, announcements=routes._announcements)
+        snap = build_snapshot(
+            routes.roster,
+            announcements=routes._announcements,
+            discovered_roles=routes._discovered_roles,  # noqa: SLF001
+        )
         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
         pass
@@ -1329,8 +1410,14 @@ def _broadcast_announcement(
     stop_event: threading.Event,
     dial_timeout: float,
     key: str | None,
+    routes: "MeshRoutes | None" = None,
 ) -> None:
-    """Finding 9: parallelize announces to every seed + roster member."""
+    """Finding 9: parallelize announces to every seed + roster member.
+
+    d1: every reply is offered to :meth:`MeshRoutes.ingest_reply_announcement`
+    so a peer's own announcement, carried in its reply, lands the moment we
+    reach it — the recreated-box boot window closes on the first pass.
+    """
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=min(8, len(seeds) + len(member_origins) + 1)
     ) as pool:
@@ -1353,9 +1440,14 @@ def _broadcast_announcement(
         # Wait for all dials to complete (each has its own timeout).
         for fut in concurrent.futures.as_completed(futures):
             try:
-                fut.result(timeout=dial_timeout)
+                reply = fut.result(timeout=dial_timeout)
             except Exception:  # nosec B110 — best-effort: drop failed peer connections
-                pass
+                continue
+            if routes is not None and reply:
+                try:
+                    routes.ingest_reply_announcement(reply)
+                except Exception:  # nosec B110 — a bad reply never breaks the pass
+                    pass
 
 
 def _heartbeat_loop(
@@ -1422,7 +1514,13 @@ def _heartbeat_loop(
 
         _maybe_fetch_seed_roster(routes, seeds, dial_timeout)
         _broadcast_announcement(
-            to_send, seeds, member_origins, stop_event, dial_timeout, routes.config.key
+            to_send,
+            seeds,
+            member_origins,
+            stop_event,
+            dial_timeout,
+            routes.config.key,
+            routes=routes,
         )
 
 
@@ -1460,6 +1558,15 @@ def _merge_seed_members(roster: "Roster", routes: "MeshRoutes | None", members: 
             # A peer's roster lists US; never merge ourselves in.
             continue
         if mname and morigin:
+            # d1: remember the roles the seed listed for it — provisional, so
+            # the pending (503) path can name a member we hold no announcement
+            # for yet. Never routed, never verified from; a real announcement
+            # wins (see build_snapshot's discovered_roles).
+            roles = member.get("roles")
+            if routes is not None and isinstance(roles, list):
+                routes._discovered_roles[morigin] = tuple(  # noqa: SLF001
+                    sorted(r for r in roles if isinstance(r, str) and r)
+                )
             # DISCOVERY only: a peer's roster tells us a member exists; it
             # is not a heartbeat FROM that member. `discover` never
             # refreshes a known name (a stopped Thor stayed alive 4+ min,
@@ -1497,7 +1604,11 @@ def _rebuild_routing_after_revocations(
         if routes._holder is not None:  # noqa: SLF001
             from lobes.gateway._mesh_routing import MeshRoutingView
 
-            snap = build_snapshot(roster, announcements=routes._announcements)  # noqa: SLF001
+            snap = build_snapshot(
+                roster,
+                announcements=routes._announcements,  # noqa: SLF001
+                discovered_roles=routes._discovered_roles,  # noqa: SLF001
+            )
             routes._holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))  # noqa: SLF001
 
 
@@ -1770,9 +1881,15 @@ def _log_pending_members(
     for mname, origin, _ann in members_to_verify:
         if origin in probed:
             continue
+        # The RejectionLog is used for its THROTTLE only; its own line reads
+        # "auth: rejected ..." (it was built for 401s) and misled the first
+        # live run, so the wording here is ours.
         line = verify_log.record(f"{origin}#pending", "GET", "/capabilities", "not_yet_probed")
         if line is not None:
-            sys.stderr.write(f"[gateway] mesh pending {mname}: {line}\n")
+            sys.stderr.write(
+                f"[gateway] mesh pending {mname}: {origin} not yet probed — requests for its "
+                "roles answer 503 role_unverified until the first /capabilities probe lands\n"
+            )
 
 
 def verify_members(
@@ -1800,7 +1917,11 @@ def verify_members(
 
     if not members_to_verify:
         # Rebuild snapshot even without verification (e.g. stale data).
-        snap = build_snapshot(routes.roster, announcements=routes._announcements)
+        snap = build_snapshot(
+            routes.roster,
+            announcements=routes._announcements,
+            discovered_roles=routes._discovered_roles,  # noqa: SLF001
+        )
         holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
         return
 
@@ -1817,6 +1938,7 @@ def verify_members(
         verified_roles=verified_by_origin,
         unverified_reasons={o: r for o, r in reason_by_origin.items() if r is not None},
         ready_roles=ready_by_origin,
+        discovered_roles=routes._discovered_roles,  # noqa: SLF001
     )
     holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 

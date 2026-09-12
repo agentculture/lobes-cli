@@ -16,7 +16,7 @@ Public API
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -339,6 +339,11 @@ def build_snapshot(
     # announcement is ready but not verified, and vice versa.  Carried onto
     # MemberInfo.ready_roles; an origin absent here gets an empty tuple.
     ready_roles: Mapping[str, "frozenset[str]"] | None = None,
+    # d1: origin -> roles a SEED ROSTER listed for a member we hold no
+    # announcement for yet. Stands in for ``announced_roles`` ONLY while the
+    # announcement is absent, so the pending (503) path can name the member;
+    # never routed and never verified from — a real announcement always wins.
+    discovered_roles: Mapping[str, "Sequence[str]"] | None = None,
 ) -> RoutingSnapshot:
     """Build a :class:`RoutingSnapshot` from *roster* + probe data.
 
@@ -391,6 +396,8 @@ def build_snapshot(
         origin = rec.origin
         roster_origins.add(origin)
         announced, verified = _resolve_member_roles(ann_map.get(origin), ver_map.get(origin))
+        if not announced and ann_map.get(origin) is None and discovered_roles:
+            announced = tuple(sorted(str(r) for r in discovered_roles.get(origin, ()) if r))
 
         members.append(
             MemberInfo(

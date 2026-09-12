@@ -718,3 +718,89 @@ def test_verification_passes_never_overlap_and_run_only_on_the_heartbeat_thread(
     finally:
         routes._stop.set()
         peer_srv.shutdown()
+
+
+def _replying_peer(probes: list, name: str) -> tuple[HTTPServer, str]:
+    """A fake peer whose POST /mesh/announce reply carries ITS OWN announcement
+    (d1) and whose /capabilities agrees with it, so the announcer can verify
+    it on the very pass that discovered it."""
+    from lobes.gateway._mesh_wire import encode
+
+    holder: dict = {}
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *_a):  # noqa: D401
+            pass
+
+        def _send(self, body: bytes) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.startswith("/capabilities"):
+                probes.append((name, time.monotonic()))
+                self._send(
+                    json.dumps(
+                        {
+                            "associate": {
+                                "ready": True,
+                                "fingerprint": {
+                                    "served_id": "m",
+                                    "quantization": "q",
+                                    "max_model_len": 1,
+                                    "runtime": "vllm",
+                                },
+                            }
+                        }
+                    ).encode()
+                )
+            else:
+                self._send(b'{"members": [], "ledger": {}}')
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(n)
+            ann = json.loads(encode(_peer_announcement(name, holder["origin"])))
+            self._send(json.dumps({"status": "announced", "announcement": ann}).encode())
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    holder["origin"] = f"http://127.0.0.1:{srv.server_address[1]}"
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, holder["origin"]
+
+
+def test_a_cold_box_learns_a_seed_peers_announcement_from_the_reply_and_verifies_it() -> None:
+    """d1 (measured gap, 2026-09-12): a recreated gateway holds NO peer
+    announcements, so its first pass had nothing to verify and requests 404'd
+    until each peer's next heartbeat (~60 s live). Now the seed's announce
+    reply carries the seed's own announcement, and it is verified within the
+    first seconds — with the heartbeat at 30 s, a tick-driven path cannot
+    explain the timing this asserts."""
+    from lobes.gateway._mesh_routes import start_mesh
+
+    probes: list = []
+    peer_srv, peer_origin = _replying_peer(probes, "seedbox")
+    env = _env(LOBES_MESH_HEARTBEAT_S=30, LOBES_MESH_SEEDS=peer_origin)
+    routes, holder = _wiring(env)
+    try:
+        t0 = time.monotonic()
+        start_mesh(routes, routes._announcement_builder())
+        deadline = t0 + 5.0
+        while time.monotonic() < deadline:
+            view = holder.current()
+            snap = getattr(view, "snapshot", None)
+            if snap is not None and any(m.name == "seedbox" and m.probed for m in snap.members):
+                break
+            time.sleep(0.02)
+        view = holder.current()
+        members = {m.name: m for m in view.snapshot.members}
+        assert "seedbox" in members, "seed never entered the roster from its reply"
+        assert members["seedbox"].probed, "seed was not probed within 5 s of start"
+        assert "associate" in members["seedbox"].verified_roles
+        assert probes and probes[0][1] - t0 < 5.0
+    finally:
+        routes._stop.set()
+        peer_srv.shutdown()

@@ -18,6 +18,7 @@ from lobes.gateway._mesh_routing import (
     MemberInfo,
     SnapshotHolder,
     build_snapshot,
+    compute_role_placement,
     member_exists,
     mesh_markers,
     origins_for_role,
@@ -1120,3 +1121,46 @@ class TestPendingPlacement:
         )
         placement = compute_role_placement(snap, "cortex")
         assert placement.pending_origins == (ORIGIN_A, ORIGIN_B)
+
+
+class TestDiscoveredRoles:
+    """d1: a seed roster's per-member ``roles`` list stands in for the
+    announcement a recreated box has not received yet, so the pending (503)
+    path can name the member; a real announcement always wins."""
+
+    def _roster(self):
+        from lobes.gateway._mesh_roster import Roster
+
+        r = Roster()
+        r.discover("thor", "http://thor:8000", None, now=0.0)
+        return r
+
+    def test_discovered_roles_become_announced_roles_when_no_announcement(self) -> None:
+        snap = build_snapshot(
+            self._roster(), discovered_roles={"http://thor:8000": ("worker", "reranker")}
+        )
+        m = snap.members[0]
+        assert m.announced_roles == ("reranker", "worker")
+        assert m.verified_roles == ()
+        assert m.probed is False
+
+    def test_discovered_member_is_pending_for_its_roles(self) -> None:
+        snap = build_snapshot(self._roster(), discovered_roles={"http://thor:8000": ("worker",)})
+        placement = compute_role_placement(snap, "worker", None)
+        assert placement.pending_origins == ("http://thor:8000",)
+        assert placement.plain_origins == ()
+        assert compute_role_placement(snap, "cortex", None).pending_origins == ()
+
+    def test_a_real_announcement_wins_over_discovered_roles(self) -> None:
+        ann = _ann("thor", "http://thor:8000", roles={"cortex": _role("m")})
+        snap = build_snapshot(
+            self._roster(),
+            announcements={"http://thor:8000": ann},
+            discovered_roles={"http://thor:8000": ("worker",)},
+        )
+        assert snap.members[0].announced_roles == ("cortex",)
+
+    def test_absent_discovered_roles_is_byte_identical(self) -> None:
+        a = build_snapshot(self._roster())
+        b = build_snapshot(self._roster(), discovered_roles=None)
+        assert a.members == b.members
