@@ -8,9 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-### Changed
-
-### Fixed
+- Delivery closure for PR #254 (mesh boot window + mesh-sourced /capabilities): `docs/deliveries/2026-09-12-mesh-boot-window-and-capabilities-advert.md` (planned vs actual, deviations d1-d3, drift, evidence-backed claims, remaining work) and the devague ledgers it reads — evidence e1-e11 from the behavioral test runs on merged main and the live transcript, behavioral deltas b1-b5, lapses l1-l11 — all filed proposed for adjudication.
 
 ## [0.77.0] - 2026-09-12
 
