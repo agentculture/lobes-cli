@@ -276,9 +276,10 @@ def _version_skew_check(port: int, deploy_dir: Path | None) -> dict:
 # --- gateway passthrough (issue #199, t3) -----------------------------------
 #
 # The role-prefix set every per-role gateway env family (FEASIBLE, the
-# singular/plural peer channels, the declared lane fingerprint) is keyed on.
-# Derived from FEASIBLE_ENV rather than hand-typed so this list can never
-# drift from the prefixes lobes.gateway._config already recognises.
+# declared lane fingerprint — and, before t14 retired it, the singular/plural
+# peer channels below) is keyed on. Derived from FEASIBLE_ENV rather than
+# hand-typed so this list can never drift from the prefixes
+# lobes.gateway._config already recognises.
 _GATEWAY_ROLE_PREFIXES: tuple[str, ...] = tuple(
     key[: -len("_FEASIBLE")] for key in FEASIBLE_ENV.values()
 )

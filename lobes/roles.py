@@ -1175,42 +1175,58 @@ def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> di
     contract has exactly one implementation. Mutates ``payload`` in place (and
     returns it for convenience): for each gateway-fronted role whose entry says
     ``feasible: false`` (this box does not host it — the #113 dropped-lobe
-    channel) AND whose backend has an OPERATOR-DECLARED peer origin in
-    ``table.peer_origins`` (:data:`lobes.gateway._config.PEER_ORIGIN_ENV`,
-    mesh-brain t3), a ``hosted_by`` key naming that origin is added.
+    channel) AND whose backend has a declared peer origin in
+    ``table.peer_origins`` (mesh-brain t3), a ``hosted_by`` key naming that
+    origin is added.
+
+    Retired (t14): ``table.peer_origins``/``table.peer_proxied`` used to be
+    populated from a per-backend ``<PREFIX>_PEER_ORIGIN``/``<PREFIX>_PEER_PROXY``
+    env pair (the config-layer names for that parsing —
+    ``PEER_ORIGIN_ENV``, ``PEER_PROXY_ENV``, and the ``_peer_proxied`` helper
+    that derived ``table.peer_proxied`` from them — are gone from
+    ``lobes.gateway._config`` along with it). ``build_config`` never fills
+    either field from env any more, so on a real deployment this function is
+    a no-op for EVERY role — the honest source for "which mesh member hosts
+    this unhosted role" is now the mesh ``member`` annotation
+    (:func:`annotate_mesh_naming`) and, at request time, the 404 body's own
+    mesh-sourced referral (:func:`lobes.gateway.server._mesh_referral_origin`).
+    What follows still describes this function's actual logic, reachable
+    today only via a directly-constructed :class:`RoutingTable` (tests, or a
+    future non-env source).
 
     Everything else is untouched — a hosted role is never annotated (even if
     an origin is declared for it: a referral says who hosts what THIS box does
     not), an unhosted role with no declared peer stays exactly as it was, and
-    with ``table.peer_origins`` empty (the default) the payload is
-    byte-identical to the pre-referral contract. The origin is metadata for
-    the CALLER to dial directly; THIS FUNCTION never forwards a request to
-    it — it only annotates. A name whose operator ALSO armed
-    ``<PREFIX>_PEER_PROXY`` (see the THIRD state below) IS forwarded, but by
-    the data-plane proxy branch in :mod:`lobes.gateway.server`
-    (:func:`~lobes.gateway.server._proxy_to_peer`, proxy-lobes t6, issues
-    #115/#127), never by this pure/offline annotator. Audio roles (stt/tts)
-    joined the channel in issue #129 — first-class entries in
-    ``ROLE_BACKEND`` and ``FEASIBLE_ENV``/``PEER_*_ENV`` — so a declared-off
-    audio lane with a declared peer gets the same ``hosted_by``/``proxied``
-    annotations as any dropped core role.
+    with ``table.peer_origins`` empty (the default, and now the only
+    reachable state via env) the payload is byte-identical to the
+    pre-referral contract. The origin is metadata for the CALLER to dial
+    directly; THIS FUNCTION never forwards a request to it — it only
+    annotates. A name whose table ALSO carries it in ``peer_proxied`` (see the
+    THIRD state below) IS forwarded, but by the data-plane proxy branch in
+    :mod:`lobes.gateway.server` (:func:`~lobes.gateway.server._proxy_to_peer`,
+    proxy-lobes t6, issues #115/#127), never by this pure/offline annotator.
+    Audio roles (stt/tts) joined the channel in issue #129 — first-class
+    entries in ``ROLE_BACKEND`` and the (now-retired) per-backend feasibility/
+    peer channels — so a declared-off audio lane with a declared peer gets
+    the same ``hosted_by``/``proxied`` annotations as any dropped core role.
 
-    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127).**
-    Referral above says "ask the peer yourself"; a role whose backend name is
-    ALSO in ``table.peer_proxied`` (the operator's ``<PREFIX>_PEER_PROXY``
-    opt-in — :data:`lobes.gateway._config.PEER_PROXY_ENV`, t1) is one this box
-    has committed to answering ON THE PEER'S BEHALF — the gateway itself
-    FORWARDS the request via the data-plane proxy branch
-    (:func:`lobes.gateway.server._proxy_to_peer`, landed in t6; this module
-    itself stays pure/offline and dials nothing — it only adds the marker
-    below). That is a materially different claim from a bare referral, so it
-    gets its own explicit marker,
+    **A THIRD honesty state — PROXIED (proxy-lobes t5/t6, issues #115/#127,
+    RETIRED SOURCE t14).** Referral above says "ask the peer yourself"; a role
+    whose backend name is ALSO in ``table.peer_proxied`` (used to be armed by
+    the operator's ``<PREFIX>_PEER_PROXY`` env opt-in, now only settable on a
+    directly-constructed table) is one this box has committed to answering ON
+    THE PEER'S BEHALF — the gateway itself FORWARDS the request via the
+    data-plane proxy branch (:func:`lobes.gateway.server._proxy_to_peer`,
+    landed in t6; this module itself stays pure/offline and dials nothing —
+    it only adds the marker below). That is a materially different claim from
+    a bare referral, so it gets its own explicit marker,
     ``"proxied": true``, added ALONGSIDE (never instead of) ``hosted_by`` — the
     origin named there is unchanged: it is still "whoever ultimately serves
     this", now additionally reachable by asking THIS box too.
-    ``table.peer_proxied`` is a subset of ``table.infeasible`` ∩
-    ``table.peer_origins`` by construction (:func:`lobes.gateway._config.
-    _peer_proxied`), so a proxied role always also gets ``hosted_by`` — the
+    ``table.peer_proxied`` is constructed as a subset of ``table.infeasible``
+    ∩ ``table.peer_origins`` (the invariant the retired ``_peer_proxied``
+    helper used to enforce for an env-built table; a hand-built table must
+    keep it itself), so a proxied role always also gets ``hosted_by`` — the
     three states are told apart by KEY PRESENCE alone, never by a sentinel
     value:
 
