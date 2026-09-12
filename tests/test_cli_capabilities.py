@@ -698,3 +698,50 @@ def test_senses_is_not_loaded_on_a_box_that_declares_it_infeasible(tmp_path, cap
     assert payload["cortex"]["loaded"] is True
     assert payload["embedder"]["loaded"] is True
     assert payload["reranker"]["loaded"] is True
+
+
+# ---------------------------------------------------------------------------
+# mesh-boot-window-and-capabilities-advert (task t5, c23/h19): a role not
+# hosted locally that a mesh publicly announces from more than one plain
+# origin carries a `members` name list instead of a single `hosted_by`
+# (contract item 4) — and the CLI renders it verbatim, alongside the
+# existing sole-origin `hosted_by`/proxied-via line it must keep unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _payload_with_pooled_and_sole_origin_roles() -> dict:
+    payload = _known_capabilities_payload()
+    # senses: pooled — more than one plain origin, so `members`, no `hosted_by`.
+    payload["senses"]["feasible"] = False
+    payload["senses"]["proxied"] = True
+    payload["senses"]["members"] = ["thor", "orin"]
+    # reranker: sole origin — the existing `hosted_by` + proxied-via line.
+    payload["reranker"]["feasible"] = False
+    payload["reranker"]["proxied"] = True
+    payload["reranker"]["hosted_by"] = "http://thor.example:8000"
+    return payload
+
+
+def test_capabilities_table_names_pooled_mesh_members_and_keeps_sole_origin_line(
+    monkeypatch, capsys
+) -> None:
+    payload = _payload_with_pooled_and_sole_origin_roles()
+    handler = type("_PooledMeshCapabilitiesHandler", (_FakeGatewayHandler,), {"payload": payload})
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    monkeypatch.setattr(
+        capabilities_module, "_fetch_gateway_capabilities", _REAL_FETCH_GATEWAY_CAPABILITIES
+    )
+    try:
+        rc = main(["capabilities", "--port", str(httpd.server_address[1])])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Pooled role: one line naming the members list, verbatim from the
+        # payload — never a recomputed/re-ordered guess.
+        assert "proxied via mesh members: thor, orin" in out
+        # Sole-origin role: the existing hosted_by/proxied-via line is
+        # unchanged by this feature.
+        assert "proxied via this gateway from peer: http://thor.example:8000" in out
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

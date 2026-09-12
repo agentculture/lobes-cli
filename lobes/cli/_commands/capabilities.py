@@ -350,6 +350,14 @@ def _render_infeasible_lines(info: dict) -> list[str]:
     # address to dial DIRECTLY — this box never proxies to it.
     elif info.get("hosted_by"):
         lines.append(f"          hosted by peer: {info['hosted_by']} (dial it directly)")
+    # Pooled mesh role (mesh-boot-window-and-capabilities-advert, c23/h19):
+    # more than one plain origin publicly announces this role, so the
+    # payload carries a `members` name list instead of a single `hosted_by`
+    # (contract item 4 — the two keys are mutually exclusive on the wire).
+    # Render verbatim from the payload; never recompute which origin would
+    # be chosen.
+    elif info.get("members"):
+        lines.append(f"          proxied via mesh members: {', '.join(info['members'])}")
     return lines
 
 
