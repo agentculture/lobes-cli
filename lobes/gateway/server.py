@@ -870,8 +870,8 @@ PROXIED_BY_HEADER = "X-Lobes-Proxied-By"
 #   same sticky choice.
 #
 # Both response markers appear ONLY on a pooled role's answers (h1: a
-# deployment with no ``*_PEER_ORIGINS`` is byte-identical to the pre-pool
-# release, headers included).
+# deployment with no ``*_PEER_ORIGINS`` and no mesh-verified member for the
+# role is byte-identical to the pre-pool release, headers included).
 SERVED_BY_HEADER = "X-Lobes-Served-By"
 ROUTE_REASON_HEADER = "X-Lobes-Route-Reason"
 AFFINITY_HEADER = "X-Lobes-Affinity"
@@ -1072,25 +1072,31 @@ def pooled_backends(
     a box that places a role but does not list it, or lists one it would not
     place, is lying in one direction or the other.
 
-    A name qualifies via EITHER of two independent, live sources (t13, W9b):
-    the env-declared one — this box does not host it, it has declared plural
-    origins, it has the singular origin the fall-through and ``hosted_by``
-    both need, and at least one declared replica is right now compatible and
-    ready (self-healing — every peer going unready drops the entry again) —
-    or the mesh one: this box does not host it (it is in ``table.infeasible``)
-    AND the mesh's own :class:`~lobes.gateway._mesh_routing.RoutingSnapshot`
-    has at least one member verified for the role. The mesh source needs
-    NEITHER ``<PREFIX>_PEER_ORIGIN`` NOR ``<PREFIX>_PEER_ORIGINS`` — it reads
-    ``table.infeasible`` (a pure hardware/shape fact, never env-peer-derived)
-    and :func:`~lobes.gateway._mesh_routing.compute_role_placement`'s
+    A name qualifies via EITHER of two independent sources (t13, W9b): the
+    table-declared one — this box does not host it, ``table.replica_origins``
+    names plural replicas for it, ``table.peer_origins`` has the singular
+    origin the fall-through and ``hosted_by`` both need, and at least one
+    declared replica is right now compatible and ready (self-healing — every
+    peer going unready drops the entry again) — or the mesh one: this box
+    does not host it (it is in ``table.infeasible``) AND the mesh's own
+    :class:`~lobes.gateway._mesh_routing.RoutingSnapshot` has at least one
+    member verified for the role. In a normal deployment the table-declared
+    source is permanently empty: t14 deleted the ``<PREFIX>_PEER_ORIGIN(S)``
+    env parsing that used to populate ``table.replica_origins``/
+    ``peer_origins``, so ``build_config`` never fills them any more — that
+    branch fires only for a hand-built :class:`RoutingTable` (tests, or a
+    future non-env source). The mesh source is what actually pools a role
+    today: it reads ``table.infeasible`` (a pure hardware/shape fact) and
+    :func:`~lobes.gateway._mesh_routing.compute_role_placement`'s
     ``plain_origins`` — the fingerprint-agreement-filtered subset of
     ``verified_roles``, never the raw union (two members that each verify a
     role but DISAGREE with each other on its fingerprint must never be
     pooled under the one plain name — that ambiguity is exactly what the
     suffixed-lane naming, issue #237, exists to keep out of the ranked pool).
-    Both sources are unioned: env peers keep working exactly as before (t14
-    removes that half), and the mesh becomes a first-class, additive source
-    rather than an overlay gated behind an env-only precondition.
+    Both sources are unioned: a hand-built table's replica origins still
+    behave exactly as they did pre-mesh (t14 only deleted the env parsing
+    that fed them, not this branch), and the mesh is a first-class, additive
+    source rather than an overlay gated behind an env-only precondition.
     """
     if replica_snapshot is None and mesh_snapshot is None:
         return frozenset()
@@ -1893,8 +1899,9 @@ def _resolve_plain_model(
 #   with no local replica is the pre-existing `_proxied_owner` case and still
 #   answers 508 `proxy_loop`.
 #
-# With no `<PREFIX>_PEER_ORIGINS` declared, `_pool_selection` returns None
-# before touching the snapshot and not one byte of the response changes (h1).
+# With no `<PREFIX>_PEER_ORIGINS` declared AND no mesh-verified member for
+# the role, `_pool_selection` returns None before touching the snapshot and
+# not one byte of the response changes (h1).
 
 
 def _replica_api_key(table: RoutingTable, backend_name: str, origin: str) -> str:
@@ -2305,7 +2312,8 @@ def _pool_dispatch(
     """Place and dispatch one pooled request, retrying pre-dispatch failures.
 
     Returns ``None`` when the request is **not pooled at all** (no snapshot
-    provider, or no ``<PREFIX>_PEER_ORIGINS`` for ``backend_name``) — the
+    provider, or neither ``<PREFIX>_PEER_ORIGINS`` nor a mesh-verified member
+    exists for ``backend_name``'s role — see :func:`_pool_selection`) — the
     caller must then take the pre-pool path with no markers whatsoever (h1).
     Returns :class:`_PoolFallthrough` when the role IS pooled but nothing was
     selectable and therefore nothing was dispatched. Otherwise returns the
@@ -3003,21 +3011,25 @@ def handle_post(
     (every pre-t6 call site, and any deployment with no proxy config).
 
     The replica pool (``replica_snapshot``, cortex-replica-pool t7, issue
-    #199): AFTER the model has resolved to its single owning backend and
-    BEFORE that backend is dialed, a role with a declared
-    ``<PREFIX>_PEER_ORIGINS`` set is placed by :func:`_pool_selection` —
-    local or one declared peer replica of the SAME role, chosen from an O(1)
-    cached snapshot. This is not a hole in #91: a peer enters the candidate set
-    only when its live-probed fingerprint matches the local lane's, so a caller
-    who asked for cortex is never answered by a different model — only by an
-    identical one on another box. The alias and the raw served id take the
-    identical path, because selection keys off the OWNING BACKEND NAME both
-    resolve to (c31). An arriving ``X-Lobes-Proxied`` request skips selection
-    entirely and is served locally (c4/h4). Pooled answers carry
+    #199; ``mesh_snapshot``, t13): AFTER the model has resolved to its single
+    owning backend and BEFORE that backend is dialed, a role with either a
+    declared ``<PREFIX>_PEER_ORIGINS`` set (a hand-built table only — t14
+    deleted the env parsing that used to populate this in a real deployment)
+    OR at least one mesh-verified plain-exposed member is placed by
+    :func:`_pool_selection` — local, a declared peer replica, or a mesh
+    replica of the SAME role, chosen from an O(1) cached snapshot. This is
+    not a hole in #91: a peer enters the candidate set only when its
+    live-probed fingerprint matches the local lane's, so a caller who asked
+    for cortex is never answered by a different model — only by an identical
+    one on another box. The alias and the raw served id take the identical
+    path, because selection keys off the OWNING BACKEND NAME both resolve to
+    (c31). An arriving ``X-Lobes-Proxied`` request skips selection entirely
+    and is served locally (c4/h4). Pooled answers carry
     ``X-Lobes-Served-By`` (local) or ``X-Lobes-Proxied-By`` (forwarded), both
     with ``X-Lobes-Route-Reason``. With ``replica_snapshot`` ``None`` (every
-    pre-pool call site) or no ``*_PEER_ORIGINS`` declared, not one byte of any
-    response changes — success or error path (h1).
+    pre-pool call site), no ``*_PEER_ORIGINS`` declared, and no mesh
+    (``mesh_snapshot`` ``None`` or nothing verified for the role), not one
+    byte of any response changes — success or error path (h1).
 
     t8 gives that placement its failure semantics (:func:`_pool_dispatch`): a
     replica that fails PRE-DISPATCH (refused / timed out / 5xx before any
@@ -4826,12 +4838,19 @@ class _Handler(BaseHTTPRequestHandler):
 #   mislabels an unknown served id (the Orin llama.cpp case).
 #
 # Because of the second job a cache is built for a hosted lane that declares NO
-# peers of its own. That is gated on the box being pooled AT ALL: with no
-# ``*_PEER_ORIGINS`` anywhere, no cache is built, no thread is spawned, and
-# /capabilities carries no ``replicas``/``fingerprint`` key — the h1
-# byte-identity guarantee, which a "publish the fingerprint unconditionally"
-# reading would have broken. Every box in a pool declares its partners, so the
-# publication job is never actually missed.
+# peers of its own. Building the CACHE itself is gated purely on
+# ``table.replica_origins`` being non-empty ANYWHERE — with it empty (every
+# real deployment since t14 deleted the ``<PREFIX>_PEER_ORIGINS`` env parsing
+# that used to fill it; only a hand-built table can populate it now) no cache
+# is built and no thread is spawned. That used to also mean /capabilities
+# carried no ``replicas``/``fingerprint`` key at all (the original h1
+# byte-identity guarantee, before a "publish the fingerprint unconditionally"
+# reading would have broken it). Review #252 finding 10 punched one hole in
+# that: :func:`lobes.roles.annotate_replicas` now publishes an OFFLINE
+# (declared, never live-probed) fingerprint for a locally-hosted role even
+# with no cache here, whenever the mesh is enabled — a mesh peer has to be
+# able to verify a hosted role's fingerprint regardless of whether this box
+# also runs an env-declared replica pool for it.
 
 # ``<PREFIX>_<SUFFIX>`` fingerprint suffixes → the lowercase
 # :data:`lobes.gateway._replicas.DECLARED_KEYS` names. Only the tool parser's
@@ -4879,13 +4898,25 @@ def _check_pool_arming(table: RoutingTable) -> None:
     """Refuse a pool that would silently drop this box's honest referral.
 
     ``hosted_by`` — the annotation that tells a caller which box actually runs
-    a role it asked for here — is read from the SINGULAR
-    ``<PREFIX>_PEER_ORIGIN`` (:func:`lobes.roles.annotate_peer_referrals`).
-    The plural channel is an ADDITION to it, never a replacement, so a
-    deployment that declared only ``<PREFIX>_PEER_ORIGINS`` would arm a pool
-    and lose the referral at the same time — and the loss would be invisible,
-    because a working pool answers 200 and nobody reads ``hosted_by`` until
-    the pool is empty. Refusing at startup is the loud version of that bug.
+    a role it asked for here — is read from ``table.peer_origins``, the
+    SINGULAR channel (:func:`lobes.roles.annotate_peer_referrals`). The
+    plural ``table.replica_origins`` is an ADDITION to it, never a
+    replacement, so a table with a plural entry but no matching singular one
+    would arm a pool and lose the referral at the same time — and the loss
+    would be invisible, because a working pool answers 200 and nobody reads
+    ``hosted_by`` until the pool is empty. Refusing at startup is the loud
+    version of that bug.
+
+    Retired (t14): both fields used to be populated from the
+    ``<PREFIX>_PEER_ORIGINS``/``<PREFIX>_PEER_ORIGIN`` env pair, so this
+    guard used to be reachable from a real deployment's ``.env``. That
+    parsing is gone — the mesh ``RoutingSnapshot`` (t13) is the pool
+    candidate source now, and it never populates these fields either — so
+    today this only guards a directly-constructed :class:`RoutingTable`
+    (tests, or a future non-env/non-mesh source that fills
+    ``replica_origins`` by hand). No operator-facing knob can trigger or fix
+    this any more; the names in the raised message describe the table's own
+    field convention, not a live env var to set.
 
     It is also what makes the empty-pool fallback well-defined: "nothing
     selectable falls through to the singular-proxy forward" (frame decision
@@ -4922,7 +4953,7 @@ def _check_pool_arming(table: RoutingTable) -> None:
         f"{names} — the plural replica channel is an addition to the singular "
         "peer channel, not a replacement: without the singular origin this box "
         "has no hosted_by to publish and nothing to fall back to when no "
-        "replica is selectable. Declare both."
+        "replica is selectable. Set both fields on the RoutingTable."
     )
 
 

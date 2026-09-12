@@ -120,8 +120,11 @@ Where that line sits, and why:
 
 The carve-out is **pooled-only**, deliberately.  For a single-owner role a 429
 is honest backpressure — there genuinely is nowhere else for the request to go
-— and every deployment with no ``*_PEER_ORIGINS`` declared therefore decides
-exactly as it did before ``d1``.  For a pooled role the same 429 is a lie
+— and every deployment with neither ``*_PEER_ORIGINS`` declared (retired,
+t14 — only reachable via a directly-constructed :class:`RoutingTable` today)
+nor a mesh-verified member for the role therefore decides exactly as it did
+before ``d1``.  For a pooled role — env-declared or mesh-sourced — the same
+429 is a lie
 whenever a replica has room, and the round trip that produced it (box A
 forwards, box B refuses on its own iowait reading, the 429 relays back) cost
 the caller a hop to arrive at the same refusal.
