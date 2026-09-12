@@ -69,7 +69,8 @@ def test_heartbeat_posts_a_real_announcement_to_the_seed_with_the_join_key() -> 
         assert path == "/mesh/announce"
         assert auth == "Bearer sk-test"
         ann = json.loads(body)
-        assert ann["name"] == "me" and ann["origin"] == "http://me.local:8000"
+        assert ann["name"] == "me"
+        assert ann["origin"] == "http://me.local:8000"
         assert "cortex" in ann["roles"]  # role names, never backend names
     finally:
         routes._stop.set()
@@ -149,7 +150,8 @@ def test_a_slow_peer_probe_never_blocks_the_roster_or_inbound_announces() -> Non
         # While that probe is in flight, the roster must still answer fast.
         t0 = time.monotonic()
         status, _h, body = routes.roster_list(Req(b""))
-        assert status == 200 and (time.monotonic() - t0) < 1.0
+        assert status == 200
+        assert (time.monotonic() - t0) < 1.0
         assert any(m["name"] == "slowbox" for m in json.loads(body)["members"])
         # ...and a second inbound announce must not be blocked either.
         t0 = time.monotonic()
@@ -220,7 +222,8 @@ def test_a_non_empty_seed_roster_is_merged_without_deadlocking_the_roster() -> N
 
         t0 = time.monotonic()
         status, _h, body = routes.roster_list(Req())
-        assert status == 200 and (time.monotonic() - t0) < 1.0
+        assert status == 200
+        assert (time.monotonic() - t0) < 1.0
         assert any(m["name"] == "peerbox" for m in json.loads(body)["members"])
     finally:
         srv.shutdown()
@@ -289,7 +292,8 @@ def test_a_box_never_lists_itself_via_announce_or_seed_merge() -> None:
             timeout=3.0,
             routes=routes,
         )
-        assert "other" in routes.roster.members() and "me" not in routes.roster.members()
+        assert "other" in routes.roster.members()
+        assert "me" not in routes.roster.members()
 
         class Req:
             def __init__(self, body: bytes):
@@ -299,7 +303,8 @@ def test_a_box_never_lists_itself_via_announce_or_seed_merge() -> None:
 
         ann = Announcement(name="me", origin="http://me.local:8000", schema_version="1", roles={})
         status, _h, body = routes.announce(Req(encode(ann)))
-        assert status == 409 and json.loads(body)["error"]["type"] == "mesh_name_conflict"
+        assert status == 409
+        assert json.loads(body)["error"]["type"] == "mesh_name_conflict"
         assert "me" not in routes.roster.members()
     finally:
         srv.shutdown()

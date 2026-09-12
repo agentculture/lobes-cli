@@ -507,7 +507,8 @@ class TestRosterEndpoint:
         )
         assert status == 200
         data = json.loads(resp)
-        assert isinstance(data["members"], list) and len(data["members"]) == 1
+        assert isinstance(data["members"], list)
+        assert len(data["members"]) == 1
         assert data["members"][0]["name"] == "alice"
         assert data["members"][0]["origin"] == "http://a.local"
 
@@ -516,7 +517,8 @@ class TestRosterEndpoint:
         status, _, resp = routes.roster_list(
             _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
         )
-        assert status == 200 and json.loads(resp)["members"] == []
+        assert status == 200
+        assert json.loads(resp)["members"] == []
 
 
 # ===========================================================================
@@ -592,7 +594,9 @@ class TestHeartbeat:
     def test_heartbeat_thread_starts(self) -> None:
         routes, announcement = build_mesh_routes(env=_mesh_key_env())
         thread = start_mesh(routes, announcement)
-        assert thread.is_alive() and thread.daemon is True and thread.name == "lobes-mesh-heartbeat"
+        assert thread.is_alive()
+        assert thread.daemon is True
+        assert thread.name == "lobes-mesh-heartbeat"
         routes._stop.set()
         thread.join(timeout=2)
 
@@ -708,7 +712,8 @@ class TestServerIntegration:
     def test_dispatch_mesh_detect(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env(name="x"))
         result = dispatch_mesh(_fake_handler("/mesh/detect"), routes)
-        assert result is not None and result[0] == 200
+        assert result is not None
+        assert result[0] == 200
 
     def test_dispatch_mesh_announce_with_key(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -722,7 +727,8 @@ class TestServerIntegration:
             _fake_handler("/mesh/announce", "POST", body, {"Authorization": "Bearer sk-test"}),
             routes,
         )
-        assert result is not None and result[0] == 200
+        assert result is not None
+        assert result[0] == 200
 
     def test_dispatch_non_mesh_returns_none(self) -> None:
         routes, _ = build_mesh_routes(env=_mesh_key_env())
@@ -795,7 +801,8 @@ class TestByteIdentical:
         status, _, body = routes.roster_list(
             _fake_handler("/mesh/roster", headers={"Authorization": "Bearer sk-test"})
         )
-        assert status == 200 and json.loads(body)["members"] == []
+        assert status == 200
+        assert json.loads(body)["members"] == []
 
 
 # ===========================================================================
@@ -968,7 +975,8 @@ class TestAuthHeader:
 
         with patch("http.client.HTTPConnection.request", fake_req):
             pa("http://127.0.0.1:9999/mesh/announce", b'{"name":"test"}', 5.0, b"sk-test-key")
-        assert "Authorization" in captured and captured["Authorization"] == "Bearer sk-test-key"
+        assert "Authorization" in captured
+        assert captured["Authorization"] == "Bearer sk-test-key"
 
     def test_post_announcement_no_auth_without_key(self) -> None:
         from lobes.gateway._mesh_routes import _post_announcement as pa

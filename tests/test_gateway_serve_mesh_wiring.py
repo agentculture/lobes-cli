@@ -31,7 +31,8 @@ def test_mesh_enabled_builds_routes_and_holder_without_starting_the_thread() -> 
     env = _env()
     table, cfg = build_config(env)
     routes, holder = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
-    assert routes is not None and holder is not None
+    assert routes is not None
+    assert holder is not None
     assert routes._thread is None  # start=False never spawns the heartbeat
     assert holder.current() is not None
 
@@ -70,7 +71,8 @@ def test_reannounce_builder_is_wired_and_rebuilds_a_fresh_announcement() -> None
     routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
     assert routes._announcement_builder is not None
     fresh = routes._announcement_builder()
-    assert fresh.name == "me" and fresh.origin == "http://me.local:8000"
+    assert fresh.name == "me"
+    assert fresh.origin == "http://me.local:8000"
     assert "cortex" in fresh.roles
 
 
@@ -89,7 +91,8 @@ def test_announcement_is_the_hosted_slice_of_this_box_s_own_capabilities() -> No
         for r, e in payload.items()
         if isinstance(e, dict) and e.get("feasible") and e.get("fingerprint")
     }
-    assert set(ann.roles) == hosted and "cortex" in hosted
+    assert set(ann.roles) == hosted
+    assert "cortex" in hosted
     fp = ann.roles["cortex"].fingerprint
     assert fp.served_id == "unsloth/Qwen3.8-27B-NVFP4"
     assert fp.runtime == "vllm"
