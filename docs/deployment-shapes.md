@@ -657,6 +657,20 @@ not).
 **zero peer config — the default — every response is byte-identical to the
 pre-referral contract** (regression-pinned in `tests/test_peer_referral.py`).
 
+> **DECLARED/UNVALIDATED (#108), mesh-brain member only.** A mesh-provided
+> role sources these same two surfaces from the roster instead of a
+> `<PREFIX>_PEER_*` value: `hosted_by` is the verified peer's announced
+> origin when the role has exactly one plain (agreeing-fingerprint) origin,
+> or a `members` list in its place when the role is pooled across more than
+> one; `GET /capabilities` `ready`/`proxied` come from that same verified
+> roster. A role a mesh member has *announced but not yet probed* is a
+> third state neither `404` names today: a request during that boot window
+> answers `503`, `error.type`/`error.code` `role_unverified`,
+> `error.hosted_by` naming the pending member, `Retry-After: 5`, never a
+> `404` — see
+> [`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain)
+> for the full contract.
+
 **The default boundary: no data-plane proxying.** Declaring `*_PEER_ORIGIN`
 alone is an annotation for the *caller* to act on — the gateway never forwards
 a generate/embed/rerank/audio request to a peer on the strength of the origin
@@ -681,6 +695,7 @@ state on top of the two above:
 | **awake** | hosts the role | served locally |
 | **asleep** (referral-only) | dropped the role, named its peer | `404 role_infeasible` + `hosted_by: <peer origin>` — the caller must dial the peer itself |
 | **proxy** | dropped the role, named its peer, *and* opted in to following the referral | forwarded to the peer; the caller never has to know it moved |
+| **pending** (mesh-brain member, DECLARED/UNVALIDATED #108) | announced by a mesh member the roster has not yet probed | `503 role_unverified` + `error.hosted_by: <pending origin>` + `Retry-After: 5` — retryable, never `404`; a member whose probe RAN and disagreed still gets the plain `asleep` `404` above |
 
 **The opt-in is a second, deliberate step — q1 from the #115/#127 design
 work.** Declaring `<PREFIX>_PEER_ORIGIN` alone (above) stays **referral-only**

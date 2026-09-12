@@ -647,10 +647,30 @@ retired replica-pool compatibility check used (below) — but a peer's
 announcement is **trust-but-verify**, not trust-on-arrival: the receiving
 side probes the announcing member's own `GET /capabilities` and runs
 `compare_fingerprints` against what it announced. An unverified member's
-roles receive nothing — no traffic is routed to a role this box has not
-independently confirmed — and it shows an `unverified_reason` (a short,
-stable category, never the raw probe error) rather than silently dropping
-out of the roster.
+roles receive nothing routed as a *confirmed* answer — no traffic reaches a
+role this box has not independently confirmed — and it shows an
+`unverified_reason` (a short, stable category, never the raw probe error)
+rather than silently dropping out of the roster. **DECLARED/UNVALIDATED
+(#108):** a member that has never yet been probed carries
+`unverified_reason: "not_yet_probed"` — the roster's own way of telling
+"nobody has checked yet" apart from "checked and disagreed" — and a request
+that lands during that boot window no longer 404s. Instead it answers `503`,
+`error.type`/`error.code` `role_unverified`, `error.hosted_by` naming the
+pending member's origin, `Retry-After: 5`
+(`BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS`) and
+`X-Lobes-Mesh-Member`/`X-Lobes-Mesh-Origin`/`X-Lobes-Mesh-Role`/
+`X-Lobes-Mesh-Unverified: true` — the same retryable discipline as
+`backend_unavailable`/`server_busy`, not a 404 variant. A member whose probe
+*ran* and disagreed on fingerprint, and an empty roster, both keep today's
+`404 role_infeasible` with no `hosted_by` — the retryable status is scoped to
+the never-probed boot window only. The heartbeat loop is meant to close that
+window fast: its first verification pass runs immediately at thread start
+rather than waiting a full `LOBES_MESH_HEARTBEAT_S`, and an inbound announce
+or a seed-discovered member wakes an immediate out-of-band verification pass
+(single-flight, always on the loop thread) instead of waiting for the next
+periodic tick — so in practice a request lands in the `role_unverified`
+window only for the seconds it takes that pass's probes to complete, not a
+full heartbeat.
 
 **Pools form from verified members whose fingerprints agree.** When two or
 more verified members announce the same role with an equal fingerprint they
@@ -661,7 +681,27 @@ silently folded in or silently dropped — it is exposed only under its own
 suffixed lane, `{role}-{machine-name}` (e.g. `cortex-thor`), so a caller can
 still reach it deliberately. Addressing the plain **raw checkpoint id** on a
 box that has any divergent lane for that role 404s, listing every divergent
-lane name in the body — the ambiguity is refused, never guessed.
+lane name in the body — the ambiguity is refused, never guessed. A raw-id
+request whose checkpoint is announced only by a never-probed member follows
+the SAME `role_unverified` rule as the role alias, since the served-backend
+lookup shares the same fall-through.
+
+**DECLARED/UNVALIDATED (#108):** `GET /capabilities` sources `hosted_by`,
+`ready` and `proxied` for a mesh-provided role from this same verified
+roster, not from the retired `<PREFIX>_PEER_*` env family. `proxied` is
+`true` whenever the role is auto-wired to a verified peer; `ready` is that
+peer's own per-role `ready` bit as captured at probe time (up to one
+heartbeat stale — refreshed on every verification pass, never a live
+per-request probe); `hosted_by` names the peer's announced origin ONLY when
+the role has exactly one plain (agreeing-fingerprint) origin. When the role
+is pooled across more than one plain origin the entry instead carries a
+`members` list of those origins and omits `hosted_by` — a pooled forward may
+land on any member in the pool, so no single name would be honest, and
+`X-Lobes-Proxied-By` always equals `hosted_by` whenever `hosted_by` is
+present. With no mesh configured, `/capabilities` stays byte-identical to
+today. See
+[`docs/colleague-stack.md#a-third-role-state-proxied`](colleague-stack.md#a-third-role-state-proxied)
+for the full JSON shape.
 
 **A role a member lacks is auto-wired to the mesh, not left to referral.**
 Where the retired peer family required an operator to type

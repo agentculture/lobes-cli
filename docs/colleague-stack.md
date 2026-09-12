@@ -421,7 +421,8 @@ by role name, each value carrying exactly these fields:
     "ready": bool | null,                 # see the note below
     "loaded": bool,                       # is this role's backend wired in THIS deployment? (LOCAL wiring only — see below)
     "feasible": bool,                     # can THIS MACHINE serve this role at all? (deployment-shapes)
-    "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared
+    "hosted_by": str,                     # OPTIONAL — present only when feasible=false and a peer origin is declared (or, on a mesh member, the role's ONE verified plain origin)
+    "members": [str, ...],                # OPTIONAL, DECLARED/UNVALIDATED (#108) — present instead of hosted_by when a mesh-provided role is pooled across more than one plain origin
     "proxied": bool,                      # OPTIONAL — present (and true) only when this box also forwards to that peer
     "replicas": [                         # OPTIONAL, ADDITIVE (issue #199) — present only when a retired peer-origins pool is declared
       {
@@ -581,6 +582,20 @@ above.)
 > mesh-forwarded answer additionally carries `X-Lobes-Mesh-Member: <name>`.
 > The mesh path is DECLARED/UNVALIDATED (#108) — see that same section for
 > the code-vs-docs implementation-status caveat.
+>
+> **DECLARED/UNVALIDATED (#108): the caller-facing boot-window status.** A
+> mesh member the roster has announced but not yet probed answers `503`,
+> `error.type`/`error.code` `role_unverified`, `error.hosted_by` naming that
+> member's origin, `Retry-After: 5`, and
+> `X-Lobes-Mesh-Member`/`X-Lobes-Mesh-Origin`/`X-Lobes-Mesh-Role`/
+> `X-Lobes-Mesh-Unverified: true` — retryable, never a 404. `GET
+> /mesh/roster` carries the same "never checked yet" fact as
+> `"probed": false` plus `unverified_reason: "not_yet_probed"` on that
+> member's record (`None` only after a clean probe); a member whose probe
+> *ran* and disagreed on fingerprint, and an empty roster, both keep the
+> plain `404 role_infeasible` with no `hosted_by`. See
+> [`docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`](gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain)
+> for the full 503 contract and the boot-window timing it depends on.
 
 A role's `feasible: false` (this box's deployment shape dropped it — see
 [`docs/deployment-shapes.md`](deployment-shapes.md)) has always meant one of
@@ -595,6 +610,12 @@ two things a client can tell apart by key presence alone:
   for the role is forwarded to the peer named in `hosted_by`, and the answer
   comes back through this box's own `endpoint` — the caller never has to
   learn the peer exists or change its request.
+- **proxied, pooled** (DECLARED/UNVALIDATED, #108) — on a mesh member, when
+  more than one verified peer announces the role with an agreeing
+  fingerprint, `hosted_by` is **absent** (no single origin would be honest —
+  the forward may land on any pool member) and `members: [<origin>, ...]`
+  lists them instead; `proxied: true` is still present. `hosted_by` returns
+  the moment the pool narrows back to exactly one plain origin.
 
 ```json
 {
@@ -665,7 +686,15 @@ healthy — a background thread probes the declared peer's own `GET
 box would forward to it. A dead or misconfigured peer means `ready: false`
 (or the id drops off `/v1/models` entirely) even though `proxied: true` is
 still declared — declaring the intent to proxy is not evidence the peer is
-reachable right now.
+reachable right now. **DECLARED/UNVALIDATED (#108), mesh-sourced case:** on a
+mesh member, `ready` for a mesh-provided role is the chosen peer's own
+per-role `ready` bit as captured during the mesh's verification probe (the
+same probe that populates `GET /capabilities` `ready`) rather than a
+separate per-request dial — up to one heartbeat of staleness is accepted,
+refreshed on every verification pass. A member the roster has not yet probed
+(`probed: false`, `unverified_reason: "not_yet_probed"`) contributes no
+`ready` bit at all — a request for a role only such a member announces
+answers `503 role_unverified` rather than surfacing a guessed `ready` value.
 
 **The honesty invariants this state carries forward, unchanged:**
 
