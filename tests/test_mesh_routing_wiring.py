@@ -87,7 +87,14 @@ class _FakeMemberGateway:
         handler.send_response(200)
         handler.send_header("Content-Type", "application/json")
         handler.end_headers()
-        handler.wfile.write(json.dumps({"roles": self._capacities}).encode())
+        # review #252 finding 8: the real gateway's capabilities_payload puts
+        # the role mapping AT THE TOP LEVEL of the JSON body (see
+        # server.capabilities_payload — `payload = {role: ... for role in
+        # ROLES}`), never nested under a "roles" key. This fixture used to
+        # serve the nested shape, which happened to match the (buggy)
+        # `_probe_peer` code that read `payload.get("roles", {})` — masking
+        # the bug instead of catching it.
+        handler.wfile.write(json.dumps(self._capacities).encode())
 
     def _handle_status(self, handler) -> None:
         handler.send_response(200)
@@ -287,7 +294,10 @@ def _probe_verification(
                     import json
 
                     payload = json.loads(resp.read())
-                    roles_data = payload.get("roles", {})
+                    # review #252 finding 8: mirror the real fix in
+                    # lobes.gateway._mesh_routes.verify_members — the roles
+                    # mapping is the top-level payload, never nested.
+                    roles_data = payload if isinstance(payload, dict) else {}
 
                     # Get the announced roles for this origin
                     ann_roles = announced_roles_per_origin.get(origin, {})
@@ -1081,3 +1091,95 @@ class TestBusyDispatchForwardsToMesh:
             assert member_headers == ["primary"]
         finally:
             member.stop()
+
+
+# ---------------------------------------------------------------------------
+# review #252 findings 11/12/13: the do_GET <-> mesh_snapshot_holder wiring,
+# exercised over REAL HTTP through _make_handler. Every other test in this
+# module calls S.handle_post directly, skipping the handler layer entirely —
+# these three bugs (a MeshRoutingView handed to code expecting a bare
+# RoutingSnapshot, and /v1/models never receiving mesh_snapshot at all) had
+# zero coverage before this.
+# ---------------------------------------------------------------------------
+
+
+class TestHandlerMeshSnapshotWiring:
+    def _spin_server(self, table, cfg, holder):
+        httpd = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            S._make_handler(table, cfg, mesh_snapshot_holder=holder),
+        )
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        return httpd, thread
+
+    def test_capabilities_and_v1_models_survive_a_populated_mesh_snapshot(self) -> None:
+        """Finding 12: SnapshotHolder.current() returns a MeshRoutingView, not
+        a bare RoutingSnapshot — handing the view straight to capabilities/
+        v1-models code crashed on the first `.members`/`.announcements`
+        access. Both routes must return valid 200 JSON, not a crash."""
+        import urllib.request
+
+        from lobes.gateway._mesh_routing import MeshRoutingView, SnapshotHolder
+
+        table, cfg = build_config({})
+        routes, snap = _setup_mesh(
+            ["http://member.local:9100"],
+            "sk-mesh-join-key",
+            announced_roles={"http://member.local:9100": {"cortex": _role("cortex")}},
+            member_names=["nameA"],
+        )
+        holder = SnapshotHolder(routes.roster)
+        holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
+
+        httpd, thread = self._spin_server(table, cfg, holder)
+        try:
+            port = httpd.server_address[1]
+            for path in ("/capabilities", "/v1/models"):
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+                    assert resp.status == 200
+                    payload = json.loads(resp.read())
+                    assert isinstance(payload, dict)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+    def test_v1_models_receives_the_unwrapped_mesh_snapshot(self, monkeypatch) -> None:
+        """Finding 13: _get_v1_models must pass mesh_snapshot into
+        pooled_backends — and (finding 12) it must be the unwrapped
+        RoutingSnapshot, never the MeshRoutingView wrapper."""
+        import urllib.request
+
+        from lobes.gateway._mesh_routing import MeshRoutingView, RoutingSnapshot
+
+        table, cfg = build_config({})
+        received: dict = {}
+        real_pooled_backends = S.pooled_backends
+
+        def spy(table_arg, replica_snapshot_arg, *, mesh_snapshot=None):
+            received["mesh_snapshot"] = mesh_snapshot
+            return real_pooled_backends(
+                table_arg, replica_snapshot_arg, mesh_snapshot=mesh_snapshot
+            )
+
+        monkeypatch.setattr(S, "pooled_backends", spy)
+
+        class _Holder:
+            def current(self):
+                return MeshRoutingView(
+                    snapshot=RoutingSnapshot(members=(), announcements=()), peer_states={}
+                )
+
+        httpd, thread = self._spin_server(table, cfg, _Holder())
+        try:
+            port = httpd.server_address[1]
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=5) as resp:
+                assert resp.status == 200
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=5)
+
+        assert "mesh_snapshot" in received
+        assert isinstance(received["mesh_snapshot"], RoutingSnapshot)
