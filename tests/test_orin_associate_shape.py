@@ -2,10 +2,13 @@
 
 A THIRD answer to the Orin's ``[cortex, senses, associate]`` co-residency
 group (``builtin/orin.toml``'s ``[[exclusive_roles]]``): this shape hosts the
-opt-in ``associate`` role (Nemotron 3.5 Lightning 30B-A3B, MEASURED live
-2026-08-25) and drops BOTH heavy defaults (``cortex``, ``senses``) to a peer,
-alongside ``hand`` + the two pooling gears and no audio overlay — structurally
-``thor-muse``/``thor-worker`` for a THIRD opt-in core role and a different card.
+opt-in ``associate`` role (Nemotron 3.5 Lightning 30B-A3B, now MEASURED live
+at its full 1,048,576-token native window, 2026-09-13) alongside the two
+pooling gears (``embedder``, ``reranker``) and drops BOTH heavy defaults
+(``cortex``, ``senses``) to a peer, plus ``hand`` (no margin for it at the 1M
+window — see the shape's own ``hosts`` comment) and no audio overlay —
+structurally ``thor-muse``/``thor-worker`` for a THIRD opt-in core role and a
+different card.
 
 Two things have to line up for the declaration to be more than paperwork:
 
@@ -71,11 +74,14 @@ def _fake_card(resolved: str) -> _detect.DetectedCard:
 # --- 1. the shape's own data -------------------------------------------------
 
 
-def test_hosts_associate_alone_and_drops_every_other_role() -> None:
+def test_hosts_associate_plus_pooling_gears_and_drops_hand_and_every_other_role() -> None:
     shape = resolve_shape(_SHAPE)
-    assert set(shape.hosts) == {"associate"}
+    assert set(shape.hosts) == {"associate", "embedder", "reranker"}
     assert not shape.hosts_role("cortex")
     assert not shape.hosts_role("senses")
+    assert not shape.hosts_role(
+        "hand"
+    ), "no margin for hand at the full 1M window (see hosts comment)"
     for role in AUDIO_ROLES:
         assert not shape.hosts_role(role), "sm_87 has no Parakeet image (see orin-lobe)"
 
@@ -83,17 +89,26 @@ def test_hosts_associate_alone_and_drops_every_other_role() -> None:
 def test_declares_the_full_associate_override_matching_the_card_documentation() -> None:
     """LOCKSTEP: the shape's numbers must equal builtin/orin.toml's own
     [roles.associate] documentation block — the two describe the same
-    physical measurement."""
+    physical measurement (the 2026-09-13 1M A/B)."""
     rp = resolve_shape(_SHAPE).override("associate")
     assert rp.model == _MODEL_ID
-    assert rp.gpu_mem_util == 0.80
-    assert rp.max_model_len == 128000
+    assert rp.gpu_mem_util == 0.70
+    assert rp.max_model_len == 1048576
+    assert rp.max_num_batched_tokens == 8192
+    assert rp.max_num_seqs == 2
     assert rp.quantization == "modelopt"
     assert rp.kv_cache_dtype == "bfloat16"
+    assert rp.speculative_config is None
+
+    text = _shape_toml(_SHAPE)
+    assert "docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt" in text
+    assert "image =" not in text  # neither shape nor card declares an image override here
 
     card_text = files("lobes.profiles.builtin").joinpath("orin.toml").read_text(encoding="utf-8")
-    assert "gpu_mem_util   0.56" in card_text
-    assert "max_model_len  128000" in card_text
+    assert "gpu_mem_util           0.70" in card_text
+    assert "max_model_len          1048576" in card_text
+    assert "0.56 (HISTORICAL" in card_text
+    assert "128000 (HISTORICAL)" in card_text
     assert "feasible = false" in card_text  # d1: the card abstains, docs only
 
 
@@ -132,12 +147,16 @@ def test_associate_renders_feasible_with_its_full_declaration_despite_the_card_v
     assert "ASSOCIATE_FEASIBLE" not in env  # feasible=True renders no marker at all
     assert env["ASSOCIATE_MODEL"] == _MODEL_ID
     assert env["ASSOCIATE_SERVED_NAME"] == _MODEL_ID
-    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.8"
-    assert env["ASSOCIATE_MAX_MODEL_LEN"] == "128000"
+    assert env["ASSOCIATE_GPU_MEM_UTIL"] == "0.7"
+    assert env["ASSOCIATE_MAX_MODEL_LEN"] == "1048576"
+    assert env["ASSOCIATE_MAX_NUM_BATCHED_TOKENS"] == "8192"
+    assert env["ASSOCIATE_MAX_NUM_SEQS"] == "2"
     assert env["ASSOCIATE_QUANTIZATION"] == "modelopt"
     assert env["ASSOCIATE_KV_CACHE_DTYPE"] == "bfloat16"
     assert env["ASSOCIATE_BASE_URL"] == "http://vllm-associate:8000"
-    assert env["COMPOSE_PROFILES"] == "associate"
+    assert (
+        env["COMPOSE_PROFILES"] == "associate"
+    )  # embedder/reranker are unconditional, not profile-gated
 
 
 def test_dropped_cortex_and_senses_are_flagged_off_and_leak_no_knob() -> None:
@@ -159,17 +178,18 @@ def test_muse_and_worker_stay_untouched_by_this_shape() -> None:
     assert env.get("WORKER_FEASIBLE") == "false"
 
 
-def test_the_associate_compose_service_is_hosted_and_the_others_are_not() -> None:
+def test_the_associate_and_pooling_services_are_hosted_and_hand_and_heavy_lobes_are_not() -> None:
     services = shape_services(resolve_shape(_SHAPE), resolve_profile(_CARD))
-    assert ROLE_SERVICE["associate"] in services
+    for role in ("associate", "embedder", "reranker"):
+        assert ROLE_SERVICE[role] in services
     assert ROLE_SERVICE["cortex"] not in services
     assert ROLE_SERVICE["senses"] not in services
-    # SOLO shape (operator decision 2026-08-26): hand, embedder and reranker are
-    # dropped too, so their lanes must NOT be in the composed service set. Note
-    # hand: it is the pressure-policy servable floor that every other built-in
-    # shape hosts, so a box on this shape has no floor at all.
-    for role in ("hand", "embedder", "reranker"):
-        assert ROLE_SERVICE[role] not in services
+    # 2026-09-13 1M update: `hand` is dropped from this shape's `hosts` (no
+    # margin for it at the full 1,048,576-token window), so its lane must NOT
+    # be in the composed service set. It is the pressure-policy servable floor
+    # that every other built-in shape hosts, so a box on this shape has no
+    # floor at all.
+    assert ROLE_SERVICE["hand"] not in services
 
 
 def test_the_card_keeps_its_tegra_iowait_declaration_under_this_shape() -> None:
@@ -217,7 +237,7 @@ def test_end_to_end_init_render_activates_associate(tmp_path, monkeypatch) -> No
     assert "vllm-associate" not in shape_override  # hosted lane is never parked
 
     dropped = init_cmd._shape_dropped_services(resolve_shape(_SHAPE), resolve_profile(_CARD))
-    assert dropped == ["vllm-embed", "vllm-hand", "vllm-multimodal", "vllm-primary", "vllm-rerank"]
+    assert dropped == ["vllm-hand", "vllm-multimodal", "vllm-primary"]
 
 
 def test_reapplying_orin_associate_after_a_different_shape_restores_byte_for_byte(
