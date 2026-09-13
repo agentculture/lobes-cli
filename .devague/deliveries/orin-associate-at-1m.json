@@ -2,7 +2,7 @@
   "plan_slug": "orin-associate-at-1m",
   "schema_version": 2,
   "created": "2026-09-13T05:41:01Z",
-  "updated": "2026-09-13T06:57:23Z",
+  "updated": "2026-09-13T07:49:15Z",
   "deviations": [
     {
       "id": "d1",
@@ -31,6 +31,21 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "widen t7: update lobes/profiles/builtin_shapes/orin-associate.toml header and summary from DECLARED/UNVALIDATED to VALIDATED live 2026-09-13 for exactly what docs/evidence/2026-09-13-accept-orin-associate-1m.txt shows, and rewrite tests/test_orin_associate_shape.py::test_claims_no_shape_validation_though_the_lane_and_budget_are_measured to assert the accept citation",
+      "task_ref": "t7",
+      "reason": "the accept transcript booted the rendered shape on the physical Orin, meeting the shape's own 'until one lands' condition; t7's docs correctly call it accepted/validated while the merged shape file and its pinning test still claim no box booted it. Neither t6 nor t7 covered those files. Operator approved 2026-09-13.",
+      "affects": [
+        "t6",
+        "c9",
+        "h1"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],
