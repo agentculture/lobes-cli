@@ -41,6 +41,13 @@ Quoted verbatim from the `devague summary` skeleton:
 - `d2` — t7 docs quote the shipped shape's minimum available host memory next to the A/B's 2,588 MiB, instead of 2,588 MiB alone. Reason: the live rollout measured lower headroom, and quoting only 2,588 would overstate it on a zero-swap board. Operator approved 2026-09-13.
   - **Number correction (same approved rule):** the d2 record quotes 1,952 MiB, the step-9 minimum. The minimum over the whole run was **1,925 MiB** (07:09:49Z). The docs use 1,925. The correction was posted on #260 (comment 5651996338).
 - `d3` — widen t7: the `orin-associate.toml` header and summary go from DECLARED/UNVALIDATED to VALIDATED live 2026-09-13, for exactly what the accept transcript shows, and the pinning test now asserts that citation. Reason: the accept transcript booted the rendered shape on the physical Orin, which meets the shape's own "until one lands" condition. Operator approved 2026-09-13.
+- `d4` — Qodo review on #261 (High), approved by the operator: a plain `lobes fleet up` booted the pooling gears before associate, because the base compose makes `vllm-associate` depend on them. That order is unmeasured at util 0.70 at 1M. For shapes hosting associate, the generated `docker-compose.shape.yml` now clears associate's `depends_on` and makes the gears wait on associate being healthy (commits `4b9be8c`, `9bc4e5b`). This was checked live on the Orin: the gears were held in `created` until associate went healthy, then all four lanes came up healthy (accept transcript addendum, commit `b349abc`).
+- **Incident during the d4 live check (caused by the run):** the check stopped every lane at 08:41:25Z and ran the literal `lobes fleet up --apply`. Its gateway `--build` step failed on `pip install lobes-cli==0.78.0`, an unpublished build, so nothing started. The fleet was restored with `docker compose ... up -d --no-build`. associate was unavailable ~08:41:25–08:48:34Z; all lanes were healthy again at 08:51:32Z.
+- **Qodo review triage (#261):**
+  - `#1` boot order → FIX (d4).
+  - `#2` consumer context window → pushback on keeping 128K; follow-up agentculture/associate#11 filed.
+  - `#3` `hand` not hosted → pushback (decision c23, headroom).
+  - `#4` "2 GiB reserve rule" → pushback (no such rule in the repo).
 - **Main-agent review of t6** — before merging, fixed three claims and added one missing piece, all comment-only in `orin-associate.toml` (commit `728dbc8`):
   - a false "same quadruple as the live `.env`" before-state claim;
   - the memory headroom, which was attributed to associate alone;
@@ -60,6 +67,7 @@ Quoted verbatim from the `devague summary` skeleton:
 | `t1` (`d1`) | t1's required vllm-associate change (`ASSOCIATE_MAX_NUM_SEQS` argv + `VLLM_ALLOW_LONG_MAX_MODEL_LEN` env) moves that service's hash, failing the tool-parser plan's non-primary service hash-lock (1 failed / 4952 passed); the file documents recompute-on-deliberate-change and has precedent (#120, #222, #227, #217). Operator approved 2026-09-13. | `acceptable` |
 | `t7` (`d2`) | the live rollout (t5 step 9, cold 1,040,073-token request through the Orin gateway) measured minimum available memory 1,952 MiB at 06:11:19Z on the rendered shape with embed, rerank and gateway resident, lower than the A/B's 2,588 MiB; quoting only 2,588 would overstate headroom on a zero-swap board. Operator approved 2026-09-13. | `acceptable` |
 | `t7` (`d3`) | the accept transcript booted the rendered shape on the physical Orin, meeting the shape's own 'until one lands' condition; t7's docs correctly call it accepted/validated while the merged shape file and its pinning test still claim no box booted it. Neither t6 nor t7 covered those files. Operator approved 2026-09-13. | `acceptable` |
+| `t6` (`d4`) | Qodo review on PR #261: the fleet compose's `vllm-associate` depends_on both gears, so a plain fleet up booted them first, the unmeasured order for util 0.70 at 1M. Fixed by a shape override for shapes hosting associate; verified live. Operator approved 2026-09-13. | `needs-follow-up` (resolved in-PR) |
 | `t5` | Re-scaffolding changed the Orin reranker's behaviour (the #227 chat template), which the plan did not anticipate. Recorded in the accept transcript and as delta `b4`; no deviation record covers it. | `risky` |
 
 ## Evidence
@@ -69,7 +77,8 @@ Quoted verbatim from the `devague summary` skeleton:
 - TDD merge gate: full suite before and after each merge — t2 4947→4949, t1 4949→4955, t4 4955→4958, t6 4958→4958, t7 4958→4958 (all pass)
 - lint at `9a251fa`: `uv run black --check lobes tests` clean; `isort --check-only` clean; `flake8` clean; `bandit -c pyproject.toml -r lobes` clean; `markdownlint-cli2` clean on the touched docs
 - live: `docs/evidence/2026-09-13-accept-orin-associate-1m.txt` (rollout at `6eeacca`, 06:00:18Z–07:29:26Z) and `docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt` (A/B, 02:22–04:33Z)
-- delivery ledger (`.devague/deliveries/orin-associate-at-1m.json`, all `llm`-origin and proposed): obligations `o1`–`o15`, evidence `e1`–`e21`, deltas `b1`–`b4`
+- delivery ledger (`.devague/deliveries/orin-associate-at-1m.json`, all `llm`-origin and proposed): obligations `o1`–`o16`, evidence `e1`–`e23`, deltas `b1`–`b5`
+- d4: `tests/test_orin_associate_boot_order.py` plus the full suite at `4b9be8c` — `4970 passed, 15 skipped` (pass). Live boot-order check: addendum in `docs/evidence/2026-09-13-accept-orin-associate-1m.txt` (pass; `e22`, `e23`)
 - commits: `0145a54..9a251fa` on `feat/orin-associate-1m` (stacked on PR #258's `evidence/lightning-thor-v029`)
 - PRs / issues: #260 (tracking; deviations and results in comments 5651326251, 5651445280, 5651806426, 5651996338, 5652044937), #258 (Thor evidence, unmerged, base of this branch)
 
@@ -88,11 +97,14 @@ No lapses are filed for this plan (`devague lapse --list`: none). All ledger evi
 | NVFP4 is the A/B winner under the c24 rule | high | file `docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt` (verdict section) · `e14` |
 | docs are reconciled to the 1M budget, cite both transcripts, and keep retired figures only as history | medium | grep evidence `e20`, `e21` (context review); `e19` is a filed false fail pending the operator's rejection |
 | the shipped shape's operating headroom at 1M is 1,925 MiB minimum available host memory | medium | accept transcript step 12 (30 s samples; cause of the gap to the A/B's 2,588 MiB not isolated) · `e17` |
+| a plain compose up of a shape hosting associate boots associate before the pooling gears | high | test `tests/test_orin_associate_boot_order.py` · accept transcript addendum · `e22`, `e23` |
 | agentic sessions through the gateway run as fast as the A/B's direct-lane run | unverified | contradicted, not claimed: 198.4 s through the gateway vs 119.1 s direct, cause not isolated (accept step 11) |
 
 ## Remaining Work / Follow-up
 
-- **Merge order** — this branch stacks on PR #258 (Thor evidence). #258 must merge first, or this PR's diff includes its commits. Owner: operator.
+- **Merge order** — resolved: #258 was squash-merged as `6d52e42`, and `main` was merged into this branch (`d345cce`).
+- **Unresolved Qodo thread** — GitHub returns HTTP 500 on replies to review thread `PRRT_kwDOSktgM86h3hv2` (inline comment 3999151963), and "Something went wrong" on resolving it. The d4 reply is posted as top-level comment `issuecomment-5652321152`. The operator can resolve the thread in the UI, or it can be retried later.
+- **`lobes fleet up --apply` with an unpublished `MODEL_GEAR_VERSION`** — the gateway `--build` step fails before any service starts (seen live 2026-09-13 at 08:41Z). Next step: have fleet up skip rebuilding an existing gateway image, or fall back to a local wheel. Issue not yet filed.
 - **Operator adjudication of the delivery ledger** — confirm or reject `o1`–`o15`, `e1`–`e21` and `b1`–`b4` (recommend rejecting `e19`).
 - **Open frame parks:**
   - `v3` — head-of-line behaviour at `max_num_seqs=2` behind a cold 1M prefill is unmeasured.
