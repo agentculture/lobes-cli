@@ -27,7 +27,8 @@
 # the profile-gated vllm-associate service; ASSOCIATE_BASE_URL wires the
 # gateway backend — see shape_render.OPT_IN_CORE_ACTIVATION_ENV).
 #
-# DECLARED, NOT VALIDATED (#108). The budget below is MEASURED live on the
+# VALIDATED live on the physical Jetson AGX Orin, 2026-09-13 (#108) — for exactly
+# what docs/evidence/2026-09-13-accept-orin-associate-1m.txt shows. The budget below is MEASURED live on the
 # physical Jetson AGX Orin at the FULL 1,048,576-token native window,
 # 2026-09-13 (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt —
 # the A/B against useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-W4A16,
@@ -35,11 +36,15 @@
 # that file's "Verdict" section). The LANE itself was a confirmed GO earlier
 # (docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt: known-answer PASS,
 # structured tool calls PASS, ~78-81 tok/s single-stream with DSpark
-# speculation). But no box has booted this SHAPE, and no acceptance transcript
-# exists for it — nothing here, in any doc, or in `lobes capabilities` output
-# may claim this shape validated until one lands.
+# speculation). The SHAPE itself was then rendered with `lobes init --shape
+# orin-associate` and accepted live on the physical Orin, 2026-09-13
+# (docs/evidence/2026-09-13-accept-orin-associate-1m.txt): GET /capabilities
+# associate context 1048576, cold >= 1M needles PASS through the gateway (streamed
+# and non-streamed), 2-session agentic PASS, associate restarts 0. Claim nothing
+# beyond that transcript: no cross-box caller, no gears-first boot and no `hand`
+# co-residency was exercised at this window.
 name = "orin-associate"
-summary = "Jetson AGX Orin 64GB associate-lobe (DECLARED, UNVALIDATED) -- Lightning associate at its full 1M native window + embedder + reranker, no cortex/senses/hand, no audio"
+summary = "Jetson AGX Orin 64GB associate-lobe (VALIDATED live 2026-09-13 at 1M) -- Lightning associate at its full 1M native window + embedder + reranker, no cortex/senses/hand, no audio"
 
 
 # `hand` (the ninth Colleague role, LFM2.5-1.2B) is hosted by EVERY OTHER

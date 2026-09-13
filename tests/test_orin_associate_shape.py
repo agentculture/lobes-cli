@@ -118,13 +118,18 @@ def test_the_vendor_refusal_is_recorded_not_dropped() -> None:
     assert "REFUSED" in text
 
 
-def test_claims_no_shape_validation_though_the_lane_and_budget_are_measured() -> None:
-    """#108: no box has booted this SHAPE — separate from the LANE, which is a
-    confirmed GO, and the BUDGET, which is measured."""
+def test_claims_validation_only_by_citing_the_accept_transcript() -> None:
+    """#108: the SHAPE is validated only because an accept transcript of the
+    RENDERED shape landed (approved deviation d3, issue #260) — the claim must
+    cite it, and the stale "no box has booted this SHAPE" wording must be gone."""
     text = _shape_toml(_SHAPE)
-    assert "DECLARED, NOT VALIDATED" in text
-    assert "VALIDATED on" not in text
-    assert "UNVALIDATED" in resolve_shape(_SHAPE).summary
+    assert "VALIDATED live on the physical Jetson AGX Orin, 2026-09-13" in text
+    assert "docs/evidence/2026-09-13-accept-orin-associate-1m.txt" in text
+    assert "DECLARED, NOT VALIDATED" not in text
+    assert "no box has booted this SHAPE" not in text
+    summary = resolve_shape(_SHAPE).summary
+    assert "UNVALIDATED" not in summary
+    assert "VALIDATED live 2026-09-13 at 1M" in summary
     assert "MEASURED" in text
 
 
