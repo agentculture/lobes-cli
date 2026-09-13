@@ -2,7 +2,7 @@
   "plan_slug": "orin-associate-at-1m",
   "schema_version": 2,
   "created": "2026-09-13T05:41:01Z",
-  "updated": "2026-09-13T07:55:39Z",
+  "updated": "2026-09-13T08:52:22Z",
   "deviations": [
     {
       "id": "d1",
@@ -46,6 +46,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "add an orin-associate-only boot-order override: the generated docker-compose.shape.yml resets vllm-associate's depends_on and makes vllm-embed and vllm-rerank depend on vllm-associate being healthy, so a plain lobes fleet up boots associate first; tests + goldens; short live check on the Orin that lobes fleet up --apply boots associate first and all lanes go healthy",
+      "task_ref": "t6",
+      "reason": "Qodo review on PR #261 (High): the fleet compose gives vllm-associate depends_on vllm-embed/vllm-rerank service_healthy, so the ordinary fleet up path boots gears first \u2014 the order where util 0.70 is unmeasured at 1M and was refused at 128K; the accept run used targeted lobes up starts and never exercised it. Operator approved 2026-09-13.",
+      "affects": [
+        "c17",
+        "c18"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 25
     }
   ],
   "evidence": [
@@ -429,6 +443,44 @@
       "status": "proposed",
       "superseded": false,
       "seq": 24
+    },
+    {
+      "id": "e22",
+      "obligation_ref": "o16",
+      "test_ref": "tests/test_orin_associate_boot_order.py (4 tests incl. docker compose config merge) + tests/test_orin_associate_shape.py::test_end_to_end_init_render_activates_associate",
+      "behavior_text": "override resets vllm-associate depends_on and adds service_healthy edges from both gears; no other built-in shape gains an edge; real compose merge resolves the reversed order",
+      "contract_text": "d4: associate-first boot enforced by the shape override",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "4970 passed full suite at the d4 commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T08:35:00Z",
+        "commit": "4b9be8c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 26
+    },
+    {
+      "id": "e23",
+      "obligation_ref": "o16",
+      "test_ref": "Orin ~/lightning-spike/bootorder/{driver.log,restore.log,restore-samples.log}",
+      "behavior_text": "rendered override resolved associate depends_on=None and gears depends_on associate service_healthy; plain docker compose up -d --no-build started associate+gateway 08:42:38Z with embed/rerank held in created, gears started 08:48:34Z after associate healthy, all four healthy 08:51:32Z, associate restarts 0, capabilities context 1048576",
+      "contract_text": "d4 live: associate-first order on a plain compose up",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "sampled every 5 s on the physical Orin; lobes fleet up --apply itself failed at the gateway --build step (unpublished MODEL_GEAR_VERSION 0.78.0), so the order check used compose up --no-build with the same file set",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T08:51:32Z",
+        "commit": "4b9be8c"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 27
     }
   ],
   "deltas": [
@@ -484,6 +536,18 @@
       "evidence_refs": [
         "e13"
       ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "shapes hosting associate boot it before the pooling gears on a plain compose up (shape override reverses the base template's gears-first depends_on)",
+      "caused_by": [
+        "d4"
+      ],
+      "evidence_refs": [],
       "origin": "llm",
       "status": "proposed",
       "superseded": false

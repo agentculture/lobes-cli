@@ -213,6 +213,37 @@ its cause is not isolated. Per approved deviation d2 (issue #260), the docs quot
 headroom and keep 2,588 MiB as the A/B figure. Peak tj 97.6 C is higher than the A/B's 94.5 C over a longer continuous load;
 no throttle event was examined beyond tegrastats temperatures.
 
+## Addendum — associate-first boot enforced on a plain compose up (deviation d4, 2026-09-13 08:41-08:51Z)
+
+The rollout above started the lanes with role-targeted `lobes up` (--no-deps), so it never exercised the base
+template's start order: `vllm-associate` depends_on both pooling gears (service_healthy), which boots them FIRST.
+That is the order where util 0.70 is unmeasured at 1M and was refused at 128K. Qodo flagged it on PR #261; approved
+deviation d4 made the generated docker-compose.shape.yml reverse it for shapes hosting associate (commit 4b9be8c).
+
+Re-rendered on the Orin with the fix (lobes 0.78.0 from 4b9be8c). Resolved `docker compose config`:
+  vllm-associate depends_on = None
+  vllm-embed     depends_on = {'vllm-associate': {'condition': 'service_healthy', 'required': True}}
+  vllm-rerank    depends_on = {'vllm-associate': {'condition': 'service_healthy', 'required': True}}
+  gateway        depends_on = None
+
+All lanes were stopped at 08:41:25Z. The literal `lobes fleet up --apply` then FAILED before starting anything: it runs
+`up -d --build`, and the gateway image build pip-installs lobes-cli==MODEL_GEAR_VERSION, here 0.78.0, an unpublished
+branch build. This outage was caused by the check. The fleet was restored with the same file set
+(docker-compose.yml, docker-compose.gpu.yml, docker-compose.shape.yml, docker-compose.override.yml) and
+`docker compose ... up -d --no-build`. That restore is the live order check (5 s samples, restore-samples.log):
+
+  08:42:38Z  vllm-associate running|starting, gateway running|healthy, vllm-embed=created, vllm-rerank=created
+  +118 s     vllm-associate running|starting; vllm-embed and vllm-rerank still `created` (waiting on associate)
+  08:48:34Z  vllm-embed and vllm-rerank StartedAt (associate healthy; first all-associate-healthy sample at +361 s)
+  08:50:33Z  vllm-embed restarted once (RestartCount 1; the known gear first-start race)
+  08:51:32Z  all four healthy; associate restarts 0; GET /capabilities associate context 1048576 ready true
+
+The kernel log still has 2 'Killed process' lines, both predating this run. associate was unavailable from
+08:41:25Z to about 08:48:34Z.
+
+Finding (pre-existing, not introduced by d4): a plain `lobes fleet up --apply` cannot start a fleet whose
+MODEL_GEAR_VERSION names an unpublished lobes-cli, because the gateway `--build` step fails first.
+
 ## Rollback (not exercised)
 
 The pre-change configuration is documented in lobes/profiles/builtin_shapes/orin-associate.toml's ROLLBACK note: associate
