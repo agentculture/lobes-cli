@@ -205,15 +205,19 @@ excludes TTFT and approximates multi-token speculative SSE chunks.
 
 | other figure | value |
 |---|---|
-| KV at the final boot (0.90, MTP=3, BF16 KV) | 19.58 GiB = **677,323 tokens = 2.58x** at 262144 |
-| KV at an MTP=2 boot | 711,119 tokens = 2.71x |
-| Triton baseline KV (0.85, MTP=2) | 12.45 GiB = 440,286 tokens = 1.68x |
+| KV at the final boot (0.90, MTP=3, BF16 KV) | 19.58 GiB = **677,323 tokens**; KV-pool concurrency ceiling 2.58x at 262144 |
+| KV at an MTP=2 boot | 711,119 tokens; KV-pool ceiling 2.71x |
+| Triton baseline KV (0.85, MTP=2) | 12.45 GiB = 440,286 tokens; KV-pool ceiling 1.68x |
 | 4 concurrent short prompts, 256 tokens each, MTP=3 | **68.10 tok/s** aggregate; 22.52 tok/s mean per request |
 | same, MTP=2 | **73.44 tok/s** aggregate (+7.8%); 22.37 tok/s per request |
 | 4 concurrent unequal prompts (68 / 2968 / 11595 / 27068 input tokens), incl. cold prefill + JIT | 28.41 tok/s aggregate, no failure |
 | host memory available after the 4-way runs | ~10 GiB (short), ~7.2 GiB (unequal); swap unchanged |
 | earlier MTP=2 draft acceptance (Triton baseline, live windows) | 49.52% weighted, mean length 2.03 |
 | smoke | a parsed `read_file` tool call; a 25,640-token retrieval returned the right answer twice (13.28 s cold, 1.38 s prefix-cached) |
+
+The `x` figures are **KV-pool concurrency ceilings**: KV tokens divided by
+`max_model_len` (262144). They are arithmetic from the boot log, not measured
+throughput, and must not be multiplied by a single-stream tok/s.
 
 **Not tested by the author:** any full 256K request, four resident full-length
 contexts, a sustained or multi-user load, a quality eval, or vision.

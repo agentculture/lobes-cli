@@ -4,31 +4,43 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-09-13T12:31:42Z",
-  "updated": "2026-09-13T12:36:33Z",
+  "updated": "2026-09-13T12:42:53Z",
   "claims": [
     {
       "id": "c1",
       "kind": "announcement",
-      "text": "The Jetson AGX Thor serves Qwen3.8-Flash-Next (RadixArk NVFP4, 125B MoE) on vLLM, reproduced from the NemoClaw-Thor fast recipe and measured in this fleet's own evidence",
+      "text": "The NemoClaw-Thor recipe for Qwen3.8-Flash-Next (RadixArk NVFP4, 125B MoE) on a Jetson AGX Thor is recorded as a reference doc in this repo, with every measurement attributed to the recipe author \u2014 not built, booted, measured, or reproduced on any fleet box",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The Jetson AGX Thor serves Qwen3.8-Flash-Next (RadixArk NVFP4, 125B MoE) on vLLM, reproduced from the NemoClaw-Thor fast recipe and measured in this fleet's own evidence",
+          "kind": "announcement",
+          "reason": "PR #267 Qodo 3999631524: the original announcement claimed a fleet reproduction that the operator decided against (2026-09-13, reference only)"
+        }
+      ]
     },
     {
       "id": "c2",
       "kind": "decision",
-      "text": "operator authorizes dropping the Thor's lobes lanes for this work and raising them again as needed (user, this session: 'We can drop lobes and raise as needed on thor. You have ssh thor control')",
+      "text": "operator first authorized dropping the Thor's lobes lanes for this work, then (2026-09-13) chose reference-only: the Thor keeps serving worker and nothing is booted",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "operator authorizes dropping the Thor's lobes lanes for this work and raising them again as needed (user, this session: 'We can drop lobes and raise as needed on thor. You have ssh thor control')",
+          "kind": "decision",
+          "reason": "superseded by the operator's doc-only decision in the same session"
+        }
+      ]
     },
     {
       "id": "c3",

@@ -57,8 +57,10 @@ table is the floor no expert-only quantization can go below — which is also wh
 `UD-IQ1_S` at 72.5 GB is not nearly as small as a 1-bit quant of 176B
 parameters should be.
 
-**So GGUF is currently the only format that fits.** Any engine choice here is a
-choice about *which engine reads a GGUF*, not about serving the native weights.
+**As of 2026-08-27, GGUF was the only route identified that fits.** Any engine
+choice here was a choice about *which engine reads a GGUF*, not about serving
+the native weights. That is no longer the only known route — see the
+correction below. The NVFP4 route it names is unverified on this fleet.
 
 > **Correction (2026-09-13):** the NVFP4 row above assumes the PLE table must be
 > resident. It does not have to be: an external Thor recipe serves
