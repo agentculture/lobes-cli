@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-09-12T21:27:30Z",
-  "updated": "2026-09-13T01:12:07Z",
+  "updated": "2026-09-13T01:48:40Z",
   "claims": [
     {
       "id": "c1",
@@ -350,6 +350,42 @@
       "id": "c27",
       "kind": "decision",
       "text": "next repo step is an evidence-only PR (transcript + frame state); no shape, role, profile or engine-pin change lands with it (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "decision",
+      "text": "operator approved a measure-only 1M-context spike on the Jetson AGX Orin 64GB (2026-09-13): DSpark x5 + bf16 KV at the live util 0.70 on vllm/vllm-openai:v0.27.1, --max-num-seqs 2, standalone container (no compose/.env edits), associate lane offline for the run and restored in boot-safe order afterwards",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "decision",
+      "text": "the Orin 1M test is an A/B: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (modelopt) vs useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-W4A16 (compressed-tensors GPTQ INT4 g64), both at 1,048,576 with DSpark x5, bf16 KV, util 0.70, max-num-seqs 2 on vllm/vllm-openai:v0.27.1; W4A16 pre-downloaded first; associate offline ~3-3.5 h and restored in boot-safe order; worker-on-Orin estimate deferred (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "decision",
+      "text": "goal plan scope (operator 2026-09-13): build and implement a plan for the Orin associate lane at 1,048,576 only (adopt the NVFP4-vs-W4A16 A/B winner, add the needed lane knobs such as --max-num-seqs and VLLM_ALLOW_LONG_MAX_MODEL_LEN, measured shape budget, live acceptance); the Thor keeps worker; workflow = waves via assign-to-workforce, /deviate recorded on GitHub issues, /validate-delivery, /summarize-delivery, then PR via /cicd",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],

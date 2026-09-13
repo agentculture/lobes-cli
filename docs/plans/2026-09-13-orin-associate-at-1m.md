@@ -1,0 +1,94 @@
+# Build Plan — orin associate at 1M
+
+slug: `orin-associate-at-1m` · status: `exported` · from frame: `orin-associate-at-1m`
+
+> The Jetson AGX Orin's associate lane serves Nemotron 3.5 Lightning at the native 1,048,576-token window as shipped, measured lobes configuration — not hand-typed .env keys — using the checkpoint that wins a measured NVFP4-vs-W4A16 A/B on the Orin
+
+## Tasks
+
+### t1 — associate lane knobs: `ASSOCIATE_MAX_NUM_SEQS` argv and `VLLM_ALLOW_LONG_MAX_MODEL_LEN` passthrough
+
+- instruction: Edit lobes/templates/fleet/docker-compose.yml vllm-associate only: add '${`ASSOCIATE_MAX_NUM_SEQS`:+--max-num-seqs=${`ASSOCIATE_MAX_NUM_SEQS`}}' to the command block next to --max-num-batched-tokens, copying the worker lane idiom at the vllm-worker command (~line 1541) and extending the lane's knob comment; add '- `VLLM_ALLOW_LONG_MAX_MODEL_LEN`=${`ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN`:-0}' to its environment, mirroring vllm-primary (~line 84). Add both keys, commented, to the associate block of lobes/templates/fleet/env.example with a one-line reason each. Extend `_EIGHT_FLAGS`/`_DECLARED_KNOBS` in tests/`test_associate_compose.py` and add the set/unset assertions test-first. Do not touch any other service or file.
+- covers: c2, h2, c3, h3, c4, h11
+- acceptance:
+  - docker compose config for vllm-associate renders --max-num-seqs=2 when `ASSOCIATE_MAX_NUM_SEQS`=2 and no --max-num-seqs token when it is unset, asserted in tests/`test_associate_compose.py`
+  - docker compose config renders `VLLM_ALLOW_LONG_MAX_MODEL_LEN`=0 in the vllm-associate environment by default and =1 when `ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN`=1, asserted in tests/`test_associate_compose.py`
+  - tests/`test_associate_exposure.py` passes with zero modifications
+  - tests/goldens/template-defaults.env is regenerated with 'uv run python tests/goldens/regen.py' and the golden tests pass
+  - uv run pytest -n auto passes; black, isort and flake8 are clean on touched files
+
+### t2 — pin one associate gear: `test_exactly_one_associate_gear`
+
+- instruction: Test-only change in tests/`test_catalog.py`. `resolve_tier` returns the FIRST `role_hint` match (lobes/catalog.py ~1408-1432), so a second associate entry would be silently shadowed; the test must count `role_hint`=='associate' across the catalog and equal 1. Prove the failure mode without editing lobes/catalog.py (e.g. apply the same counting helper to a list with an added duplicate).
+- covers: c10, h6, h23
+- acceptance:
+  - tests/`test_catalog.py`::`test_exactly_one_associate_gear` passes on the shipped catalog and asserts that entry's id is nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  - the test fails when a second SupportedModel with `role_hint`='associate' is injected (proven by a companion parametrised or monkeypatched case)
+  - lobes/catalog.py is unchanged and contains no useful-quants entry
+
+### t3 — measure transcript: docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt
+
+- instruction: Build it from the raw results in the session scratchpad orin-ab/ (nvfp4/, w4a16/, free-mem.log, compare.md, driver.log) plus the restore check and the before-state reads; follow the layout and tone of docs/evidence/2026-09-13-spike-lightning-thor-v029.txt. Plain text, no invented figures: every number must be traceable to a file in orin-ab/ or a live read.
+- covers: c19, h18, c15, h14, c16, h15
+- acceptance:
+  - the file exists under docs/evidence with that exact name and contains one row per arm (NVFP4, W4A16) for: boot result and time, KV pool GiB and tokens, probes, decode tok/s at 128K/250K/1.04M cold and warm, cold TTFT at 128K/250K/1.04M, concurrency 1/2/4 aggregate, agentic 1- and 2-session wall/tool-calls/recall, peak tj, minimum available memory, OOM and restart counts
+  - a verdict paragraph quotes the c24 rule and its >=10% threshold and compares the numbers explicitly (1M decode -7%, agentic -1% and -0.7%), concluding keep NVFP4
+  - before-state values (128000, util 0.70, 8192, v0.27.1, DSpark, shape 0.80, card 0.56) are quoted with their source (live .env line numbers, engine log, repo file:line at the branch start commit)
+  - Thor figures are cited from docs/evidence/2026-09-13-spike-lightning-thor-v029.txt, not restated from memory
+  - the transcript records the 128K/250K warm needles that did not hit the NVFP4 prefix cache as repeat samples, the gear first-start race timestamps, and labels every KV concurrency ratio as a capacity ceiling
+
+### t4 — Orin card: `GATEWAY_READ_TIMEOUT`=7200 in \[`host_env`\]
+
+- instruction: `host_env` is the schema's designed home for box-wide gateway facts (lobes/profiles/schema.py docstring; lobes/profiles/render.py:315-319 renders it first). 7200 is ~3x the measured cold 1M TTFT. Only the orin card changes (decision c30: Orin-only). Regenerate goldens with 'uv run python tests/goldens/regen.py' and review the diff is exactly the one new key.
+- depends on: t1
+- covers: c26
+- acceptance:
+  - lobes/profiles/builtin/orin.toml \[`host_env`\] declares `GATEWAY_READ_TIMEOUT` = "7200" with a comment citing the 2,390 s cold 1.04M TTFT and the 600 s default it replaces
+  - a new test (tests/`test_orin_gateway_read_timeout.py`) asserts `render_env` for the orin card emits `GATEWAY_READ_TIMEOUT`=7200 and that spark, thor and base do not
+  - deployment.lock allowlist includes `GATEWAY_READ_TIMEOUT` via the existing `host_env` derivation, asserted in the new test
+  - goldens regenerated (orin.env and every shapes/\*`__orin`.env) and all golden tests pass
+
+### t6 — orin-associate shape at 1M: hosts, header, measured budget, rollback note; card doc block in lockstep
+
+- instruction: Values are exactly the A/B configuration (the measure transcript task) — do not extrapolate. Check `max_num_batched_tokens` is a RoleProfile knob before declaring it (render.py `_KNOB_ENV_SUFFIX`); if it is not, record a /deviate instead of inventing one. Keep every historical refusal comment (0.70/0.63 at 128K) but mark it superseded. Update the test that currently asserts card text contains '0.56'.
+- depends on: t4, t3
+- covers: c7, h4, c8, h12, c25, h10, c28, h16, c17
+- acceptance:
+  - orin-associate.toml hosts = \["associate", "embedder", "reranker"\] and its header describes exactly that set
+  - \[overrides.associate\] declares `max_model_len` = 1048576, `gpu_mem_util` = 0.70, `max_num_batched_tokens` = 8192, `max_num_seqs` = 2, each with a comment citing docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt
+  - the comment block quotes the pre-change 128000 / util 0.70 / 8192 values as a documented rollback
+  - neither orin-associate.toml nor orin.toml declares image or `speculative_config` for associate
+  - orin.toml \[roles.associate\] documentation block states the same 1M values (LOCKSTEP) and marks 0.56 / 128000 as historical
+  - tests/`test_orin_associate_shape.py` asserts the three hosted roles, the 1M override values and the card text, and 'lobes init --shape orin-associate' dry-run on the orin card renders `ASSOCIATE_MAX_MODEL_LEN`=1048576, `ASSOCIATE_MAX_NUM_SEQS`=2, `EMBED_`\* and `RERANK_`\* and marks cortex/senses/hand/muse/worker infeasible
+  - orin-associate goldens regenerated and all tests pass
+
+### t5 — live rollout on the Orin and accept transcript docs/evidence/2026-09-13-accept-orin-associate-1m.txt
+
+- instruction: Operator approval to drop/raise lobes is standing (2026-09-13). Cap every side process with docker --memory; use detached nohup setsid runners and short-poll monitors, never long local ssh. Recreate the gateway, not only vllm-associate. If re-scaffolding would lose a hand-kept compose customisation, stop and /deviate on issue #260 rather than overwrite it. Timestamp every check.
+- depends on: t1, t4, t6
+- covers: c1, h1, c11, h7, c13, h9, c14, h13, c18, h17, h19, c27, h20, h21
+- acceptance:
+  - before rollout: a dated backup of ~/.lobes/.env is taken and GET /capabilities through the Orin gateway shows associate context 128000, both quoted in the transcript
+  - the Orin runs this branch's lobes (uv tool install of the built wheel) and 'lobes init --shape orin-associate --apply --force' renders the shape; docker-compose.override.yml mesh block and operator-typed `ASSOCIATE_IMAGE` / `ASSOCIATE_SPECULATIVE_CONFIG` survive (diffed in the transcript)
+  - boot order associate first, gears after healthy; engine argv shows --max-model-len=1048576 and --max-num-seqs=2; KV pool line quoted
+  - known-answer, multi-step and tool-call probes PASS directly and through the gateway as model=associate
+  - a streamed and a non-streamed cold request of >= 1,000,000 prompt tokens through the Orin gateway as model=associate both return 200 with the needle recalled
+  - GET /capabilities reports associate context 1048576 and the lane /v1/models `max_model_len` is 1048576
+  - a 2-session 12-turn agentic run completes with zero OOMKilled; docker inspect RestartCount for associate == 0 after the run; embed and rerank RestartCount quoted; dmesg OOM lines counted
+
+### t7 — docs reconciliation to the measured 1M values
+
+- instruction: Docs only, after both transcripts exist. Mark superseded numbers as history rather than deleting them (cite-don't-delete). No claim of validation beyond what the accept transcript shows (#108).
+- depends on: t3, t5
+- covers: c9, h5, c12, h8, c29, h22
+- acceptance:
+  - CLAUDE.md associate paragraph, docs/deployment-shapes.md orin-associate rows, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md Orin section, docs/machine-profiles.md totals and docs/orin-associate-deployment.md state the 1M budget and cite the measure and accept transcripts by path
+  - grep for 0.56, the 0.63 KV-pool figures and 16384 batched tokens in those files returns only lines marked historical
+  - docs/orin-associate-deployment.md records the 2,588 MiB minimum available memory at 1M, the memory-capped side-process rule, the gear first-start race, and that cold associate requests whose TTFT exceeds a member's `GATEWAY_READ_TIMEOUT` are supported via the Orin gateway only (decision c30)
+  - doc-test alignment tests (tests/`test_gateway_fleet_doc.py` and any doc-honesty test) pass; markdownlint-cli2 clean on every touched .md
+
+## Risks
+
+- [unknown_nonblocking] re-scaffolding the Orin (lobes init --shape orin-associate --apply --force) may overwrite hand-kept compose customisations: the live ~/.lobes/docker-compose.yml predates the template (no .secrets.env entries, no reranker chat-template mount) and the mesh block lives in docker-compose.override.yml; diff before and after, and /deviate on #260 rather than lose one (task t5)
+- [unknown_nonblocking] the rendered .env pins `MODEL_GEAR_VERSION` to the build under test; if that dev version is not on (Test)PyPI the gateway image build fails (memory: testpypi-dev-wheel-propagation-race), so the rollout may need the local-wheel Dockerfile.gateway path already used on the Orin (Dockerfile.gateway.bak-local-wheel-0.76.0) or no gateway rebuild at all, since `GATEWAY_READ_TIMEOUT` is read by the existing gateway code (task t5)
+- [unknown_nonblocking] acceptance wall time and associate downtime: two cold >= 1M requests through the gateway (~40 min each, measured 2,390 s TTFT) plus the 2-session agentic run and boot; with `max_num_seqs`=2 they must run sequentially (head-of-line, frame park v3) (task t5)
