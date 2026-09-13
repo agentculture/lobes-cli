@@ -294,9 +294,35 @@ max_model_len = 262144
 # boot and an associate-first boot do not yield the same pool. These numbers are
 # from a GEARS-FIRST boot, which is what the shape does.
 #
-# max_model_len 128000 is the vendor recipe's window, served in full and measured
-# at it — NOT the checkpoint's 1,048,576 native ceiling, which nothing here has
-# exercised. Trimming it is the memory dial if a future co-resident needs room.
+# max_model_len 128000 was the vendor recipe's window, served in full and
+# measured at it. It is now HISTORICAL (see the 2026-09-13 update below): the
+# checkpoint's 1,048,576 native ceiling has since been exercised and adopted.
+#
+# *** UPDATE, 2026-09-13: THE FULL 1,048,576-TOKEN NATIVE WINDOW ***
+# docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt — an A/B
+# against a W4A16 candidate (useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-
+# A3B-W4A16) that did NOT clear the operator's >= 10% win rule, so the model
+# stays nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4. Measured live,
+# ASSOCIATE-FIRST boot (associate healthy before embed/rerank started — NOT
+# the gears-first order the 0.56/0.80 values below were measured under), with
+# `hand` NOT resident (builtin_shapes/orin-associate.toml dropped it from
+# `hosts` for this window):
+#   gpu_mem_util           0.70
+#   max_model_len          1048576   (the checkpoint's full native ceiling)
+#   max_num_batched_tokens 8192
+#   max_num_seqs           2
+# KV pool: weights+non-torch 24.61 GiB, available KV 17.34 GiB, GPU KV cache
+# size 2,889,456 tokens = a 2.76x CAPACITY CEILING at 1,048,576 (arithmetic,
+# not measured throughput). Cold 1,040,073-token needle PASSED (TTFT 2390.17 s,
+# decode 7.98 tok/s at that depth); every probe and the 2-session agentic run
+# PASSED with zero OOM; minimum available host memory 2,588 MiB; peak tj
+# 94.0 C. See builtin_shapes/orin-associate.toml's [overrides.associate] for
+# the full rationale, the operational finding (embed's first-start race under
+# associate-first boot order) and the LOCKSTEP values (the two files must not
+# drift — these are facts about the same board).
+#
+# 0.56 / 128000 below are now HISTORICAL — the gears-first, hand-resident
+# measurement that was superseded by the 1M update above. Kept, not deleted:
 # WHERE THE KNOBS LIVE, and why NOT here (approved deviation d1, 2026-08-25):
 # `associate` is an OPT-IN core role (lobes/profiles/shapes.py's
 # OPT_IN_CORE_ROLES), so it follows muse's and worker's rule exactly — the CARD
@@ -313,8 +339,11 @@ max_model_len = 262144
 # two must not drift:
 #
 #   model          nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
-#   gpu_mem_util   0.56          (0.70 and 0.63 both REFUSED — see above)
-#   max_model_len  128000        (the vendor window, not the 1M ceiling)
+#   gpu_mem_util   0.56 (HISTORICAL, gears-first) / 0.70 (CURRENT, associate-
+#                  first, 2026-09-13 — see the update above; 0.70 and 0.63 were
+#                  both REFUSED under the OLDER gears-first, hand-resident boot)
+#   max_model_len  128000 (HISTORICAL) / 1048576 (CURRENT — the checkpoint's
+#                  full native ceiling, adopted 2026-09-13)
 #   quantization   modelopt      (Lightning's own quant_method; vLLM resolves it
 #                                 to modelopt_mixed and picks Marlin on sm_87)
 #   kv_cache_dtype bfloat16      (NOT the checkpoint's declared FP8
@@ -567,4 +596,22 @@ max_model_len = 8192
 #   ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
 [host_env]
 LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+# GATEWAY_READ_TIMEOUT: the gateway's socket-read timeout on every upstream
+# POST (lobes/gateway/server.py; default 600 s, lobes/gateway/_config.py's
+# GATEWAY_READ_TIMEOUT). MEASURED 2026-09-13
+# (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt): a cold,
+# 1,040,073-token associate prompt at the 1M window took 2,390.17 s TTFT on
+# this board's NVFP4 arm — nearly 4x the 600 s default, which would abort the
+# request from under the model before a first token ever streams back. 7200 is
+# ~3x that measured cold TTFT, leaving headroom rather than pinning the raw
+# number.
+#
+# Decision c30 (operator): ORIN-ONLY. Spark and Thor keep the 600 s default —
+# neither serves a lane with a cold TTFT anywhere near this board's, and
+# raising it fleet-wide would hide a genuinely wedged request on those boxes
+# for over two hours instead of the intended few minutes. A cold associate
+# request whose TTFT would exceed a *different* mesh member's own (unraised)
+# timeout is supported only by reaching this board's gateway directly, not by
+# proxying through a member still running the 600 s default.
+GATEWAY_READ_TIMEOUT = "7200"
 

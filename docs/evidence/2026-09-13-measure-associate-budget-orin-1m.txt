@@ -1,0 +1,218 @@
+# MEASURE — Orin associate lane at the native 1,048,576-token window: nvidia NVFP4 vs useful-quants W4A16
+#
+# Date:     2026-09-13, 02:22:24 -> 04:33:13 UTC (one detached driver run, ~/lightning-orin-ab.sh)
+# Board:    Jetson AGX Orin 64GB (sm_87 Ampere, 62,817 MiB host RAM, ZERO swap), ssh orin@orin
+# Engine:   vllm/vllm-openai:v0.27.1 (the operator-typed ASSOCIATE_IMAGE; DSpark needs >= 0.27.1)
+# Frame:    orin-associate-at-1m (docs/specs/2026-09-13-orin-associate-at-1m.md), decision c24 = the win rule
+# Tracking: issue #260 (verdict comment 5651326251)
+#
+# SUMMARY
+#   Both checkpoints BOOTED at max_model_len 1,048,576 and PASSED every probe, every needle
+#   (128K / 250K / 1.04M, cold and repeat) and both agentic runs, with ZERO OOM kills and ZERO
+#   container restarts. W4A16 did NOT clear the c24 >= 10% bar (1M decode -7%, agentic -1% and
+#   -0.7%). Operator decision 2026-09-13: associate STAYS on nvidia NVFP4 (parked item v2 resolved).
+#
+# CONCURRENCY RATIOS: every "Nx at 1M" figure below is vLLM's KV-pool CAPACITY CEILING
+#   (pool tokens / 1,048,576), NOT measured throughput. With --max-num-seqs 2 the lane never runs
+#   more than two sequences at once, whatever the pool could hold. Measured concurrency is the
+#   separate "Concurrency" table.
+
+## Configuration (identical for both arms)
+
+Driver argv (both arms; W4A16 adds --dtype bfloat16 and --quantization compressed-tensors):
+
+  docker run -d --name lightning-spike --runtime=nvidia -p 127.0.0.1:8090:8000 \
+    -e VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 \
+    vllm/vllm-openai:v0.27.1 \
+    --model <checkpoint> --served-model-name nemotron35 --quantization <modelopt|compressed-tensors> \
+    --kv-cache-dtype bfloat16 --max-model-len 1048576 --gpu-memory-utilization 0.70 \
+    --max-num-seqs 2 --max-num-batched-tokens 8192 \
+    --mamba-backend flashinfer --mamba-ssm-cache-dtype float16 \
+    --enable-mamba-cache-stochastic-rounding --mamba-cache-philox-rounds 5 --mamba-cache-mode align \
+    --enable-prefix-caching \
+    --speculative-config '{"method": "dspark", "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark", "num_speculative_tokens": 5, "kv_cache_dtype": "bfloat16"}' \
+    --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser nemotron_v3 --trust-remote-code
+
+- Boot order per arm: associate lane stopped, gears stopped, `echo 3 | sudo -n tee
+  /proc/sys/vm/drop_caches` (scoped sudoers rule /etc/sudoers.d/lobes-spike; logged "drop_caches: OK"
+  before every boot), spike booted, then embed + rerank started AFTER the spike was healthy, so
+  every measurement below ran with both pooling gears resident.
+- VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 was set on both arms. It is inert for NVFP4 (its config declares
+  1,048,576) and required for W4A16 (its config.json declares max_position_embeddings 262144; boot
+  log: "User-specified max_model_len (1048576) is greater than the derived max_model_len
+  (max_position_embeddings=262144.0 ...)" then "Using max model len 1048576").
+- Checkpoints: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (W4A16_NVFP4 experts + FP8
+  projections, Marlin fallback on sm_87) and useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-W4A16
+  (compressed-tensors GPTQ INT4 g64; download verified with the repo's SHA256SUMS, all OK, 02:20 UTC).
+- W4A16 kernels (boot log): MarlinLinearKernel for CompressedTensorsWNA16, 'MARLIN' WNA16 MoE
+  backend, MarlinExperts; a MarlinNvFp4LinearKernel line also appears (attributed to the NVFP4
+  DSpark drafter; not separately verified).
+
+## Before state (quoted, not remembered)
+
+- Live Orin ~/.lobes/.env at 2026-09-13T05:32:43Z: line 593 ASSOCIATE_GPU_MEM_UTIL=0.70, line 594
+  ASSOCIATE_MAX_MODEL_LEN=128000, line 614 ASSOCIATE_MAX_NUM_BATCHED_TOKENS=8192, line 601
+  ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1, line 600 ASSOCIATE_SPECULATIVE_CONFIG (dspark,
+  num_speculative_tokens 5, kv_cache_dtype bfloat16), line 596 ASSOCIATE_KV_CACHE_DTYPE=bfloat16.
+- Live engine argv (docker inspect model-gear-vllm-associate): --max-model-len=128000,
+  --gpu-memory-utilization=0.70, --max-num-batched-tokens=8192, --speculative-config={"method": "dspark" ...}.
+- Live GET /capabilities through the Orin gateway, 05:32:43Z: associate context 128000, ready true.
+- Repo at branch start commit 0145a54: lobes/profiles/builtin_shapes/orin-associate.toml:84
+  gpu_mem_util = 0.80, :89 max_model_len = 128000; lobes/profiles/builtin/orin.toml:316 documents
+  gpu_mem_util 0.56 and :317 max_model_len 128000.
+- Engine settings were saved before the run at ~/.lobes/.env.bak-2026-09-13-pre-1m-spike.
+
+## Boot and memory
+
+| metric | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| boot start -> healthy (driver.log) | 02:22:34 -> 02:28:54 (6.3 min) | 03:27:40 -> 03:34:28 (6.8 min) |
+| consumed memory, weights + non-torch (GiB) | 24.61 | 22.82 |
+| peak activation / CUDA graphs (GiB) | 0.98 / 0.38 | 1.38 / 0.31 |
+| available KV cache memory (GiB) | 17.34 | 18.74 |
+| GPU KV cache size (tokens) | 2,889,456 | 3,122,236 |
+| KV-pool capacity ceiling at 1,048,576 | 2.76x | 2.98x |
+| embed / rerank healthy after spike | 02:30:46 / 02:31:06 | 03:36:37 / 03:36:37 |
+
+Boot-log lines quoted:
+  NVFP4  02:27:35 "Available KV cache memory: 17.34 GiB" / "GPU KV cache size: 2,889,456 tokens" /
+         "Maximum concurrency for 1,048,576 tokens per request: 2.76x"
+  W4A16  03:30:24 "Model loading took 18.3 GiB and 32.296868 seconds"
+         03:33:00 "Available KV cache memory: 18.74 GiB" / "GPU KV cache size: 3,122,236 tokens" /
+         "Maximum concurrency for 1,048,576 tokens per request: 2.98x"
+
+## Probes and single-stream decode (DSpark on, shallow depth)
+
+| metric | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| known-answer (17+25) | PASS | PASS ("42") |
+| multi-step (train, 15:40) | PASS | PASS ("15:40") |
+| tool call (get_weather, Tel Aviv, c) | PASS | PASS |
+| prose decode, 3 runs (tok/s) | 59.81, 58.98, 60.49 | 54.77, 54.37, 54.64 |
+| code decode (tok/s) | 102.47 | 100.7 |
+| TTFT, short prompt (s) | 0.199 | 0.184 |
+
+## Needles (secret at 37% depth; 256 forced tokens via min_tokens + ignore_eos)
+
+"Cold" is the first request at that length on a fresh arm. "Repeat" is the same prompt sent again
+after all three cold needles. On NVFP4 the 128K and 250K repeats did NOT hit the prefix cache
+(TTFT equal to cold), so for NVFP4 those two rows are REPEAT COLD SAMPLES, not warm-cache
+measurements; only the 1.04M repeat (the most recent prompt) was served from cache.
+
+| metric | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| 128,073 tok cold: recall / TTFT s / prefill tok/s / decode tok/s | PASS / 89.81 / 1426.1 / 29.42 | PASS / 88.74 / 1443.2 / 29.80 |
+| 250,073 tok cold: recall / TTFT s / prefill tok/s / decode tok/s | PASS / 214.27 / 1167.1 / 19.71 | PASS / 212.47 / 1177.0 / 21.52 |
+| 1,040,073 tok cold: recall / TTFT s / prefill tok/s / decode tok/s | PASS / 2390.17 / 435.1 / 7.98 | PASS / 2379.82 / 437.0 / 7.53 |
+| 128,073 tok repeat: recall / TTFT s / decode tok/s | PASS / 90.53 / 28.63 (no cache hit) | PASS / 2.09 / 29.88 (cache hit) |
+| 250,073 tok repeat: recall / TTFT s / decode tok/s | PASS / 175.84 / 21.87 (no clear hit) | PASS / 3.08 / 21.05 (cache hit) |
+| 1,040,073 tok repeat: recall / TTFT s / decode tok/s | PASS / 13.12 / 7.72 (cache hit) | PASS / 13.24 / 7.06 (cache hit) |
+| cold 1.04M wall (s) | 2422.1 | 2413.7 |
+
+Prefix caching in Mamba 'align' mode is flagged by vLLM at boot: "Prefix caching in Mamba cache
+'align' mode is currently enabled. Its support for Mamba layers is experimental." NVFP4's logged
+prefix-cache hit rate stayed between 0.0% and 12.0% over the arm. Why W4A16 retained the 128K/250K
+prefixes after the 1M request and NVFP4 did not is NOT established; its 8% larger KV pool is a
+plausible, unverified explanation.
+
+## Concurrency (512-token completions, short prompts; aggregate tok/s / per-request p50 / TTFT p50)
+
+| N | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| 1 | 56.7 / 58.08 / 0.233 s | 57.7 / 58.99 / 0.212 s |
+| 2 | 76.8 / 40.64 / 0.75 s | 82.1 / 41.62 / 0.193 s |
+| 4 (two queue behind --max-num-seqs 2) | 82.8 / 43.5 / 12.108 s | 81.5 / 44.03 / 12.566 s |
+
+## Agentic (12 turns, ~8,000 tool-result tokens per turn, to ~118K)
+
+| metric | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| 1 session: wall (s) | 102.0 | 100.9 |
+| 1 session: tool calls / recall | 12/12 / 3/3 | 12/12 / 3/3 |
+| 1 session: TTFT p50 / max (s) | 8.431 / 10.789 | 8.327 / 10.645 |
+| 1 session: decode p50 / min (tok/s) | 174.79 / 144.77 | 169.21 / 141.16 |
+| 1 session: max prompt tokens | 117,929 | 117,929 |
+| 2 sessions: wall (s) | 119.1 | 118.3 |
+| 2 sessions: tool calls / recall | 24/24 / 6/6 | 24/24 / 6/6 |
+| 2 sessions: TTFT p50 / max (s) | 8.598 / 12.726 | 8.52 / 12.442 |
+| 2 sessions: decode p50 / min (tok/s) | 62.85 / 8.75 | 116.64 / 6.09 |
+| 2 sessions: max prompt tokens | 117,967 | 117,967 |
+
+Per-turn completions are ~30 tokens (one tool call), which DSpark drafts almost perfectly (NVFP4
+last SpecDecoding windows: mean acceptance length 6.00 and 5.80), so per-turn decode rates are
+inflated; WALL TIME is the comparable figure.
+
+## Thermals, memory, stability
+
+| metric | nvidia NVFP4 | useful-quants W4A16 |
+|---|---|---|
+| peak tj (tegrastats, 5 s) | 94.0 C | 94.5 C |
+| peak gpu (tegrastats) | 94.0 C | 94.5 C |
+| min available host memory (free-mem.log, 30 s) | 2,588 MiB at 03:16:25 (1.04M prefill) | 4,182 MiB at 04:23:57 |
+| container OOMKilled / restarts (driver.log) | false / 0 | false / 0 |
+| kernel OOM kills during the run (sudo -n dmesg) | 0 | 0 |
+
+The Orin's dmesg timestamps are local time (UTC+3). The only two OOM entries in the kernel log
+predate this run: [Sat Sep 12 15:45:38] = 2026-09-12 12:45:38 UTC, and [Sun Sep 13 04:45:52] =
+2026-09-13 01:45:52 UTC. The second is the uncapped W4A16 download incident recorded on #260.
+
+## Verdict (decision c24, applied explicitly)
+
+Rule (operator, 2026-09-13): "adopt useful-quants W4A16 only if it boots at 1,048,576, passes every
+probe and needle (including >= 1M tokens) and the 2-session agentic run with zero OOM, AND beats
+NVIDIA NVFP4 by >= 10% on decode at depth or agentic wall time; otherwise associate stays on NVFP4."
+
+- Gate conditions: W4A16 booted at 1,048,576 (yes), passed every probe and needle including
+  1,040,073 tokens (yes), passed the 2-session agentic run with zero OOM (yes).
+- Decode at 1.04M depth: W4A16 7.53 (cold) and 7.06 (repeat), mean 7.30 tok/s; NVFP4 7.98 and
+  7.72, mean 7.85 tok/s. W4A16 is -7.0%. Threshold +10%: NOT MET. (128K: +1.2% cold; 250K: +9.2%
+  cold, single samples; neither reaches +10%.)
+- Agentic wall time: 1 session 100.9 s vs 102.0 s = W4A16 1.1% faster; 2 sessions 118.3 s vs
+  119.1 s = 0.7% faster. Threshold 10% faster: NOT MET.
+- Result: associate STAYS on nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4. No W4A16 catalog
+  entry; its 262144 native_max_model_len question is moot (frame park v2, resolved by the operator).
+- Recorded, not adopted: W4A16's capacity-only edges (+8% KV pool: 3,122,236 vs 2,889,456 tokens;
+  128K/250K prefixes still cached after a 1M request) and its -8% shallow prose decode.
+
+## Context: the Thor 1M results this lane is being brought to
+
+Cited from docs/evidence/2026-09-13-spike-lightning-thor-v029.txt (vLLM v0.29.0 on the Jetson AGX
+Thor, three arms B plain fp8 / C DSpark fp8 / D plain bf16), not restated from memory:
+- lines 35-36: "1,040,073 tokens = 99.2% of the window), 180/180 agentic tool calls and 45/45
+  cross-context recalls PASSED in all of B, C and D."
+- lines 80-81: 1,040,000 cold recall/TTFT PASS / 1687.85 s (B), 1661.2 s (C), 1448.97 s (D);
+  decode at 1M depth 33.41 (B), 45.02 (C), 26.82 (D) tok/s.
+The Orin's 1M cold TTFT (2390.17 s NVFP4) and 1M decode (7.98 tok/s) are on different silicon,
+a different engine (v0.27.1 vs v0.29.0) and bf16 KV, so they are context, not a like-for-like comparison.
+
+## Operational findings from this run (routed to the plan)
+
+- Gear first-start race: model-gear-vllm-embed failed its FIRST start every time the gears were
+  started together after the associate-class engine was healthy, with "ValueError: No available
+  memory for the cache blocks", and recovered on Docker's restart=unless-stopped retry. embed start
+  banners (docker logs): 02:29:09 -> 02:30:01, 03:34:43 -> 03:35:45, 04:31:27 -> 04:32:28 (4 error
+  lines across the 3 failed starts). rerank also restarted once (02:29:09 -> 02:30:10) without that
+  error line. RestartCount after restore: embed 1, rerank 0, associate 0.
+- Gateway read timeout: GATEWAY_READ_TIMEOUT is 600 s (template default and live Orin value), below
+  the 2,390 s cold 1M TTFT, so a cold 1M request through the gateway would time out (frame c26).
+- Zero-swap headroom: 2,588 MiB was the lowest available memory in the NVFP4 arm, during the 1.04M
+  prefill (frame c29).
+
+## Restore (driver EXIT trap)
+
+  04:28:40 RESTORE start; spike removed; gears stopped; 04:28:50 drop_caches: OK
+  04:28:51 associate started (the pre-existing 128K lane, unchanged)
+  04:31:11 model-gear-vllm-associate healthy after 140s
+  04:31:12 gears started
+  04:33:13 model-gear-vllm-embed healthy after 120s; model-gear-vllm-rerank healthy
+  04:33:13 RESTORE done
+Post-restore check: model=associate through the Orin gateway answered the known-answer probe "42",
+served by nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4.
+
+## Raw data
+
+Driver: ~/lightning-orin-ab.sh on the Orin; logs ~/lightning-spike/orin-ab/{driver.log, free-mem.log,
+nvfp4/, w4a16/} (boot.log, probes.json, needle-{cold,warm}-*.json, concurrency.jsonl,
+agentic-*.jsonl, spec-metrics.txt, tegrastats.log, dmesg-tail.txt). Side-by-side tables were
+generated by the session's compare.py over those directories; the 2-session agentic rows were
+taken from agentic-2x12x8k.jsonl SUMMARY lines.

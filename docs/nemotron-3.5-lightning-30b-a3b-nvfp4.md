@@ -192,7 +192,11 @@ honest DEPLOYED-topology comparison (different box, different engine,
 proxy hop included, no speculative decoding on either side today), not a
 same-silicon A/B.
 
-## Live numbers — Jetson AGX Orin 64GB as `associate` (2026-08-26)
+## HISTORY — Jetson AGX Orin 64GB as `associate` at 128,000 (2026-08-26, superseded 2026-09-13)
+
+**Superseded below** by the native 1,048,576-token (1M) budget and its live
+acceptance transcript — the numbers in this section are kept for the record
+(cite-don't-delete), not the current deployed state.
 
 The **second** box to serve this checkpoint, and the first on **Ampere**. Role:
 `associate` — the tenth Colleague role, "they do, but not act" (worker's
@@ -216,8 +220,8 @@ indefinitely on two engine versions — so that no-go is sm_110-specific.
 | | |
 |---|---|
 | Board | Jetson AGX Orin 64GB, Ampere sm_87, 61.34 GiB unified, **ZERO swap** |
-| `ASSOCIATE_GPU_MEM_UTIL` | **0.56** — the vendor's 0.70 and an earlier 0.63 were both REFUSED at boot |
-| `ASSOCIATE_MAX_MODEL_LEN` | 128,000 (native ceiling 1,048,576 — unexercised) |
+| `ASSOCIATE_GPU_MEM_UTIL` | **0.56** (HISTORICAL — superseded 2026-09-13) — the vendor's 0.70 and an earlier 0.63 were both REFUSED at boot |
+| `ASSOCIATE_MAX_MODEL_LEN` | 128,000 (HISTORICAL — superseded 2026-09-13; native ceiling 1,048,576, since exercised, below) |
 | `ASSOCIATE_QUANTIZATION` | `modelopt` → resolved to `modelopt_mixed` |
 | `ASSOCIATE_KV_CACHE_DTYPE` | `bfloat16` — sm_87 has no FP8 KV path, so the checkpoint's declared FP8 `kv_cache_quant_algo` is overridden |
 | Speculation | **OFF**. `ASSOCIATE_SPECULATIVE_CONFIG` exists but is default-off and UNMEASURED on the shape |
@@ -227,12 +231,14 @@ indefinitely on two engine versions — so that no-go is sm_110-specific.
 |---|---|
 | Model loading | 17.81 GiB / 43.5 s (weights warm in cache) |
 | Available KV | 9.35 GiB |
-| GPU KV cache size | **1,524,000 tokens** |
-| Max concurrency @ 128,000 | **11.91×** |
+| GPU KV cache size | **1,524,000 tokens** (HISTORICAL — superseded 2026-09-13) |
+| Max concurrency @ 128,000 | **11.91×** (HISTORICAL — superseded 2026-09-13) |
 | init engine | 228.7 s (compilation 40.2 s) |
 
 Full shape resident: associate 34.85 + hand 5.80 + rerank 5.34 + embed 4.83 GiB
-= **~50.9 GiB used, ~1 GiB free** on a zero-swap board. See issue #216.
+= **~50.9 GiB used, ~1 GiB free** on a zero-swap board (HISTORICAL — this
+shape composition, with `hand` co-resident, is superseded below; see issue
+\#216 for the original headroom concern).
 
 ### Probes
 
@@ -294,17 +300,101 @@ SSM tensor `blk.5.ssm_in.weight`, llama.cpp b10373 — a build-version gap, NOT 
 sm_87 limit); and a vLLM `--speculative_config.model` whose repo id omits its
 `-NVFP4` infix. Treat those recipes as unverified drafts.
 
-### Still open on the Orin
+### Still open on the Orin (as of the 2026-08-26 measurement, HISTORICAL — see the 1M section below for what is now answered)
 
 1. DSpark is wired but **default-off and unmeasured** on the full shape; the
-   drafter costs KV and the shape leaves ~1 GiB free.
+   drafter costs KV and the shape leaves ~1 GiB free. **ANSWERED 2026-09-13**
+   — DSpark x5 is on by default on the rendered 1M shape and was measured
+   live (both transcripts below).
 2. Engine drift — `v0.27.1`, `7c5a10e9` and the template's `8bd082` are all in
    play; none compared against the others on this board.
 3. `lobes fleet up` cannot start this shape (it builds the audio overlay a
    no-audio shape does not host).
-4. No cross-box probe has addressed this lane from a peer.
+4. No cross-box probe has addressed this lane from a peer. **Still open** —
+   unchanged by the 1M work.
 5. Marlin NVFP4 correctness on sm_87 rests on a small probe set — vLLM
    `#34694`/`#49070` report garbled output on this fallback on non-Blackwell parts.
+
+## MEASURED live — Jetson AGX Orin 64GB as `associate` at the native 1M window (2026-09-13)
+
+Issue #260 (orin-associate-at-1m plan). Two transcripts, read as the source
+of truth (quoted, not paraphrased from memory):
+
+- **A/B**, `docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt` —
+  `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (kept) vs
+  `useful-quants/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-W4A16` (not adopted),
+  both at `max_model_len=1048576`, `gpu_mem_util=0.70`,
+  `max_num_batched_tokens=8192`, `max_num_seqs=2`, DSpark x5 (`num_speculative_tokens=5`,
+  `kv_cache_dtype=bfloat16`), `vllm/vllm-openai:v0.27.1`. NVFP4: available KV
+  cache memory 17.34 GiB, GPU KV cache size 2,889,456 tokens, "Maximum
+  concurrency for 1,048,576 tokens per request: 2.76x" (a capacity ceiling,
+  not measured throughput). Cold 1,040,073-token needle PASS, TTFT 2390.17 s,
+  decode 7.98 tok/s at depth; repeat (cache hit) TTFT 13.12 s, decode
+  7.72 tok/s. 2-session, 12-turn agentic run PASS (24/24 tool calls, 6/6
+  recall), wall 119.1 s. Minimum available host memory 2,588 MiB (30 s
+  sampling, at 03:16:25 during the 1.04M prefill). Peak tj 94.0 C. Operator's
+  win rule (decision c24): adopt W4A16 only if it beats NVFP4 by >= 10% on
+  decode at depth or agentic wall time; W4A16 measured -7.0% decode at 1.04M
+  depth and 0.7-1.1% *faster* agentic wall (not >= 10%), so **associate STAYS
+  on nvidia NVFP4** — W4A16 gets no catalog entry.
+- **Accept**, `docs/evidence/2026-09-13-accept-orin-associate-1m.txt` — the
+  RENDERED `orin-associate` shape (`lobes init --shape orin-associate
+  --profile orin --apply --force`, branch `feat/orin-associate-1m` at
+  `6eeacca`, installed as `lobes_cli-0.77.2`), not a hand-run docker command.
+  Associate booted FIRST from the render at the same knobs (`max_model_len`
+  `1048576`, `gpu_mem_util` `0.70`, `max_num_batched_tokens` `8192`,
+  `max_num_seqs` `2`, DSpark x5): "Available KV cache memory: 17.4 GiB" /
+  "GPU KV cache size: 2,899,067 tokens" / "Maximum concurrency for 1,048,576
+  tokens per request: 2.76x". `GET /capabilities` through the Orin gateway
+  moved from associate context `128000` to `1048576`, and the lane's own
+  `/v1/models` reports `max_model_len` `1048576`. Known-answer, multi-step
+  and tool-call probes PASS through the gateway as `model=associate` and
+  directly on the lane. A cold >= 1M needle PASSED through the Orin gateway
+  both **non-streamed** (1,040,073 prompt tokens, wall 2,495.1 s) and
+  **streamed** (1,030,073 prompt tokens, first byte at 1,971.42 s — vLLM
+  v0.27.1 sends no bytes before the first generated token, so streaming does
+  not dodge the gateway read timeout) — proving out the rendered Orin-only
+  `GATEWAY_READ_TIMEOUT=7200` (decision c30; other mesh members keep the
+  600 s default). The 2-session, 12-turn agentic run through the gateway
+  PASSED (24/24 tool calls, 6/6 recall, wall 198.4 s — slower than the A/B's
+  direct-to-lane 119.1 s; the cause, among the gateway hop, the refreshed
+  compose, and prefix-cache state, is **not isolated**, per the transcript).
+  associate restarts 0, embed RestartCount 1 (the gear first-start race,
+  below), zero OOMKilled, zero new kernel OOM kills. **Minimum available
+  host memory 1,925 MiB** (30 s sampling, at 07:09:49Z during the streamed
+  1.03M prefill) — lower than the A/B's 2,588 MiB; **per approved deviation
+  d2 (issue #260), quote both figures, never 2,588 MiB alone, and do not
+  invent a cause for the gap** — both runs had embed, rerank and the gateway
+  up, so it is not explained by an extra resident container. Peak tj 97.6 C.
+
+**Shape composition at this budget: `hand` is not hosted.** The A/B and
+accept runs both ran associate + embedder + reranker only — the 2026-08-26
+composition's `hand` co-residency (above) is superseded; there is no
+measured or accepted `associate` + `hand` pairing at the 1M budget.
+
+**Operational findings, routed to the plan and carried forward as
+standing facts:**
+
+- **Gear first-start race.** `model-gear-vllm-embed` failed its first start
+  every time the gears were started together right after the associate-class
+  engine went healthy ("ValueError: No available memory for the cache
+  blocks"), and recovered on Docker's `restart=unless-stopped` retry — seen
+  in both the A/B (3 failed starts) and the accept run (embed
+  RestartCount 1). Start the gears with associate already healthy, and
+  expect one embed restart.
+- **Zero-swap headroom.** On this zero-swap board, an uncapped side process
+  (an hf-xet download during A/B prep) triggered a kernel OOM kill of the
+  associate engine on 2026-09-13 (recorded on #260) — run side work
+  memory-capped (`docker run --memory ...`) and with `HF_HUB_DISABLE_XET=1`
+  for any Hugging Face download alongside a hosted lane.
+- **Cold-request timeout support is Orin-gateway-only.** A cold associate
+  request at >= 1M tokens can take ~2,000-2,500 s TTFT/wall — well past the
+  600 s `GATEWAY_READ_TIMEOUT` every other mesh member keeps. Only the Orin
+  card raises this to `GATEWAY_READ_TIMEOUT=7200` (decision c30,
+  `lobes/profiles/builtin/orin.toml` `[host_env]`); a cold 1M-token
+  associate request routed through a different member's gateway (e.g. via
+  the mesh join's auto-wiring) would time out at that member's 600 s. This
+  is a supported path only via the Orin's own gateway.
 
 ## Status and gating
 

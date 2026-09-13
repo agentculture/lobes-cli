@@ -1,0 +1,531 @@
+{
+  "slug": "orin-associate-at-1m",
+  "title": "orin associate at 1M",
+  "frame_slug": "orin-associate-at-1m",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-13T05:20:28Z",
+  "updated": "2026-09-13T05:50:27Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Jetson AGX Orin's associate lane serves Nemotron 3.5 Lightning at the native 1,048,576-token window as shipped, measured lobes configuration \u2014 not hand-typed .env keys \u2014 using the checkpoint that wins a measured NVFP4-vs-W4A16 A/B on the Orin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "a docs/evidence accept transcript shows the RENDERED orin-associate shape (not a hand-run docker command) booting on the physical Orin at max_model_len 1048576, with the engine argv, KV pool line, a >= 1M-token needle PASS and GET /capabilities context 1048576",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the vllm-associate lane gains an ASSOCIATE_MAX_NUM_SEQS knob rendered with the worker lane's conditional idiom (unset renders no argv token), so a 1M-window lane can cap concurrent sequences; documented in the lane's knob comment and pinned in tests/test_associate_compose.py",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "docker compose config renders --max-num-seqs=N exactly when ASSOCIATE_MAX_NUM_SEQS is set and renders no argv token when unset, asserted in tests/test_associate_compose.py",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "the vllm-associate lane gains a VLLM_ALLOW_LONG_MAX_MODEL_LEN environment passthrough (ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN, default 0) mirroring vllm-primary, required only when the served checkpoint declares max_position_embeddings below the requested window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "docker compose config renders VLLM_ALLOW_LONG_MAX_MODEL_LEN=0 by default and =1 when ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN=1 in the vllm-associate environment, asserted by a test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "the associate lane's exposure contract is unchanged: --host=0.0.0.0 paired with no published host port (expose-only behind the gateway bearer gate), as pinned by tests/test_associate_exposure.py",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "tests/test_associate_exposure.py passes unmodified after the lane-knob change, and docker compose config for vllm-associate still shows --host=0.0.0.0 with no ports and no network_mode",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "orin-associate.toml's associate override declares the measured 1M budget (max_model_len 1048576 plus the util, batched-token cap and max_num_seqs the A/B measured) with each value citing a docs/evidence transcript, replacing the 128000 window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "every numeric override in orin-associate.toml's associate block carries a comment citing the docs/evidence transcript that measured it on the Orin, and the orin-associate golden is regenerated to match",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "ASSOCIATE_IMAGE and ASSOCIATE_SPECULATIVE_CONFIG stay operator-typed .env keys (the v0.27.1 image + DSpark matched pair), never declared on card or shape, unless the plan explicitly decides otherwise",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "neither orin-associate.toml nor orin.toml declares an image or speculative_config key for associate after the change, and the orin card comment still documents ASSOCIATE_IMAGE + ASSOCIATE_SPECULATIVE_CONFIG as the operator-typed matched pair",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "stale Orin associate statements are reconciled with what ships: the orin-associate header (still describes hand + pooling gears), orin.toml's 0.56 LOCKSTEP doc block, docs/deployment-shapes.md:91 (pre-d2 util 0.63 KV figures) and docs/orin-associate-deployment.md (16384 batched tokens vs the live 8192)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "grep for the retired associate budget literals (0.56, 0.63 KV-pool figures, 16384 batched tokens) in the listed docs and profile comments returns only lines explicitly marked historical",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "the catalog keeps exactly one role_hint=\"associate\" entry (the NVIDIA NVFP4 checkpoint), pinned by a new test_exactly_one_associate_gear; the useful-quants W4A16 is NOT added to the catalog (A/B 2026-09-13 missed the c24 bar, v2 resolved)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "tests/test_catalog.py::test_exactly_one_associate_gear fails when a second role_hint=associate entry is added and passes on the shipped catalog",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "lobes/catalog.py contains no useful-quants W4A16 entry and test_exactly_one_associate_gear passes on the shipped catalog",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "after the window change the Orin gateway advertises context 1048576 for associate on GET /capabilities and lobes capabilities: the gateway container is recreated (not only vllm-associate), and acceptance checks both the advertised context and the live fingerprint max_model_len read from the lane's /v1/models",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "on the live Orin after rollout, curl GET /capabilities through the Orin gateway returns associate context 1048576 AND the replica fingerprint max_model_len read from the lane's /v1/models equals 1048576",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "every doc that states associate's Orin budget or window as fact is updated to the measured 1M values: CLAUDE.md associate paragraph, docs/deployment-shapes.md orin-associate rows, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md Orin section, docs/machine-profiles.md totals, docs/orin-associate-deployment.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "each listed doc cites the 1M measure or accept transcript by path where it states the Orin associate budget",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "the 1M budget and lane are backed by two new transcripts under docs/evidence/ following the repo naming convention: a measure-associate-budget-orin-1m transcript (the A/B) and an accept-orin-associate-1m transcript of the shipped rendered shape on the physical Orin; until the accept transcript lands the shape stays DECLARED/UNVALIDATED (#108)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "both transcripts exist under docs/evidence with the YYYY-MM-DD-measure-/accept- naming and every number in the success signals appears in them with a timestamp or count",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "audience",
+      "text": "the lobes operator who runs the Jetson AGX Orin, and every mesh caller that addresses model=associate (e.g. pi/Qwen-Code agent harnesses via the Orin gateway or a mesh member)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "the accept transcript exercises the lane both directly on the Orin and through the Orin gateway as model=associate, the path mesh callers use",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "before_state",
+      "text": "the Orin associate lane serves Lightning NVFP4 at 128000 tokens on vLLM v0.27.1 with DSpark, util 0.70 and 8192 batched tokens set by hand-typed .env keys; the orin-associate shape still says util 0.80 at 128000, the card doc block says 0.56, and no transcript has exercised the lane past 128000 on the Orin",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "the before-state values (128000 window, util 0.70, 8192 batched tokens, v0.27.1, DSpark, shape 0.80, card 0.56) are quoted from the live Orin .env/engine log and the repo files at the plan's start commit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "why_it_matters",
+      "text": "Lightning's 1M native window is the reason to run it on a 64 GB board, and the Thor spike showed recall and agentic tool use hold to 1,040,073 tokens; today the Orin advertises and serves only 128K, and its live budget exists only in hand-edited .env keys that drift from the shipped shape",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the Thor 1M results cited are the committed docs/evidence/2026-09-13-spike-lightning-thor-v029.txt figures, and the Orin's pre-change context advert (128000) is captured from GET /capabilities before rollout",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "after_state",
+      "text": "rendering orin-associate on the Orin produces a lane that boots at max_model_len 1048576 with the A/B-measured checkpoint, util, batched-token cap and max_num_seqs; the gateway advertises context 1048576; and every value cites a docs/evidence transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "a dry-run lobes init --shape orin-associate on the orin card renders ASSOCIATE_MAX_MODEL_LEN=1048576 and the measured util / batched tokens / max_num_seqs, every one of which appears in the measure transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "success_signal",
+      "text": "on the physical Orin with the rendered shape: /health 200; known-answer, multi-step and tool-call probes PASS; a needle at >= 1,000,000 prompt tokens PASSES; GET /capabilities reports associate context == 1048576; zero OOMKilled/engine-dead events across a 2-session 12-turn agentic run; associate restarts == 0 after the run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "each listed check appears as a timestamped line (or count) in the accept transcript produced from the rendered shape on the physical Orin, including restarts==0 read from docker inspect after the agentic run",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "success_signal",
+      "text": "the A/B transcript records, for NVFP4 and W4A16 at 1,048,576: boot result, KV pool tokens, decode tok/s at >= 3 depths, cold TTFT at ~1M, concurrency 1/2/4 aggregate tok/s, agentic tool-call validity and recall counts, peak tj and minimum available memory; the winner is chosen by a stated rule, not by feel",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "the measure transcript contains one row per arm for every listed metric and a verdict paragraph that applies decision c24's rule explicitly (thresholds quoted, numbers compared)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "orin-associate.toml's hosts list is associate, embedder and reranker (the pooling gears return to the shape), its header comment describes exactly that, and tests/test_orin_associate_shape.py plus the orin-associate golden assert the three hosted roles and the dropped ones",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "lobes init --shape orin-associate (dry-run) on the orin card renders ASSOCIATE_* plus EMBED_* and RERANK_* lanes and marks cortex/senses/hand/muse/worker infeasible; the regenerated golden and test_orin_associate_shape assert exactly that set",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "a cold 1M request through the Orin gateway as model=associate completes: the Orin gateway's upstream read timeout (GATEWAY_READ_TIMEOUT, template default 600 s, live Orin value 600 s, applied as the socket read timeout on every upstream POST at lobes/gateway/server.py:616) is raised above the measured cold 1.04M TTFT (2,390 s NVFP4 on 2026-09-13) with margin, set through a shipped knob (env.example + orin card or shape), not a hand-typed key",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "a streamed AND a non-streamed request of >= 1,000,000 prompt tokens sent cold through the Orin gateway as model=associate return 200 with the needle recalled, and the rendered gateway env shows GATEWAY_READ_TIMEOUT above the measured cold TTFT, both in the accept transcript",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "the accept transcript records embed and reranker restart counts after rollout, and the Orin deployment doc names the observed gear first-start race: on 2026-09-13 model-gear-vllm-embed failed its first start every time the gears started together after associate (02:29, 03:34, 04:31 UTC; 'No available memory for the cache blocks') and recovered via restart=unless-stopped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "the accept transcript quotes docker inspect RestartCount for vllm-embed and vllm-rerank after rollout, and docs/orin-associate-deployment.md names the gear first-start KV race with the 2026-09-13 timestamps",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "orin-associate.toml keeps the pre-change 128000-window associate values as a documented rollback in its comment block (the spark-lobe d4 idiom), and the rollout records a dated backup of the Orin .env before rendering",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "orin-associate.toml's comment block quotes the 128000 / util 0.70 / 8192 pair as a rollback, and the accept transcript shows the dated .env backup path taken before render",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "the Orin associate docs record the measured zero-swap headroom at 1M (minimum available host memory 2,588 MiB during the NVFP4 1.04M prefill, 2026-09-13) together with the operating rule that any side process on the Orin runs memory-capped",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "the Orin associate docs quote the 2,588 MiB minimum available memory with its evidence transcript path and state the memory-capped side-process rule",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "associate lane knobs: ASSOCIATE_MAX_NUM_SEQS argv and VLLM_ALLOW_LONG_MAX_MODEL_LEN passthrough",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docker compose config for vllm-associate renders --max-num-seqs=2 when ASSOCIATE_MAX_NUM_SEQS=2 and no --max-num-seqs token when it is unset, asserted in tests/test_associate_compose.py",
+        "docker compose config renders VLLM_ALLOW_LONG_MAX_MODEL_LEN=0 in the vllm-associate environment by default and =1 when ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN=1, asserted in tests/test_associate_compose.py",
+        "tests/test_associate_exposure.py passes with zero modifications",
+        "tests/goldens/template-defaults.env is regenerated with 'uv run python tests/goldens/regen.py' and the golden tests pass",
+        "uv run pytest -n auto passes; black, isort and flake8 are clean on touched files"
+      ],
+      "deps": [],
+      "covers": [
+        "c2",
+        "h2",
+        "c3",
+        "h3",
+        "c4",
+        "h11"
+      ],
+      "instruction": "Edit lobes/templates/fleet/docker-compose.yml vllm-associate only: add '${ASSOCIATE_MAX_NUM_SEQS:+--max-num-seqs=${ASSOCIATE_MAX_NUM_SEQS}}' to the command block next to --max-num-batched-tokens, copying the worker lane idiom at the vllm-worker command (~line 1541) and extending the lane's knob comment; add '- VLLM_ALLOW_LONG_MAX_MODEL_LEN=${ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN:-0}' to its environment, mirroring vllm-primary (~line 84). Add both keys, commented, to the associate block of lobes/templates/fleet/env.example with a one-line reason each. Extend _EIGHT_FLAGS/_DECLARED_KNOBS in tests/test_associate_compose.py and add the set/unset assertions test-first. Do not touch any other service or file."
+    },
+    {
+      "id": "t2",
+      "summary": "pin one associate gear: test_exactly_one_associate_gear",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_catalog.py::test_exactly_one_associate_gear passes on the shipped catalog and asserts that entry's id is nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4",
+        "the test fails when a second SupportedModel with role_hint='associate' is injected (proven by a companion parametrised or monkeypatched case)",
+        "lobes/catalog.py is unchanged and contains no useful-quants entry"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h6",
+        "h23"
+      ],
+      "instruction": "Test-only change in tests/test_catalog.py. resolve_tier returns the FIRST role_hint match (lobes/catalog.py ~1408-1432), so a second associate entry would be silently shadowed; the test must count role_hint=='associate' across the catalog and equal 1. Prove the failure mode without editing lobes/catalog.py (e.g. apply the same counting helper to a list with an added duplicate)."
+    },
+    {
+      "id": "t3",
+      "summary": "measure transcript: docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the file exists under docs/evidence with that exact name and contains one row per arm (NVFP4, W4A16) for: boot result and time, KV pool GiB and tokens, probes, decode tok/s at 128K/250K/1.04M cold and warm, cold TTFT at 128K/250K/1.04M, concurrency 1/2/4 aggregate, agentic 1- and 2-session wall/tool-calls/recall, peak tj, minimum available memory, OOM and restart counts",
+        "a verdict paragraph quotes the c24 rule and its >=10% threshold and compares the numbers explicitly (1M decode -7%, agentic -1% and -0.7%), concluding keep NVFP4",
+        "before-state values (128000, util 0.70, 8192, v0.27.1, DSpark, shape 0.80, card 0.56) are quoted with their source (live .env line numbers, engine log, repo file:line at the branch start commit)",
+        "Thor figures are cited from docs/evidence/2026-09-13-spike-lightning-thor-v029.txt, not restated from memory",
+        "the transcript records the 128K/250K warm needles that did not hit the NVFP4 prefix cache as repeat samples, the gear first-start race timestamps, and labels every KV concurrency ratio as a capacity ceiling"
+      ],
+      "deps": [],
+      "covers": [
+        "c19",
+        "h18",
+        "c15",
+        "h14",
+        "c16",
+        "h15"
+      ],
+      "instruction": "Build it from the raw results in the session scratchpad orin-ab/ (nvfp4/, w4a16/, free-mem.log, compare.md, driver.log) plus the restore check and the before-state reads; follow the layout and tone of docs/evidence/2026-09-13-spike-lightning-thor-v029.txt. Plain text, no invented figures: every number must be traceable to a file in orin-ab/ or a live read."
+    },
+    {
+      "id": "t4",
+      "summary": "Orin card: GATEWAY_READ_TIMEOUT=7200 in [host_env]",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/profiles/builtin/orin.toml [host_env] declares GATEWAY_READ_TIMEOUT = \"7200\" with a comment citing the 2,390 s cold 1.04M TTFT and the 600 s default it replaces",
+        "a new test (tests/test_orin_gateway_read_timeout.py) asserts render_env for the orin card emits GATEWAY_READ_TIMEOUT=7200 and that spark, thor and base do not",
+        "deployment.lock allowlist includes GATEWAY_READ_TIMEOUT via the existing host_env derivation, asserted in the new test",
+        "goldens regenerated (orin.env and every shapes/*__orin.env) and all golden tests pass"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c26"
+      ],
+      "instruction": "host_env is the schema's designed home for box-wide gateway facts (lobes/profiles/schema.py docstring; lobes/profiles/render.py:315-319 renders it first). 7200 is ~3x the measured cold 1M TTFT. Only the orin card changes (decision c30: Orin-only). Regenerate goldens with 'uv run python tests/goldens/regen.py' and review the diff is exactly the one new key."
+    },
+    {
+      "id": "t5",
+      "summary": "live rollout on the Orin and accept transcript docs/evidence/2026-09-13-accept-orin-associate-1m.txt",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "before rollout: a dated backup of ~/.lobes/.env is taken and GET /capabilities through the Orin gateway shows associate context 128000, both quoted in the transcript",
+        "the Orin runs this branch's lobes (uv tool install of the built wheel) and 'lobes init --shape orin-associate --apply --force' renders the shape; docker-compose.override.yml mesh block and operator-typed ASSOCIATE_IMAGE / ASSOCIATE_SPECULATIVE_CONFIG survive (diffed in the transcript)",
+        "boot order associate first, gears after healthy; engine argv shows --max-model-len=1048576 and --max-num-seqs=2; KV pool line quoted",
+        "known-answer, multi-step and tool-call probes PASS directly and through the gateway as model=associate",
+        "a streamed and a non-streamed cold request of >= 1,000,000 prompt tokens through the Orin gateway as model=associate both return 200 with the needle recalled",
+        "GET /capabilities reports associate context 1048576 and the lane /v1/models max_model_len is 1048576",
+        "a 2-session 12-turn agentic run completes with zero OOMKilled; docker inspect RestartCount for associate == 0 after the run; embed and rerank RestartCount quoted; dmesg OOM lines counted"
+      ],
+      "deps": [
+        "t1",
+        "t4",
+        "t6"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c11",
+        "h7",
+        "c13",
+        "h9",
+        "c14",
+        "h13",
+        "c18",
+        "h17",
+        "h19",
+        "c27",
+        "h20",
+        "h21"
+      ],
+      "instruction": "Operator approval to drop/raise lobes is standing (2026-09-13). Cap every side process with docker --memory; use detached nohup setsid runners and short-poll monitors, never long local ssh. Recreate the gateway, not only vllm-associate. If re-scaffolding would lose a hand-kept compose customisation, stop and /deviate on issue #260 rather than overwrite it. Timestamp every check."
+    },
+    {
+      "id": "t6",
+      "summary": "orin-associate shape at 1M: hosts, header, measured budget, rollback note; card doc block in lockstep",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "orin-associate.toml hosts = [\"associate\", \"embedder\", \"reranker\"] and its header describes exactly that set",
+        "[overrides.associate] declares max_model_len = 1048576, gpu_mem_util = 0.70, max_num_batched_tokens = 8192, max_num_seqs = 2, each with a comment citing docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt",
+        "the comment block quotes the pre-change 128000 / util 0.70 / 8192 values as a documented rollback",
+        "neither orin-associate.toml nor orin.toml declares image or speculative_config for associate",
+        "orin.toml [roles.associate] documentation block states the same 1M values (LOCKSTEP) and marks 0.56 / 128000 as historical",
+        "tests/test_orin_associate_shape.py asserts the three hosted roles, the 1M override values and the card text, and 'lobes init --shape orin-associate' dry-run on the orin card renders ASSOCIATE_MAX_MODEL_LEN=1048576, ASSOCIATE_MAX_NUM_SEQS=2, EMBED_* and RERANK_* and marks cortex/senses/hand/muse/worker infeasible",
+        "orin-associate goldens regenerated and all tests pass"
+      ],
+      "deps": [
+        "t4",
+        "t3"
+      ],
+      "covers": [
+        "c7",
+        "h4",
+        "c8",
+        "h12",
+        "c25",
+        "h10",
+        "c28",
+        "h16",
+        "c17"
+      ],
+      "instruction": "Values are exactly the A/B configuration (the measure transcript task) \u2014 do not extrapolate. Check max_num_batched_tokens is a RoleProfile knob before declaring it (render.py _KNOB_ENV_SUFFIX); if it is not, record a /deviate instead of inventing one. Keep every historical refusal comment (0.70/0.63 at 128K) but mark it superseded. Update the test that currently asserts card text contains '0.56'."
+    },
+    {
+      "id": "t7",
+      "summary": "docs reconciliation to the measured 1M values",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "CLAUDE.md associate paragraph, docs/deployment-shapes.md orin-associate rows, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md Orin section, docs/machine-profiles.md totals and docs/orin-associate-deployment.md state the 1M budget and cite the measure and accept transcripts by path",
+        "grep for 0.56, the 0.63 KV-pool figures and 16384 batched tokens in those files returns only lines marked historical",
+        "docs/orin-associate-deployment.md records the 2,588 MiB minimum available memory at 1M, the memory-capped side-process rule, the gear first-start race, and that cold associate requests whose TTFT exceeds a member's GATEWAY_READ_TIMEOUT are supported via the Orin gateway only (decision c30)",
+        "doc-test alignment tests (tests/test_gateway_fleet_doc.py and any doc-honesty test) pass; markdownlint-cli2 clean on every touched .md"
+      ],
+      "deps": [
+        "t3",
+        "t5"
+      ],
+      "covers": [
+        "c9",
+        "h5",
+        "c12",
+        "h8",
+        "c29",
+        "h22"
+      ],
+      "instruction": "Docs only, after both transcripts exist. Mark superseded numbers as history rather than deleting them (cite-don't-delete). No claim of validation beyond what the accept transcript shows (#108)."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "re-scaffolding the Orin with lobes init --shape orin-associate --apply --force OVERWRITES docker-compose.yml, Dockerfile.gateway, qwen3_reranker.jinja, mg-logwrap.sh and the tool-parser plugin from the packaged templates with NO backup (lobes/runtime/_compose.py:471-525, :242-259); docker-compose.override.yml (mesh block) is never written by init (_compose.py:130-137); .env rendered keys are rewritten in place via set_env while unrendered operator keys (ASSOCIATE_IMAGE, ASSOCIATE_SPECULATIVE_CONFIG, GATEWAY_API_KEY, LOBES_MESH_*) are preserved (init.py:588-624). --force is required for the t1 compose knob to exist on the box, so t5 must tar-backup ~/.lobes first (including the local-wheel Dockerfile.gateway) and diff afterwards",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "every fleet --apply rewrites MODEL_GEAR_VERSION to the running CLI version and LOBES_PROFILE (init.py:801-803), and Dockerfile.gateway pip-installs lobes-cli==MODEL_GEAR_VERSION from PyPI with an optional LOBES_DEV_INDEX_URL lane (Dockerfile.gateway:20-28); a branch build is on neither index, so a gateway rebuild needs the Orin's existing local-wheel Dockerfile.gateway path or the gateway must be recreated from its existing image (GATEWAY_READ_TIMEOUT is read by the already-deployed gateway code, lobes/gateway/_config.py:1046)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": true,
+      "resolution": "no gateway rebuild: the Orin gateway runs the locally built lobes-gateway:latest image (lobes-cli 0.77.0.dev544) whose code already reads GATEWAY_READ_TIMEOUT (lobes/gateway/_config.py:1046); t5 recreates it with 'docker compose up -d --no-build --no-deps gateway' so the new .env values reach it, and installs this branch's lobes CLI on the Orin from a locally built wheel only to run lobes init; Dockerfile.gateway is still included in the pre-rollout tar backup"
+    },
+    {
+      "id": "r3",
+      "text": "acceptance wall time and associate downtime: two cold >= 1M requests through the gateway (~40 min each, measured 2,390 s TTFT) plus the 2-session agentic run and boot; with max_num_seqs=2 they must run sequentially (head-of-line, frame park v3)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t5",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

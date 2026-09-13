@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.78.0] - 2026-09-13
+
+### Added
+
+- associate lane knobs: ASSOCIATE_MAX_NUM_SEQS (conditional --max-num-seqs) and ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN (VLLM_ALLOW_LONG_MAX_MODEL_LEN passthrough, default 0) in the fleet compose and env.example
+- test_exactly_one_associate_gear pins a single associate catalog entry (resolve_tier would silently shadow a second)
+- Orin card [host_env] GATEWAY_READ_TIMEOUT=7200 so a cold 1M associate request (2,390 s TTFT measured) completes through the Orin gateway; other cards keep 600 s
+- evidence: docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt (NVFP4 vs W4A16 A/B at 1M; NVFP4 kept) and docs/evidence/2026-09-13-accept-orin-associate-1m.txt (rendered shape accepted live on the physical Orin)
+
+### Changed
+
+- orin-associate shape serves associate at the native 1,048,576-token window: hosts associate + embedder + reranker (hand stays out), util 0.70, 8192 batched tokens, max_num_seqs 2, associate-first boot, documented 128K rollback; orin card documentation block kept in lockstep
+- docs reconciled to the measured 1M budget (128K / 0.56 / 0.63 figures kept as history)
+
 ## [0.77.2] - 2026-09-13
 
 ### Added

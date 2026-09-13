@@ -60,6 +60,7 @@ _DECLARED_KNOBS = {
     "ASSOCIATE_MAMBA_CACHE_MODE": "${ASSOCIATE_MAMBA_CACHE_MODE:-align}",
     "ASSOCIATE_PREFIX_CACHING": "${ASSOCIATE_PREFIX_CACHING:---enable-prefix-caching}",
     "ASSOCIATE_MAX_NUM_BATCHED_TOKENS": "${ASSOCIATE_MAX_NUM_BATCHED_TOKENS:-16384}",
+    "ASSOCIATE_MAX_NUM_SEQS": "${ASSOCIATE_MAX_NUM_SEQS:+--max-num-seqs=${ASSOCIATE_MAX_NUM_SEQS}}",
 }
 
 
@@ -212,6 +213,23 @@ class TestDeclaredKnobsRenderNoDeadDeclarations:
         assert "--max-num-batched-tokens=8192" in cmd
 
     @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+    def test_max_num_seqs_unset_renders_no_token(self) -> None:
+        # Same worker-lane idiom (${VAR:+--flag=VAR}): unset must leave NO
+        # argv token at all, not an empty one `vllm serve` would misread as a
+        # second positional.
+        out = _compose_config({"COMPOSE_PROFILES": "associate"})
+        rendered = yaml.safe_load(out)
+        cmd = [str(c) for c in rendered["services"]["vllm-associate"]["command"]]
+        assert not any(c.startswith("--max-num-seqs") for c in cmd)
+
+    @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+    def test_max_num_seqs_set_renders_flag(self) -> None:
+        out = _compose_config({"COMPOSE_PROFILES": "associate", "ASSOCIATE_MAX_NUM_SEQS": "2"})
+        rendered = yaml.safe_load(out)
+        cmd = [str(c) for c in rendered["services"]["vllm-associate"]["command"]]
+        assert "--max-num-seqs=2" in cmd
+
+    @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
     def test_without_profile_service_absent(self) -> None:
         out = _compose_config({})
         rendered = yaml.safe_load(out)
@@ -272,8 +290,40 @@ class TestEnvExampleDocumentsAssociateKnobs:
             "ASSOCIATE_MAMBA_CACHE_MODE",
             "ASSOCIATE_PREFIX_CACHING",
             "ASSOCIATE_MAX_NUM_BATCHED_TOKENS",
+            "ASSOCIATE_MAX_NUM_SEQS",
+            "ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN",
         ):
             assert knob in text, f"env.example must document {knob}"
+
+
+class TestAssociateAllowLongMaxModelLen:
+    """Mirrors PRIMARY_ALLOW_LONG_MAX_MODEL_LEN (~line 84): the
+    VLLM_ALLOW_LONG_MAX_MODEL_LEN passthrough env var lets an associate-hosting
+    shape serve a --max-model-len beyond the checkpoint's own declared
+    ceiling (orin-associate-1m t1)."""
+
+    def test_env_var_declared_in_raw_environment(self) -> None:
+        text = _FLEET_COMPOSE.read_text(encoding="utf-8")
+        start = text.index("vllm-associate:")
+        end = text.index("\n  gateway:", start)
+        block = text[start:end]
+        assert "VLLM_ALLOW_LONG_MAX_MODEL_LEN=${ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN:-0}" in block
+
+    @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+    def test_defaults_to_zero(self) -> None:
+        out = _compose_config({"COMPOSE_PROFILES": "associate"})
+        rendered = yaml.safe_load(out)
+        env = rendered["services"]["vllm-associate"]["environment"]
+        assert str(env["VLLM_ALLOW_LONG_MAX_MODEL_LEN"]) == "0"
+
+    @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+    def test_override_reaches_one(self) -> None:
+        out = _compose_config(
+            {"COMPOSE_PROFILES": "associate", "ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN": "1"}
+        )
+        rendered = yaml.safe_load(out)
+        env = rendered["services"]["vllm-associate"]["environment"]
+        assert str(env["VLLM_ALLOW_LONG_MAX_MODEL_LEN"]) == "1"
 
 
 def _compose_config(env_extra: dict[str, str]) -> str:

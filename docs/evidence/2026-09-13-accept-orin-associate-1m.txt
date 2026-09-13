@@ -1,0 +1,260 @@
+# ACCEPT — the rendered orin-associate shape serves associate at the native 1,048,576-token window on the physical Jetson AGX Orin
+#
+# Date:     2026-09-13, rollout driver 06:00:18Z -> 07:29:26Z (~/lightning-orin-rollout.sh, detached on the Orin)
+# Board:    Jetson AGX Orin 64GB (sm_87, 62,817 MiB host RAM, ZERO swap), ssh orin@orin, deploy dir ~/.lobes
+# Code:     branch feat/orin-associate-1m at 6eeacca, installed on the Orin as lobes_cli-0.77.2 (uv tool, built from that commit)
+# Plan:     orin-associate-at-1m, task t5 (docs/plans/2026-09-13-orin-associate-at-1m.md); the budget comes from
+#           docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt
+# Tracking: issue #260 (deviations d1, d2 recorded there)
+#
+# SUMMARY
+#   `lobes init --shape orin-associate --profile orin --apply --force` rendered the shape on the live Orin, and
+#   the associate lane booted FROM THAT RENDER (not a hand-run docker command) at max_model_len 1048576 / util 0.70 /
+#   8192 batched tokens / max_num_seqs 2 with DSpark x5 on vllm/vllm-openai:v0.27.1:
+#   - KV pool 2,899,067 tokens (2.76x capacity ceiling at 1M, not throughput).
+#   - GET /capabilities through the Orin gateway moved from associate context 128000 to 1048576, and the lane's own
+#     /v1/models reports max_model_len 1048576.
+#   - All probes PASS through the gateway as model=associate, and known-answer PASS directly on the lane.
+#   - Cold >= 1M needles PASS through the gateway both NON-streamed (1,040,073 tokens, 2,495.1 s wall) and STREAMED
+#     (1,030,073 tokens, first byte at 1,971.42 s), proving the rendered GATEWAY_READ_TIMEOUT=7200.
+#   - The 2-session 12-turn agentic run through the gateway PASSED (24/24 tool calls, 6/6 recall).
+#   - associate restarts 0, zero OOMKilled, zero new kernel OOM kills.
+#   - Minimum available host memory 1,925 MiB; peak tj 97.6 C.
+
+## Success signals and honesty conditions (spec docs/specs/2026-09-13-orin-associate-at-1m.md) — checked here
+
+| target | requirement | evidence in this file | result |
+|---|---|---|---|
+| c18 | /health 200 on the rendered shape | step 5 healthcheck "healthy after 360s"; step 7 /capabilities ready true | PASS |
+| c18 | known-answer, multi-step, tool-call probes PASS | step 8 | PASS |
+| c18 | a needle at >= 1,000,000 prompt tokens PASSES | steps 9 and 10 (1,040,073 and 1,030,073 tokens) | PASS |
+| c18 / h7 | GET /capabilities associate context == 1048576 AND lane /v1/models max_model_len == 1048576 | step 7 | PASS |
+| c18 | zero OOMKilled / engine-dead events across a 2-session 12-turn agentic run | steps 11-12 | PASS |
+| c18 | associate restarts == 0 after the run | step 12 | PASS |
+| h1 | the RENDERED shape boots at 1048576 with engine argv, KV pool line, >= 1M needle PASS, /capabilities 1048576 | steps 3-5, 7, 9-10 | PASS |
+| h13 | exercised directly on the lane AND through the Orin gateway as model=associate | step 8 | PASS |
+| h17 | each check is a timestamped line or count, incl. restarts==0 read from docker inspect after the agentic run | throughout; step 12 | PASS |
+| h19 / c26 | a streamed AND a non-streamed cold >= 1M request through the Orin gateway return 200 with the needle recalled; rendered GATEWAY_READ_TIMEOUT above the cold TTFT | steps 3, 6, 9, 10 | PASS |
+| h20 / c27 | embed and rerank RestartCount quoted after rollout | step 12 (embed 1, rerank 0) | PASS |
+| h21 / c28 | dated .env backup taken before render | step 1 | PASS |
+
+## Step 0 — before (06:00:18Z)
+
+  model-gear-vllm-associate Up 2 hours (healthy)
+  model-gear-gateway Up 18 hours (healthy)
+  model-gear-vllm-rerank Up About an hour (healthy)
+  model-gear-vllm-embed Up About an hour (healthy)
+  capabilities before: associate context 128000 ready True
+  installed CLI before: lobes 0.76.0
+GET /capabilities (associate) before: model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, context 128000, ready true,
+feasible true, quant modelopt, mtp false.
+
+## Step 1 — backups (06:00:19Z-06:00:22Z)
+
+  .env backup: /home/orin/.lobes/.env.bak-20260913T060018Z-pre-associate-1m
+  tar backup:  /home/orin/lobes-dir-backup-20260913T060018Z.tgz (14M)
+
+## Step 2 — branch CLI (06:00:22Z)
+
+  + lobes-cli==0.77.2 (from file:///home/orin/lobes_cli-0.77.2-py3-none-any.whl)
+  installed CLI now: lobes 0.77.2
+
+## Step 3 — dry-run render: `lobes init --shape orin-associate --profile orin --json ~/.lobes`
+
+  ASSOCIATE_BASE_URL=http://vllm-associate:8000        ASSOCIATE_MAX_NUM_BATCHED_TOKENS=8192
+  ASSOCIATE_GPU_MEM_UTIL=0.7                           ASSOCIATE_MAX_NUM_SEQS=2
+  ASSOCIATE_KV_CACHE_DTYPE=bfloat16                    ASSOCIATE_MODEL=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  ASSOCIATE_MAX_MODEL_LEN=1048576                      ASSOCIATE_QUANTIZATION=modelopt
+  ASSOCIATE_SERVED_NAME=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+  COMPOSE_PROFILES=associate
+  EMBED_{ATTENTION_BACKEND=TRITON_ATTN, GPU_MEM_UTIL=0.06, MAX_MODEL_LEN=8192, MODEL=Qwen/Qwen3-Embedding-0.6B}
+  RERANK_{ATTENTION_BACKEND=TRITON_ATTN, ENFORCE_EAGER=--enforce-eager, GPU_MEM_UTIL=0.06, MAX_MODEL_LEN=8192, MODEL=Qwen/Qwen3-Reranker-0.6B}
+  GATEWAY_READ_TIMEOUT=7200
+  HAND_FEASIBLE=false  MULTIMODAL_FEASIBLE=false  MUSE_FEASIBLE=false  PRIMARY_FEASIBLE=false  WORKER_FEASIBLE=false
+
+## Step 4 — apply with --force (06:00:23Z-06:00:31Z)
+
+Lanes stopped first (gears 06:00:24Z, associate 06:00:31Z). init scaffolded docker-compose.yml, Dockerfile.gateway,
+Dockerfile.vllm-gemma4, mg-logwrap.sh, cf-tunnel.env.example, qwen3_reranker.jinja, qwen3_thinking_tool_parser.py, .env,
+docker-compose.shape.yml (drops vllm-hand, vllm-multimodal, vllm-primary) and the gpu overlays (gpu_access=runtime).
+
+.env diff (pre -> post), exactly:
+  519c519  GATEWAY_READ_TIMEOUT=600          -> GATEWAY_READ_TIMEOUT=7200
+  543c543  MODEL_GEAR_VERSION=0.77.0.dev544  -> MODEL_GEAR_VERSION=0.77.2
+  594c594  ASSOCIATE_MAX_MODEL_LEN=128000    -> ASSOCIATE_MAX_MODEL_LEN=1048576
+  614a615  + ASSOCIATE_MAX_NUM_SEQS=2
+  614a616  + HAND_FEASIBLE=false
+
+Operator-typed keys preserved (post .env):
+- ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1
+- ASSOCIATE_SPECULATIVE_CONFIG (dspark, num_speculative_tokens 5, kv_cache_dtype bfloat16)
+- GATEWAY_API_KEY set (34 chars)
+- LOBES_MESH_NAME=orin
+- LOBES_MESH_KEY set (48 chars)
+
+ASSOCIATE_GPU_MEM_UTIL=0.70 and ASSOCIATE_MAX_NUM_BATCHED_TOKENS=8192 were already on those values. COMPOSE_PROFILES=associate,
+LOBES_PROFILE=orin. docker-compose.override.yml (the mesh block): NO diff. Dockerfile.gateway: NO diff.
+
+SIDE EFFECT (recorded, not hidden): the Orin's docker-compose.yml predated the packaged template, so --force brought it
+current. Beyond the associate lane it added:
+- `.secrets.env` (required: false) env_file entries on the lanes;
+- the #222 gateway depends_on comment rewrite;
+- the #120 attention-config move on the multimodal lanes, which this shape does not host;
+- the one with live effect: the reranker's #227 judge-prompt `--chat-template=/usr/local/share/lobes/qwen3_reranker.jinja`
+  plus its read-only bind mount.
+So from this rollout on, the Orin's reranker scores with the model card's judge prompt (calibrated, saturating scores; see
+docs/qwen3-reranker-0.6b.md). docker-compose.shape.yml lost its obsolete `gateway: depends_on: !reset` patch (#222) and gained
+`vllm-hand` in the shape-dropped profile.
+
+Resolved compose (lobes' file order: docker-compose.yml, docker-compose.gpu.yml, docker-compose.shape.yml,
+docker-compose.override.yml); active services: vllm-embed vllm-rerank vllm-associate gateway. vllm-associate resolved argv:
+  --max-model-len=1048576  --gpu-memory-utilization=0.70  --max-num-batched-tokens=8192  --max-num-seqs=2
+  '--speculative-config={"method": "dspark", "model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark", "num_speculative_tokens": 5, "kv_cache_dtype": "bfloat16"}'
+  environment VLLM_ALLOW_LONG_MAX_MODEL_LEN: "0"   image: vllm/vllm-openai:v0.27.1
+
+## Step 5 — associate booted FIRST from the render (06:00:31Z-06:06:36Z)
+
+  06:00:33Z drop_caches: OK
+  >> starting associate (vllm-associate) in /home/orin/.lobes      (`lobes up associate --apply`)
+  06:06:36Z model-gear-vllm-associate healthy after 360s
+Engine log (quoted):
+  06:01:29 [model.py:1883] Using max model len 1048576
+  06:05:13 [gpu_worker.py:563] Available KV cache memory: 17.4 GiB
+  06:05:13 [kv_cache_utils.py:2235] GPU KV cache size: 2,899,067 tokens
+  06:05:13 [kv_cache_utils.py:2236] Maximum concurrency for 1,048,576 tokens per request: 2.76x   (KV-pool CAPACITY CEILING, not throughput)
+  06:05:56 [gpu_worker.py:789] Free memory on device (55.66/61.34 GiB) on startup. Desired GPU memory utilization is (0.7, 42.94 GiB).
+           Actual usage is 24.55 GiB for consumed memory (weights + non-torch), 0.98 GiB for peak activation, and 0.4 GiB for CUDAGraph memory.
+docker inspect Args: --kv-cache-dtype=bfloat16 --max-model-len=1048576 --gpu-memory-utilization=0.70 --max-num-batched-tokens=8192
+  --max-num-seqs=2 --speculative-config={"method": "dspark" ... "num_speculative_tokens": 5 ...}
+For comparison, the A/B's NVFP4 arm (hand-run docker command, same values): 17.34 GiB / 2,889,456 tokens / 2.76x / 24.61 GiB.
+
+## Step 6 — gears after associate, gateway recreated without a build (06:06:36Z-06:10:01Z)
+
+  >> starting embedder (vllm-embed) / reranker (vllm-rerank)       (`lobes up embedder --apply`, `lobes up reranker --apply`)
+  06:09:40Z model-gear-vllm-embed healthy after 180s
+  06:09:40Z model-gear-vllm-rerank healthy after 0s
+  >> starting gateway (gateway)                                    (`lobes up gateway --apply`, no --build)
+  mesh: reannounce not delivered ([Errno 104] Connection reset by peer)
+  06:10:01Z model-gear-gateway healthy after 10s
+  gateway image lobes-gateway; env GATEWAY_READ_TIMEOUT=7200, ASSOCIATE_MAX_MODEL_LEN=1048576; gateway lobes-cli 0.77.0.dev544
+  free -m: used 58699 MiB, free 418, available 4117
+The one "reannounce not delivered" line is the CLI's post-recreate mesh reannounce; the recreated gateway's log from 06:09:50Z
+shows peers' POST /mesh/announce and GET /mesh/roster answered 200 continuously. Mesh behaviour is outside this plan (c30).
+
+## Step 7 — advertised context and lane window (06:10:02Z)
+
+  capabilities after: associate context 1048576 ready True
+GET /capabilities (associate) after: model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, context 1048576, ready true,
+feasible true, quant modelopt, mtp false.
+Lane /v1/models (read from inside the gateway container): [{"id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4", "max_model_len": 1048576}]
+
+## Step 8 — probes through the gateway as model=associate, and directly on the lane (06:10:22Z-06:11:11Z)
+
+  known_answer  17+25        -> "42"     PASS  39.21 s  (first request after boot)  served_model nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, HTTP 200
+  multi_step    09:40 train  -> "15:40"  PASS   7.28 s
+  tool_call     get_weather  -> finish_reason=tool_calls, get_weather({"city": "Tel Aviv", "unit": "c"})  PASS  0.67 s
+  direct on the lane (http://vllm-associate:8000, raw model id): "42" PASS
+
+## Step 9 — cold 1,040,073-token needle through the Orin gateway as model=associate, NON-streamed (06:11:11Z-06:52:46Z)
+
+  {"mode": "nostream", "status": 200, "prompt_tokens": 1040073, "completion_tokens": 256,
+   "reply_head": "MAROON-4817 is the answer. Once upon a time, there was a sai", "pass": true,
+   "served_model": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4", "wall_s": 2495.1}
+A non-streamed response sends no bytes until the whole 256-token completion is done, so the gateway's upstream socket
+sat idle for ~2,495 s. That is over four times the previous GATEWAY_READ_TIMEOUT (600 s) and inside the rendered 7200 s.
+After the request: vllm-associate restarts=0 OOMKilled=false; gateway restarts=0 OOMKilled=false.
+
+## Step 10 — cold 1,030,073-token needle through the Orin gateway as model=associate, STREAMED (06:52:47Z-07:26:07Z)
+
+  {"mode": "stream", "status": 200, "prompt_tokens": 1030073, "completion_tokens": 256,
+   "reply_head": "MAROON-4817 is the answer. Once upon a time, there was a sai", "pass": true,
+   "first_byte_s": 1971.42, "ttft_s": 1971.42, "decode_tok_s_at_depth": 8.82, "wall_s": 2000.3}
+This used a different prompt length from step 9 (1,030,000 filler words), so there was no prefix-cache hit and the prefill was
+genuinely cold. first_byte_s == ttft_s: vLLM v0.27.1 sent NO bytes (no role chunk, no keep-alive) until the first generated
+token, ~1,971 s after the request. A streamed cold 1M request is therefore exposed to the gateway read timeout exactly like a
+non-streamed one, and would also have failed under the old 600 s timeout. This is the evidence for frame park v5, which stays
+open until the operator resolves it. Decode at 1.03M depth was 8.82 tok/s (A/B NVFP4 at 1.04M: 7.98 cold / 7.72 repeat).
+After the request: vllm-associate restarts=0 OOMKilled=false; gateway restarts=0 OOMKilled=false.
+
+## Step 11 — agentic, 2 sessions x 12 turns x ~8,000 tool-result tokens, through the gateway as model=associate (07:26:07Z-07:29:26Z)
+
+  session 0: final_prompt_tokens 117929, recalled 3/3 (want 896,461,547 got 896,461,547)
+  session 1: final_prompt_tokens 117967, recalled 3/3 (want 915,193,516 got 915,193,516)
+  SUMMARY {"sessions": 2, "turns": 12, "pad_tokens_per_turn": 8000, "wall_s": 198.4, "tool_call_ok": "24/24",
+           "max_prompt_tokens": 117967, "recall": "6/6", "ttft_s_p50": 15.941, "ttft_s_max": 21.331,
+           "decode_tok_s_p50": 122.55, "decode_tok_s_min": 89.45}
+Compared with the A/B's same 2-session run against the lane directly (NVFP4 arm: wall 119.1 s, TTFT p50 8.598 s), this run
+through the gateway on the rendered shape took 198.4 s wall with TTFT p50 15.941 s. The spec sets no wall-time threshold,
+so this is recorded, not failed. The cause is NOT isolated here. Candidates, unverified:
+- the gateway hop;
+- the refreshed compose (reranker chat template) and resident-set differences;
+- prefix-cache state after two cold 1M prefills.
+
+## Step 12 — stability after the agentic run (07:29:26Z)
+
+  /model-gear-vllm-associate restarts=0 oomkilled=false status=running started=2026-09-13T06:00:34.752286553Z
+  /model-gear-vllm-embed     restarts=1 oomkilled=false status=running started=2026-09-13T06:08:41.459955048Z
+  /model-gear-vllm-rerank    restarts=0 oomkilled=false status=running started=2026-09-13T06:06:39.341366192Z
+  /model-gear-gateway        restarts=0 oomkilled=false status=running started=2026-09-13T06:09:51.398416649Z
+  kernel 'Killed process' lines (all time): 2. Both predate this run (Orin dmesg timestamps are local UTC+3):
+    [Sat Sep 12 15:45:38 2026] = 2026-09-12 12:45:38 UTC and [Sun Sep 13 04:45:52 2026] = 2026-09-13 01:45:52 UTC
+  min avail sample (free-mem.log, 30 s): 2026-09-13T07:09:49Z used=60891 free=516 avail=1925
+  peak tj (tegrastats, 5 s): 97.562 C
+  07:29:26Z == ALL DONE
+
+embed RestartCount 1 is the gear first-start race recorded in the measure transcript: embed's first start failed with
+"No available memory for the cache blocks" and Docker's restart=unless-stopped retried it. Its current container started
+06:08:41Z and stayed up for the rest of the run.
+
+Headroom: the whole-run minimum available host memory on the shipped shape was 1,925 MiB (07:09:49Z, during the streamed
+1.03M prefill). That is lower than the A/B's 2,588 MiB (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt).
+Both runs had embed, rerank and the gateway container up, so the gap is not explained by an extra resident container, and
+its cause is not isolated. Per approved deviation d2 (issue #260), the docs quote the shipped shape's minimum as the operating
+headroom and keep 2,588 MiB as the A/B figure. Peak tj 97.6 C is higher than the A/B's 94.5 C over a longer continuous load;
+no throttle event was examined beyond tegrastats temperatures.
+
+## Addendum — associate-first boot enforced on a plain compose up (deviation d4, 2026-09-13 08:41-08:51Z)
+
+The rollout above started the lanes with role-targeted `lobes up` (--no-deps), so it never exercised the base
+template's start order: `vllm-associate` depends_on both pooling gears (service_healthy), which boots them FIRST.
+That is the order where util 0.70 is unmeasured at 1M and was refused at 128K. Qodo flagged it on PR #261; approved
+deviation d4 made the generated docker-compose.shape.yml reverse it for shapes hosting associate (commit 4b9be8c).
+
+Re-rendered on the Orin with the fix (lobes 0.78.0 from 4b9be8c). Resolved `docker compose config`:
+  vllm-associate depends_on = None
+  vllm-embed     depends_on = {'vllm-associate': {'condition': 'service_healthy', 'required': True}}
+  vllm-rerank    depends_on = {'vllm-associate': {'condition': 'service_healthy', 'required': True}}
+  gateway        depends_on = None
+
+All lanes were stopped at 08:41:25Z. The literal `lobes fleet up --apply` then FAILED before starting anything: it runs
+`up -d --build`, and the gateway image build pip-installs lobes-cli==MODEL_GEAR_VERSION, here 0.78.0, an unpublished
+branch build. This outage was caused by the check. The fleet was restored with the same file set
+(docker-compose.yml, docker-compose.gpu.yml, docker-compose.shape.yml, docker-compose.override.yml) and
+`docker compose ... up -d --no-build`. That restore is the live order check (5 s samples, restore-samples.log):
+
+  08:42:38Z  vllm-associate running|starting, gateway running|healthy, vllm-embed=created, vllm-rerank=created
+  +118 s     vllm-associate running|starting; vllm-embed and vllm-rerank still `created` (waiting on associate)
+  08:48:34Z  vllm-embed and vllm-rerank StartedAt (associate healthy; first all-associate-healthy sample at +361 s)
+  08:50:33Z  vllm-embed restarted once (RestartCount 1; the known gear first-start race)
+  08:51:32Z  all four healthy; associate restarts 0; GET /capabilities associate context 1048576 ready true
+
+The kernel log still has 2 'Killed process' lines, both predating this run. associate was unavailable from
+08:41:25Z to about 08:48:34Z.
+
+Finding (pre-existing, not introduced by d4): a plain `lobes fleet up --apply` cannot start a fleet whose
+MODEL_GEAR_VERSION names an unpublished lobes-cli, because the gateway `--build` step fails first.
+
+## Rollback (not exercised)
+
+The pre-change configuration is documented in lobes/profiles/builtin_shapes/orin-associate.toml's ROLLBACK note: associate
+at 128000 / util 0.70 / 8192, with no max_num_seqs. To return to it, restore /home/orin/.lobes/.env.bak-20260913T060018Z-pre-associate-1m
+(or untar /home/orin/lobes-dir-backup-20260913T060018Z.tgz), then `lobes up associate --apply`, the gears, and
+`lobes up gateway --apply`.
+
+## Raw data
+
+On the Orin: ~/lightning-spike/rollout/{driver.log, free-mem.log, tegrastats.log, init-dryrun.json, capabilities-before.json,
+capabilities-after.json, lane-models.json, probes-gateway.json, probes-direct.json, needle-1m-nostream.json,
+needle-1m-stream.json, agentic-2x12x8k.jsonl, associate-boot-lines.txt, pre/ (compose, override, shape, Dockerfile.gateway
+and .env before apply)}. Probe and bench scripts: ~/lightning-accept-probe.py and ~/lightning-bench.py
+(BENCH_BASE/BENCH_MODEL/BENCH_API_KEY).
