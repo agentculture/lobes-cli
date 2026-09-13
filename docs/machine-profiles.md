@@ -237,6 +237,14 @@ pool; on dedicated-VRAM boards (RTX PRO 6000) it is true discrete VRAM.
 - `base` cortex: `0.30` — safe default for unknown hardware (small model, so
   conservative util).
 - `base` embedder/reranker: `0.06` each.
+- `orin-associate` shape's `associate` override: `0.70` — the opt-in tenth
+  Colleague role at its native 1,048,576-token window, MEASURED live
+  2026-09-13 (`docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt`,
+  the NVFP4-vs-W4A16 A/B; ACCEPTED on the rendered shape
+  `docs/evidence/2026-09-13-accept-orin-associate-1m.txt`). HISTORY
+  (superseded 2026-09-13): an earlier 2026-08-25 measurement found `0.63`
+  refused at boot and `0.56` accepted at `max_model_len=128000`
+  (`docs/evidence/2026-08-25-measure-associate-budget-orin.txt`).
 
 #### `max_model_len` (typical values: 8192–262144 tokens)
 
@@ -257,6 +265,10 @@ Tuned per card to balance headroom and capability.
 - `base` cortex: `32768` (32K) — the small 4B model's cap on unknown hardware,
   conservative.
 - `base` embedder/reranker: `8192` (8K) — same as spark.
+- `orin-associate` shape's `associate` override: `1048576` (the checkpoint's
+  native ceiling) — MEASURED live 2026-09-13, both the A/B and the accepted
+  rendered shape (paths above). HISTORY (superseded 2026-09-13): `128000`
+  was the earlier accepted value (`docs/evidence/2026-08-26-accept-orin-associate.txt`).
 
 #### `quantization` (typical values: `"modelopt"`, `"compressed-tensors"`, or omitted)
 

@@ -421,26 +421,61 @@ that rules out the cortex and muse NVFP4 exports on Ampere. vLLM accepts
 the "Warming up Mamba2 SSD Triton kernels" step that wedged the Jetson AGX Thor
 indefinitely on two engine versions — that no-go is sm_110-specific.
 
-**MEASURED live, 2026-08-26** (`docs/evidence/2026-08-26-accept-orin-associate.txt`,
-the `orin-associate` shape: associate + hand + embedder + reranker, no cortex, no
-senses, no audio): `ASSOCIATE_GPU_MEM_UTIL=0.56` at `max_model_len=128000` —
-weights 17.81 GiB, KV 9.35 GiB, pool 1,524,000 tokens, 11.91x concurrency. Both
-higher hypotheses are recorded as REFUSED rather than dropped: the vendor's 0.70,
-and 0.63 (which fit the gears but not `hand`, whose 5.84 GiB resident is 59% more
-than its declared util implies). Probes: known-answer PASS, multi-step reasoning
-PASS, structured tool calls PASS, and unauthenticated requests — including over
-the tailnet address — refused 401. Throughput, at the same depths as this board's
-own llama.cpp GGUF cortex and WITHOUT speculation: **52.5 tok/s decode at 32768
-depth with NO decay across 0->32768, vs 2.43 tok/s (~21.6x); TTFT 16.9 s vs
-610.0 s (~36x); prefill ~1,612 vs ~64 tok/s.** NVIDIA's "89 tok/s on Jetson AGX
-Orin" is deliberately NOT used as a comparator: it is an agentic-workload
-aggregate with speculation, and three separate defects were found in that page's
-published recipes (a nonexistent llama.cpp quantization tag, a GGUF that will not
-load in NVIDIA's own Jetson-Orin image, and a vLLM DSpark repo id missing its
-`-NVFP4` infix). **Still open:** DSpark is wired but default-off and UNMEASURED
-on the full shape; the shape leaves only ~1 GiB free on a ZERO-swap board (see
-issue #216); and no peer has addressed this lane cross-box. See
-`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md`.
+**HISTORY — MEASURED live, 2026-08-26, superseded by the 1M work below**
+(`docs/evidence/2026-08-26-accept-orin-associate.txt`, the `orin-associate`
+shape as it existed then: associate + hand + embedder + reranker, no cortex,
+no senses, no audio): `ASSOCIATE_GPU_MEM_UTIL=0.56` (HISTORICAL — superseded)
+at `max_model_len=128000` (HISTORICAL — superseded) — weights 17.81 GiB, KV
+9.35 GiB, pool 1,524,000 tokens (HISTORICAL — superseded), 11.91x concurrency
+(HISTORICAL — superseded). Both higher hypotheses were recorded as REFUSED
+rather than dropped: the vendor's 0.70, and 0.63 (HISTORICAL — superseded;
+which fit the gears but not `hand`, whose 5.84 GiB resident is 59% more than
+its declared util implies). Probes: known-answer PASS, multi-step reasoning
+PASS, structured tool calls PASS, and unauthenticated requests — including
+over the tailnet address — refused 401. Throughput, at the same depths as
+this board's own llama.cpp GGUF cortex and WITHOUT speculation: **52.5 tok/s
+decode at 32768 depth with NO decay across 0->32768, vs 2.43 tok/s (~21.6x);
+TTFT 16.9 s vs 610.0 s (~36x); prefill ~1,612 vs ~64 tok/s.** NVIDIA's "89
+tok/s on Jetson AGX Orin" is deliberately NOT used as a comparator: it is an
+agentic-workload aggregate with speculation, and three separate defects were
+found in that page's published recipes (a nonexistent llama.cpp quantization
+tag, a GGUF that will not load in NVIDIA's own Jetson-Orin image, and a vLLM
+DSpark repo id missing its `-NVFP4` infix).
+
+**MEASURED live, 2026-09-13 — associate now runs at its native 1,048,576
+(1M) window** (issue #260). An A/B first checked whether a `useful-quants`
+W4A16 requant could replace the NVFP4 checkpoint at 1M
+(`docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt`): both
+booted at `max_model_len=1048576`, `gpu_mem_util=0.70`,
+`max_num_batched_tokens=8192`, `max_num_seqs=2`, DSpark x5, on
+`vllm/vllm-openai:v0.27.1`; NVFP4 measured KV pool 17.34 GiB = 2,889,456
+tokens = 2.76x capacity ceiling at 1M, cold 1,040,073-token needle PASS
+(TTFT 2390.17 s, decode 7.98 tok/s at depth), 2-session agentic PASS
+(24/24 tool calls, 6/6 recall, wall 119.1 s), minimum available host memory
+2,588 MiB. W4A16 did not clear the operator's >= 10% win rule (1M decode
+-7%, agentic wall -0.7% to -1.1% faster only), so associate STAYS on NVFP4 —
+`hand` is dropped from the shape's hosted set at this budget (the render no
+longer hosts it alongside associate/embedder/reranker at util 0.70). The
+render was then accepted live
+(`docs/evidence/2026-09-13-accept-orin-associate-1m.txt`): `lobes init
+--shape orin-associate --profile orin --apply --force` booted associate
+FROM THAT RENDER at the same knobs, KV pool 2,899,067 tokens (2.76x), `GET
+/capabilities` moved from context 128000 to 1048576, all probes PASS
+through the gateway and directly on the lane, a cold >= 1M needle PASSED
+both non-streamed (1,040,073 tokens, 2,495.1 s wall) and streamed
+(1,030,073 tokens, first byte at 1,971.42 s) — proving out the rendered
+`GATEWAY_READ_TIMEOUT=7200` (decision c30, Orin-only; other members keep
+600 s) — and the 2-session agentic run PASSED (24/24 tool calls, 6/6
+recall) with associate restarts 0. Minimum available host memory on the
+shipped, accepted shape was **1,925 MiB** (not the A/B's 2,588 MiB; per
+approved deviation d2 on issue #260, quote both, never 2,588 MiB alone —
+the gap between the two runs is not isolated and no cause should be
+invented for it). **Now answered:** DSpark IS measured on the rendered
+shape (both transcripts above). **Still open:** no peer has addressed this
+lane cross-box; W4A16 is not adopted and carries no catalog entry; `hand`
+does not co-reside with associate at this budget. See
+`docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md` and
+`docs/orin-associate-deployment.md`.
 
 **`hand` — the ninth role, the fleet's FINE-TUNING BASE (default-hosted
 everywhere).** Checkpoint: `LiquidAI/LFM2.5-1.2B-Instruct` (a ~1.2B hybrid
