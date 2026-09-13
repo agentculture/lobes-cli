@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-13T05:20:28Z",
-  "updated": "2026-09-13T05:50:27Z",
+  "updated": "2026-09-13T12:25:15Z",
   "targets": [
     {
       "id": "c1",
@@ -507,8 +507,8 @@
       "text": "re-scaffolding the Orin with lobes init --shape orin-associate --apply --force OVERWRITES docker-compose.yml, Dockerfile.gateway, qwen3_reranker.jinja, mg-logwrap.sh and the tool-parser plugin from the packaged templates with NO backup (lobes/runtime/_compose.py:471-525, :242-259); docker-compose.override.yml (mesh block) is never written by init (_compose.py:130-137); .env rendered keys are rewritten in place via set_env while unrendered operator keys (ASSOCIATE_IMAGE, ASSOCIATE_SPECULATIVE_CONFIG, GATEWAY_API_KEY, LOBES_MESH_*) are preserved (init.py:588-624). --force is required for the t1 compose knob to exist on the box, so t5 must tar-backup ~/.lobes first (including the local-wheel Dockerfile.gateway) and diff afterwards",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "Mitigated, nothing lost: before rendering, ~/.lobes was tarred (including the local-wheel Dockerfile.gateway) and .env backed up, and the result was diffed afterwards (docs/evidence/2026-09-13-accept-orin-associate-1m.txt step 1). docker-compose.override.yml was untouched and operator-typed .env keys were preserved. The only side effect was the stale compose coming up to date, which gave the reranker the #227 chat template (delta b4). The product gap (init --force overwrites without a backup) is noted in #265."
     },
     {
       "id": "r2",
@@ -523,8 +523,8 @@
       "text": "acceptance wall time and associate downtime: two cold >= 1M requests through the gateway (~40 min each, measured 2,390 s TTFT) plus the 2-session agentic run and boot; with max_num_seqs=2 they must run sequentially (head-of-line, frame park v3)",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "Realized as planned: associate offline 06:00:31-06:06:36Z; embed and rerank lanes back at 06:09:40Z; the cold >=1M needles and the 2-session agentic run then ran sequentially against the live lane (accept transcript). The separate ~7 min 08:41-08:48Z outage came from the d4 live check and is tracked in #262. Tracked in #265."
     }
   ],
   "obligations": []

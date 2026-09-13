@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.78.3] - 2026-09-13
+
+### Changed
+
+- Resolve frame park v5 and plan risks r1/r3 for plan orin-associate-at-1m from the accept transcript; parks v3/v4 stay open, tracked in #265.
+
 ## [0.78.2] - 2026-09-13
 
 ### Changed

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-13T01:51:16Z",
-  "updated": "2026-09-13T12:03:07Z",
+  "updated": "2026-09-13T12:24:51Z",
   "claims": [
     {
       "id": "c1",
@@ -575,8 +575,8 @@
       "text": "whether vLLM v0.27.1 streaming emits any bytes (role chunk, headers) before the first generated token; if it does, a streamed cold 1M request might survive a 600 s gateway read timeout while a non-streamed one does not; unprobed",
       "kind": "unknown_nonblocking",
       "claim_id": null,
-      "resolved": false,
-      "resolution": "",
+      "resolved": true,
+      "resolution": "Answered by docs/evidence/2026-09-13-accept-orin-associate-1m.txt step 10: vLLM v0.27.1 emits no bytes before the first generated token, so a streamed cold 1M request fails a 600 s gateway read timeout exactly like a non-streamed one. The Orin card's GATEWAY_READ_TIMEOUT=7200 covers both; both cold >=1M requests passed through the gateway (non-streamed 2,495.1 s wall; streamed first byte at 1,971.42 s). Tracked in #265.",
       "resolution_claim_id": null
     }
   ],
