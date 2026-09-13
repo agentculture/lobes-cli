@@ -2,7 +2,7 @@
   "plan_slug": "orin-associate-at-1m",
   "schema_version": 2,
   "created": "2026-09-13T05:41:01Z",
-  "updated": "2026-09-13T07:49:15Z",
+  "updated": "2026-09-13T07:55:39Z",
   "deviations": [
     {
       "id": "d1",
@@ -48,7 +48,446 @@
       "seq": 3
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_associate_compose.py::TestDeclaredKnobsRenderNoDeadDeclarations::test_max_num_seqs_set_renders_flag + ::test_max_num_seqs_unset_renders_no_token",
+      "behavior_text": "docker compose config renders --max-num-seqs=2 when set and no token when unset",
+      "contract_text": "c2/h2: conditional --max-num-seqs knob",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the 187-test obligation run on the merged branch",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_tool_parser_plugin.py::TestOtherServicesUntouched::test_every_non_primary_service_hash_unchanged",
+      "behavior_text": "only vllm-associate's service hash moved (recomputed with a dated comment); every other non-primary service hash byte-identical",
+      "contract_text": "d1: the associate lane change is scoped to vllm-associate",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the obligation run after deviation d1",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_associate_compose.py::TestAssociateAllowLongMaxModelLen",
+      "behavior_text": "raw environment declares the passthrough; default 0; override reaches 1",
+      "contract_text": "c3/h3: allow-long passthrough mirroring vllm-primary",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "3 tests passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_associate_exposure.py (whole file)",
+      "behavior_text": "exposure assertions pass; file unchanged versus main (git diff --stat: empty)",
+      "contract_text": "c4/h11: exposure contract unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the obligation run; git diff against main is empty",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_catalog.py::test_exactly_one_associate_gear + ::test_exactly_one_associate_gear_detects_an_injected_duplicate",
+      "behavior_text": "count of role_hint=='associate' is 1 and names nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4; the helper reports 2 on a copy with a duplicate",
+      "contract_text": "c10/h6/h23: single associate gear, no W4A16 entry",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "2 tests passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_orin_gateway_read_timeout.py (3 tests)",
+      "behavior_text": "orin render emits GATEWAY_READ_TIMEOUT=7200; spark/thor/base do not; the lock allowlist includes the key",
+      "contract_text": "c26: shipped timeout knob",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "3 tests passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o5",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt steps 9-10",
+      "behavior_text": "non-streamed 1,040,073-token needle 200 PASS wall 2495.1 s; streamed 1,030,073-token needle 200 PASS first byte 1971.42 s; both through the Orin gateway as model=associate with GATEWAY_READ_TIMEOUT=7200",
+      "contract_text": "c26/h19: cold >= 1M completes through the gateway",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live on the physical Orin during the t5 rollout",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:26:07Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_orin_associate_shape.py::test_declares_the_full_associate_override_matching_the_card_documentation + ::test_associate_renders_feasible_with_its_full_declaration_despite_the_card_veto",
+      "behavior_text": "shape override values and rendered ASSOCIATE_* env match the 1M budget",
+      "contract_text": "c7/h4/h16: measured 1M budget in the shape",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o6",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt steps 3-5",
+      "behavior_text": "live render showed ASSOCIATE_MAX_MODEL_LEN=1048576 / util 0.7 / 8192 / max_num_seqs 2 and the engine booted with that argv, KV 2,899,067 tokens",
+      "contract_text": "c7/c17: the rendered budget boots",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "measured live on the physical Orin",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T06:06:36Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_orin_associate_shape.py::test_hosts_associate_plus_pooling_gears_and_drops_hand_and_every_other_role",
+      "behavior_text": "hosts set and dropped roles asserted; goldens regenerated",
+      "contract_text": "c25/h10: three hosted roles",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o8",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt steps 0 and 7",
+      "behavior_text": "capabilities associate context 128000 before, 1048576 after; lane /v1/models max_model_len 1048576",
+      "contract_text": "c11/h7: advertised and live window agree at 1M",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "read live from the Orin gateway and the lane",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T06:10:02Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o9",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt steps 5-12",
+      "behavior_text": "healthy after 360 s; probes 3/3 via gateway + direct 42; needles PASS; agentic 24/24 tools 6/6 recall; associate restarts 0; no new kernel OOM",
+      "contract_text": "c18/h1/h13/h17: acceptance success signal",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "full acceptance run on the physical Orin, 07:29:26Z ALL DONE",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:29:26Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o9",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt step 4 (compose diff)",
+      "behavior_text": "lobes init --force brought the stale Orin compose current, adding the #227 judge-prompt --chat-template and its bind mount to vllm-rerank",
+      "contract_text": "t5 re-scaffold side effect recorded in the accept transcript",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "pre/post compose diff captured by the rollout driver",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T06:00:31Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o10",
+      "test_ref": "docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt",
+      "behavior_text": "rows for NVFP4 and W4A16: boot, KV pool, probes, needles cold/repeat, concurrency, agentic 1/2 sessions, tj, min memory, OOM/restarts; verdict quotes the >= 10% rule (1M decode -7%, agentic -1%/-0.7%, keep NVFP4)",
+      "contract_text": "c19/h18: A/B recorded and decided by the stated rule",
+      "evidence_type": "manual",
+      "strength": "fidelity",
+      "strength_basis": "transcript assembled from the raw driver results and reviewed against compare.md",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o11",
+      "test_ref": "docs/evidence/2026-09-13-accept-orin-associate-1m.txt step 12 + docs/orin-associate-deployment.md",
+      "behavior_text": "RestartCount embed 1, rerank 0 quoted; race-doc grep hits: 1",
+      "contract_text": "c27/h20",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "docker inspect read live after the agentic run; doc grep at the merged commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:29:26Z",
+        "commit": "6eeacca"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o12",
+      "test_ref": "lobes/profiles/builtin_shapes/orin-associate.toml ROLLBACK note + docs/evidence/2026-09-13-accept-orin-associate-1m.txt step 1",
+      "behavior_text": "rollback note present (grep hits 1); dated .env backup path quoted (grep hits 2)",
+      "contract_text": "c28/h21",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "grep at the merged commit",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o13",
+      "test_ref": "docs/orin-associate-deployment.md",
+      "behavior_text": "grep hits 1,925 MiB: 2, 2,588 MiB: 2, capped side-process rule: 2",
+      "contract_text": "c29/h22 as amended by d2",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "grep at the merged commit",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e18",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_orin_associate_shape.py::test_claims_validation_only_by_citing_the_accept_transcript + tests/test_gateway_fleet_doc.py",
+      "behavior_text": "shape claims VALIDATED only with the accept citation; stale 'no box has booted this SHAPE' gone; doc-alignment tests pass",
+      "contract_text": "c9/h5 and deviation d3",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "passed in the obligation run",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-13T07:52:44Z",
+        "commit": "b6a287b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 21
+    },
+    {
+      "id": "e19",
+      "obligation_ref": "o14",
+      "test_ref": "grep 0.56|1,524,000|11.91|16384 over the five docs excluding lines marked historical/superseded and the Spark 0.30+0.14+0.06+0.06 budget sum",
+      "behavior_text": "unmarked retired literals: CLAUDE.md:222:0.56` on the 128 GB GB10. These are the **machine-as-brain** (default) | docs/machine-profiles.md:246:  refused at boot and `0.56` accepted at `max_model_len=128000` | docs/orin-associate-deployment.md:66:`--max-num-seqs`, and `--max-num-batched-tokens 16384` \u2014 kept here for the | docs",
+      "contract_text": "h5: retired literals only historical",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "grep at the merged commit",
+      "outcome": "fail",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 22
+    },
+    {
+      "id": "e20",
+      "obligation_ref": "o15",
+      "test_ref": "grep for both transcript paths in the five docs",
+      "behavior_text": "per-file (measure, accept) citation counts: {'CLAUDE.md': ('1', '1'), 'docs/deployment-shapes.md': ('2', '2'), 'docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md': ('1', '1'), 'docs/machine-profiles.md': ('1', '1'), 'docs/orin-associate-deployment.md': ('5', '3')}",
+      "contract_text": "c12/h8",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "grep at the merged commit",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 23
+    },
+    {
+      "id": "e21",
+      "obligation_ref": "o14",
+      "test_ref": "context review of the six lines e19 flagged: CLAUDE.md:219-223, docs/machine-profiles.md:240-247, docs/orin-associate-deployment.md:62-90 and :183-212",
+      "behavior_text": "all six hits are compliant: CLAUDE.md:222 continues the Spark GB10 budget sum 0.30+0.14+0.06+0.06 = 0.56 (not an Orin associate figure); machine-profiles.md:246 sits in the sentence opened by 'HISTORY (superseded 2026-09-13)'; orin-associate-deployment.md:66 and :90 sit under the heading '### HISTORY (superseded 2026-09-13): the original 128,000-token docker run'; :191 and :209 quote the compose template's generic :-16384 fallback, which the doc states is not the shape's number. e19's fail came from a line-scoped grep filter that could not see an enclosing heading or a wrapped sentence.",
+      "contract_text": "h5: retired associate budget literals appear only where marked historical (criterion read at sentence/section scope)",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "each flagged line read in context at the merged commit",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 24
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "the vllm-associate service hash lock in tests/test_tool_parser_plugin.py was recomputed for the new knobs; all other service hashes unchanged",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e2"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "the Orin associate docs quote 1,925 MiB as the shipped shape's minimum available memory at 1M alongside the A/B's 2,588 MiB, instead of 2,588 MiB alone",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e17"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "the orin-associate shape header and summary say VALIDATED live 2026-09-13 citing the accept transcript, and the pinning test asserts that citation",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [
+        "e18"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "the Orin reranker now serves with the #227 judge-prompt chat template, a side effect of the t5 re-scaffold bringing the stale compose current",
+      "caused_by": [
+        "c18"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
