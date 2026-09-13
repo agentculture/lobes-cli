@@ -16,13 +16,13 @@ Edit the Owner/Model columns before approving gate 2 — the default Model is a 
 
 | Task | Owner | Model |
 | --- | --- | --- |
-| `t1` |  | sonnet |
-| `t2` |  | sonnet |
-| `t3` |  | sonnet |
-| `t4` |  | sonnet |
-| `t6` |  | sonnet |
-| `t5` |  | sonnet |
-| `t7` |  | sonnet |
+| `t1` | subagent (worktree agent-orin1m-t1) | sonnet |
+| `t2` | subagent (worktree agent-t2) | sonnet |
+| `t3` | main agent (in-house: figures trace to the A/B raw data) | opus |
+| `t4` | subagent | sonnet |
+| `t6` | subagent (main agent reviews) | sonnet |
+| `t5` | main agent (in-house: live Orin rollout, standing drop/raise approval) | opus |
+| `t7` | subagent | sonnet |
 
 ## Wave 1
 
