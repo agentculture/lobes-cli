@@ -567,4 +567,22 @@ max_model_len = 8192
 #   ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
 [host_env]
 LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+# GATEWAY_READ_TIMEOUT: the gateway's socket-read timeout on every upstream
+# POST (lobes/gateway/server.py; default 600 s, lobes/gateway/_config.py's
+# GATEWAY_READ_TIMEOUT). MEASURED 2026-09-13
+# (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt): a cold,
+# 1,040,073-token associate prompt at the 1M window took 2,390.17 s TTFT on
+# this board's NVFP4 arm — nearly 4x the 600 s default, which would abort the
+# request from under the model before a first token ever streams back. 7200 is
+# ~3x that measured cold TTFT, leaving headroom rather than pinning the raw
+# number.
+#
+# Decision c30 (operator): ORIN-ONLY. Spark and Thor keep the 600 s default —
+# neither serves a lane with a cold TTFT anywhere near this board's, and
+# raising it fleet-wide would hide a genuinely wedged request on those boxes
+# for over two hours instead of the intended few minutes. A cold associate
+# request whose TTFT would exceed a *different* mesh member's own (unraised)
+# timeout is supported only by reaching this board's gateway directly, not by
+# proxying through a member still running the 600 s default.
+GATEWAY_READ_TIMEOUT = "7200"
 
