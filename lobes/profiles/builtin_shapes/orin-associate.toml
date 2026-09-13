@@ -47,8 +47,9 @@ summary = "Jetson AGX Orin 64GB associate-lobe (DECLARED, UNVALIDATED) -- Lightn
 # cheap enough (~2.4 GiB) to keep resident everywhere, so a caller always has a
 # local generate lane and a local fine-tuning base. THIS shape is the
 # exception: the 2026-09-13 A/B that measured the budget below never started
-# `hand`, and at the full 1,048,576-token window the associate engine alone
-# leaves only ~2.6 GiB of host memory free on a ZERO-swap board (see the
+# `hand`, and at the full 1,048,576-token window the associate engine plus the
+# two pooling gears left only ~2.6 GiB of host memory free (minimum 2,588 MiB,
+# during the 1.04M prefill) on a ZERO-swap board (see the
 # override comment) — there is no margin left for hand's ~5.8 GiB resident
 # footprint (orin.toml's own [roles.associate] documentation records hand
 # holding 59% more than its declared util implies). A box on this shape has no
@@ -80,9 +81,11 @@ model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 # gpu_mem_util 0.70, max_model_len 1048576, max_num_batched_tokens 8192 and
 # max_num_seqs 2 are ALL measured together, live on the physical Jetson AGX
 # Orin, 2026-09-13
-# (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt) — the same
-# quadruple as the live Orin's pre-change hand-typed `.env` (see "Before
-# state" in that file), now promoted into this shape's declaration. Unlike
+# (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt). The live
+# Orin's pre-change hand-typed `.env` already carried util 0.70 and 8192
+# batched tokens, but at max_model_len 128000 and with no max_num_seqs cap
+# (see "Before state" in that file); the window and the sequence cap are what
+# this measurement adds, and all four now live in this shape's declaration. Unlike
 # every earlier measurement on this shape, the boot order was
 # ASSOCIATE-FIRST: the associate engine was booted to healthy BEFORE embed and
 # rerank were started, not gears-first as the 2026-08-26 measurement below
@@ -103,8 +106,9 @@ model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 # turns each, to ~118K tokens) PASSED with zero OOM. Minimum available host
 # memory over the run was 2,588 MiB (during the 1.04M prefill) on this
 # ZERO-swap board — thin, and the reason `hand` stays out of `hosts` above.
-# Peak thermal (tegrastats) was 94.0 C. Zero container restarts, zero kernel
-# OOM kills.
+# Peak thermal (tegrastats) was 94.0 C. Zero restarts of the associate engine
+# container, zero kernel OOM kills (embed's first-start retries are the
+# operational finding below, not engine restarts).
 #
 # OPERATIONAL FINDING, not a knob: embed failed its FIRST start every time the
 # gears were started (together) right after the associate engine went
@@ -153,6 +157,16 @@ max_num_seqs = 2
 # Both refusal histories (0.70/0.63 at 128K gears-first, and the 0.70 solved
 # at 1M associate-first) are kept here rather than collapsed into the
 # surviving numbers — the boot-order and co-residency dependence is the point.
+#
+# ROLLBACK (the pre-1M live configuration, 2026-09-12 to 2026-09-13): associate
+# at max_model_len 128000, gpu_mem_util 0.70, max_num_batched_tokens 8192, no
+# max_num_seqs cap, same checkpoint/image/DSpark, embed + rerank resident,
+# associate booted first. To return to it, set those three keys (and drop
+# ASSOCIATE_MAX_NUM_SEQS) in the box's .env — or restore the dated .env backup
+# the 1M rollout takes — then recreate vllm-associate AND the gateway (the
+# gateway's advertised context comes from its own process env). Quoted from the
+# "Before state" section of
+# docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt.
 #
 # modelopt -- Lightning's own quant_method; vLLM resolves it to
 # modelopt_mixed and picks the Marlin fallback stack on sm_87 (see above).
