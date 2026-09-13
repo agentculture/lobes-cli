@@ -239,7 +239,10 @@ def test_end_to_end_init_render_activates_associate(tmp_path, monkeypatch) -> No
     shape_override = (tmp_path / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
     assert "  vllm-primary:" in shape_override
     assert "  vllm-multimodal:" in shape_override
-    assert "vllm-associate" not in shape_override  # hosted lane is never parked
+    # The hosted lane is never parked; it appears only to reverse the base template's
+    # gears-first start order (approved deviation d4, issue #260).
+    assert '  vllm-associate:\n    profiles: ["shape-dropped"]' not in shape_override
+    assert "  vllm-associate:\n    depends_on: !reset null" in shape_override
 
     dropped = init_cmd._shape_dropped_services(resolve_shape(_SHAPE), resolve_profile(_CARD))
     assert dropped == ["vllm-hand", "vllm-multimodal", "vllm-primary"]

@@ -230,7 +230,54 @@ def render_shape_override(shape: Shape, profile: Profile) -> str | None:
     for service in dropped:
         lines.append(f"  {service}:")
         lines.append(f'    profiles: ["{SHAPE_DROPPED_PROFILE}"]')
+    lines.extend(_associate_first_boot_lines(shape, profile))
     return "\n".join(lines) + "\n"
+
+
+# Start-order edges a shape hosting `associate` must reverse (orin-associate-at-1m
+# plan, approved deviation d4, issue #260). The base template makes vllm-associate
+# wait for both pooling gears to be healthy — a GEARS-FIRST boot. On the Jetson AGX
+# Orin that order REFUSED gpu_mem_util 0.70 at 128K (2026-08-26), and the shipped 1M
+# budget (util 0.70) was measured and accepted ASSOCIATE-FIRST only
+# (docs/evidence/2026-09-13-accept-orin-associate-1m.txt). gpu_memory_utilization is
+# a fraction of the whole device checked against free memory at startup, so the
+# heavy engine must claim its share before the gears do.
+_ASSOCIATE_SERVICE = "vllm-associate"
+_ASSOCIATE_FIRST_GEARS = ("embedder", "reranker")
+
+
+def _associate_first_boot_lines(shape: Shape, profile: Profile) -> list[str]:
+    """Override lines that make a plain ``docker compose up`` boot associate FIRST.
+
+    Empty unless the shape hosts ``associate`` on its vLLM lane. Otherwise the
+    ``vllm-associate`` ``depends_on`` is cleared with the compose ``!reset`` tag and
+    each hosted pooling gear gains a ``service_healthy`` dependency on
+    ``vllm-associate``, so ``lobes fleet up --apply`` reproduces the measured order.
+    Role-targeted starts (``lobes up <role>``) carry ``--no-deps`` and are unaffected.
+    """
+    if not shape.hosts_role("associate"):
+        return []
+    composed = compose_profile(shape, profile)
+    if role_service("associate", composed.role("associate")) != _ASSOCIATE_SERVICE:
+        return []
+    lines = [
+        "  # Associate-first boot (approved deviation d4, issue #260): the shipped",
+        "  # associate budget is measured with associate healthy BEFORE the pooling",
+        "  # gears start; the base template's gears-first edge is reversed here.",
+        f"  {_ASSOCIATE_SERVICE}:",
+        "    depends_on: !reset null",
+    ]
+    for gear in _ASSOCIATE_FIRST_GEARS:
+        if shape.hosts_role(gear):
+            lines.extend(
+                [
+                    f"  {ROLE_SERVICE[gear]}:",
+                    "    depends_on:",
+                    f"      {_ASSOCIATE_SERVICE}:",
+                    "        condition: service_healthy",
+                ]
+            )
+    return lines
 
 
 def _sync_shape_override(target: Path, shape: Shape, profile: Profile) -> None:
