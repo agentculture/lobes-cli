@@ -1636,6 +1636,15 @@ services:
   #   --max-num-batched-tokens       ASSOCIATE_MAX_NUM_BATCHED_TOKENS, default
   #     16384 (the recipe's value).
   #
+  #   --max-num-seqs                 NOT one of NVIDIA's eight — added by
+  #     orin-associate-1m t1, copying the worker lane's own idiom
+  #     (WORKER_MAX_NUM_SEQS, ~line 1541 above): ASSOCIATE_MAX_NUM_SEQS is a
+  #     VAR:+--flag=VAR conditional slot, so unset renders NO argv token (a
+  #     plain boot is byte-identical to before this knob existed). A
+  #     1M-token window leaves little KV headroom per sequence, so capping
+  #     concurrent sequences (e.g. ASSOCIATE_MAX_NUM_SEQS=2) is how an
+  #     operator trades concurrency for reach at that depth.
+  #
   #   --trust-remote-code            HARDCODED, not a knob — every generate
   #     lane in this file (primary/senses/worker/muse) hardcodes this
   #     unconditionally; it is a fixed security posture (run the model repo's
@@ -1686,6 +1695,14 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=associate   # → /logs/model-gear/associate-<boot>.log
+      # Same PRIMARY_ALLOW_LONG_MAX_MODEL_LEN passthrough as vllm-primary
+      # above (~line 84): OFF by default, so a plain associate boot is
+      # byte-identical to before this knob existed. A shape serving a
+      # --max-model-len beyond the checkpoint's own declared ceiling (the
+      # orin-associate-1m hypothesis, ASSOCIATE_MAX_MODEL_LEN=1048576) needs
+      # ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN=1 in .env; every other shape/card
+      # leaves this at its inert default.
+      - VLLM_ALLOW_LONG_MAX_MODEL_LEN=${ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN:-0}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
@@ -1731,6 +1748,7 @@ services:
       --mamba-cache-mode=${ASSOCIATE_MAMBA_CACHE_MODE:-align}
       ${ASSOCIATE_PREFIX_CACHING:---enable-prefix-caching}
       --max-num-batched-tokens=${ASSOCIATE_MAX_NUM_BATCHED_TOKENS:-16384}
+      ${ASSOCIATE_MAX_NUM_SEQS:+--max-num-seqs=${ASSOCIATE_MAX_NUM_SEQS}}
       ${ASSOCIATE_SPECULATIVE_CONFIG-}
       --enable-auto-tool-choice
       --tool-call-parser=${ASSOCIATE_TOOL_CALL_PARSER:-qwen3_coder}

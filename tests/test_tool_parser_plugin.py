@@ -240,7 +240,14 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # and llamacpp-primary serves a local GGUF with no HF_TOKEN need), which
     # is why their hashes above are unchanged. See
     # tests/test_fleet_secrets_env_file.py.
-    "vllm-associate": "66850d08430be6496502d34f90fd7a56bb896fbfd2914f8fcb3caad60182a4d7",
+    # Recomputed 2026-09-13 for the orin-associate-at-1m plan, t1 (approved
+    # deviation d1, issue #260): the lane gained the conditional
+    # ASSOCIATE_MAX_NUM_SEQS argv token (worker-lane idiom; unset renders
+    # nothing) and a VLLM_ALLOW_LONG_MAX_MODEL_LEN environment passthrough
+    # (default 0, mirroring vllm-primary) so a 1M-window lane can cap its
+    # sequences. ONLY vllm-associate moved; every other hash here is
+    # byte-identical. See tests/test_associate_compose.py.
+    "vllm-associate": "84b15c910c57694b5acd3a2ae9ba107a9f40d879f5b623c72b020a36a25865aa",
     "vllm-embed": "52d6afc61fb6f23d23655251443ab0a50ab17ba350fb78ef3b1653a206117a1d",
     "vllm-embed-deep": "f73a2c1f7fe25664ea0ca12adb72ff445503cb5dd03ff9d027b6dc58cb1b0bcb",
     "vllm-hand": "7337db5b60adf2fcd47d1530eb149adf6c3652d029bb7102896f2da4432b7428",
