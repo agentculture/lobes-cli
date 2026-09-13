@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.78.4] - 2026-09-13
+
+### Added
+
+- docs/experiments/qwen3.8-flash-next-nvfp4-thor-reference.md — a reference record (not reproduced here) of the external NemoClaw-Thor recipe that serves RadixArk/Qwen3.8-Flash-Next-NVFP4 on a Jetson AGX Thor: PLE table mmapped from NVMe, fused SM110a GDN decode kernel, SM110 FlashInfer CUTLASS MoE gate, embedded MTP n=3, util 0.90 at 262144; author-reported ~35 tok/s single-stream. Decision: the Thor keeps serving worker; nothing is booted.
+
+### Changed
+
+- docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md — correction note: the 2026-08-27 NVFP4 "misses by ~13 GB" premise assumed a resident PLE table; the table itself is kept as the evaluation record.
+- docs/experiments/README.md — index row for the new reference doc.
+
 ## [0.78.3] - 2026-09-13
 
 ### Changed

@@ -60,6 +60,15 @@ parameters should be.
 **So GGUF is currently the only format that fits.** Any engine choice here is a
 choice about *which engine reads a GGUF*, not about serving the native weights.
 
+> **Correction (2026-09-13):** the NVFP4 row above assumes the PLE table must be
+> resident. It does not have to be: an external Thor recipe serves
+> `RadixArk/Qwen3.8-Flash-Next-NVFP4` (126.0 GiB at the pinned revision) on a
+> preview vLLM by memory-mapping the table from NVMe, at util 0.90. That is
+> author-reported and not reproduced on a fleet box. See
+> [`qwen3.8-flash-next-nvfp4-thor-reference.md`](qwen3.8-flash-next-nvfp4-thor-reference.md#why-the-2026-08-27-doesnt-fit-was-wrong).
+> The table above is kept as written, because it is the record of that
+> evaluation.
+
 ## Route 1 — llama.cpp
 
 **Why.** Unsloth ships this checkpoint against their own llama.cpp branch:

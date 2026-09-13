@@ -40,3 +40,4 @@ was made, and deleting it loses that.
 | doc | checkpoint | status |
 |---|---|---|
 | [`qwen3.8-flash-next-gguf-llamacpp-vllm.md`](qwen3.8-flash-next-gguf-llamacpp-vllm.md) | `unsloth/Qwen3.8-Flash-Next-GGUF` — 125B MoE + 51B n-gram, 6B active | **NOT SERVED** — deferred 2026-08-27; nothing native fits 122 GiB, llama.cpp costs ~25x on prefill, vLLM route has four open unknowns |
+| [`qwen3.8-flash-next-nvfp4-thor-reference.md`](qwen3.8-flash-next-nvfp4-thor-reference.md) | `RadixArk/Qwen3.8-Flash-Next-NVFP4` @ `7b719225` — 126.0 GiB | **REFERENCE ONLY** — 2026-09-13; an external Thor recipe (NemoClaw-Thor) serves it on a preview vLLM by mmapping the PLE table from NVMe, author-reported ~35 tok/s; not reproduced here — the Thor stays the `worker` host |
