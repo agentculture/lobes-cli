@@ -130,6 +130,13 @@ lobes init --shape orin-associate --apply     # renders .env + compose overrides
 lobes fleet up --apply
 ```
 
+`lobes fleet up --apply` boots **associate first**: the generated
+`docker-compose.shape.yml` makes `vllm-embed` and `vllm-rerank` wait for
+`vllm-associate` to be healthy. The base template orders them the other way,
+and that order is not measured for this budget (approved deviation d4,
+issue #260). Role-targeted starts (`lobes up <role> --apply`) pass `--no-deps`
+and ignore start order, so bring `associate` up before the gears when you use them.
+
 Two keys are **operator-typed** in the deployment's `.env` — they cannot be
 declared by the shape (a shape has no env mechanism) and must not be declared
 by the card (it would leak them onto shapes that drop associate):

@@ -100,6 +100,14 @@ model = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
 # this window, and dropping `hand` from `hosts` (above) removes the other
 # variable the earlier 0.56/0.80 measurements had to account for.
 #
+# ENFORCED, not just documented (approved deviation d4, issue #260): the base
+# fleet template makes vllm-associate wait for both pooling gears (gears-first).
+# For a shape hosting associate, the generated docker-compose.shape.yml resets
+# that depends_on and makes vllm-embed / vllm-rerank wait for vllm-associate to
+# be healthy, so a plain `lobes fleet up --apply` reproduces the measured order
+# (lobes/cli/_commands/init.py _associate_first_boot_lines;
+# tests/test_orin_associate_boot_order.py).
+#
 # Booted clean at util 0.70 / max_model_len 1048576: weights + non-torch
 # 24.61 GiB, available KV cache memory 17.34 GiB, GPU KV cache size
 # 2,889,456 tokens = a 2.76x CAPACITY CEILING at the full 1,048,576-token
