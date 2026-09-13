@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.77.2] - 2026-09-13
+
+### Added
+
+- docs/evidence/2026-09-13-spike-lightning-thor-v029.txt: measured spike showing nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 serving on the Jetson AGX Thor on vllm/vllm-openai:v0.29.0-aarch64 up to the native 1,048,576-token window (plain fp8 KV, DSpark x5, and bf16 KV arms; probes, needles to 1,040,073 tokens, concurrency 1-32, multi-turn agentic loads, thermals). Reverses the 2026-08-20 Thor NO-GO for this engine. Measure-only: no shape, role, profile or engine pin changes.
+- .devague/frames/lightning-on-thor.json: scope/think frame for Lightning on the Thor with recorded operator decisions.
+
 ## [0.77.1] - 2026-09-12
 
 ### Added
