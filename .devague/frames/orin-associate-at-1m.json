@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-13T01:51:16Z",
-  "updated": "2026-09-13T07:54:57Z",
+  "updated": "2026-09-13T08:52:22Z",
   "claims": [
     {
       "id": "c1",
@@ -921,6 +921,15 @@
       "seam": "docs citing the 1M transcripts",
       "behavior": "CLAUDE.md, deployment-shapes, the Lightning doc, machine-profiles and the Orin deployment doc cite both 1M transcripts",
       "source_text": "every doc that states associate's Orin budget or window as fact is updated to the measured 1M values: CLAUDE.md associate paragraph, docs/deployment-shapes.md orin-associate rows, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md Orin section, docs/machine-profiles.md totals, docs/orin-associate-deployment.md",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o16",
+      "claim_id": "c17",
+      "seam": "plain fleet start order on a shape hosting associate",
+      "behavior": "the generated shape override makes vllm-embed and vllm-rerank wait for vllm-associate healthy and clears vllm-associate depends_on, so a plain compose up boots associate first",
+      "source_text": "rendering orin-associate on the Orin produces a lane that boots at max_model_len 1048576 with the A/B-measured checkpoint, util, batched-token cap and max_num_seqs; the gateway advertises context 1048576; and every value cites a docs/evidence transcript",
       "origin": "llm",
       "status": "proposed"
     }

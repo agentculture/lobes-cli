@@ -189,3 +189,16 @@
 {"ts":"2026-09-11T23:39:42.782038+00:00","type":"pr_webhook_posted","pr":252,"event":"pr_opened"}
 {"ts":"2026-09-11T23:40:45.880897+00:00","type":"readiness_arrived","pr":252,"waited_secs":60}
 {"ts":"2026-09-11T23:40:50.479370+00:00","type":"pr_read","pr":252,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-09-13T07:58:55.112195+00:00","type":"pr_opened","pr":261,"title":"Orin associate serves Nemotron 3.5 Lightning at the native 1M window \u2014 measured A/B, rendered shape accepted live (0.78.0)"}
+{"ts":"2026-09-13T07:58:56.209670+00:00","type":"pr_review_triggered","pr":261,"command":"/agentic_review"}
+{"ts":"2026-09-13T07:58:56.973404+00:00","type":"pr_webhook_posted","pr":261,"event":"pr_opened"}
+{"ts":"2026-09-13T07:59:59.934795+00:00","type":"readiness_arrived","pr":261,"waited_secs":60}
+{"ts":"2026-09-13T08:00:04.333862+00:00","type":"pr_read","pr":261,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-09-13T08:00:16.964076+00:00","type":"readiness_arrived","pr":261,"waited_secs":0}
+{"ts":"2026-09-13T08:00:21.068136+00:00","type":"pr_read","pr":261,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-09-13T08:37:35.618229+00:00","type":"pr_reply","pr":261,"thread_id":"PRRT_kwDOSktgM86h3hv5","in_reply_to":3999151968}
+{"ts":"2026-09-13T08:37:38.423777+00:00","type":"pr_reply","pr":261,"thread_id":"PRRT_kwDOSktgM86h3hvv","in_reply_to":3999151956}
+{"ts":"2026-09-13T08:37:40.391877+00:00","type":"pr_reply","pr":261,"thread_id":"PRRT_kwDOSktgM86h3hvz","in_reply_to":3999151960}
+{"ts":"2026-09-13T08:37:41.066839+00:00","type":"pr_batch_replied","pr":261,"count":3,"resolved":3}
+{"ts":"2026-09-13T08:37:41.819765+00:00","type":"pr_webhook_posted","pr":261,"event":"pr_replied"}
+{"ts":"2026-09-13T08:52:12.707485+00:00","type":"pr_batch_replied","pr":261,"count":0,"resolved":0}
