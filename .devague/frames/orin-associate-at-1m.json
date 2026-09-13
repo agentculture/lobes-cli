@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-13T01:51:16Z",
-  "updated": "2026-09-13T05:18:37Z",
+  "updated": "2026-09-13T07:54:57Z",
   "claims": [
     {
       "id": "c1",
@@ -788,5 +788,141 @@
     }
   ],
   "lapses": [],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c2",
+      "seam": "vllm-associate compose argv",
+      "behavior": "ASSOCIATE_MAX_NUM_SEQS set renders --max-num-seqs=N; unset renders no argv token",
+      "source_text": "the vllm-associate lane gains an ASSOCIATE_MAX_NUM_SEQS knob rendered with the worker lane's conditional idiom (unset renders no argv token), so a 1M-window lane can cap concurrent sequences; documented in the lane's knob comment and pinned in tests/test_associate_compose.py",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c3",
+      "seam": "vllm-associate environment",
+      "behavior": "VLLM_ALLOW_LONG_MAX_MODEL_LEN renders 0 by default and 1 when ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN=1",
+      "source_text": "the vllm-associate lane gains a VLLM_ALLOW_LONG_MAX_MODEL_LEN environment passthrough (ASSOCIATE_ALLOW_LONG_MAX_MODEL_LEN, default 0) mirroring vllm-primary, required only when the served checkpoint declares max_position_embeddings below the requested window",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c4",
+      "seam": "vllm-associate exposure contract",
+      "behavior": "--host=0.0.0.0 with no published host port and no network_mode; exposure tests unmodified",
+      "source_text": "the associate lane's exposure contract is unchanged: --host=0.0.0.0 paired with no published host port (expose-only behind the gateway bearer gate), as pinned by tests/test_associate_exposure.py",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c10",
+      "seam": "catalog role_hint=associate",
+      "behavior": "exactly one associate entry (the NVIDIA NVFP4 checkpoint); an injected duplicate is detected",
+      "source_text": "the catalog keeps exactly one role_hint=\"associate\" entry (the NVIDIA NVFP4 checkpoint), pinned by a new test_exactly_one_associate_gear; the useful-quants W4A16 is NOT added to the catalog (A/B 2026-09-13 missed the c24 bar, v2 resolved)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c26",
+      "seam": "Orin gateway upstream read timeout",
+      "behavior": "orin card renders GATEWAY_READ_TIMEOUT=7200 (spark/thor/base do not) and a cold >= 1M associate request through the Orin gateway completes, streamed and non-streamed",
+      "source_text": "a cold 1M request through the Orin gateway as model=associate completes: the Orin gateway's upstream read timeout (GATEWAY_READ_TIMEOUT, template default 600 s, live Orin value 600 s, applied as the socket read timeout on every upstream POST at lobes/gateway/server.py:616) is raised above the measured cold 1.04M TTFT (2,390 s NVFP4 on 2026-09-13) with margin, set through a shipped knob (env.example + orin card or shape), not a hand-typed key",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c7",
+      "seam": "orin-associate [overrides.associate]",
+      "behavior": "renders max_model_len 1048576, gpu_mem_util 0.70, max_num_batched_tokens 8192, max_num_seqs 2, citing the measure transcript",
+      "source_text": "orin-associate.toml's associate override declares the measured 1M budget (max_model_len 1048576 plus the util, batched-token cap and max_num_seqs the A/B measured) with each value citing a docs/evidence transcript, replacing the 128000 window",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c25",
+      "seam": "orin-associate hosts",
+      "behavior": "hosts associate, embedder and reranker; drops cortex, senses, hand, muse, worker",
+      "source_text": "orin-associate.toml's hosts list is associate, embedder and reranker (the pooling gears return to the shape), its header comment describes exactly that, and tests/test_orin_associate_shape.py plus the orin-associate golden assert the three hosted roles and the dropped ones",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c11",
+      "seam": "gateway GET /capabilities and lane /v1/models",
+      "behavior": "after rollout associate advertises context 1048576 and the lane reports max_model_len 1048576",
+      "source_text": "after the window change the Orin gateway advertises context 1048576 for associate on GET /capabilities and lobes capabilities: the gateway container is recreated (not only vllm-associate), and acceptance checks both the advertised context and the live fingerprint max_model_len read from the lane's /v1/models",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c18",
+      "seam": "rendered orin-associate shape on the physical Orin",
+      "behavior": "health 200, probes PASS, >= 1M needle PASS, capabilities 1048576, zero OOM across a 2-session agentic run, associate restarts 0",
+      "source_text": "on the physical Orin with the rendered shape: /health 200; known-answer, multi-step and tool-call probes PASS; a needle at >= 1,000,000 prompt tokens PASSES; GET /capabilities reports associate context == 1048576; zero OOMKilled/engine-dead events across a 2-session 12-turn agentic run; associate restarts == 0 after the run",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c19",
+      "seam": "A/B measure transcript",
+      "behavior": "one row per arm for every listed metric and a verdict applying the c24 rule",
+      "source_text": "the A/B transcript records, for NVFP4 and W4A16 at 1,048,576: boot result, KV pool tokens, decode tok/s at >= 3 depths, cold TTFT at ~1M, concurrency 1/2/4 aggregate tok/s, agentic tool-call validity and recall counts, peak tj and minimum available memory; the winner is chosen by a stated rule, not by feel",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c27",
+      "seam": "gear restart accounting and the deployment doc",
+      "behavior": "embed/rerank RestartCount quoted after rollout; the Orin deployment doc names the gear first-start race",
+      "source_text": "the accept transcript records embed and reranker restart counts after rollout, and the Orin deployment doc names the observed gear first-start race: on 2026-09-13 model-gear-vllm-embed failed its first start every time the gears started together after associate (02:29, 03:34, 04:31 UTC; 'No available memory for the cache blocks') and recovered via restart=unless-stopped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c28",
+      "seam": "shape rollback note and .env backup",
+      "behavior": "shape comment quotes the 128000 / 0.70 / 8192 rollback; the accept transcript quotes the dated .env backup",
+      "source_text": "orin-associate.toml keeps the pre-change 128000-window associate values as a documented rollback in its comment block (the spark-lobe d4 idiom), and the rollout records a dated backup of the Orin .env before rendering",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c29",
+      "seam": "Orin associate docs headroom",
+      "behavior": "docs quote the shipped-shape minimum (1,925 MiB, deviation d2) and the A/B's 2,588 MiB with transcript paths, plus the memory-capped side-process rule",
+      "source_text": "the Orin associate docs record the measured zero-swap headroom at 1M (minimum available host memory 2,588 MiB during the NVFP4 1.04M prefill, 2026-09-13) together with the operating rule that any side process on the Orin runs memory-capped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c9",
+      "seam": "stale Orin associate statements",
+      "behavior": "shape header/summary and card doc block match what ships; retired budget literals only historical; shape validation claimed only by citing the accept transcript",
+      "source_text": "stale Orin associate statements are reconciled with what ships: the orin-associate header (still describes hand + pooling gears), orin.toml's 0.56 LOCKSTEP doc block, docs/deployment-shapes.md:91 (pre-d2 util 0.63 KV figures) and docs/orin-associate-deployment.md (16384 batched tokens vs the live 8192)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c12",
+      "seam": "docs citing the 1M transcripts",
+      "behavior": "CLAUDE.md, deployment-shapes, the Lightning doc, machine-profiles and the Orin deployment doc cite both 1M transcripts",
+      "source_text": "every doc that states associate's Orin budget or window as fact is updated to the measured 1M values: CLAUDE.md associate paragraph, docs/deployment-shapes.md orin-associate rows, docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md Orin section, docs/machine-profiles.md totals, docs/orin-associate-deployment.md",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }
