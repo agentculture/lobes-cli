@@ -21,9 +21,15 @@
 #           port bound to 127.0.0.1 only (never --network host).
 #
 # Runs      A  plain decode, fp8 KV, 128000        (boot + probes)
-#           B  plain decode, fp8 KV, 1,048,576      KV pool 20,431,534 tokens (19.49x at 1M)
-#           C  DSpark x5,    fp8 KV, 1,048,576      KV pool 17,911,473 tokens (17.08x at 1M)
-#           D  plain decode, bf16 KV, 1,048,576     KV pool 10,392,269 tokens (9.91x at 1M)
+#           B  plain decode, fp8 KV, 1,048,576      KV pool 20,431,534 tokens (19.49x at 1M = KV-pool capacity ceiling)
+#           C  DSpark x5,    fp8 KV, 1,048,576      KV pool 17,911,473 tokens (17.08x at 1M = KV-pool capacity ceiling)
+#           D  plain decode, bf16 KV, 1,048,576     KV pool 10,392,269 tokens (9.91x at 1M = KV-pool capacity ceiling)
+#
+# CONCURRENCY RATIOS: every "Nx at 1M" / "Maximum concurrency ... Nx" figure below is vLLM's
+#   KV-pool CAPACITY CEILING (KV cache tokens divided by max_model_len) — how many full-length
+#   requests the cache could hold. It is NOT measured concurrency and must NOT be multiplied by
+#   single-stream tok/s to project aggregate throughput. Measured aggregate throughput is the
+#   N=1-32 concurrency sweep (e.g. N=32: 541 tok/s total, 17 tok/s per request, fp8 plain).
 #
 # Correctness: every probe (known-answer, multi-step, tool call), every needle (~128K, ~250K,
 #   1,040,073 tokens = 99.2% of the window), 180/180 agentic tool calls and 45/45 cross-context
@@ -145,6 +151,7 @@ Boot log (excerpts):
   21:43:25 [ssu_dispatch.py:310] Using flashinfer Mamba SSU backend.
   21:44:16 [gpu_worker.py:625] Available KV cache memory: 60.21 GiB
   21:44:16 [kv_cache_utils.py:2032] GPU KV cache size: 18,346,666 tokens, Maximum concurrency for 128,000 tokens per request: 143.33x
+           ^ KV-POOL CAPACITY CEILING (KV cache tokens / max_model_len), NOT measured concurrency and NOT a throughput multiplier; measured aggregate throughput is the N=1-32 sweep.
   21:46:32 [gpu_worker.py:860] Free memory on device (94.49/122.82 GiB) on startup ... 22.84 GiB consumed (weights + non-torch), 2.92 GiB peak activation
   21:46:38 [core.py:361] init engine took 301.61 s (compilation: 14.36 s)
   /health 200 at +362 s from docker run
@@ -176,6 +183,7 @@ Boot log (excerpts):
   21:54:37 [model_runner.py:960] Graph capturing finished in 49 secs, took 1.87 GiB
   21:54:38 [gpu_worker.py:625] Available KV cache memory: 59.44 GiB
   21:54:38 [kv_cache_utils.py:2032] GPU KV cache size: 20,431,534 tokens, Maximum concurrency for 1,048,576 tokens per request: 19.49x
+           ^ KV-POOL CAPACITY CEILING (KV cache tokens / max_model_len), NOT measured concurrency and NOT a throughput multiplier; measured aggregate throughput is the N=1-32 sweep.
   21:59:52 [core.py:361] init engine took 473.29 s (compilation: 14.82 s)
   /health 200 at +559 s from docker run
 
@@ -344,6 +352,7 @@ Boot log (excerpts so far):
   22:43:32 [gpu_worker.py:625] Available KV cache memory: 56.27 GiB
   22:43:32 [kv_cache_utils.py:2032] GPU KV cache size: 17,911,473 tokens, Maximum concurrency
            for 1,048,576 tokens per request: 17.08x   (Run B: 20,431,534 / 19.49x)
+           ^ KV-POOL CAPACITY CEILING (KV cache tokens / max_model_len), NOT measured concurrency and NOT a throughput multiplier; measured aggregate throughput is the N=1-32 sweep.
   22:45:39 [core.py:361] init engine took 309.09 s (compilation: 45.01 s)
   /health 200 at +392 s from docker run
 
@@ -459,6 +468,7 @@ workloads. Driver fully detached (nohup setsid, files only), launched 23:25:22 U
 
   23:30:17 [kv_cache_utils.py:2032] GPU KV cache size: 10,392,269 tokens, Maximum concurrency
            for 1,048,576 tokens per request: 9.91x   (Run B fp8: 20,431,534 / 19.49x)
+           ^ KV-POOL CAPACITY CEILING (KV cache tokens / max_model_len), NOT measured concurrency and NOT a throughput multiplier; measured aggregate throughput is the N=1-32 sweep.
   /health 200 at +498 s; pass start 23:33:50 (full pass incl. cold 1M needle, so the warm 1M
   figure is genuinely warm this time)
   23:28:19 [monitor.py:81] Initial profiling/warmup run took 91.75 s
