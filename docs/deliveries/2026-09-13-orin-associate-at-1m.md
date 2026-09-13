@@ -104,7 +104,7 @@ No lapses are filed for this plan (`devague lapse --list`: none). All ledger evi
 
 - **Merge order** — resolved: #258 was squash-merged as `6d52e42`, and `main` was merged into this branch (`d345cce`).
 - **Unresolved Qodo thread** — GitHub returns HTTP 500 on replies to review thread `PRRT_kwDOSktgM86h3hv2` (inline comment 3999151963), and "Something went wrong" on resolving it. The d4 reply is posted as top-level comment `issuecomment-5652321152`. The operator can resolve the thread in the UI, or it can be retried later.
-- **`lobes fleet up --apply` with an unpublished `MODEL_GEAR_VERSION`** — the gateway `--build` step fails before any service starts (seen live 2026-09-13 at 08:41Z). Next step: have fleet up skip rebuilding an existing gateway image, or fall back to a local wheel. Issue not yet filed.
+- **`lobes fleet up --apply` with an unpublished `MODEL_GEAR_VERSION`** — the gateway `--build` step fails before any service starts (seen live 2026-09-13 at 08:41Z). Next step: have fleet up skip rebuilding an existing gateway image, or fall back to a local wheel. Filed as #262.
 - **Operator adjudication of the delivery ledger** — confirm or reject `o1`–`o15`, `e1`–`e21` and `b1`–`b4` (recommend rejecting `e19`).
 - **Open frame parks:**
   - `v3` — head-of-line behaviour at `max_num_seqs=2` behind a cold 1M prefill is unmeasured.
