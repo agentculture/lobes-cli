@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.78.2] - 2026-09-13
+
+### Changed
+
+- Operator approved the full delivery ledger for plan orin-associate-at-1m: obligations o1-o16, evidence e1-e23, behavioral deltas b1-b5.
+
 ## [0.78.1] - 2026-09-13
 
 ### Changed
