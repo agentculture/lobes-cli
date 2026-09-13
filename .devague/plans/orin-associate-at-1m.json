@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-13T05:20:28Z",
-  "updated": "2026-09-13T05:31:18Z",
+  "updated": "2026-09-13T05:50:27Z",
   "targets": [
     {
       "id": "c1",
@@ -504,7 +504,7 @@
   "risks": [
     {
       "id": "r1",
-      "text": "re-scaffolding the Orin (lobes init --shape orin-associate --apply --force) may overwrite hand-kept compose customisations: the live ~/.lobes/docker-compose.yml predates the template (no .secrets.env entries, no reranker chat-template mount) and the mesh block lives in docker-compose.override.yml; diff before and after, and /deviate on #260 rather than lose one",
+      "text": "re-scaffolding the Orin with lobes init --shape orin-associate --apply --force OVERWRITES docker-compose.yml, Dockerfile.gateway, qwen3_reranker.jinja, mg-logwrap.sh and the tool-parser plugin from the packaged templates with NO backup (lobes/runtime/_compose.py:471-525, :242-259); docker-compose.override.yml (mesh block) is never written by init (_compose.py:130-137); .env rendered keys are rewritten in place via set_env while unrendered operator keys (ASSOCIATE_IMAGE, ASSOCIATE_SPECULATIVE_CONFIG, GATEWAY_API_KEY, LOBES_MESH_*) are preserved (init.py:588-624). --force is required for the t1 compose knob to exist on the box, so t5 must tar-backup ~/.lobes first (including the local-wheel Dockerfile.gateway) and diff afterwards",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
       "resolved": false,
@@ -512,11 +512,11 @@
     },
     {
       "id": "r2",
-      "text": "the rendered .env pins MODEL_GEAR_VERSION to the build under test; if that dev version is not on (Test)PyPI the gateway image build fails (memory: testpypi-dev-wheel-propagation-race), so the rollout may need the local-wheel Dockerfile.gateway path already used on the Orin (Dockerfile.gateway.bak-local-wheel-0.76.0) or no gateway rebuild at all, since GATEWAY_READ_TIMEOUT is read by the existing gateway code",
+      "text": "every fleet --apply rewrites MODEL_GEAR_VERSION to the running CLI version and LOBES_PROFILE (init.py:801-803), and Dockerfile.gateway pip-installs lobes-cli==MODEL_GEAR_VERSION from PyPI with an optional LOBES_DEV_INDEX_URL lane (Dockerfile.gateway:20-28); a branch build is on neither index, so a gateway rebuild needs the Orin's existing local-wheel Dockerfile.gateway path or the gateway must be recreated from its existing image (GATEWAY_READ_TIMEOUT is read by the already-deployed gateway code, lobes/gateway/_config.py:1046)",
       "kind": "unknown_nonblocking",
       "task_id": "t5",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "no gateway rebuild: the Orin gateway runs the locally built lobes-gateway:latest image (lobes-cli 0.77.0.dev544) whose code already reads GATEWAY_READ_TIMEOUT (lobes/gateway/_config.py:1046); t5 recreates it with 'docker compose up -d --no-build --no-deps gateway' so the new .env values reach it, and installs this branch's lobes CLI on the Orin from a locally built wheel only to run lobes init; Dockerfile.gateway is still included in the pre-rollout tar backup"
     },
     {
       "id": "r3",

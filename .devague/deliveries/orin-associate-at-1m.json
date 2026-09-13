@@ -1,0 +1,39 @@
+{
+  "plan_slug": "orin-associate-at-1m",
+  "schema_version": 2,
+  "created": "2026-09-13T05:41:01Z",
+  "updated": "2026-09-13T06:57:23Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "widen t1 by one test file: recompute ONLY the vllm-associate entry in tests/test_tool_parser_plugin.py _EXPECTED_NON_PRIMARY_HASHES with a dated comment (plan orin-associate-at-1m, issue #260); every other service hash must stay byte-identical",
+      "task_ref": "t1",
+      "reason": "t1's required vllm-associate change (ASSOCIATE_MAX_NUM_SEQS argv + VLLM_ALLOW_LONG_MAX_MODEL_LEN env) moves that service's hash, failing the tool-parser plan's non-primary service hash-lock (1 failed / 4952 passed); the file documents recompute-on-deliberate-change and has precedent (#120, #222, #227, #217). Operator approved 2026-09-13.",
+      "affects": [
+        "c2",
+        "c3"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t7 docs quote 1,952 MiB as the operating minimum available host memory of the shipped orin-associate shape (accept transcript) AND keep 2,588 MiB as the A/B NVFP4-arm figure (measure transcript), instead of 2,588 MiB alone",
+      "task_ref": "t7",
+      "reason": "the live rollout (t5 step 9, cold 1,040,073-token request through the Orin gateway) measured minimum available memory 1,952 MiB at 06:11:19Z on the rendered shape with embed, rerank and gateway resident, lower than the A/B's 2,588 MiB; quoting only 2,588 would overstate headroom on a zero-swap board. Operator approved 2026-09-13.",
+      "affects": [
+        "c29",
+        "h22"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
