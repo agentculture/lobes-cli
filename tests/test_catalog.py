@@ -4,6 +4,7 @@ drift from the docs, the parser inference, and the gateway's default primary."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1121,3 +1122,36 @@ def test_radixark_entries_use_the_dspark_speculation_doc() -> None:
     for model_id in (_RADIXARK_TARGET_ID, _RADIXARK_DRAFTER_ID):
         gear = next(m for m in SUPPORTED_MODELS if m.id == model_id)
         assert gear.doc == "dspark-speculation.md"
+
+
+def _count_role_hint(models: list[SupportedModel], hint: str) -> int:
+    # Shared by test_exactly_one_associate_gear and its companion below — the
+    # exact counting resolve_tier's first-match lookup depends on staying == 1.
+    return len([m for m in models if m.role_hint == hint])
+
+
+def test_exactly_one_associate_gear() -> None:
+    # resolve_tier (lobes/catalog.py ~1408-1432) returns the FIRST generate
+    # model whose role_hint matches the requested tier's role — a second
+    # role_hint="associate" entry would be silently shadowed by whichever one
+    # sorts first in SUPPORTED_MODELS, exactly like the primary/multimodal/
+    # embedding single-gear guards elsewhere in this file (issue #244, t2:
+    # `associate` used to share `worker`'s role_hint via an alias table entry,
+    # which is exactly the kind of silent-move defect this test pins against).
+    assert _count_role_hint(list(SUPPORTED_MODELS), "associate") == 1
+    associate_ids = [m.id for m in SUPPORTED_MODELS if m.role_hint == "associate"]
+    assert associate_ids == [_NEMOTRON_ID], f"role_hint='associate' models: {associate_ids}"
+
+
+def test_exactly_one_associate_gear_detects_an_injected_duplicate() -> None:
+    # Companion to test_exactly_one_associate_gear: proves the counting helper
+    # above actually catches the failure mode it guards against, without
+    # touching lobes/catalog.py — a throwaway second role_hint="associate"
+    # entry (via dataclasses.replace, mirroring the "throwaway replace()"
+    # pattern already used for the Gemma MTP round-trip test) is injected into
+    # a plain list, and the same helper must report 2, not silently pick one.
+    associate = next(m for m in SUPPORTED_MODELS if m.role_hint == "associate")
+    duplicate = replace(associate, id=associate.id + "-duplicate-for-test")
+    models_with_duplicate = list(SUPPORTED_MODELS) + [duplicate]
+
+    assert _count_role_hint(models_with_duplicate, "associate") == 2
