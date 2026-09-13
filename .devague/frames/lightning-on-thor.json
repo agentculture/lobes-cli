@@ -1,0 +1,542 @@
+{
+  "slug": "lightning-on-thor",
+  "title": "lightning on thor",
+  "schema_version": 6,
+  "status": "drafting",
+  "created": "2026-09-12T21:27:30Z",
+  "updated": "2026-09-13T01:03:53Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Nemotron 3.5 Lightning serves on the Jetson AGX Thor past the sm_110 Mamba2 SSD warmup wedge, at a context window larger than the Orin's 128000",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "a transcript under docs/evidence/ names the engine digest, full vLLM argv, the warmup-completed log line, and probe outputs on the physical Thor",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "Lightning boots on the Thor (sm_110) past '[mamba_mixer2] Warming up Mamba2 SSD Triton kernels' to /health and passes known-answer, multi-step and tool-call probes, recorded as a docs/evidence transcript before any doc claims it (#108)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the probes run against the Thor's container itself, not through any proxy that could be answered by the Orin",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "The recipe the user supplied is a PARTIALLY UNTRIED arm on the Thor: the Aug-20 v0.27.1 addendum records only util/window/--mamba-backend flashinfer, not --mamba-ssm-cache-dtype float16, stochastic rounding, --mamba-cache-mode align, prefix caching, fp8 KV, max-num-batched-tokens 16384 or DSpark; no raw log survives on the Thor to settle it",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "Orin sm_87 cleared the identical v0.27.1 + full recipe (warmup 94 s, ~78-81 tok/s with DSpark x5), so the wedge is sm_110-specific, not a checkpoint or flag-parsing defect",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "Newer engines exist that were never tried for Lightning on the Thor: upstream v0.29.0 (aarch64 cu129 tags, 2026-09-09) and cu129 nightlies through 2026-09-12",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Flags need no new compose surface: vllm-associate already carries all recipe flags as ASSOCIATE_* knobs (mamba backend/ssm dtype/stochastic rounding/philox rounds/cache mode/prefix caching/batched tokens/speculative config), and keeps the named departure of NOT inheriting --network host",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "A Thor hosting path for associate is NEW shape data: associate is an OPT_IN_CORE_ROLE hostable today only by orin-associate (and reached by gateway-only); no Thor shape declares it",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "no shape file is committed this session; c7 is carried to /spec-to-plan as the follow-up once the spike is GO",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "non_goal",
+      "text": "Do not re-checkpoint the worker role back to Lightning: #244 widened worker to a multimodal coder (image/video, code_authoring allowed) and removing responsibilities is a contract break",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "assumption",
+      "text": "Memory: the recipe's util 0.7 cannot co-reside with the live worker lane (util 0.45); operator authorized dropping/starting lobes on the Thor (2026-09-13), so a spike may stop the worker and the Spark's worker proxy to the Thor goes 503 meanwhile",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "assumption",
+      "text": "A larger window is memory-cheap for Lightning: most layers are Mamba-2 with constant state, the Orin's 9.35 GiB KV pool held 1,524,000 tokens at 128000; native max_position_embeddings is 1,048,576 and no box has exercised above 128000",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "The Jetson AI Lab page gives no Thor-specific image, JetPack, env or warmup guidance; it claims DSpark x5 was best on Thor averaging 115 tok/s on an agentic aggregate, and the vLLM page lists the upstream image",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "assumption",
+      "text": "DSpark arm needs a download first: the Thor HF cache holds the Lightning base checkpoint but not nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "decision",
+      "text": "associate replaces worker on the Thor: a Thor shape hosts associate (Lightning) instead of worker (q1, operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "context steps 128000 -> 262144 -> 1,048,576 native, measured at each step (q2)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "decision",
+      "text": "engine order: vllm/vllm-openai:v0.29.0-aarch64 (cu130) first; the exact v0.27.1 recipe is the fallback arm (q3)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "decision",
+      "text": "this session is measure-only: spike + evidence transcripts; worker lane approved down for the session and restored after; no shape/role code lands yet (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "audience",
+      "text": "the lobes operator deciding the Thor's role, and the mesh consumers of model=associate (and today's model=worker callers, incl. Qwen Code via the Spark)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "before_state",
+      "text": "Lightning is NO-GO on the Thor (Mamba2 SSD Triton warmup wedge on 0.26.1rc1 nightly and v0.27.1, 2026-08-20); it serves only on the Orin as associate at 128000; the Thor hosts worker (Qwen3.6-35B-A3B)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "after_state",
+      "text": "a docs/evidence transcript shows Lightning serving on the Thor on a named engine digest with measured KV pool, decode tok/s and TTFT at each context step up to the largest window that boots, or a NO-GO naming exactly which arms wedged",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "warmup completes < 15 min and /health returns 200; known-answer, multi-step and tool-call probes PASS; a needle retrieval passes at > 128000 tokens; decode tok/s recorded at 1 request for each of 128000 / 262144 / 1048576 that boots",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "boundary",
+      "text": "the spike container runs on a bridge network with no host port published beyond localhost (never --network host), per the associate lane's c29 exposure departure",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "decision",
+      "text": "associate stays on the Thor, served at the native 1,048,576-token window (operator lean, 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "decision",
+      "text": "the worker lane is NOT restarted on the Thor until the operator explicitly approves it (2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "requirement",
+      "text": "the spike measures concurrency (parallel-request sweep), single-stream speed, and long multi-turn agentic tool-calling workloads whose context grows past 100K, not only single-request probes (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "a transcript records aggregate tok/s and per-request decode/TTFT at each concurrency level, plus per-turn prompt tokens, tool-call validity and a final cross-context recall score for single and concurrent agent sessions",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "an associate lane on the Thor at the 1M window pursues plain decode with fp8 KV (no DSpark, not bf16): best decode to 250K and concurrency, 2x the bf16 KV pool, ~20 W cooler with no throttle alerts (operator 2026-09-13, from docs/evidence/2026-09-13-spike-lightning-thor-v029.txt)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "decision",
+      "text": "the worker lane is restarted on the Thor now and the Lightning spike container is stopped (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "next repo step is an evidence-only PR (transcript + frame state); no shape, role, profile or engine-pin change lands with it (operator 2026-09-13)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether any vLLM engine clears the Mamba2 SSD Triton warmup on sm_110 \u2014 only a live boot on the Thor answers it",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "resolved by measurement: vllm/vllm-openai:v0.29.0-aarch64 (@sha256:18372a72) clears the Mamba2 SSD Triton warmup on sm_110 in ~91 s on 4/4 boots (docs/evidence/2026-09-13-spike-lightning-thor-v029.txt)",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "With worker dropped from the Thor, which box (if any) hosts worker: the Spark's model=worker currently proxies to the Thor (docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt) and Qwen Code consumers depend on it",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "worker stays hosted on the Thor for now (lane restarted 2026-09-13); associate-on-Thor is pursued as plain fp8 at 1M but no shape lands yet, so the worker/associate co-residence or replacement question is deferred to the thor-associate plan",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt",
+      "finding": "NO-GO: fleet nightly 8bd082 (vLLM 0.26.1rc1) at util 0.25/32768 wedged 25+ min at the Mamba2 SSD Triton warmup; addendum says upstream v0.27.1 at util 0.50/65536, then with --mamba-backend flashinfer, wedged identically. Parsers nemotron_v3 + qwen3_coder were accepted",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "thor:~ and ~/.lobes/logs (read-only ssh survey 2026-09-13)",
+      "finding": "no Aug-20 spike log retained (only worker-*.log from 2026-09-10/11); the v0.27.1 image itself is gone \u2014 only digests 8bd082 (fleet nightly) and 7c5a10e9 remain",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt",
+      "finding": "non-default args line 152 carries the full recipe (kv_cache_dtype bfloat16, not fp8); line 307->308 warmup completed in 94.09 s; MARLIN NvFp4 MoE + FLASH_ATTN selected",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "Docker Hub vllm/vllm-openai tag listing (2026-09-13)",
+      "finding": "v0.29.0-aarch64-cu129 and latest-aarch64-cu129 published 2026-09-09; the fleet still pins nightly 8bd082 (3 weeks old on the Thor); whether any carries an sm_110 Mamba2 SSD fix is unknown",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/templates/fleet/docker-compose.yml:1718-1741 (vllm-associate command)",
+      "finding": "every recipe flag is a knob with the recipe value as default; kv default bfloat16, max_model_len default 65536; expose-only port behind the gateway bearer gate (c29 tailnet exposure incident)",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/profiles/shapes.py:85 + lobes/profiles/builtin_shapes/",
+      "finding": "OPT_IN_CORE_ROLES=(muse, worker, associate); associate appears only in orin-associate.toml, gateway-only.toml, builtin/orin.toml, base.toml (veto)",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "CLAUDE.md worker paragraph (#244, 2026-09-10) + docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:8-9",
+      "finding": "worker regained image_understanding/video_understanding and code_authoring un-forbidden on nvidia/Qwen3.6-35B-A3B-NVFP4; Lightning is text-only non-coding, so it fits associate's contract, not worker's",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "thor live state (free -g, docker stats, ~/.lobes/.env, 2026-09-13)",
+      "finding": "122 GiB total, 88 used, 34 available; running worker (Qwen3.6-35B util 0.45, 262144, DFlash, max_num_seqs 1) + embed + rerank + culture-nodes prod stack; COMPOSE_PROFILES=worker; L4T R38.2, driver 580.00",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/nemotron-3.5-lightning-30b-a3b-nvfp4.md:76,220 + docs/evidence/2026-08-26-accept-orin-associate.txt",
+      "finding": "Orin measured util 0.56 at 128000: weights 17.81 GiB, KV 9.35 GiB, 1,524,000-token pool, 11.91x; the 1M ceiling is marked unexercised",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "https://www.jetson-ai-lab.com/models/nemotron3-5-lightning/ (fetched 2026-09-13)",
+      "finding": "no JetPack/L4T requirement or Thor-specific container; TensorRT Edge-LLM is a separate experimental Thor-only path capped at 2200 KV tokens; the 115 tok/s is an agentic aggregate, like the Orin 89 tok/s figure the repo already refused to use as a comparator",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "thor:~/.cache/huggingface/hub listing (2026-09-13)",
+      "finding": "present: models--nvidia--NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 and models--RadixArk--Qwen3.8-27B-DSpark; Lightning DSpark drafter absent",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "Thor spike Run A: vllm/vllm-openai:v0.29.0-aarch64 @sha256:18372a72, 128000, util 0.7, kv fp8, no spec (scratchpad thor/v0.29.0_aarch64-len128000-spec0-u0.7-kvfp8.log + 10-probes json)",
+      "finding": "Mamba2 SSD Triton warmup COMPLETED in 91.13 s (the 2026-08-20 wedge step); /health 200 at +362 s; known-answer 42 PASS, multi-step 15:40 PASS, tool call get_weather(Tel Aviv, c) PASS; single-stream decode 78.7-79.3 tok/s, TTFT ~70 ms; MARLIN NvFp4 MoE + FlashInfer attention + flashinfer Mamba SSU; weights 17.82 GiB",
+      "seeds": [
+        "c2",
+        "c5"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "Thor spike Run B: same image, max_model_len 1048576 (scratchpad thor/v0.29.0_aarch64-len1048576-spec0-u0.7-kvfp8.log + results/needle-*.json)",
+      "finding": "boots at the native 1M window (warmup 90.83 s, /health +559 s): KV 59.44 GiB = 20,431,534 tokens = 19.49x at 1,048,576; needles PASS at 128,073 / 250,073 / 1,040,073 tokens; cold prefill ~2,735 / ~1,899 / ~616 tok/s (1M TTFT 1,687.85 s); decode at depth 70.83 / 66.66 / 33.41 tok/s (256 forced tokens, warm cache)",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "Thor spike Run B load benches (results/concurrency.jsonl, agentic-1x12x8k.jsonl, agentic-4x12x8k.jsonl, tegrastats.log)",
+      "finding": "concurrency 1/2/4/8/16/32 -> aggregate 76.2/108.5/158.3/267.1/370.7/541.0 tok/s, per-request p50 77.9 -> 17.2 tok/s, TTFT <= 0.52 s, no failures, no knee by 32; agentic 12 turns x ~8K tool results to ~118K: 1 session 12/12 valid tool calls + 3/3 recall, 4 concurrent 48/48 + 12/12, TTFT p50 3.9 s (1) / 11.5 s (4) with prefix cache; tj max 99.5 C vs 109 C throttle trip, no throttling",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "Thor FP4 kernel check (fp4check.py in vllm/vllm-openai:v0.29.0-aarch64 on the Thor GPU) + checkpoint safetensors index (snapshot bee7596271d1)",
+      "finding": "cutlass_fp4_supported() and cutlass_scaled_mm_supports_fp4(110) are True and FlashInfer CUTLASS fused MoE is present on the Thor, yet MARLIN is correct: the W4A16_NVFP4 checkpoint has 5,888 expert weight_scale/weight_scale_2 tensors and ZERO expert input_scale tensors (only 46 FP8 in_proj/out_proj input_scales), so W4A4 native FP4 MoE kernels cannot serve it on any GPU; no native-FP4 decode speedup exists for this checkpoint; the forced-backend arm is dropped",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "Thor spike Run C: DSpark x5 (nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark), 1,048,576, util 0.7, kv fp8 (scratchpad thor/evidence-draft.txt Run C; thor:~/lightning-spike/results-dspark/)",
+      "finding": "boots (warmup 91.05 s, /health +392 s, drafter ~1.62 GiB, KV 56.27 GiB = 17,911,473 tokens = 17.08x at 1M, cudagraph forced PIECEWISE); probes PASS; single-stream code 141.14 tok/s (1.79x plain) but prose 77-87 (~1.05x); needles PASS 128K/250K/1,040,073 with prefill unchanged (1M cold 1,661 s); decode at depth vs plain: 128K 67.46 vs 70.83, 250K 66.07 vs 66.66, 1M 45.02 vs 33.41 (+35%); warm TTFT ~2x plain under dense-checkpoint prefix retention",
+      "seeds": [
+        "c5",
+        "c10"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "Thor spike Run C load benches (thor:~/lightning-spike/results-dspark/concurrency.jsonl, agentic-1x12x8k.jsonl, agentic-4x12x8k.jsonl, spec-metrics, tegrastats)",
+      "finding": "DSpark x5 under load: concurrency aggregate 75.0/94.8/157.7/249.3/322.9/516.6 tok/s at N=1..32 vs plain 76.2/108.5/158.3/267.1/370.7/541.0 (never faster, -2..-13%); agentic 1 session 12/12 + 3/3 but wall 65.1 s vs 54.7 (+19%) with TTFT p50 5.18 vs 3.90 s; 4 sessions 48/48 + 12/12 but wall 184.7 vs 153.6 s (+20%), TTFT max 21.8 s, one turn at 2.28 tok/s; acceptance length 6.00 on tool-call JSON falling to 3.25 on free text; tj max 100.2 C (71 samples >= 99 C), no throttle. For associate (code_authoring forbidden) DSpark's only big win (code 1.79x) is out of contract",
+      "seeds": [
+        "c24",
+        "c8"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "Thor spike Run D: plain decode, 1,048,576, util 0.7, KV bfloat16 (thor:~/lightning-spike/results-bf16/, boot log v0.29.0_aarch64-len1048576-spec0-u0.7-kvbfloat16.log)",
+      "finding": "boots (warmup 91.75 s, /health +498 s, KV 60.01 GiB = 10,392,269 tokens = 9.91x at 1M, half of fp8's 20,431,534); the uncalibrated fp8 q_scale warning logged by Runs A-C is ABSENT; probes PASS (known-answer 1.95 s, multi-step 8.29 s, tool call 1.07 s); single-stream decode prose ~73.8 tok/s steady (61.1 first-run outlier), code 73.7 \u2014 ~6-7% below fp8's ~79 at short context",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "Thor spike Run D load benches + thermals (thor:~/lightning-spike/results-bf16/, tegrastats.log, dmesg gpu-throttle-alert, result-file mtimes)",
+      "finding": "bfloat16 KV: needles PASS at every depth with cold prefill faster than fp8 (128K 45.28 s, 250K 122.44 s, 1M 1,448.97 s vs 46.84/131.7/1,687.85) but decode at depth slower (61.16/52.73/26.82 vs 70.83/66.66/33.41, -14..-21%); concurrency at parity (527.8 vs 541.0 at N=32); agentic fastest of three (1 session 47.8 s vs 54.7 fp8 / 65.1 DSpark; 4 sessions 138.6 s vs 153.6 / 184.7), 48/48 tool calls, 12/12 recall; no fp8 accuracy difference found. THERMAL: tj p50 106.4 max 109.4 C at ~86 W; 238 gpu-throttle-alert events 23:45:30-00:01:33 UTC, all inside the cold 1M prefill; later measurements ran after the last alert. Fan already on nvfancontrol 'cool' profile (close_loop, cont governor) \u2014 the 106-109 C plateau is the box's envelope, not a fan misconfiguration. A 1M associate at util 0.7 is thermally bounded on this box",
+      "seeds": [
+        "c24",
+        "c10"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}
