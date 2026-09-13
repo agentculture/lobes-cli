@@ -2,7 +2,7 @@
   "plan_slug": "orin-associate-at-1m",
   "schema_version": 2,
   "created": "2026-09-13T05:41:01Z",
-  "updated": "2026-09-13T12:03:08Z",
+  "updated": "2026-09-13T12:08:46Z",
   "deviations": [
     {
       "id": "d1",
@@ -550,8 +550,31 @@
       "evidence_refs": [],
       "origin": "llm",
       "status": "approved",
+      "superseded": true
+    },
+    {
+      "id": "b6",
+      "kind": "added",
+      "behavior_text": "shapes hosting associate boot it before the pooling gears on a plain compose up (shape override reverses the base template's gears-first depends_on)",
+      "caused_by": [
+        "d4"
+      ],
+      "evidence_refs": [
+        "e22",
+        "e23"
+      ],
+      "origin": "llm",
+      "status": "approved",
       "superseded": false
     }
   ],
-  "supersessions": []
+  "supersessions": [
+    {
+      "id": "s1",
+      "action": "supersede",
+      "target_ref": "b5",
+      "replacement_ref": "b6",
+      "origin": "user"
+    }
+  ]
 }
