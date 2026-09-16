@@ -1777,10 +1777,10 @@ services:
   # env_file chaining to .env + .secrets.env, and the mg-logwrap entrypoint
   # (issue #50 durable-logs contract) — none of that is bespoke to ComfyUI.
   #
-  # volumes: intentionally does NOT include the models/output bind mounts or a
-  # `user:` override yet — those are a later task in this plan (t4); this
-  # service mounts only the two fleet-standard files every other lane mounts
-  # (mg-logwrap + the durable log dir).
+  # volumes: carries the two fleet-standard files every other lane mounts
+  # (mg-logwrap + the durable log dir) PLUS two ComfyUI-specific mounts and a
+  # `user:` override (t4) — see the rationale comment above the `volumes:`
+  # key below.
   comfyui:
     build:
       context: .
@@ -1803,7 +1803,34 @@ services:
     environment:
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=comfyui   # → /logs/model-gear/comfyui-<boot>.log
+    # `user:` — the FIRST fleet service to set this (t4). Every other lane
+    # above runs as whatever the image's own USER directive leaves it as (root
+    # for the vLLM images); Dockerfile.comfyui already `USER 1000:1000`s
+    # inside the image (t2), and this pins the SAME uid:gid at the compose
+    # layer so a freshly rendered artifact is owned by a real host user, not
+    # root, and the operator can delete it / write into the output tree
+    # without sudo. Overridable for a host whose non-root deploy user is not
+    # uid/gid 1000.
+    user: "${COMFY_UID:-1000}:${COMFY_GID:-1000}"
     volumes:
+      # The model weights tree, mounted READ-ONLY — the SAME structural
+      # statement the llama.cpp GGUF lane makes above (docker-compose.yml,
+      # the llamacpp-primary service's `volumes:` comment): this lane never
+      # writes to the tree it did not create. Unlike llama.cpp's single mmap'd
+      # file, ComfyUI reads a whole checkpoint/LoRA/VAE tree, but the
+      # rationale is identical — the served weights are whatever the operator
+      # placed, byte-for-byte, never something the container downloaded or
+      # mutated. Accepted consequence (instruction): downloading a checkpoint
+      # from inside the ComfyUI UI itself is ruled out by this mount, on
+      # purpose. No operator-specific absolute path is baked into the
+      # packaged template — only a $HOME-relative fallback, exactly like
+      # LLAMACPP_MODEL_DIR/HF_CACHE above; rendering on a box whose weights
+      # live elsewhere needs exactly one env knob, COMFY_MODELS.
+      - ${COMFY_MODELS:-${HOME:-/root}/comfy/ComfyUI/models}:/opt/ComfyUI/models:ro
+      # The render OUTPUT tree — separately owned from the read-only models
+      # mount above, and read-write: this is the one place this lane is
+      # meant to write. Same one-env-knob pattern, COMFY_OUTPUT.
+      - ${COMFY_OUTPUT:-${HOME:-/root}/comfy/ComfyUI/output}:/opt/ComfyUI/output
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro

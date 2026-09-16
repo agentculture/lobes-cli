@@ -208,14 +208,15 @@ class TestReusesFleetShapesVerbatim:
         build = _service()["build"]
         assert build["dockerfile"] == "Dockerfile.comfyui"
 
-    def test_volumes_do_not_yet_include_models_or_output_or_a_user_key(self) -> None:
-        """Scope boundary with t4: this task must NOT add the models/output
-        bind mounts or a `user:` override -- that is a later task."""
+    def test_volumes_include_models_and_output_and_a_user_key(self) -> None:
+        """t4 adds the models/output bind mounts and a `user:` override --
+        see tests/test_comfyui_volumes.py for the full t4 acceptance-criteria
+        coverage. This is just the scope-boundary flip from t3's own test."""
         svc = _service()
-        assert "user" not in svc
+        assert "user" in svc
         volumes = svc.get("volumes", [])
-        assert not any("/opt/ComfyUI/models" in v for v in volumes)
-        assert not any("/opt/ComfyUI/output" in v for v in volumes)
+        assert any("/opt/ComfyUI/models" in v for v in volumes)
+        assert any("/opt/ComfyUI/output" in v for v in volumes)
 
 
 # ---------------------------------------------------------------------------
