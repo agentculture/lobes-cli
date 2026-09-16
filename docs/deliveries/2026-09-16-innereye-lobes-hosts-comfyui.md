@@ -38,11 +38,11 @@ Both appear under Drift below rather than silently vanishing.
 
 | Plan task | Status | What actually landed |
 |-----------|--------|----------------------|
-| `t1` | delivered | `[[exclusive_roles]]` on `spark.toml` + the new `spark-innereye` shape + 4 goldens; merged `dd4df9e` |
+| `t1` | delivered | `[[exclusive_roles]]` on `spark.toml` + the new `spark-innereye` shape + 4 goldens; merged `29515ae` |
 | `t2` | delivered | `Dockerfile.comfyui`, BUILT and render-validated live (41.84s vs the baseline's 42.05s); merged `577a519` |
 | `t3` | delivered | the `comfyui` compose service, expose-only, `/object_info` healthcheck; merged `5cd5cc2` |
 | `t4` | delivered | read-only models mount, writable output, `user: 1000:1000`; verified through the service; merged `d40da75` |
-| `t5` | delivered | **re-scoped by `d2`** to an atomic registration absorbing `t7` + `t14`; merged `a0f1e0f` |
+| `t5` | delivered | **re-scoped by `d2`** to an atomic registration absorbing `t7` + `t14`; merged `46feb80` |
 | `t6` | delivered | `declared_peak_gib` lane-gated to innereye, single consumer; merged `6fcd2f6` |
 | `t7` | dropped | absorbed into `t5` by `d2` — registering a role cannot be split file-disjoint |
 | `t8` | delivered | method-general `open_upstream` + GET-side streaming relay; merged `23b7416` |
@@ -112,7 +112,7 @@ it and should be deletable once #269 lands.
 
 | Claim | Confidence | Evidence |
 |-------|------------|----------|
-| `innereye` is registered as the eleventh role across every role-keyed table | high | `e5` · full suite 5151 passed · commit `a0f1e0f` |
+| `innereye` is registered as the eleventh role across every role-keyed table | high | `e5` · full suite 5151 passed · commit `46feb80` |
 | The service publishes no host port; 8188 is refused from the host and from the Thor | high | `e3` · acceptance §2 (both controls re-run after a confound was removed) |
 | An unauthenticated request to `/v1/render` is refused 401, with an attribution control | high | `e8` · acceptance §3 |
 | `GET /capabilities` reports innereye feasible **and** ready | high | `e10` · acceptance §4 · `tests/test_gateway_readiness.py` |
