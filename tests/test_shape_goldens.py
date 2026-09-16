@@ -566,13 +566,16 @@ def test_services_cover_exactly_the_hosted_feasible_roles() -> None:
 
 
 # Roles whose ROLE_SERVICE entry is REGISTERED but whose compose service has
-# not been declared yet. `innereye` (issue #82) is registered as the eleventh
-# role — every role-keyed table needs the name, because `compose_profile` /
-# `shape_services` index ROLE_SERVICE unconditionally — while the `comfyui`
-# service itself is a separate, later task in the same plan. No built-in shape
-# hosts the role, so nothing ever selects the missing service (see
-# test_services_cover_exactly_the_hosted_feasible_roles).
-_SERVICE_PENDING_ROLES: frozenset[str] = frozenset({"innereye"})
+# not been declared yet. Empty since issue #82's t3 landed the `comfyui`
+# service (`innereye`'s ROLE_SERVICE target) — the exemption was
+# SELF-RETIRING by design: the moment the service lands in the template,
+# test_role_service_constants_exist_in_compose_templates's own second loop
+# fails on a still-listed role, forcing the name back out here rather than
+# letting it rot into a place a real gap could hide. No built-in shape hosts
+# `innereye` yet, so nothing selects the `comfyui` service in
+# test_services_cover_exactly_the_hosted_feasible_roles either — this table
+# stays empty until a future task adds an innereye-hosting shape.
+_SERVICE_PENDING_ROLES: frozenset[str] = frozenset()
 
 
 def test_role_service_constants_exist_in_compose_templates() -> None:

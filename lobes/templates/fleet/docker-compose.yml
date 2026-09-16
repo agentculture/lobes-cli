@@ -1761,6 +1761,95 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- innereye render tenant (ComfyUI, the eleventh Colleague role, issue #82) -
+  # The `innereye` role's backend (shape_render.ROLE_SERVICE["innereye"] ==
+  # "comfyui"). Built from ./Dockerfile.comfyui (t2, built and render-validated
+  # on the DGX Spark 2026-09-16), which reproduces the vendor playbook's venv
+  # install. Gated behind the "innereye" compose profile, the SAME opt-in
+  # mechanic as muse/worker/associate above: a plain `docker compose up`
+  # never starts it, and an innereye-hosting shape writes
+  # COMPOSE_PROFILES=innereye + INNEREYE_BASE_URL into .env.
+  #
+  # This lane reuses the fleet's existing shapes VERBATIM: restart:
+  # unless-stopped, the shipped `deploy.resources.reservations.devices` GPU
+  # request (a csv-mode board gets it rewritten to `runtime: nvidia` the same
+  # way every other GPU_SERVICES entry does — see lobes/runtime/_compose.py),
+  # env_file chaining to .env + .secrets.env, and the mg-logwrap entrypoint
+  # (issue #50 durable-logs contract) — none of that is bespoke to ComfyUI.
+  #
+  # volumes: intentionally does NOT include the models/output bind mounts or a
+  # `user:` override yet — those are a later task in this plan (t4); this
+  # service mounts only the two fleet-standard files every other lane mounts
+  # (mg-logwrap + the durable log dir).
+  comfyui:
+    build:
+      context: .
+      dockerfile: Dockerfile.comfyui
+    image: ${INNEREYE_IMAGE:-lobes/comfyui:local}
+    container_name: model-gear-comfyui
+    profiles:
+      - innereye
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=comfyui   # → /logs/model-gear/comfyui-<boot>.log
+    volumes:
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # ComfyUI ships NO authentication (innereye challenge finding c36). On the
+    # bare venv this was answered by `start-comfy.sh`'s `--listen 127.0.0.1` —
+    # copying that literally into a container would make the lane unreachable
+    # from the gateway too, since loopback inside the container is the
+    # CONTAINER's own loopback, not the compose network. The SAME no-authn
+    # property is instead answered here by publishing no host port at all
+    # (`expose:`, never `ports:`, matching every other model lane above):
+    # this service is reachable ONLY as http://comfyui:8188 on the compose
+    # network — never from the host, and never off-box — with the gateway's
+    # job-scoped /v1/render facade as the sole outward exposure.
+    expose:
+      - "8188"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Split ENTRYPOINT/CMD in the image lets the flags be overridden without
+    # losing the interpreter (Dockerfile.comfyui's own comment) — but
+    # overriding `entrypoint:` here for mg-logwrap means the full invocation,
+    # image ENTRYPOINT included, has to be respelled as `command:`. Binds
+    # 0.0.0.0, NEVER 127.0.0.1 — see the rationale comment above (c36); do not
+    # "restore" the bare venv's loopback bind here.
+    command:
+      - python3.12
+      - /opt/ComfyUI/main.py
+      - --listen
+      - "0.0.0.0"
+      - --port
+      - "8188"
+    # ComfyUI ships no /health route (unlike every vLLM lane above), so this
+    # probes its own native `/object_info` endpoint instead — the SAME path
+    # the gateway's readiness cache uses for this backend (server.py's
+    # _COMFY_READY_PATH, issue #92/t11). That endpoint only answers once
+    # ComfyUI's HTTP server and its full node registry have finished
+    # initializing, so this reports UNHEALTHY during that startup window
+    # rather than healthy immediately — it does not, and cannot, track
+    # per-workflow CHECKPOINT loading (ComfyUI loads model weights lazily,
+    # per render job, never at boot), so a healthy container does not imply a
+    # warm model; it implies the render server itself is up and answering.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/object_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+
   gateway:
     build:
       context: .

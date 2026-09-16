@@ -236,6 +236,11 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
     "llamacpp-primary": "56507a02c50560eb2ab2d620b33121c605fd2b0f3b6092f17451889cac7c2004",
+    # NEW (innereye plan t3, issue #82): the opt-in `comfyui` render-tenant
+    # service, gated behind the `innereye` profile so no existing deployment
+    # starts it. Nothing else moved — vllm-primary's tool-parser wiring above
+    # is untouched by this task.
+    "comfyui": "1998c537c156e2f014c6e7ea4d82627d68d0110c829b21a48323bf301ef2b243",
     # NEW (lightning-on-orin plan, t7): the opt-in `vllm-associate` lane, gated
     # behind the `associate` profile so no existing deployment starts it. It
     # gives NVIDIA's published Jetson serve recipe's eight previously-
