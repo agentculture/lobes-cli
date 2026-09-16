@@ -1,13 +1,18 @@
-# The Colleague stack: ten roles, one contract
+# The Colleague stack: eleven roles, one contract
 
-> The ten first-class, Colleague-facing roles lobes exposes over the fleet —
-> `cortex` / `senses` / `muse` / `worker` / `hand` / `embedder` / `reranker` /
-> `stt` / `tts` — how a caller discovers them, drives them, measures them, and
-> the before→after context migration that shipped alongside this contract
-> (issue #81; `muse` joined as the seventh, opt-in-hosted role, `worker` as the
-> eighth, thor-worker-lobe plan, and `hand` as the ninth, hand-lobe plan).
-> **`muse` is currently DORMANT/unhosted mesh-wide** — see the callout below
-> the role table.
+> The eleven first-class, Colleague-facing roles lobes exposes over the fleet —
+> `cortex` / `senses` / `muse` / `worker` / `associate` / `hand` / `embedder` /
+> `reranker` / `stt` / `tts` / `innereye` — how a caller discovers them, drives
+> them, measures them, and the before→after context migration that shipped
+> alongside this contract (issue #81; `muse` joined as the seventh,
+> opt-in-hosted role, `worker` as the eighth, thor-worker-lobe plan, `hand` as
+> the ninth, hand-lobe plan, `associate` as the tenth, lightning-on-orin plan,
+> and `innereye` as the eleventh, issue #82/#268 — the ComfyUI image-render
+> tenant, the first role that is not a vLLM lane at all).
+> **`muse` is currently DORMANT/unhosted mesh-wide.** **`innereye` is
+> DECLARED/UNVALIDATED per #108 — see
+> [`docs/comfyui-innereye.md`](comfyui-innereye.md) for the reference doc and
+> its acceptance status.** See the callout below the role table.
 >
 > **Topology swap, deviation d1 (2026-08-20).** `worker` is no longer the
 > multimodal `unsloth/Qwen3.6-35B-A3B-NVFP4` on the Thor — the Thor's
@@ -41,7 +46,7 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The ten roles
+## The eleven roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
@@ -55,6 +60,7 @@ below.
 | `reranker` | `rerank` (pooling) | `POST /v1/rerank` (+ `/v1/score`) | Reordering/scoring retrieved candidates. |
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
 | `tts` | Chatterbox (audio overlay, opt-in) | `POST /v1/audio/speech` | Text-to-speech. |
+| `innereye` | `innereye` (ComfyUI, **opt-in hosting**, runtime `comfyui` — not vLLM) | `POST /v1/render` | Image generation via ComfyUI, job-scoped submit/status/artifact facade. Never decides or acts on the repo. **DECLARED/UNVALIDATED (#108)** — see [`docs/comfyui-innereye.md`](comfyui-innereye.md). |
 
 **`cortex` is the final decision authority, not the only lobe that acts.**
 Since `worker` joined as the eighth role, two lobes may act on the repo:
@@ -62,8 +68,8 @@ Since `worker` joined as the eighth role, two lobes may act on the repo:
 `worker` (`repo_action` allowed, but forbidden `final_decision` and
 `security_decision` — it executes ground work under `cortex`'s direction, it
 never decides on its own authority). Every other role — `senses`, `muse`,
-`embedder`, `reranker`, `stt`, `tts` — still carries no acting authority at
-all — including `associate`, the tenth role, which is `worker` with
+`embedder`, `reranker`, `stt`, `tts`, `innereye` — still carries no acting
+authority at all — including `associate`, the tenth role, which is `worker` with
 `repo_action` moved from the allowed column to the forbidden one. See
 "Responsibilities and forbidden responsibilities" below for the
 full division of labour.
@@ -146,6 +152,7 @@ whether a role did its job well; that judgment is Colleague's (see
 | `reranker` | `retrieval_ordering`, `relevance_refinement` | *(none)* |
 | `stt` | `transcribe`, `audio_input_to_text` (+ `realtime_vad_session` when the audio overlay is wired and feasible — see below) | *(none)* |
 | `tts` | `speech_output`, `synthesize` | *(none)* |
+| `innereye` | `image_generation` | `final_decision`, `repo_action`, `security_decision` — innereye renders on request; it never decides or touches the repo |
 
 **`worker` is the first role besides `cortex` permitted `repo_action`.**
 Every other non-`cortex` role (`senses`, `muse`, `embedder`, `reranker`,
@@ -349,7 +356,19 @@ first and `agentculture/lobes-cli#180` tracks granting it once adapters exist.
 > token cannot provide: a **separate public address**, so the `worker` seat
 > stays free for a possible future worker/cortex switch. That is an operator
 > decision about naming, recorded here as such rather than dressed up as a
-> capability argument. An eleventh should expect the same scrutiny. If what you want is a different
+> capability argument.
+>
+> **The eleventh, `innereye`, landed 2026-09-16** (issue #82/#268,
+> innereye-lobes-hosts-comfyui plan) as the first role that is not a vLLM
+> lane at all — ComfyUI has no `gpu_mem_util` fraction, no catalog entry,
+> and no checkpoint id, so none of the three usual escapes (a catalog
+> change, a profile/shape change, or a responsibilities token) could have
+> expressed it: there was no existing lane for a token to attach to. The
+> operator decision (claim `c15`) accepted the same irreversibility cost as
+> every prior role — see [`docs/comfyui-innereye.md`](comfyui-innereye.md)
+> for the full reference doc, and note its status: DECLARED/UNVALIDATED
+> per #108 until the live acceptance transcript lands. A twelfth should
+> expect the same scrutiny. If what you want is a different
 > checkpoint, that is a catalog change; if it is a different budget, that is a
 > profile or shape change; if it is a different behaviour on an existing lane,
 > that is a responsibilities token. Reach for a new role only when none of
@@ -385,7 +404,7 @@ base URL. Everything else — which model backs a role, whether it's loaded,
 what context it's served at — comes from the contract itself.
 
 ```bash
-lobes capabilities              # human-readable table, all ten roles
+lobes capabilities              # human-readable table, all eleven roles
 lobes capabilities --json       # the machine-readable contract
 lobes endpoint cortex           # just the base URL for one role
 curl -s http://localhost:8000/capabilities   # the same contract, over HTTP
@@ -520,8 +539,8 @@ RESPONSIBILITY of the role. `senses` has `tools: true` and no `tool_use`: its
 Gemma lane can serve tool calls, but the division of labour doesn't ask it to.
 
 **Every role's `endpoint` is the one client-reachable gateway origin** — dial
-it directly (issue #87). All ten roles (`cortex`/`senses`/`muse`/`worker`/`associate`/`hand`/
-`embedder`/`reranker` **and** `stt`/`tts`) report the same base URL because routing happens via the
+it directly (issue #87). All eleven roles (`cortex`/`senses`/`muse`/`worker`/`associate`/`hand`/
+`embedder`/`reranker`/`innereye` **and** `stt`/`tts`) report the same base URL because routing happens via the
 `model` field / the OpenAI `path`, not distinct per-role URLs; the internal
 upstream hosts (`vllm-primary:8000`, `realtime:8080`) are never leaked. When you
 fetch `GET /capabilities`, the gateway advertises the origin **you actually
@@ -566,7 +585,7 @@ Example (`cortex`, fully wired, default fleet):
 An unwired role (e.g. `stt`/`tts` without `--audio`, or `senses` before the
 multimodal gear is up) is **never omitted** — it's returned with
 `loaded: false` and the model it *would* serve named from the catalog, so a
-client can always render all ten roles. (An unwired `muse` or `worker`
+client can always render all eleven roles. (An unwired `muse` or `worker`
 additionally defaults to `feasible: false` — the opt-in-hosting honesty rule
 above.)
 
@@ -794,8 +813,8 @@ claim (lobes measures serving performance; whether an *answer* was good is
 Colleague's call):
 
 ```bash
-lobes measure              # all ten roles, table
-lobes measure --json       # all ten roles, JSON
+lobes measure              # all eleven roles, table
+lobes measure --json       # all eleven roles, JSON
 lobes measure --role cortex --json
 ```
 
@@ -931,7 +950,7 @@ and live-validation history behind this rebalance.
 - [`docs/openai-api.md`](openai-api.md) — the raw OpenAI-compatible wire
   endpoints each role sits behind.
 - [`docs/deployment-shapes.md`](deployment-shapes.md) — the orthogonal
-  deployment-shape axis: which of these ten roles a given box hosts at all,
+  deployment-shape axis: which of these eleven roles a given box hosts at all,
   the cross-box honest-referral surface for a role it doesn't, and the
   opt-in proxy-lobes extension (the awake/asleep/proxy table, the pairwise
   key contract, a worked example).
