@@ -89,6 +89,13 @@ ROLE_SERVICE: dict[str, str] = {
     "reranker": "vllm-rerank",
     "stt": "stt",
     "tts": "chatterbox",
+    # `innereye` (issue #82) — the ComfyUI render tenant, the eleventh role.
+    # Its service is `comfyui` (NOT a `vllm-*` gear: it is not a vLLM lane at
+    # all), and like muse/worker/associate it is an opt-in core role, so
+    # `lobes up innereye` is gated by _opt_in_core_activated below. The
+    # service itself is declared by a later task; this entry is the role's
+    # lifecycle registration only.
+    "innereye": "comfyui",
 }
 
 # The roles whose service lives in the audio overlay (docker-compose.audio.yml):

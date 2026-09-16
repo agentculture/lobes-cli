@@ -1188,15 +1188,22 @@ def test_innereye_defaults_infeasible_on_a_minimal_primary_only_fleet() -> None:
 def test_innereye_explicit_feasible_true_does_not_fabricate_loaded() -> None:
     """An operator can override the OPT_IN_BACKENDS default to feasible:true
     (e.g. declaring intent ahead of the backend actually being wired), but
-    that alone must never fabricate loaded/ready — there is still nothing to
-    dial (issue #92's "advertised implies reachable")."""
+    that alone must never fabricate loaded/ready — there is still nothing
+    behind the facade (issue #92's "advertised implies reachable").
+
+    The ENDPOINT is the gateway origin all the same, exactly as it is for an
+    unwired-but-feasible ``cortex`` (:func:`lobes.roles._gateway_role` sets
+    ``endpoint = gateway`` unconditionally): "which origin fronts this role"
+    is a facade fact, and ``loaded``/``ready`` — not ``endpoint`` — are the
+    channel that says whether anything answers there. Only an INFEASIBLE
+    innereye blanks the endpoint (the test above)."""
     env = _full_env() | {"INNEREYE_FEASIBLE": "true"}
     registry = _registry(env)
     info = registry["innereye"]
     assert info.feasible is True
     assert info.loaded is False
     assert info.ready is False
-    assert info.endpoint == ""
+    assert info.endpoint == _DEFAULT_TEST_GATEWAY_URL
 
 
 def test_innereye_explicit_feasible_false_is_honored() -> None:

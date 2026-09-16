@@ -1963,6 +1963,11 @@ services:
       # dropped core role (absent = feasible — the sleeping-lobe default).
       - STT_FEASIBLE=${STT_FEASIBLE:-}
       - TTS_FEASIBLE=${TTS_FEASIBLE:-}
+      # The innereye render tenant (issue #82) — opt-in-hosted like
+      # muse/worker/associate, so an ABSENT INNEREYE_FEASIBLE means
+      # INFEASIBLE (lobes/gateway/_config.py's OPT_IN_BACKENDS), not the
+      # stt/tts sleeping-lobe default.
+      - INNEREYE_FEASIBLE=${INNEREYE_FEASIBLE:-}
       # Retired (t14): the operator-typed peer family (honest referral,
       # proxy-lobes, and the replica-pool plural form) that used to be
       # passed through here is gone from lobes.gateway._config.build_config
@@ -2000,6 +2005,7 @@ services:
       - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
       - STT_MAX_ACTIVE=${STT_MAX_ACTIVE:-}
       - TTS_MAX_ACTIVE=${TTS_MAX_ACTIVE:-}
+      - INNEREYE_MAX_ACTIVE=${INNEREYE_MAX_ACTIVE:-}
       # GATEWAY_CAPACITY_KILL_SWITCH (issue #199): truthy pins EVERY
       # resolved capacity — local and peer alike — back to the 1.0
       # sentinel, reproducing today's ranking exactly while leaving the
@@ -2120,6 +2126,18 @@ services:
       - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
       - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
       - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
+      # INNEREYE_*: the render tenant is ComfyUI, not a vLLM lane — none of
+      # these five knobs has any meaning for it and no `comfyui` service
+      # expands them. Passed through anyway, exactly as the pooling gears and
+      # the audio sidecars above are: the gateway derives the fingerprint
+      # cross-product from FEASIBLE_ENV mechanically, and a key it reads but
+      # compose omits is silently inert (tests/test_gateway_env_passthrough_
+      # guard.py is the standing guard). Harmless ${VAR:-} no-ops today.
+      - INNEREYE_QUANTIZATION=${INNEREYE_QUANTIZATION:-}
+      - INNEREYE_KV_CACHE_DTYPE=${INNEREYE_KV_CACHE_DTYPE:-}
+      - INNEREYE_REASONING_PARSER=${INNEREYE_REASONING_PARSER:-}
+      - INNEREYE_TOOL_CALL_PARSER=${INNEREYE_TOOL_CALL_PARSER:-}
+      - INNEREYE_SPECULATIVE_CONFIG=${INNEREYE_SPECULATIVE_CONFIG-}
       # Mesh join (mesh-brain-join, t4): the six LOBES_MESH_* keys the
       # gateway's MeshConfig parses (lobes/gateway/_mesh_config.py, t1). Same
       # silent-inert trap as the capacity block above: the gateway does not

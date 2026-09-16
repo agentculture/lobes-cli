@@ -254,7 +254,7 @@ def test_lobes_up_addresses_associate_and_the_bundle_excludes_it() -> None:
 
 
 def test_associate_is_an_opt_in_core_role_on_every_layer() -> None:
-    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate")
+    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate", "innereye")
     assert "associate" in OPT_IN_BACKENDS
     assert "associate" in PROFILE_ROLES
     assert ROLE_ENV_PREFIX["associate"] == "ASSOCIATE"

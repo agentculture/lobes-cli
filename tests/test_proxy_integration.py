@@ -1035,6 +1035,32 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "innereye": {
+        # The ELEVENTH Colleague role (issue #82): the ComfyUI render tenant.
+        # Like stt/tts it has NO catalog entry, so context/quant/mtp/tools are
+        # honestly empty rather than a checkpoint's claims. UNLIKE stt/tts it
+        # is OPT-IN (OPT_IN_BACKENDS), so this no-knob deployment — which
+        # neither wires nor declares it — reads feasible:false, and the
+        # endpoint is blank because an infeasible role has no facade to name.
+        "role": "innereye",
+        "model": "comfyanonymous/ComfyUI-0.33.2",
+        "runtime": "comfyui",
+        "endpoint": "",
+        "path": "/v1/render",
+        "context": 0,
+        "quant": "",
+        "mtp": False,
+        "tools": False,  # a render tenant, not a chat lane
+        "responsibilities": ["image_generation"],
+        "forbidden_responsibilities": [
+            "final_decision",
+            "repo_action",
+            "security_decision",
+        ],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
 }
 
 _GOLDEN_MODELS = {

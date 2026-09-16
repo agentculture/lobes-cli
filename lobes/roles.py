@@ -1169,12 +1169,21 @@ def build_role_registry(
     # actually wires a `Backend(name="innereye", ...)` into the table. Until
     # then `innereye_configured` is always False, which — combined with
     # innereye being in `OPT_IN_BACKENDS` (`lobes.gateway._config`) — means
-    # this always resolves `loaded=False, feasible=False, ready=False`: the
-    # honest "declared but unhosted" contract (#92), satisfied from the very
-    # PR that registers the role.
+    # this resolves `loaded=False, feasible=False, ready=False` on every
+    # deployment that has not declared `INNEREYE_FEASIBLE`: the honest
+    # "declared but unhosted" contract (#92), satisfied from the very PR that
+    # registers the role.
     innereye_backend = next((b for b in table.backends if b.name == ROLE_BACKEND["innereye"]), None)
     innereye_configured = innereye_backend is not None
-    innereye_endpoint = gateway if innereye_configured else ""
+    # The ENDPOINT is the gateway origin whenever the role is feasible, wired
+    # or not — the gateway-fronted rule (`_gateway_role` sets `endpoint =
+    # gateway` unconditionally), NOT the stt/tts rule. The audio lanes blank
+    # their endpoint on an unwired OVERLAY because `AUDIO_URL` names a real
+    # second origin that may be absent; innereye has no such field, so the
+    # only origin it ever has is this box's gateway. `loaded`/`ready` (below)
+    # carry the "is anything actually behind it" honesty, and the INFEASIBLE
+    # branch of `_resolve_innereye_role` still blanks the endpoint outright.
+    innereye_endpoint = gateway
     innereye_local_signal = (
         None if backend_ready is None else backend_ready.get(ROLE_BACKEND["innereye"]) is True
     )
@@ -1183,6 +1192,8 @@ def build_role_registry(
         and bool(innereye_endpoint)
         and (innereye_local_signal if innereye_local_signal is not None else True)
     )
+    # NOTE the clamp above stays on `innereye_configured`, not on the endpoint:
+    # a feasible-but-unwired tenant advertises the facade origin and ready:false.
     registry["innereye"] = _resolve_innereye_role(
         table,
         endpoint=innereye_endpoint,

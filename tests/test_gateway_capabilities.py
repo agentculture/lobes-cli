@@ -239,7 +239,13 @@ def test_build_config_reads_gateway_public_url() -> None:
 
 
 def test_capabilities_payload_gateway_url_applies_to_all_roles() -> None:
-    env = _full_env(AUDIO_URL="http://realtime:8080")
+    # Every role must be DECLARED-ON for this guard to say anything: an
+    # unwired audio overlay blanks stt/tts's endpoint, and the opt-in
+    # `innereye` render tenant (issue #82) is infeasible-by-default, which
+    # blanks its endpoint the same way. AUDIO_URL and INNEREYE_FEASIBLE are
+    # what turn the two channels on, so the assertion below is about the
+    # gateway origin (#87) and not about feasibility.
+    env = _full_env(AUDIO_URL="http://realtime:8080", INNEREYE_FEASIBLE="true")
     table, cfg = build_config(env)
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url="https://tunnel.example")
     for role in ROLES:

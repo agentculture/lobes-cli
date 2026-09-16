@@ -1037,6 +1037,12 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "rerank": "RERANK_SERVED_NAME",
 }
 
+# Backend names that resolve their served id from a hardcoded constant rather
+# than from :data:`_PEER_SERVED_NAME_ENV` above or :data:`_PEER_ROLE_HINT`
+# below: the two audio sidecars and the innereye render tenant, none of which
+# is a switchable catalog gear. See _peer_served_name's early return.
+_FIXED_SIDECAR_BACKENDS: frozenset[str] = frozenset({"stt", "tts", "innereye"})
+
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
 # fallback lobes.roles uses to NAME an unwired role's model.
 #
@@ -1053,8 +1059,8 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
 # missing from these two, so its proxy knob did nothing on a box that only
 # REACHES worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve
 # off).
-# ``stt``/``tts`` are proxyable too but resolve via _peer_served_name's
-# fixed-sidecar early return, not these tables.
+# ``stt``/``tts``/``innereye`` are proxyable too but resolve via
+# _peer_served_name's fixed-sidecar early return, not these tables.
 # tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name
 # is the standing guard.
 _PEER_ROLE_HINT: dict[str, str] = {
@@ -1095,14 +1101,16 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
     simply never advertises ready, and a forward naming it surfaces the peer's
     own honest 404.
     """
-    if name in ("stt", "tts"):
-        # First-class audio roles (issue #129): fixed sidecar checkpoints, not
-        # catalog gears — the id is the SAME constant lobes.roles advertises on
-        # /capabilities (lazy import: matches capabilities_payload's own
-        # deferred lobes.roles import below).
-        from lobes.roles import _STT_MODEL, _TTS_MODEL
+    if name in _FIXED_SIDECAR_BACKENDS:
+        # Fixed non-catalog tenants: the two audio sidecars (issue #129) and
+        # the innereye ComfyUI render tenant (issue #82). None has a
+        # SupportedModel entry, so neither _PEER_SERVED_NAME_ENV nor
+        # _PEER_ROLE_HINT can resolve them — the id is the SAME constant
+        # lobes.roles advertises on /capabilities (lazy import: matches
+        # capabilities_payload's own deferred lobes.roles import below).
+        from lobes.roles import _INNEREYE_MODEL, _STT_MODEL, _TTS_MODEL
 
-        return _STT_MODEL if name == "stt" else _TTS_MODEL
+        return {"stt": _STT_MODEL, "tts": _TTS_MODEL, "innereye": _INNEREYE_MODEL}[name]
     wired = next((b.served_name for b in table.backends if b.name == name), None)
     if wired:
         return wired

@@ -82,7 +82,14 @@ COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
 # likewise too heavy to co-reside with the default duo, so it is hosted only
 # by an explicit worker-hosting shape and renders nothing by default -- which
 # is what keeps machine-as-brain byte-identical when the role vocabulary grew.
-OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker", "associate")
+# `innereye` (issue #82) joined this set for the same HOSTING reason, though
+# not the same weight reason: it is a Profile-machinery role (schema.ROLES)
+# that machine-as-brain must never host, because a render tenant draws from
+# the same card budget the gears do and only an explicit innereye-hosting
+# shape may make that trade. Being here is what keeps machine-as-brain
+# byte-identical: a non-hosted opt-in core role renders nothing, and the
+# gateway's OPT_IN_BACKENDS unwired-by-default rule carries the honesty.
+OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker", "associate", "innereye")
 
 # The "whole brain" set machine-as-brain hosts exactly -- the identity-shape
 # invariant (see shape_render.py's module docstring and
