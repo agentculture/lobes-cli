@@ -211,7 +211,10 @@ def test_unknown_shape_is_user_error_naming_valid_shapes(tmp_path, capsys) -> No
     assert rc == 1
     err = capsys.readouterr().err
     assert "unknown shape" in err
-    assert "machine-as-brain, orin-associate, orin-cortex, orin-lobe, orin-small, spark-lobe" in err
+    assert (
+        "machine-as-brain, orin-associate, orin-cortex, orin-lobe, orin-small, "
+        "spark-innereye, spark-lobe" in err
+    )
     assert not target.exists()  # aborts before any scaffolding
 
 
@@ -233,6 +236,9 @@ def test_builtin_shape_names_are_sorted() -> None:
         "orin-cortex",
         "orin-lobe",
         "orin-small",
+        # The innereye/cortex "way out" shape (issue #268, t1) -- sorts before
+        # spark-lobe, so a new built-in name lands mid-tuple, not at the end.
+        "spark-innereye",
         "spark-lobe",
         "thor-lobe",
         "thor-muse",

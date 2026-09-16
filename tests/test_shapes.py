@@ -283,6 +283,12 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "orin-lobe",
         "orin-cortex",
         "orin-associate",
+        # The innereye/cortex co-residency "way out" (issue #268, plan
+        # innereye-lobes-hosts-comfyui, t1): the DGX Spark hosts the opt-in
+        # `innereye` ComfyUI tenant and drops `cortex` to a peer, because
+        # decision c41 forbids the two co-residing on a unified-memory card.
+        # DECLARED/UNVALIDATED -- the `comfyui` compose service is t2's.
+        "spark-innereye",
     }
 
 
@@ -309,6 +315,33 @@ def test_spark_lobe_hosts_cortex_embedder_reranker_and_audio_no_senses() -> None
     assert spark_lobe is not None
     assert set(spark_lobe.hosts) == {"cortex", "hand", "embedder", "reranker", "stt", "tts"}
     assert "senses" not in spark_lobe.hosts
+
+
+def test_spark_innereye_hosts_innereye_and_senses_but_never_cortex() -> None:
+    """The spark-side resolution of the cortex/innereye clash (issue #268, t1).
+
+    `spark-innereye` is `spark-lobe`'s mirror image for THIS exclusive group:
+    everything machine-as-brain would host on the GB10 MINUS `cortex`, PLUS
+    the opt-in `innereye` ComfyUI tenant. Hosting it is a DECLARATION only --
+    the `comfyui` compose service (t2) and the gateway-side
+    INNEREYE_BASE_URL reader (a later task) do not exist yet, so a box on
+    this shape still advertises `innereye` infeasible (proven in
+    tests/test_shape_contract_matrix.py). It carries NO overrides on
+    purpose: a reclaimed budget for the surviving lanes is t2's to measure.
+    """
+    spark_innereye = load_builtin_shape("spark-innereye")
+    assert spark_innereye is not None
+    assert set(spark_innereye.hosts) == {
+        "senses",
+        "innereye",
+        "hand",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    }
+    assert "cortex" not in spark_innereye.hosts
+    assert dict(spark_innereye.overrides) == {}
 
 
 def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:
