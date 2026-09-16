@@ -207,3 +207,9 @@
 {"ts":"2026-09-16T11:23:33.578369+00:00","type":"pr_webhook_posted","pr":270,"event":"pr_opened"}
 {"ts":"2026-09-16T11:24:36.967038+00:00","type":"readiness_arrived","pr":270,"waited_secs":60}
 {"ts":"2026-09-16T11:24:41.403788+00:00","type":"pr_read","pr":270,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-09-16T12:44:50.051042+00:00","type":"pr_reply","pr":270,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T12:44:51.569047+00:00","type":"pr_reply","pr":270,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T12:44:53.179673+00:00","type":"pr_reply","pr":270,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T12:44:54.522120+00:00","type":"pr_reply","pr":270,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T12:44:54.534943+00:00","type":"pr_batch_replied","pr":270,"count":4,"resolved":0}
+{"ts":"2026-09-16T12:44:55.310544+00:00","type":"pr_webhook_posted","pr":270,"event":"pr_replied"}

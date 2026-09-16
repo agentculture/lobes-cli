@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - lobes up remediation for an opt-in core role now names the real hosting shape instead of a hardcoded thor- prefix, which was already wrong for associate
+
 ## [0.78.4] - 2026-09-13
 
 ### Added
