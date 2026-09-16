@@ -20,6 +20,7 @@ import yaml
 from lobes.cli._commands.init import render_shape_override
 from lobes.profiles import resolve_profile
 from lobes.profiles.shapes import builtin_shape_names, resolve_shape
+from lobes.runtime import _compose
 
 _TEMPLATE = (
     Path(__file__).resolve().parents[1] / "lobes" / "templates" / "fleet" / "docker-compose.yml"
@@ -105,3 +106,23 @@ def test_docker_compose_merges_the_reversed_order(tmp_path: Path) -> None:
     assert not services["vllm-associate"].get("depends_on")
     for gear in ("vllm-embed", "vllm-rerank"):
         assert services[gear]["depends_on"]["vllm-associate"]["condition"] == "service_healthy"
+
+
+def test_boot_order_blocks_are_not_read_as_dropped_lobes() -> None:
+    """A start-order reversal must never be mistaken for a shape DROP.
+
+    ``docker-compose.shape.yml`` holds two unrelated kinds of block: services
+    PARKED in the inert ``shape-dropped`` profile, and services merely re-ordered
+    (this file's whole subject). Reading "any service key present" as "dropped" —
+    which lobes did until the ``INNEREYE_UI_PORT`` work introduced a third kind —
+    reported ``vllm-associate`` and both pooling gears as dropped on the one shape
+    that hosts them, so ``lobes up associate`` would have been refused on the Orin
+    and ``doctor`` would have stopped demanding their knobs.
+    """
+    text = render_shape_override(resolve_shape("orin-associate"), resolve_profile("orin"))
+    parked = _compose.shape_parked_service_keys(text)
+    assert "vllm-associate" not in parked
+    assert "vllm-embed" not in parked
+    assert "vllm-rerank" not in parked
+    # The shape genuinely drops the two heavy default lobes; those ARE parked.
+    assert {"vllm-primary", "vllm-multimodal"} <= parked

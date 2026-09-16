@@ -144,14 +144,106 @@ explicitly, so the 503 never claims a cold backend it did not observe. This
 covers every buffered round trip: submit, polling, the artifact index,
 cancel and upload.
 
-**No reader should conclude the native ComfyUI surface is reachable
-off-box.** It categorically is not: the `comfyui` service declares
+**By default the native ComfyUI surface is not reachable off-box — and that
+default is now defeasible.** As shipped, the `comfyui` service declares
 `expose: ["8188"]` with **no** `ports:` key, so port 8188 answers only to
 other containers on the compose network — never to the host, and never to
 anything outside the box. The isolation property is the absent port
 publication, not a bind address (see "Rollback", below, for why the
 scaffolded compose service binds `0.0.0.0` inside the container rather than
-copying the venv script's `--listen 127.0.0.1`).
+copying the venv script's `--listen 127.0.0.1`). An operator can give that
+property up on purpose, with one knob — the third exposure, next. Nothing
+else in this doc's outward story changes: the gateway still publishes only
+the six `/v1/render` spellings, whether or not the knob is set.
+
+### The third exposure — `INNEREYE_UI_PORT`, opt-in, default off
+
+`INNEREYE_UI_PORT` in the deployment's `.env` publishes **ComfyUI's own web
+UI** — and with it ComfyUI's whole native API — on a host address. Unset (the
+shipped state; `env.example` carries it commented out) nothing is published
+and the rendered deployment is byte-identical to one from before the knob
+existed.
+
+**What it gives up, stated plainly.** ComfyUI ships **no authentication of
+any kind** (innereye challenge finding `c36`) — that is *why* the service
+publishes nothing by default, and there is no password to add instead. The
+absent port publication **is** the access control. Anyone who can reach the
+published address can:
+
+- **spend the GPU** — submit any workflow, for as long as they like;
+- **read every prior prompt** — `GET /history` returns the whole queue
+  history, including workflows submitted through the `/v1/render` facade by
+  other callers;
+- **download every prior output** — `GET /view` serves any file in the
+  output tree by name.
+
+None of those three are reachable through the job-scoped facade: it has no
+outward spelling of `/history` or `/queue`, mints its own job ids, and serves
+artifacts only per-job. Setting this knob is therefore not "the same surface
+with a port on it" — it is a strictly larger surface than anything the
+facade exposes.
+
+**Two forms, loopback by default.**
+
+| value | rendered bind |
+|---|---|
+| `INNEREYE_UI_PORT=8188` | `127.0.0.1:8188:8188` — **loopback only** |
+| `INNEREYE_UI_PORT=100.127.105.72:8188` | `100.127.105.72:8188:8188` — that interface only |
+
+A bare port number binds loopback, never `0.0.0.0`. A wider bind (a LAN
+address, a tailnet address, or `0.0.0.0` itself) has to be typed as an
+explicit interface, because a box with a home-WiFi address as well as a
+tailnet one would otherwise publish an unauthenticated ComfyUI to every
+device on the LAN by way of a value that looked like it only named a port.
+Reaching a loopback-bound UI from elsewhere is then an `ssh -L` tunnel — an
+authenticated channel, chosen deliberately, rather than an open port.
+
+**Rendered by lobes, not hand-written.** The knob is read at render time and
+emitted as a `ports:` entry into the GENERATED `docker-compose.shape.yml`,
+carrying the same warning as a comment. Compose has no conditional-block
+syntax — no `${VAR}` in the packaged template can make a `ports:` key
+*absent* — so a generated override is the only way an opt-in port can exist
+without a hand-edited `docker-compose.override.yml` that no re-render would
+survive (the 2026-08-25 Spark incident; see `docs/deployment-lock.md`). Set
+it in `.env`, then re-run `lobes init [--shape …] --apply`; the dry run and
+the `--json` payload both name the address that would be published. Clearing
+the knob and re-rendering removes the publication again.
+
+That file's other blocks park a dropped lobe in the inert `shape-dropped`
+profile; this one does the opposite, so lobes reads the **profile marker**,
+not the mere presence of a service block, when it asks which lanes a shape
+drops — a published UI is never mistaken for a dropped `innereye`.
+
+**A literal bind, validated at render time.** The rendered text is the whole
+truth about what gets published, so the value has to *be* an address, not an
+expression that becomes one later. The accepted grammar:
+
+- **port** — 1 to 65535, digits only. A bare port binds `127.0.0.1`.
+- **interface** — an IPv4 address (`100.127.105.72`), a hostname
+  (`localhost`, `host.example`), or a **bracketed** IPv6 literal
+  (`[::1]:8188`, with an optional `%zone`).
+- nothing else. Anything outside `[A-Za-z0-9.\-:\[\]%]` is refused, which
+  notably rules out `$` and `\`: compose would interpolate
+  `INNEREYE_UI_PORT=${BIND_HOST}:8188` **itself**, possibly to `0.0.0.0`,
+  producing a wide bind from a file whose literal text named a narrow one;
+  and a backslash lands inside the generated double-quoted YAML scalar, where
+  `\q` is an invalid escape — `lobes init --apply` would report success and
+  every later compose command would fail to load the file.
+- a **third** colon-separated segment is refused: the container port is always
+  `8188` and is never typed. `127.0.0.1:8188:9000` is an error, not a mapping.
+- **bare (unbracketed) IPv6 is refused**, with a message saying to bracket it.
+  `::1:8188` is itself a valid IPv6 address, so it cannot be told apart from
+  `host:port`; guessing would be worse than asking.
+
+Every rejection is a `lobes` user error naming the broken rule and the whole
+grammar — never a silently rendered file that `docker compose` chokes on.
+
+**Never routed through the CLI's port resolver.** Validating the digits above
+is *not* the same as resolving the value as a port. `VLLM_PORT` *is* resolved,
+its parser rejects docker's `IP:port` form, and every verb that resolves it
+then fails outright (issue #272). This knob is consumed at render time only,
+to emit that one compose line; no CLI verb hands it to that resolver, so it
+does not inherit that bug.
 
 ## Declaration, not metering
 

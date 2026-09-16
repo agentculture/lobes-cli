@@ -606,18 +606,61 @@ def _override_service_keys(text: str) -> set[str]:
     return keys
 
 
+#: The inert compose profile a shape-dropped service is parked in. Mirrors
+#: ``lobes.cli._commands.init.SHAPE_DROPPED_PROFILE`` — this module is the
+#: READER of the file that module GENERATES, and the runtime carries no YAML
+#: parser, so the marker is matched as a literal line.
+SHAPE_DROPPED_PROFILE = "shape-dropped"
+_SHAPE_DROPPED_MARKER = f'profiles: ["{SHAPE_DROPPED_PROFILE}"]'
+
+
+def shape_parked_service_keys(text: str) -> set[str]:
+    """Services the shape override PARKS, i.e. those carrying the dropped-profile marker.
+
+    Not every block in ``docker-compose.shape.yml`` is a drop. The file also
+    carries start-order reversals (the associate-first ``depends_on`` blocks,
+    issue #260), a pre-#222 ``gateway: depends_on: !reset null``, and — since
+    the ``INNEREYE_UI_PORT`` knob — a ``comfyui: ports:`` block that PUBLISHES a
+    lane rather than parking it. Reading "any service key present" as "dropped"
+    would therefore report a hosted lane as dropped: ``lobes up`` would refuse
+    it, ``lobes fleet status`` would drop its container from the expected set,
+    and ``lobes doctor`` would stop demanding its knobs. The
+    ``shape-dropped`` profile line is the only honest signal, so it is what is
+    matched.
+
+    Same stdlib indentation scan as :func:`_override_service_keys` (the runtime
+    carries no YAML parser): a service key is exactly two-space-indented and
+    ends in ``:``; its attributes are deeper-indented.
+    """
+    keys: set[str] = set()
+    current: str | None = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        stripped = line.strip()
+        if indent == 2 and stripped.endswith(":"):
+            current = stripped[:-1]
+            continue
+        if indent > 2 and current is not None and stripped == _SHAPE_DROPPED_MARKER:
+            keys.add(current)
+    return keys
+
+
 def shape_dropped_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     """Container names the shape override disables, read from ``docker-compose.shape.yml``.
 
     The override file itself is the single source of truth: ``lobes init`` GENERATES
     it listing exactly the core services it parks in the inert ``shape-dropped``
-    compose profile (plus the ``gateway`` whose ``depends_on`` it resets — not a
-    core gear, so never returned here). Empty tuple when no override is scaffolded.
+    compose profile. Only the PARKED blocks count — see
+    :func:`shape_parked_service_keys` for why the file's other blocks (start-order
+    reversals, a pre-#222 ``gateway`` reset, a published ComfyUI UI port) must not
+    be read as drops. Empty tuple when no override is scaffolded.
     """
     path = Path(deploy_dir) / SHAPE_OVERLAY
     if not path.is_file():
         return ()
-    keys = _override_service_keys(path.read_text(encoding="utf-8"))
+    keys = shape_parked_service_keys(path.read_text(encoding="utf-8"))
     return tuple(
         container for service, container in _CORE_SERVICE_CONTAINER.items() if service in keys
     )
