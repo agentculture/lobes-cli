@@ -63,12 +63,15 @@ import os
 import re
 import socket
 import sys
+import threading
+import uuid
+from collections import OrderedDict
 from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Iterable
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
@@ -121,14 +124,20 @@ from lobes.gateway._replicas import (
     ReplicaState,
 )
 from lobes.gateway._routing import (
+    RENDER_PATH,
+    RENDER_TASK,
     Backend,
+    RenderRoute,
     RoutingTable,
     audio_role_for_path,
+    extract_job_artifacts,
     infeasible_owner,
     is_audio_path,
+    is_render_path,
     is_unknown_model,
     list_models_payload,
     order_backends,
+    parse_render_route,
     resolve_model,
     supported_models_payload,
 )
@@ -3754,6 +3763,18 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
         eps.append("POST /v1/embeddings")
     if "score" in tasks:
         eps += ["POST /v1/rerank", "POST /v1/score"]
+    if RENDER_TASK in tasks:
+        # The render facade (issue #82, t9) — advertised only when the tenant is
+        # actually wired, like every other task family here. Job-scoped by
+        # construction: there is no /history or /view spelling to advertise.
+        eps += [
+            f"POST {RENDER_PATH}",
+            f"POST {RENDER_PATH}/uploads/image",
+            f"POST {RENDER_PATH}/jobs/{{job_id}}/cancel",
+            f"GET {RENDER_PATH}/jobs/{{job_id}}",
+            f"GET {RENDER_PATH}/jobs/{{job_id}}/artifacts",
+            f"GET {RENDER_PATH}/jobs/{{job_id}}/artifacts/{{filename}}",
+        ]
     # Per-role audio honesty (issue #129): each lane is advertised iff it is
     # answerable HERE — served by the local overlay (and not declared off) or
     # forwarded to a declared peer. A declared-off, unproxied lane 404s
@@ -4237,6 +4258,182 @@ def _not_found_body(route: str) -> dict:
     return {"error": {"message": message, "type": "not_found"}}
 
 
+# --- the /v1/render facade (issue #82, t9) ---------------------------------
+#
+# The gateway fronts a ComfyUI that has NO authentication of any kind. The
+# fleet bearer answers WHO may reach the lane; it says nothing about WHAT a
+# caller may read once inside. ComfyUI's own surfaces make that gap total:
+# ``GET /history`` lists every prompt the box has ever run (other agents'
+# included) and ``GET /view`` serves every output by a shared, counter-named
+# filename (``flux_output_00001_.png``, ``_00002_``, …). A transparent prefix
+# relay would therefore hand any bearer-holder the entire render history of
+# the machine (spec claim c35).
+#
+# So this facade is JOB-SCOPED (c38). Three properties carry that, and each is
+# covered by a negative control in tests/test_gateway_render_facade.py:
+#
+# 1. the gateway MINTS the outward job id and keeps ComfyUI's ``prompt_id``
+#    to itself, so the upstream id space is not addressable at all;
+# 2. status / artifact-index / artifact-bytes / cancel are served only for ids
+#    :class:`RenderJobRegistry` recorded as ISSUED — an id this process did
+#    not mint is refused without dialing ComfyUI;
+# 3. an artifact name is checked against THAT JOB's own outputs, read back
+#    from the upstream, before ``/view`` is dialed — so a valid job id still
+#    cannot walk to the next counter's file.
+#
+# There is no outward spelling of ``/history``, ``/queue`` or a caller-
+# parameterised ``/view`` (see :func:`parse_render_route`, an allowlist).
+
+# ComfyUI's native endpoints, dialed only from here. The 0.33.2 ``/api/jobs``
+# surface is what innereye itself prefers; the older ``/history`` + ``/queue``
+# fallback is deliberately NOT wired outward, and `extract_job_artifacts`
+# parses either shape should a deployment's upstream answer in the old one.
+_COMFY_SUBMIT_PATH = "/prompt"
+_COMFY_JOB_PATH = "/api/jobs/{}"
+_COMFY_CANCEL_PATH = "/api/jobs/{}/cancel"
+_COMFY_VIEW_PATH = "/view"
+_COMFY_UPLOAD_PATH = "/upload/image"
+
+# The gateway backend NAME of the render tenant (its Colleague role name too).
+_RENDER_BACKEND = "innereye"
+
+# Seconds a caller should wait before retrying a render request that could not
+# reach the backend. Mirrors BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS.
+RENDER_RETRY_AFTER_SECONDS: int = 5
+
+# How many issued job ids one gateway process remembers. Past this the oldest
+# is evicted and its id stops resolving — the facade FAILS CLOSED (refuses),
+# never open.
+_MAX_ISSUED_RENDER_JOBS = 4096
+
+
+class RenderJobRegistry:
+    """The ComfyUI ``prompt_id`` behind each job id THIS gateway issued.
+
+    Thread-safe by construction: the gateway is a
+    :class:`~http.server.ThreadingHTTPServer`, so a submit and a status poll
+    genuinely race. Every read and write takes the same lock, and the
+    ``OrderedDict`` is never exposed.
+
+    **Restart behaviour, stated plainly (honesty h28/h31).** This mapping lives
+    in process memory ONLY. A gateway restart — a ``lobes up gateway``, a crash,
+    a container recreate — forgets every id it ever issued, so a job id handed
+    out before the restart is refused ``render_job_not_found`` afterwards even
+    though ComfyUI still holds that job and its artifacts. Nothing is lost on
+    disk: the outputs remain in the operator's bind-mounted output tree, which
+    is the exposure the deployment intends for them. This is a deliberate
+    fail-CLOSED choice over persisting the map: the alternative — a store the
+    gateway does not otherwise have — would have to survive exactly the events
+    that make the gateway's own state suspect, and a mis-restored map would
+    hand one caller another's job. The same fail-closed rule covers eviction
+    past :data:`_MAX_ISSUED_RENDER_JOBS`.
+    """
+
+    def __init__(self, limit: int = _MAX_ISSUED_RENDER_JOBS) -> None:
+        self._lock = threading.Lock()
+        self._issued: "OrderedDict[str, str]" = OrderedDict()
+        self._limit = max(1, limit)
+
+    def issue(self, prompt_id: str) -> str:
+        """Mint an opaque job id for ``prompt_id`` and remember the pairing."""
+        job_id = uuid.uuid4().hex
+        with self._lock:
+            self._issued[job_id] = prompt_id
+            while len(self._issued) > self._limit:
+                self._issued.popitem(last=False)
+        return job_id
+
+    def prompt_id(self, job_id: str) -> str | None:
+        """The upstream id for ``job_id``, or ``None`` if this process never
+        issued it (an unknown, a forgotten, or another box's id — all three are
+        the same answer here, which is the point)."""
+        with self._lock:
+            return self._issued.get(job_id)
+
+
+def _render_error_body(message: str, error_type: str) -> bytes:
+    """OpenAI-shaped error body for the render facade.
+
+    Note what the ``render_job_not_found`` message deliberately does NOT say:
+    whether the id was never issued, was evicted, or belongs to someone else.
+    Distinguishing them would make the refusal an existence oracle over the
+    box's render history — the very thing the job scoping exists to close.
+    """
+    return json.dumps(
+        {"error": {"message": message, "type": error_type, "code": error_type}}
+    ).encode()
+
+
+def _render_json(status: int, payload: dict) -> GatewayResponse:
+    return GatewayResponse(
+        status=status,
+        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+        body=json.dumps(payload).encode(),
+    )
+
+
+def _render_error(status: int, error_type: str, message: str) -> GatewayResponse:
+    return GatewayResponse(
+        status=status,
+        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+        body=_render_error_body(message, error_type),
+    )
+
+
+def _render_relay_headers(headers: Iterable[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Upstream headers safe to pass back on a relayed artifact.
+
+    Drops ``Content-Length``/``Transfer-Encoding`` on top of the usual
+    hop-by-hop filter: the streaming relay re-chunks the body and sets its own
+    framing, so an upstream length header would contradict the wire.
+    """
+    return [
+        (k, v)
+        for k, v in filter_headers(headers)
+        if k.lower() not in ("content-length", "transfer-encoding")
+    ]
+
+
+def _render_upstream_headers(body: bytes, content_type: str | None) -> list[tuple[str, str]]:
+    """The headers the gateway sends INTO ComfyUI — built, never forwarded.
+
+    The caller's own headers are deliberately not passed through. ComfyUI has
+    no authentication, so relaying the fleet ``Authorization`` into it would
+    put the key in a process that neither checks nor needs it; and the caller's
+    ``Host``/``Content-Length`` describe the gateway hop, not this one.
+    """
+    headers = [("Accept", "*/*"), ("Content-Length", str(len(body)))]
+    if content_type:
+        headers.append(("Content-Type", content_type))
+    return headers
+
+
+def _render_job_state(payload: object, artifacts: tuple[dict[str, str], ...]) -> str:
+    """A coarse, schema-tolerant state for one job: ``completed`` or ``pending``.
+
+    Deliberately NOT a relay of the upstream's own status object. ComfyUI's
+    0.33.2 ``/api/jobs`` shape and the older ``/history`` fallback disagree on
+    it, and relaying whatever came back would make the facade's contract track
+    the upstream's — plus any field it grows later would ship outward
+    unreviewed. A caller that needs more detail has the artifact index, which
+    is derived, bounded and job-scoped.
+    """
+    if artifacts:
+        return "completed"
+    if isinstance(payload, dict):
+        status = payload.get("status")
+        if isinstance(status, dict) and status.get("completed"):
+            return "completed"
+    return "pending"
+
+
+def _json_or_none(raw: bytes) -> object:
+    try:
+        return json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
 # --- the HTTP handler ------------------------------------------------------
 
 
@@ -4261,6 +4458,11 @@ class _Handler(BaseHTTPRequestHandler):
     # Mesh routes (t6, #237). `None` when mesh is disabled — same treatment as
     # other optional per-server state below.
     mesh_routes: MeshRoutes | None = None
+    # The render facade's issued-job map (issue #82, t9). One per server, bound
+    # by _make_handler; the class-level instance here is the fallback for a
+    # hand-built handler (the unit suites) so the attribute is never None. See
+    # RenderJobRegistry for the in-memory/restart contract.
+    render_jobs: "RenderJobRegistry" = RenderJobRegistry()
     # The proxied roles' peer specs (proxy-lobes t6, #115/#127), keyed by
     # backend name — built once by peer_specs_from_table and shared with the
     # ReadinessCache's peer-probe thread (see serve). None/empty → the proxy
@@ -4476,6 +4678,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, supported_models_payload(self.table, supported_models_catalog()))
         elif route == "/capabilities":
             self._get_capabilities(mesh_snapshot=mesh_snapshot)
+        elif is_render_path(route):
+            # The render facade's READ half (issue #82, t9): job status, the
+            # job's artifact index, and the artifact bytes. It sits AFTER the
+            # `/v1/` bearer gate above, which is the whole reason the family is
+            # spelled under /v1/ — ComfyUI behind it has no auth of its own
+            # (c2/c26), so an unauthenticated GET reaching here would be served.
+            self._deliver(self._render_response(self.path, "GET", b""))
         else:
             # The GET-side upstream seam. Every branch above answers from a
             # hand-built body and opens no socket; this is the one place a GET
@@ -4500,8 +4709,295 @@ class _Handler(BaseHTTPRequestHandler):
         needs to stream arbitrary upstream bytes out of a GET overrides this
         (call :func:`open_upstream` with ``method="GET"`` and return a
         ``GatewayResponse`` carrying ``upstream=`` and ``streaming=True``).
+
+        The ``/v1/render`` family (t9) does NOT come through here: its
+        acceptance criterion asks for the family in the do_GET/do_POST if/elif
+        chains themselves, so it has its own named branch alongside
+        ``is_realtime_path`` — mirroring how ``is_audio_path`` sits in do_POST.
+        This seam stays as shipped, for a later route family that only needs to
+        stream upstream bytes.
         """
         return None
+
+    # --- the /v1/render facade (issue #82, t9) -------------------------------
+    #
+    # ONE entry point for both verbs: the route table is method-aware
+    # (:func:`parse_render_route`), so submit/cancel/upload arrive here from
+    # do_POST and status/index/artifact from do_GET, and every one of them
+    # takes the same infeasibility gate, the same upstream-failure treatment
+    # and the same job-scope check.
+
+    def _render_response(self, path: str, method: str, body: bytes) -> GatewayResponse:
+        """Answer one request in the render family, or explain why not."""
+        route = parse_render_route(path, method)
+        if route is None:
+            # Not a spelling the allowlist knows — including every ComfyUI
+            # surface deliberately left unreachable (/history, /queue, a
+            # caller-parameterised /view).
+            return _render_json(404, _not_found_body(path.split("?", 1)[0]))
+        backend = self._render_backend()
+        if backend is None:
+            # Hosted nowhere here, or declared infeasible: the same honest 404
+            # every dropped role gives, never a half-served lane (#92).
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_role_infeasible_body(_RENDER_BACKEND, _RENDER_BACKEND),
+            )
+        handlers = {
+            "submit": self._render_submit,
+            "status": self._render_status,
+            "artifacts": self._render_artifact_index,
+            "artifact": self._render_artifact,
+            "cancel": self._render_cancel,
+            "upload": self._render_upload,
+        }
+        try:
+            return handlers[route.kind](backend, route, body)
+        except UpstreamError as exc:
+            # The backend is wired but unreachable — a cold/stopped ComfyUI is
+            # the common case. Retryable, and never a silent boot: lobes has no
+            # lifecycle actuator in the data plane.
+            return GatewayResponse(
+                status=503,
+                headers=[
+                    ("Content-Type", _CONTENT_TYPE_JSON),
+                    ("Retry-After", str(RENDER_RETRY_AFTER_SECONDS)),
+                ],
+                body=_render_error_body(
+                    f"the render backend is not reachable ({exc}) — it may still be "
+                    "warming; retry shortly.",
+                    "render_backend_unavailable",
+                ),
+            )
+
+    def _render_backend(self) -> Backend | None:
+        """This box's wired-and-feasible render tenant, else ``None``."""
+        if _RENDER_BACKEND in self.table.infeasible:
+            return None
+        return next((b for b in self.table.backends if b.name == _RENDER_BACKEND), None)
+
+    def _render_open(
+        self,
+        backend: Backend,
+        path: str,
+        *,
+        method: str,
+        body: bytes = b"",
+        ctype: str | None = None,
+    ) -> "_Upstream":
+        return open_upstream(
+            backend,
+            path,
+            body,
+            _render_upstream_headers(body, ctype),
+            connect_timeout=self.server_config.connect_timeout,
+            read_timeout=self.server_config.read_timeout,
+            method=method,
+        )
+
+    def _render_fetch(
+        self,
+        backend: Backend,
+        path: str,
+        *,
+        method: str,
+        body: bytes = b"",
+        ctype: str | None = None,
+    ) -> tuple[int, bytes, list[tuple[str, str]]]:
+        """Dial ComfyUI and read the whole answer (never a stream)."""
+        up = self._render_open(backend, path, method=method, body=body, ctype=ctype)
+        try:
+            return up.status, up.read_all(), up.headers
+        finally:
+            up.close()
+
+    def _render_prompt_id(self, route: RenderRoute) -> str | None:
+        return self.render_jobs.prompt_id(route.job_id)
+
+    @staticmethod
+    def _render_job_not_found(route: RenderRoute) -> GatewayResponse:
+        return _render_error(
+            404,
+            "render_job_not_found",
+            f"no render job `{route.job_id}` was issued by this gateway. Only jobs "
+            "submitted through POST /v1/render are addressable here, and a gateway "
+            "restart forgets the ids it issued.",
+        )
+
+    def _render_submit(self, backend: Backend, route: RenderRoute, body: bytes) -> GatewayResponse:
+        """``POST /v1/render`` → ComfyUI ``POST /prompt``, and mint the job id."""
+        status, raw, headers = self._render_fetch(
+            backend,
+            _COMFY_SUBMIT_PATH,
+            method="POST",
+            body=body,
+            ctype=self.headers.get("Content-Type"),
+        )
+        if status != 200:
+            # A rejected graph (ComfyUI's submit-time `node_errors`) is the
+            # caller's OWN submission coming back — safe to relay verbatim, and
+            # the only way a client learns which node it got wrong. No job id is
+            # issued for it.
+            return GatewayResponse(status=status, headers=_render_relay_headers(headers), body=raw)
+        payload = _json_or_none(raw)
+        prompt_id = ""
+        if isinstance(payload, dict):
+            prompt_id = str(payload.get("prompt_id") or "")
+        if not prompt_id:
+            return _render_error(
+                502,
+                "render_submit_failed",
+                "the render backend accepted the submission but returned no prompt_id.",
+            )
+        job_id = self.render_jobs.issue(prompt_id)
+        # The response names the GATEWAY's id and nothing of the upstream's —
+        # leaking prompt_id would re-open exactly the id space job scoping shuts.
+        out: dict = {"job_id": job_id, "status": "queued"}
+        if isinstance(payload, dict) and payload.get("node_errors"):
+            out["node_errors"] = payload["node_errors"]
+        return _render_json(200, out)
+
+    def _render_job_payload(self, backend: Backend, prompt_id: str) -> tuple[int, object]:
+        status, raw, _headers = self._render_fetch(
+            backend, _COMFY_JOB_PATH.format(quote(prompt_id, safe="")), method="GET"
+        )
+        return status, _json_or_none(raw)
+
+    def _render_status(self, backend: Backend, route: RenderRoute, body: bytes) -> GatewayResponse:
+        """``GET /v1/render/jobs/<job_id>`` → ComfyUI ``GET /api/jobs/<prompt_id>``."""
+        prompt_id = self._render_prompt_id(route)
+        if prompt_id is None:
+            return self._render_job_not_found(route)
+        status, payload = self._render_job_payload(backend, prompt_id)
+        if status != 200:
+            return _render_error(
+                502,
+                "render_upstream_error",
+                f"the render backend answered {status} for this job.",
+            )
+        artifacts = extract_job_artifacts(payload)
+        return _render_json(
+            200,
+            {
+                "job_id": route.job_id,
+                "state": _render_job_state(payload, artifacts),
+                "artifacts": [dict(a) for a in artifacts],
+            },
+        )
+
+    def _render_artifact_index(
+        self, backend: Backend, route: RenderRoute, body: bytes
+    ) -> GatewayResponse:
+        """``GET /v1/render/jobs/<job_id>/artifacts`` — this job's outputs only."""
+        resp = self._render_status(backend, route, body)
+        if resp.status != 200 or resp.body is None:
+            return resp
+        payload = json.loads(resp.body)
+        return _render_json(200, {"job_id": payload["job_id"], "artifacts": payload["artifacts"]})
+
+    def _render_artifact(
+        self, backend: Backend, route: RenderRoute, body: bytes
+    ) -> GatewayResponse:
+        """``GET /v1/render/jobs/<job_id>/artifacts/<name>`` → ``GET /view`` bytes.
+
+        The name is matched against THIS job's own outputs, read back from the
+        upstream on every fetch, before ``/view`` is dialed at all. That extra
+        round trip is the enforcement: it is what makes the counter-named
+        neighbour of a legitimate artifact unreachable rather than merely
+        undocumented.
+        """
+        prompt_id = self._render_prompt_id(route)
+        if prompt_id is None:
+            return self._render_job_not_found(route)
+        status, payload = self._render_job_payload(backend, prompt_id)
+        if status != 200:
+            return _render_error(
+                502,
+                "render_upstream_error",
+                f"the render backend answered {status} for this job.",
+            )
+        match = next(
+            (a for a in extract_job_artifacts(payload) if a["filename"] == route.artifact),
+            None,
+        )
+        if match is None:
+            return _render_error(
+                404,
+                "render_artifact_not_found",
+                "this render job produced no such artifact.",
+            )
+        query = urlencode(
+            {
+                "filename": match["filename"],
+                "subfolder": match["subfolder"],
+                "type": match["type"],
+            }
+        )
+        up = self._render_open(backend, f"{_COMFY_VIEW_PATH}?{query}", method="GET")
+        if up.status != 200:
+            try:
+                raw = up.read_all()
+            finally:
+                up.close()
+            return GatewayResponse(
+                status=502,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_render_error_body(
+                    f"the render backend answered {up.status} for this artifact "
+                    f"({len(raw)} bytes discarded).",
+                    "render_upstream_error",
+                ),
+            )
+        # Streamed, never buffered: a render can be tens of megabytes, and
+        # `_relay_streaming` re-chunks arbitrary binary verbatim (t8).
+        return GatewayResponse(
+            status=up.status,
+            headers=_render_relay_headers(up.headers),
+            upstream=up,
+            streaming=True,
+        )
+
+    def _render_cancel(self, backend: Backend, route: RenderRoute, body: bytes) -> GatewayResponse:
+        """``POST /v1/render/jobs/<job_id>/cancel`` — that job, never the queue.
+
+        Scoped for the same reason innereye's own client refuses to fall back
+        to ``POST /interrupt``: interrupting kills whatever is running, which
+        is not necessarily the job the caller asked about.
+        """
+        prompt_id = self._render_prompt_id(route)
+        if prompt_id is None:
+            return self._render_job_not_found(route)
+        status, raw, headers = self._render_fetch(
+            backend,
+            _COMFY_CANCEL_PATH.format(quote(prompt_id, safe="")),
+            method="POST",
+            body=b"",
+        )
+        if status != 200:
+            return _render_error(
+                502,
+                "render_upstream_error",
+                f"the render backend answered {status} cancelling this job.",
+            )
+        return GatewayResponse(status=200, headers=_render_relay_headers(headers), body=raw)
+
+    def _render_upload(self, backend: Backend, route: RenderRoute, body: bytes) -> GatewayResponse:
+        """``POST /v1/render/uploads/image`` → ComfyUI ``POST /upload/image``.
+
+        An INPUT, not an output: it writes into ComfyUI's input tree and reads
+        nothing back out of the render history, so it needs no job scope. It is
+        here because a workflow that starts from an image cannot be submitted
+        without it.
+        """
+        status, raw, headers = self._render_fetch(
+            backend,
+            _COMFY_UPLOAD_PATH,
+            method="POST",
+            body=body,
+            ctype=self.headers.get("Content-Type"),
+        )
+        return GatewayResponse(status=status, headers=_render_relay_headers(headers), body=raw)
 
     # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
     def _handle_realtime(
@@ -4797,6 +5293,12 @@ class _Handler(BaseHTTPRequestHandler):
                 ),
                 mesh_snapshot=mesh_snapshot,
             )
+        elif is_render_path(self.path):
+            # /v1/render/* → path-routed to the innereye ComfyUI tenant, the
+            # exact shape is_audio_path uses one branch up: one backend, no
+            # `model` field, no routing table lookup. The WRITE half (submit,
+            # cancel, input upload); the read half is in do_GET.
+            resp = self._render_response(self.path, "POST", body)
         else:
             # Read pressure from the cache (O(1), never samples here) and the
             # override header so the tier-downgrade layer runs in front of routing.
@@ -5322,6 +5824,10 @@ def _make_handler(
             "peer_specs": peer_specs,
             "mesh_routes": mesh_routes,
             "mesh_snapshot_holder": mesh_snapshot_holder,
+            # One per server, shared across handler threads — never a global,
+            # so two gateways in one process (the test suites) cannot see each
+            # other's issued job ids.
+            "render_jobs": RenderJobRegistry(),
             # `staticmethod` is load-bearing, not decoration: `replica_snapshot`
             # is the ONLY class attribute here that is a plain function, so it
             # is the only one the descriptor protocol would turn into a BOUND

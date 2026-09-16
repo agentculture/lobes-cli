@@ -12,11 +12,12 @@ is covered automatically the moment its TOML lands. Today the cells are:
 * ``orin-small``  drops BOTH heavies (``cortex`` AND ``senses``) — its generate
   lane is the opt-in 4B ``minor`` gear;
 * ``spark-innereye`` drops ``cortex`` only (the Qwen primary lives on a peer)
-  and is the first shape to HOST a role the gateway cannot yet reach — the
-  ``innereye`` ComfyUI tenant, whose container and gateway reader are later
-  tasks on issue #82's plan. Its cell assertions therefore say the honest
-  thing: hosted, declared in the env, ``feasible: false``, absent from
-  ``/v1/models``, serving nothing (see ``_HOSTED_BUT_UNWIRED_ROLES``);
+  and hosts the ``innereye`` ComfyUI tenant. Since issue #82's t9 wired the
+  gateway's ``INNEREYE_BASE_URL`` reader and the ``/v1/render`` facade behind
+  it, that tenant is genuinely reachable: its cells assert hosted, declared in
+  the env, ``feasible: true`` — and still ABSENT from ``/v1/models``, because
+  it is PATH-routed, not an id a caller may name in a ``model`` field (see
+  ``_PATH_ROUTED_ROLES``, and ``_HOSTED_BUT_UNWIRED_ROLES``, now empty);
 * ``machine-as-brain`` drops no DEFAULT role; since the opt-in core ``muse``
   lobe landed it contributes exactly one cell (``muse`` — like every shape
   that doesn't host it), while its default path stays regression-pinned by the
@@ -125,11 +126,10 @@ _INNEREYE_ID = "comfyanonymous/ComfyUI-0.33.2"
 # `innereye` is the one core role whose pair has NO served-name half (hence the
 # `str | None`): it is a ComfyUI container, not a vLLM lane, so
 # shape_render.EXTRA_ENV emits a bare `INNEREYE_BASE_URL` and nothing else (see
-# the rendered tests/goldens/shapes/spark-innereye__*.env). That key is what a
-# box on an innereye-hosting shape really gets today; `build_config` does not
-# read it yet (the gateway-side `_optional_backend` reader is a later task on
-# issue #82's plan), which is exactly why a shape that HOSTS innereye still
-# advertises it infeasible below — declared, never half-served (#92).
+# the rendered tests/goldens/shapes/spark-innereye__*.env). `build_config` READS
+# that key since issue #82's t9 (an `_optional_backend` like every sibling), so
+# a shape that hosts innereye now wires a real backend and advertises the role
+# feasible — advertised AND reachable, which is the only honest pairing (#92).
 _WIRE_ENV: dict[str, tuple[str, str | None]] = {
     "cortex": ("PRIMARY_URL", "PRIMARY_SERVED_NAME"),
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
@@ -142,18 +142,31 @@ _WIRE_ENV: dict[str, tuple[str, str | None]] = {
     "innereye": ("INNEREYE_BASE_URL", None),
 }
 
-# The one core role a shape can HOST while the gateway still, honestly,
-# advertises it infeasible. `innereye`'s compose service (`comfyui`) and the
-# gateway's reader for its base URL are separate, later tasks on issue #82's
-# plan; until both land, `INNEREYE_BASE_URL` is a rendered-but-unread key and
-# `innereye` sits in the gateway's OPT_IN_BACKENDS, whose unwired default is
-# INFEASIBLE. The honesty contract is therefore satisfied in the strict
-# direction (#92: advertised implies reachable): the box declares the tenant
-# in its env, advertises `feasible: false`, omits it from /v1/models, and
-# serves nothing — rather than advertising a render lane that is not there.
-# When the wiring lands, THIS set is what should shrink; a cell asserting a
-# hosted role is feasible must never be relaxed to make it pass.
-_HOSTED_BUT_UNWIRED_ROLES: frozenset[str] = frozenset({"innereye"})
+# Core roles a shape can HOST while the gateway still, honestly, advertises
+# them infeasible.
+#
+# EMPTY since issue #82's t9. `innereye` was the set's only member: its
+# `INNEREYE_BASE_URL` was a rendered-but-unread key, so a box on an
+# innereye-hosting shape declared the tenant in its env and advertised
+# `feasible: false` — honest in the strict direction (#92), but not yet
+# reachable. t9 added the gateway's `_optional_backend` reader for that key
+# and the /v1/render facade behind it, so an innereye-hosting shape now wires
+# a real backend and the role reads feasible like every other hosted one. The
+# set is kept (rather than deleted) because it is the honest landing place for
+# the NEXT hosted-but-unreachable role, and because the assertion structure
+# below is what proves the shrink actually happened.
+#
+# Note it never shrinks by relaxation: a cell asserting a hosted role is
+# feasible must never be weakened to make a failing cell pass.
+_HOSTED_BUT_UNWIRED_ROLES: frozenset[str] = frozenset()
+
+# Hosted core roles that are NOT OpenAI-addressable models, so their id is
+# absent from GET /v1/models even when the lane is wired, feasible and ready.
+# `innereye` is a ComfyUI tenant fronted by a PATH family (/v1/render) exactly
+# as the audio overlay is — /v1/models is the set of ids a caller may put in a
+# `model` field, and this is not one of them (see
+# lobes.gateway._routing.model_routed_backends).
+_PATH_ROUTED_ROLES: frozenset[str] = frozenset({"innereye"})
 
 
 def _peer_origin(role: str) -> str:
@@ -290,8 +303,8 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         # the three opt-in core generate roles it does not host. `innereye`
         # itself contributes NO cell: it is not a generate role (it is absent
         # from TIER_ROLE, so _is_generate_role filters it), and on this shape
-        # it is HOSTED anyway — hosted but, until its container and gateway
-        # reader land, still honestly infeasible (_HOSTED_BUT_UNWIRED_ROLES).
+        # it is HOSTED anyway — and, since t9 wired the gateway reader, hosted
+        # AND feasible (see _HOSTED_BUT_UNWIRED_ROLES, now empty).
         ("spark-innereye", "cortex"),
         ("spark-innereye", "muse"),
         ("spark-innereye", "worker"),
@@ -436,9 +449,8 @@ def test_cell_capabilities_flag_dropped_role_on_gateway_and_cli(shape_name: str,
     assert payload[role]["ready"] is False
     assert payload[role]["model"]  # still NAMES what would have served it
     # Every hosted core role is unaffected (audio roles are always feasible) —
-    # except the hosted-but-unwired ones, which are asserted infeasible on
-    # purpose (see _HOSTED_BUT_UNWIRED_ROLES: innereye's container and gateway
-    # reader are later tasks, so the box must NOT advertise it yet).
+    # except any hosted-but-unwired one, which is asserted infeasible on
+    # purpose (see _HOSTED_BUT_UNWIRED_ROLES, empty since t9 wired innereye).
     for hosted in CORE_ROLES:
         if not shape.hosts_role(hosted):
             continue
@@ -471,11 +483,13 @@ def test_cell_v1_models_omits_dropped_role(shape_name: str, role: str) -> None:
     assert _MODEL_ID[role] not in ids
     # Every hosted core role's id IS advertised...
     for hosted in CORE_ROLES:
-        if shape.hosts_role(hosted) and hosted not in _HOSTED_BUT_UNWIRED_ROLES:
+        if hosted in _HOSTED_BUT_UNWIRED_ROLES or hosted in _PATH_ROUTED_ROLES:
+            continue
+        if shape.hosts_role(hosted):
             assert _MODEL_ID[hosted] in ids, hosted
-    # ...and a hosted-but-unwired one is NOT: /v1/models is the list a caller
-    # may address, and innereye is neither reachable (no gateway reader yet)
-    # nor an OpenAI chat/pooling model at all — its facade is POST /v1/render.
+    # ...and the PATH-routed tenant is NOT, wired or not: /v1/models is the list
+    # of ids a caller may put in a `model` field, and innereye is not an
+    # OpenAI chat/pooling model at all — its facade is POST /v1/render.
     if shape.hosts_role("innereye"):
         assert _INNEREYE_ID not in ids
 

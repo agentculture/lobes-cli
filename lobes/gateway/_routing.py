@@ -7,8 +7,10 @@ module that touches ``http.client`` / sockets.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from urllib.parse import unquote
 
 from lobes.catalog import TIER_ROLE
 
@@ -192,6 +194,177 @@ def is_audio_path(path: str) -> bool:
     return path.split("?", 1)[0].startswith("/v1/audio/")
 
 
+# --- the /v1/render facade (issue #82, t9) ---------------------------------
+#
+# The innereye ComfyUI tenant is fronted exactly the way the audio overlay is:
+# a PATH family routed to one backend, never a `model` field. Two consequences
+# are load-bearing and deliberate:
+#
+# * the family is spelled under ``/v1/`` because the gateway's GET branch gates
+#   the inbound bearer on that prefix alone (``do_GET``); spelled anywhere else
+#   the render lane would ship unauthenticated in front of a ComfyUI that has
+#   no auth of its own (spec claims c2/c26);
+# * the lane's backend carries ``task="render"``, which keeps it out of every
+#   model-routed surface (:func:`resolve_model`, :func:`_backend_for`,
+#   :func:`is_unknown_model`, :func:`list_models_payload`). Its "served name"
+#   is a pinned ComfyUI RELEASE, not a checkpoint a caller may address.
+
+#: The single facade path :data:`lobes.roles.ROLE_PATH` advertises for
+#: ``innereye``. Everything the facade serves lives at or below it.
+RENDER_PATH: str = "/v1/render"
+
+#: The task family of a PATH-routed tenant that is not an OpenAI model.
+RENDER_TASK: str = "render"
+
+# Task families that are NOT addressable through a request's ``model`` field.
+# Kept as a set (rather than an ``== RENDER_TASK`` check) so a second such
+# tenant joins by naming its task here and nowhere else.
+_PATH_ROUTED_TASKS: frozenset[str] = frozenset({RENDER_TASK})
+
+# A gateway-issued job id is 32 hex chars; a bound this generous still refuses
+# anything that could be a path segment attack, and the artifact name is
+# additionally checked against the job's OWN outputs before any fetch.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+# The most artifacts one job's index will report. ComfyUI's outputs tree is
+# caller-influenced (a workflow may declare many save nodes), so the walk is
+# bounded rather than trusting the upstream payload's size.
+MAX_JOB_ARTIFACTS: int = 512
+
+
+def is_render_path(path: str) -> bool:
+    """True for the render facade family (``/v1/render`` and below).
+
+    Deliberately NOT a bare ``startswith("/v1/render")``: that would also match
+    ``/v1/renderer``. The exact path or a ``/``-delimited child, nothing else.
+    """
+    route = path.split("?", 1)[0]
+    return route == RENDER_PATH or route.startswith(RENDER_PATH + "/")
+
+
+@dataclass(frozen=True)
+class RenderRoute:
+    """One resolved facade route: what to do, and for which job/artifact."""
+
+    kind: str  # submit | status | artifacts | artifact | cancel | upload
+    job_id: str = ""
+    artifact: str = ""
+
+
+def parse_render_route(path: str, method: str) -> RenderRoute | None:
+    """Resolve ``method`` + ``path`` to a facade route, or ``None`` to 404.
+
+    **This function is the outward attack surface of the whole lane**, so it is
+    an allowlist of six exact spellings rather than a prefix relay. There is
+    deliberately NO outward spelling that reaches ComfyUI's ``/history``,
+    ``/queue`` or ``/view`` — the last of those takes a caller-chosen filename,
+    and ComfyUI names its outputs with a shared counter
+    (``flux_output_00001_.png``), so a relayed ``/view`` would let any
+    bearer-holder walk every render the box has ever produced (spec c35).
+    Artifacts are reachable only as ``…/jobs/<job_id>/artifacts/<name>``, where
+    BOTH halves are checked: the job id against the ids this gateway issued,
+    and the name against that job's own outputs.
+
+    ``job_id`` is validated against :data:`_JOB_ID_RE` here, before it is used
+    to build an upstream path — a percent-encoded separator or whitespace is
+    refused outright rather than normalised.
+    """
+    route = path.split("?", 1)[0]
+    if not is_render_path(route):
+        return None
+    rest = route[len(RENDER_PATH) :].strip("/")
+    parts = [unquote(p) for p in rest.split("/")] if rest else []
+    if method == "POST":
+        return _parse_render_post(parts)
+    if method == "GET":
+        return _parse_render_get(parts)
+    return None
+
+
+def _valid_job_id(job_id: str) -> bool:
+    return bool(_JOB_ID_RE.match(job_id))
+
+
+def _parse_render_post(parts: list[str]) -> RenderRoute | None:
+    if not parts:
+        return RenderRoute(kind="submit")
+    if parts == ["uploads", "image"]:
+        return RenderRoute(kind="upload")
+    if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel":
+        return RenderRoute(kind="cancel", job_id=parts[1]) if _valid_job_id(parts[1]) else None
+    return None
+
+
+def _parse_render_get(parts: list[str]) -> RenderRoute | None:
+    if len(parts) < 2 or parts[0] != "jobs" or not _valid_job_id(parts[1]):
+        return None
+    job_id = parts[1]
+    if len(parts) == 2:
+        return RenderRoute(kind="status", job_id=job_id)
+    if parts[2] != "artifacts":
+        return None
+    if len(parts) == 3:
+        return RenderRoute(kind="artifacts", job_id=job_id)
+    if len(parts) == 4 and parts[3]:
+        return RenderRoute(kind="artifact", job_id=job_id, artifact=parts[3])
+    return None
+
+
+def extract_job_artifacts(payload: object) -> tuple[dict[str, str], ...]:
+    """Every artifact descriptor reachable in ONE job's upstream status payload.
+
+    A tolerant recursive walk for dicts carrying a string ``filename``, rather
+    than a hard-coded path into ComfyUI's outputs tree — the 0.33.2
+    ``GET /api/jobs/<id>`` shape and the older ``GET /history/<id>`` fallback
+    nest the same descriptors at different depths, and the facade must not
+    break when a deployment falls back. The walk is bounded
+    (:data:`MAX_JOB_ARTIFACTS`) and de-duplicated, preserving first-seen order.
+
+    This is the ALLOWLIST the artifact fetch checks a caller's requested name
+    against, which is why it is derived from the upstream's own record of that
+    job rather than from anything the caller sent.
+    """
+    found: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    stack: list[object] = [payload]
+    while stack and len(found) < MAX_JOB_ARTIFACTS:
+        node = stack.pop(0)
+        if isinstance(node, dict):
+            name = node.get("filename")
+            if isinstance(name, str) and name:
+                entry = {
+                    "filename": name,
+                    "subfolder": _as_str(node.get("subfolder")),
+                    "type": _as_str(node.get("type")) or "output",
+                }
+                key = (entry["filename"], entry["subfolder"], entry["type"])
+                if key not in seen:
+                    seen.add(key)
+                    found.append(entry)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return tuple(found)
+
+
+def _as_str(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def model_routed_backends(table: "RoutingTable") -> tuple[Backend, ...]:
+    """``table.backends`` minus every PATH-routed tenant (see
+    :data:`_PATH_ROUTED_TASKS`).
+
+    The single place the render lane is subtracted from model-field routing,
+    so ``model=comfyanonymous/ComfyUI-0.33.2`` on ``/v1/chat/completions`` is
+    an unknown id rather than a chat request forwarded into ComfyUI. The
+    tenant is still a full member of ``table.backends`` for everything keyed
+    by backend NAME — feasibility, ``/capabilities``, ``/status``, and the
+    facade's own dispatch.
+    """
+    return tuple(b for b in table.backends if b.task not in _PATH_ROUTED_TASKS)
+
+
 def tier_aliases(
     backends: Iterable[Backend],
     tier_role: Mapping[str, str],
@@ -268,7 +441,7 @@ def resolve_model(table: RoutingTable, requested: str | None) -> str:
     if requested:
         if requested in table.aliases:
             return table.aliases[requested]
-        for backend in table.backends:
+        for backend in model_routed_backends(table):
             if requested == backend.served_name or requested in backend.adapters:
                 return requested
     return table.default_model
@@ -317,12 +490,12 @@ def is_unknown_model(table: RoutingTable, requested: str | None) -> bool:
         return False
     return not any(
         requested == backend.served_name or requested in backend.adapters
-        for backend in table.backends
+        for backend in model_routed_backends(table)
     )
 
 
 def _backend_for(table: RoutingTable, served_name: str) -> Backend | None:
-    for backend in table.backends:
+    for backend in model_routed_backends(table):
         if served_name == backend.served_name or served_name in backend.adapters:
             return backend
     return None
@@ -504,7 +677,10 @@ def list_models_payload(
     honest answer for a caller holding no live evidence and keeps every
     pre-adapter caller byte-identical.
     """
-    backends = table.backends
+    # PATH-routed tenants (the innereye render lane) are not OpenAI models and
+    # are never listed here — /v1/models is the set of ids a caller may put in
+    # a `model` field, and the render lane is addressed at /v1/render instead.
+    backends = model_routed_backends(table)
     if ready is not None:
         backends = tuple(b for b in backends if ready.get(b.name) is True)
     if table.infeasible:
