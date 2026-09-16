@@ -935,10 +935,16 @@ def _role_info_from_capability_entry(
     """Build one :class:`RoleInfo` from a ``/capabilities`` payload entry.
 
     Returns ``None`` when the entry should be skipped — not feasible, no
-    fingerprint, or proxied (a member announces only what it hosts here).
+    fingerprint, proxied (a member announces only what it hosts here), or a
+    member of :data:`lobes.roles.MESH_UNFORWARDABLE_ROLES` (task t11, issue
+    #92 c9/h20: the render lane's submit/poll/fetch shape cannot travel
+    through the mesh's single-hop POST forwarder, so it is never announced —
+    see that constant's docstring for the full reasoning).
     """
-    from lobes.roles import ROLE_BACKEND
+    from lobes.roles import MESH_UNFORWARDABLE_ROLES, ROLE_BACKEND
 
+    if role in MESH_UNFORWARDABLE_ROLES:
+        return None
     fp = entry.get("fingerprint")
     if not entry.get("feasible") or not isinstance(fp, Mapping) or entry.get("proxied"):
         return None
@@ -1115,7 +1121,7 @@ def _build_announcement(
     origin = self_origin or ""  # never a name: an origin is a URL an operator typed (#92)
 
     # Finding 1: build real roles from the gateway's own data.
-    from lobes.roles import BACKEND_ROLE
+    from lobes.roles import BACKEND_ROLE, MESH_UNFORWARDABLE_ROLES
 
     ready_roles = _resolve_ready_roles(readiness_cache)
 
@@ -1129,6 +1135,12 @@ def _build_announcement(
 
         # Convert backend name → role name (mesh speaks roles: cortex, senses, …)
         role_name = BACKEND_ROLE.get(backend_name, backend_name)
+        # Task t11, issue #92 c9/h20: never announce an unforwardable role
+        # (the render lane) even via this lower-level entry point — mirrors
+        # the same guard in _role_info_from_capability_entry, the path the
+        # live gateway's heartbeat actually uses.
+        if role_name in MESH_UNFORWARDABLE_ROLES:
+            continue
         roles[role_name] = _role_info_from_lane_config(
             backend_name,
             lane_config,

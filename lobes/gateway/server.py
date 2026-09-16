@@ -4294,6 +4294,19 @@ _COMFY_CANCEL_PATH = "/api/jobs/{}/cancel"
 _COMFY_VIEW_PATH = "/view"
 _COMFY_UPLOAD_PATH = "/upload/image"
 
+# The render lane's READINESS probe path (task t11, issue #92 c9/h20). The
+# gateway's shared ``ReadinessCache`` default probes ``/health`` on every
+# backend, but ComfyUI serves no such route — MEASURED live against ComfyUI
+# 0.33.2: ``/health`` 404s, while ``/``, ``/system_stats`` and
+# ``/object_info`` all answer 200. ``/object_info`` is picked over the other
+# two survivors deliberately: it lists every importable node and is only
+# complete once ComfyUI's custom-node import pass finishes, so a 200 there is
+# a genuine READINESS signal ("the server can actually run a workflow"), not
+# merely a LIVENESS one ("the process accepted a socket") the way ``/`` would
+# be. See ``ReadinessCache``'s ``paths`` constructor argument, below, for the
+# wiring — this is the ONLY backend that gets a non-default path.
+_COMFY_READY_PATH = "/object_info"
+
 # The gateway backend NAME of the render tenant (its Colleague role name too).
 _RENDER_BACKEND = "innereye"
 
@@ -5879,6 +5892,16 @@ def build_mesh_wiring(
         readiness_cache=readiness_cache,
         replica_caches=replica_caches,
         local_capacities=cfg.local_capacities,
+        # NOTE (task t11, issue #92 c9/h20): the render lane (`innereye`) is
+        # deliberately NOT filtered out of this dict — `declared_lane_configs`
+        # feeds only the lower-level `_build_announcement` entry point (its
+        # own `MESH_UNFORWARDABLE_ROLES` guard, in `_mesh_routes.py`, drops
+        # it there too). The announcement this box actually heartbeats is
+        # `_capabilities_announcement` below, built from `GET /capabilities`
+        # via `announcement_from_capabilities` — see
+        # `_role_info_from_capability_entry`'s matching guard, the path that
+        # matters live. Both guards live beside `MESH_UNFORWARDABLE_ROLES`
+        # itself in `lobes/roles.py`.
         declared_lane_configs={
             b.name: declared_lane_config(
                 table.lane_fingerprints.get(b.name, {}), runtime=_lane_runtime(b.name, env)
@@ -5966,10 +5989,18 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # every deployment that has not declared HAND_LORA_MODULES — so this adds
     # no probe traffic and changes nothing until an operator declares one.
     adapter_targets = {b.name: (b.base_url, b.adapters) for b in table.backends if b.adapters}
+    # The render lane's readiness path override (see ``_COMFY_READY_PATH``
+    # above) — the ONLY backend that gets a non-``/health`` entry; every
+    # other lane is unaffected (`paths.get(name, "/health")` inside
+    # ReadinessCache falls through to the shared default).
+    readiness_paths = {
+        b.name: _COMFY_READY_PATH for b in table.backends if b.name == _RENDER_BACKEND
+    }
     readiness_cache = ReadinessCache.from_backends(
         table.backends,
         peer_specs=tuple(peer_specs.values()),
         adapter_targets=adapter_targets,
+        paths=readiness_paths,
         start=False,
     )
     readiness_cache.refresh()
