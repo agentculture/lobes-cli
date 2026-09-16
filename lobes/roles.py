@@ -226,6 +226,38 @@ ROLE_PATH: dict[str, str] = {
     "innereye": "/v1/render",
 }
 
+# Roles this box never auto-wires into ITS OWN mesh advert (task t11, issue
+# #92 c9/h20) — even when hosted, feasible, and carrying a real fingerprint.
+#
+# The mesh forwarder (``lobes.gateway.server.open_upstream``) is POST-only,
+# single-hop, single-response — it dials one upstream and relays ONE
+# response back. A render is submit-then-poll-then-GET-binary: a job id
+# comes back from the submit call, a caller polls its status, then fetches a
+# separate binary artifact — three round trips with server-held state
+# between them, none of which the forwarder's shape can carry. Forwarding a
+# cross-box render is therefore genuinely not possible today without new,
+# stateful forwarding code, which is explicitly out of scope for the render
+# facade (frame claim c9, confirmed: "the mesh gives discovery for free but
+# NOT reach"). Announcing the role anyway would be exactly the
+# advertised-but-unreachable trap issue #92 forbids.
+#
+# This is deliberately narrower than "every path-routed role": the audio
+# roles (``stt``/``tts``) are ALSO path-routed (see :data:`ROLE_PATH`) but
+# ARE forwardable — a single POST-in/response-out call each — and already
+# participate in the mesh via :func:`probe_audio_peer_ready` /
+# :data:`PeerSpec`. Only ``GET /v1/realtime`` (the WebSocket session, never
+# a role of its own) is excluded from proxying for an unrelated reason
+# (stateful socket, not a mesh-forwarding limitation).
+#
+# Discovery on the HOSTING box is untouched by this set: ``GET
+# /capabilities`` always lists ``innereye`` (wired or not — see
+# ``role_registry_from_table``), so a peer that has never been told an
+# origin can still learn the lane exists by asking this box directly. This
+# set only narrows what THIS box puts in its own mesh heartbeat/announce —
+# see :func:`lobes.gateway._mesh_routes._role_info_from_capability_entry`,
+# its sole consumer.
+MESH_UNFORWARDABLE_ROLES: frozenset[str] = frozenset({"innereye"})
+
 # The two audio-overlay sidecars — hardcoded here (as in the gateway/realtime
 # code) because they are NOT in the switchable catalog (lobes/catalog.py): they
 # are fixed GPU sidecars behind the /v1/audio/* facade, activated together by

@@ -252,6 +252,28 @@ def test_capabilities_payload_gateway_url_applies_to_all_roles() -> None:
         assert payload[role]["endpoint"] == "https://tunnel.example"
 
 
+def test_render_lane_discoverable_from_capabilities_with_no_peer_origin_declared() -> None:
+    """Acceptance criterion 1 (task t11, issue #92 c9/h20): a peer that has
+    never been told an origin for the render lane can still discover it
+    exists from this box's own `GET /capabilities` alone.
+
+    No `INNEREYE_*` env var is set at all here — there is no
+    `INNEREYE_PEER_ORIGIN` (innereye has no such peer-referral channel to
+    begin with), so this is the plainest possible "never told an origin"
+    case. The role must still appear in the payload (never omitted) so a
+    peer probing this box's capabilities learns the lane's existence,
+    contract (path, responsibilities) and current feasibility — even though
+    it is unwired and therefore feasible:false."""
+    env = _full_env()
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    assert "innereye" in payload
+    entry = payload["innereye"]
+    assert entry["path"] == "/v1/render"
+    assert entry["feasible"] is False  # unwired, honestly reported — never fabricated
+    assert entry["ready"] is False
+
+
 def test_capabilities_payload_threads_audio_ready() -> None:
     env = _full_env(AUDIO_URL="http://realtime:8080")
     table, cfg = build_config(env)

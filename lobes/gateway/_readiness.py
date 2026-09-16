@@ -139,8 +139,9 @@ def probe_backend_ready(
     *,
     timeout: float = _READINESS_PROBE_TIMEOUT,
     opener: Opener | None = None,
+    health_path: str = _HEALTH_PATH,
 ) -> bool | None:
-    """Live-probe one backend's ``/health`` and map it to the readiness tri-state.
+    """Live-probe one backend's readiness path and map it to the tri-state.
 
     * ``True``  — HTTP 200: the backend answered and is ready.
     * ``False`` — reached the backend but it answered non-200 (e.g. warming).
@@ -148,6 +149,17 @@ def probe_backend_ready(
 
     The ``opener`` is injected so this is unit-testable without sockets; the
     default opens a bounded ``http.client`` GET.
+
+    ``health_path`` defaults to the shared ``/health`` literal every backend
+    but one uses (task t11, issue #92 c9/h20). One backend needs a DIFFERENT
+    path: ComfyUI (the ``innereye`` render lane) serves no ``/health`` route
+    at all — MEASURED live against ComfyUI 0.33.2: ``/health`` 404s, while
+    ``/``, ``/system_stats`` and ``/object_info`` all answer 200. A caller
+    that always probed ``/health`` would advertise a wired-and-up innereye as
+    ``ready: false`` forever, contradicting #92's "advertised implies
+    reachable" rule. This parameter lets :class:`ReadinessCache` pass a
+    per-backend override (see its ``paths`` constructor argument) WITHOUT
+    touching this function's default for every other lane.
 
     The ``except`` clause catches ``OSError``, ``http.client.HTTPException`` AND
     ``ValueError`` and degrades to ``None``. ``ValueError`` is load-bearing: a
@@ -159,7 +171,7 @@ def probe_backend_ready(
     """
     get_status = opener or _default_ready_opener
     try:
-        return get_status(base_url.rstrip("/") + _HEALTH_PATH, timeout) == 200
+        return get_status(base_url.rstrip("/") + health_path, timeout) == 200
     except (OSError, http.client.HTTPException, ValueError):
         return None
 
@@ -567,12 +579,21 @@ class ReadinessCache:
         peer_timeout: float = _PEER_PROBE_TIMEOUT,
         adapter_targets: Mapping[str, tuple[str, tuple[str, ...]]] | None = None,
         adapter_probe: "AdapterProbe | None" = None,
+        paths: Mapping[str, str] | None = None,
         start: bool = True,
     ) -> None:
         # Copy the targets so a caller mutating theirs cannot change what we probe.
         self._targets: dict[str, str] = dict(targets)
         self._timeout = timeout
         self._probe: Probe = probe or self._default_probe
+        # Per-backend readiness-path override (task t11, issue #92 c9/h20) —
+        # a backend name absent here probes the shared ``/health`` default;
+        # see :func:`probe_backend_ready`'s ``health_path`` docstring for why
+        # one backend (``innereye``) needs a different path. Only consulted
+        # when this cache is using the DEFAULT probe (see ``_read``) — an
+        # injected ``probe`` callable is a full stand-in for the HTTP call
+        # and decides its own path, if any.
+        self._paths: dict[str, str] = dict(paths or {})
         self._interval = interval
         # Peer specs keyed by name (last-one-wins on a duplicate name, same
         # convention as dict.fromkeys below). A caller mutating their own
@@ -621,7 +642,12 @@ class ReadinessCache:
         return cls(targets, **kwargs)
 
     def _default_probe(self, base_url: str) -> bool | None:
-        """The default probe: :func:`probe_backend_ready` bound to our timeout."""
+        """The default probe: :func:`probe_backend_ready` bound to our timeout.
+
+        Ignorant of ``self._paths`` on purpose — it matches the injectable
+        :data:`Probe` shape (``base_url`` only), so ``_read`` resolves the
+        per-backend path itself before calling into the default probe path
+        (see ``_read``'s ``self._probe == self._default_probe`` branch)."""
         return probe_backend_ready(base_url, timeout=self._timeout)
 
     def _read(self) -> dict[str, bool | None]:
@@ -630,11 +656,34 @@ class ReadinessCache:
         Per-backend ``try`` so one misbehaving probe cannot abort the whole pass
         or crash the daemon thread — the offending backend simply reads unknown.
         Runs on the background thread only, never the request path.
+
+        When this cache is still using the DEFAULT probe (no ``probe=``
+        injected at construction), each backend is probed at its OWN path —
+        ``self._paths.get(name, _HEALTH_PATH)`` — via
+        :func:`probe_backend_ready`'s ``health_path`` parameter directly,
+        bypassing ``self._probe`` (whose :data:`Probe` shape has no room for
+        a path argument). An injected ``probe`` callable is a full stand-in
+        for the whole HTTP call and is used as-is, unchanged from before —
+        ``self._paths`` only ever affects the default probe.
+
+        ``self._probe == self._default_probe`` (not ``is``) is deliberate:
+        every attribute access to a bound method creates a new method
+        object, so ``is`` would be ``False`` even when unchanged; Python's
+        bound-method ``__eq__`` compares ``__self__``/``__func__`` and is
+        the correct, stable check here.
         """
         result: dict[str, bool | None] = {}
+        using_default = self._probe == self._default_probe
         for name, base_url in self._targets.items():
             try:
-                result[name] = self._probe(base_url)
+                if using_default:
+                    result[name] = probe_backend_ready(
+                        base_url,
+                        timeout=self._timeout,
+                        health_path=self._paths.get(name, _HEALTH_PATH),
+                    )
+                else:
+                    result[name] = self._probe(base_url)
             except Exception:  # nosec B110 — readiness is best-effort; never crash the daemon
                 result[name] = None
         return result

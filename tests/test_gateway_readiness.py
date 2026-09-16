@@ -510,3 +510,130 @@ def test_from_backends_accepts_routing_backend() -> None:
         assert set(cache.current()) == {"primary", "embed"}
     finally:
         cache.stop()
+
+
+# --- probe_backend_ready: per-backend health_path override (task t11) ------
+#
+# ComfyUI (the innereye render lane) serves no /health route — MEASURED live
+# against ComfyUI 0.33.2: /health 404s, while /, /system_stats and
+# /object_info all answer 200 (issue #92 c9/h20, deviation d3). A caller must
+# be able to probe THAT backend at a different path without changing the
+# shared default for every other lane.
+
+
+def test_probe_backend_ready_default_health_path_unchanged() -> None:
+    seen: list[str] = []
+
+    def opener(url, _t):
+        seen.append(url)
+        return 200
+
+    assert R.probe_backend_ready("http://vllm-primary:8000", opener=opener) is True
+    assert seen == ["http://vllm-primary:8000/health"]
+
+
+def test_probe_backend_ready_honors_custom_health_path() -> None:
+    seen: list[str] = []
+
+    def opener(url, _t):
+        seen.append(url)
+        return 200
+
+    result = R.probe_backend_ready("http://comfyui:8188", opener=opener, health_path="/object_info")
+    assert result is True
+    assert seen == ["http://comfyui:8188/object_info"]
+
+
+# --- ReadinessCache: per-backend `paths` wiring (task t11) ------------------
+
+
+def test_readiness_cache_default_probe_uses_paths_override_per_backend() -> None:
+    """Only the overridden backend's URL carries the alternate path; every
+    other backend still probes the shared /health default — the "without
+    parameterizing the shared /health literal for any other lane" contract."""
+    seen: dict[str, str] = {}
+
+    def opener(url, _t):
+        # Record which URL each backend was actually probed at.
+        for name, base in (
+            ("innereye", "http://comfyui:8188"),
+            ("primary", "http://vllm-primary:8000"),
+        ):
+            if url.startswith(base):
+                seen[name] = url
+        return 200
+
+    cache = R.ReadinessCache(
+        {"innereye": "http://comfyui:8188", "primary": "http://vllm-primary:8000"},
+        paths={"innereye": "/object_info"},
+        timeout=1.0,
+        start=False,
+    )
+    import lobes.gateway._readiness as readiness_mod
+
+    original = readiness_mod._default_ready_opener
+    readiness_mod._default_ready_opener = opener
+    try:
+        cache.refresh()
+    finally:
+        readiness_mod._default_ready_opener = original
+        cache.stop()
+    assert seen["innereye"] == "http://comfyui:8188/object_info"
+    assert seen["primary"] == "http://vllm-primary:8000/health"
+    assert cache.current() == {"innereye": True, "primary": True}
+
+
+def test_readiness_cache_paths_ignored_when_probe_is_injected() -> None:
+    """An injected `probe=` callable is a full stand-in for the HTTP call;
+    `paths` must never silently change its behaviour."""
+    calls: list[str] = []
+
+    def probe(base_url: str) -> bool:
+        calls.append(base_url)
+        return True
+
+    cache = R.ReadinessCache(
+        {"innereye": "http://comfyui:8188"},
+        probe=probe,
+        paths={"innereye": "/object_info"},
+        start=False,
+    )
+    try:
+        cache.refresh()
+        # The injected probe receives the plain base_url, never a
+        # path-suffixed one — `paths` only steers the DEFAULT probe.
+        assert calls == ["http://comfyui:8188"]
+        assert cache.current() == {"innereye": True}
+    finally:
+        cache.stop()
+
+
+def test_readiness_cache_from_backends_forwards_paths() -> None:
+    """`from_backends` forwards `paths=` through **kwargs — the actual wiring
+    shape `server.serve` uses."""
+    from lobes.gateway._routing import Backend
+
+    seen: list[str] = []
+
+    def opener(url, _t):
+        seen.append(url)
+        return 200
+
+    backends = [Backend(name="innereye", base_url="http://comfyui:8188", served_name="comfyui")]
+    cache = R.ReadinessCache.from_backends(
+        backends,
+        paths={"innereye": "/object_info"},
+        start=False,
+    )
+    # Swap in an opener-recording default probe path by monkeypatching the
+    # module-level default opener via the public opener seam.
+    import lobes.gateway._readiness as readiness_mod
+
+    original = readiness_mod._default_ready_opener
+    readiness_mod._default_ready_opener = opener
+    try:
+        cache.refresh()
+    finally:
+        readiness_mod._default_ready_opener = original
+        cache.stop()
+    assert seen == ["http://comfyui:8188/object_info"]
