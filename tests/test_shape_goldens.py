@@ -437,7 +437,11 @@ def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:
     passes the card's own declaration through: the base card's veto renders
     its marker, a silent card renders NOTHING (the gateway's OPT_IN_BACKENDS
     unwired-by-default rule carries the honesty) -- and never a model/knob
-    leak either way."""
+    leak either way, with ONE named exception: innereye's `declared_peak_gib`
+    (t6, issue #268) is a card-level FACT rendered regardless of hosting,
+    exactly like `host_env` -- it is what the co-residency veto reads, and a
+    box's own declared figure does not become untrue because this particular
+    shape does not host the role."""
     for shape_name in builtin_shape_names():
         shape = resolve_shape(shape_name)
         for card in builtin_names():
@@ -447,8 +451,12 @@ def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:
                 if shape.hosts_role(role):
                     continue
                 prefix = ROLE_ENV_PREFIX[role]
+                allowed_stray = f"{prefix}_DECLARED_PEAK_GIB" if role == "innereye" else None
                 if role in OPT_IN_CORE_ROLES:
-                    expected = "false" if role in profile.roles else None
+                    if role in profile.roles and not profile.role(role).feasible:
+                        expected = "false"
+                    else:
+                        expected = None
                     assert (
                         env.get(f"{prefix}_FEASIBLE") == expected
                     ), f"non-hosted opt-in {role} on {shape_name}/{card}: card passthrough broken"
@@ -456,7 +464,13 @@ def test_every_dropped_core_role_renders_only_the_feasible_marker() -> None:
                     assert (
                         env.get(f"{prefix}_FEASIBLE") == "false"
                     ), f"dropped {role} on {shape_name}/{card} lacks its flagged-off marker"
-                stray = [k for k in env if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE"]
+                stray = [
+                    k
+                    for k in env
+                    if k.startswith(f"{prefix}_")
+                    and k != f"{prefix}_FEASIBLE"
+                    and k != allowed_stray
+                ]
                 assert stray == [], f"dropped {role} on {shape_name}/{card} leaked {stray}"
 
 
@@ -676,7 +690,16 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
 # documented way of activating profile-gated services, so it reaches the lane by
 # a different road than every knob below. (It is rendered whenever a card serves
 # a role on a compose-profile-gated lane — today, orin's llama.cpp cortex.)
-_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset({"COMPOSE_PROFILES"})
+#
+# INNEREYE_DECLARED_PEAK_GIB (t6, issue #268) is the second: ComfyUI is not a
+# vLLM lane and has no compose slot for a fixed-GiB figure at all (see
+# schema.RoleProfile.declared_peak_gib's docstring) — its ONLY consumer is
+# shape_render.overcommitted_groups' co-residency veto, a load-time Python
+# check that never touches the compose template. Rendering it into `.env`
+# anyway keeps the card's declaration visible next to the knobs it sits
+# beside, the same way COMPOSE_PROFILES's own rendered value is visible even
+# though nothing here expands it.
+_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset({"COMPOSE_PROFILES", "INNEREYE_DECLARED_PEAK_GIB"})
 
 
 @pytest.mark.parametrize("card_name", sorted(builtin_names()))

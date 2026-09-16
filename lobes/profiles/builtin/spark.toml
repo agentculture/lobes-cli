@@ -94,6 +94,29 @@ model = "Qwen/Qwen3-Reranker-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
 
+# --- innereye: the declared peak-GiB figure (issue #268, plan
+# innereye-lobes-hosts-comfyui, t6) --------------------------------------
+#
+# ComfyUI has NO --gpu-memory-utilization equivalent -- its footprint is
+# per-GRAPH, not per-server: idle ~0, ~32 GB mid-FLUX-render, larger still
+# for the Wan 2.1 14B video path. Resist the symmetry pull: `innereye` gets
+# no `gpu_mem_util` line here, real or invented, because there is no fixed
+# fraction to give it truthfully.
+#
+# `declared_peak_gib` is the operator declaration that stands in for one,
+# sourced from the SAME bare-venv comfy-aimdo run the [[exclusive_roles]]
+# reason below quotes: a cold FLUX turn staged CLIP 9318 MiB + Flux
+# 22700 MiB + VAE 159 MiB = 32177 MiB = 31.42 GiB. DECLARED, not measured by
+# lobes (the #108 honesty rule -- no acceptance transcript exists for this
+# figure yet; the aimdo observation is a bare-venv run, not this project's
+# own container). Its ONLY consumer is
+# `shape_render.overcommitted_groups`'s co-residency veto below: it is never
+# summed with `cortex`'s `gpu_mem_util`, and never compared against this
+# card's total memory -- the veto is operator declaration plus a prose
+# reason, never arithmetic.
+[roles.innereye]
+declared_peak_gib = 31.42
+
 # --- co-residency: cortex vs innereye (issue #268, plan innereye-lobes-hosts-comfyui, t1) --
 #
 # `innereye` is the ComfyUI tenant this card can host -- and, per decision c41,

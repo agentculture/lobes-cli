@@ -172,6 +172,10 @@ def test_spark_and_thor_share_every_other_knob() -> None:
         "HAND_SERVED_NAME=LiquidAI/LFM2.5-1.2B-Instruct",
         "HAND_GPU_MEM_UTIL=0.06",
         "HAND_MAX_MODEL_LEN=32768",
+        # innereye's declared peak-GiB figure (t6, issue #268): spark is the
+        # only card that has DECLARED it (backing its own cortex/innereye
+        # exclusive_roles group); thor has no opinion.
+        "INNEREYE_DECLARED_PEAK_GIB=31.42",
     }
     assert only_in_thor == {
         "PRIMARY_KV_CACHE_DTYPE=auto",
