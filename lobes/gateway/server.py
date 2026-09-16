@@ -4778,8 +4778,10 @@ class _Handler(BaseHTTPRequestHandler):
                     ("Retry-After", str(RENDER_RETRY_AFTER_SECONDS)),
                 ],
                 body=_render_error_body(
-                    f"the render backend is not reachable ({exc}) — it may still be "
-                    "warming; retry shortly.",
+                    f"the render backend is not reachable ({exc}) — it may be cold "
+                    "or still warming up. lobes never starts it automatically; an "
+                    "operator must bring it up with 'lobes up innereye --apply'. "
+                    "Retry shortly.",
                     "render_backend_unavailable",
                 ),
             )
