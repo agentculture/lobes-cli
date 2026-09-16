@@ -1,0 +1,59 @@
+BASELINE — bare-venv ComfyUI on the DGX Spark GB10 (spark-f8a9), 2026-09-16
+Recorded before containerization, as the like-for-like reference for task t2
+and as an OBSERVATION against plan risk r2 (aimdo-in-container unmeasured).
+
+This is a BASELINE, not an acceptance run. It does NOT validate any lobes
+surface: at the time of this run no comfyui compose service, no /v1/render
+facade and no INNEREYE_BASE_URL reader existed. Per the #108 rule nothing
+here may be cited as evidence that the innereye role works.
+
+== Startup banner (venv, python main.py --listen 127.0.0.1 --port 8188) ==
+Total VRAM 124611 MB, total RAM 124611 MB
+Device: cuda:0 NVIDIA GB10 : cudaMallocAsync
+Using async weight offloading with 2 streams
+Enabled pinned memory 112149.0
+aimdo: comfy-aimdo integrated Linux GPU RAM headroom: 7788 MB
+aimdo: comfy-aimdo inited for GPU: NVIDIA GB10 (VRAM: 124610 MB)
+DynamicVRAM support detected and enabled
+comfy-aimdo version: 0.4.13
+
+Note: VRAM total EQUALS RAM total (124611 MB) — unified memory. This is why
+co-residency with a heavy generate lane is the concern, and why frame claim
+c41 declares cortex/innereye mutually exclusive for v1.
+
+== GET /system_stats ==
+device: cuda:0 NVIDIA GB10 : cudaMallocAsync
+vram_total: 130.7 GB
+vram_free:   72.9 GB  (at idle, after startup)
+
+== One FLUX.1-dev text-to-image render, driven by the REAL client ==
+client:  innereye 0.11.1 (installed), `innereye render ... --wait --apply`
+graph:   ~/comfy/graphs/flux-text-to-image.api.json (+ its mapping)
+job id:  284edb82e6e2  -> flux_output_00007_.png (1024x1024)
+prompt:  "a lobed brain made of glowing circuitry, one lobe rendering an
+          image, dark background, cinematic"
+
+Model FluxClipModel_     prepared for dynamic VRAM loading.  9318MB Staged.
+Model Flux               prepared for dynamic VRAM loading. 22700MB Staged.
+0 models unloaded.
+Model AutoencodingEngine prepared for dynamic VRAM loading.   159MB Staged.
+Prompt executed in 42.05 seconds
+
+Total staged: 9318 + 22700 + 159 = 32177 MB (~31.4 GiB)
+
+== Host memory DURING the render, with NO fleet gear running ==
+$ free -g
+Mem:  total 121   used 85   free 4   buff/cache 33   available 35
+
+85 GiB of 121 GiB in use with ComfyUI as the ONLY GPU tenant on the box.
+That is an observation, not a measured peak-RSS attribution: `free` counts
+the whole system, and the pinned-memory reservation above is part of why the
+figure is far larger than the 31.4 GiB of staged model weights. It is
+recorded because it is the single most decision-relevant number available
+without instrumenting the process, and it is consistent with the operator
+decision (c41) that this tenant does not share a card in v1.
+
+OPEN, per r2: every number above is from the BARE VENV. Whether comfy-aimdo
+reads the same host totals from inside a container cgroup, and whether the
+112149.0 pinned-memory reservation behaves the same there, is UNMEASURED.
+Task t2 records the containerized equivalents beside these.

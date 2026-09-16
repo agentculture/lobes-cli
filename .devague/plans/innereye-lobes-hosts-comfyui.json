@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-16T09:02:49Z",
-  "updated": "2026-09-16T09:18:09Z",
+  "updated": "2026-09-16T10:53:45Z",
   "targets": [
     {
       "id": "c1",
@@ -459,19 +459,20 @@
   "tasks": [
     {
       "id": "t1",
-      "summary": "Declare the exclusive_roles group and prove the containerized ComfyUI boots and renders",
+      "summary": "Declare the innereye/cortex exclusive_roles group and prove lobes init refuses the bad shape",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
-        "A [[exclusive_roles]] group declaring roles=[\"cortex\",\"innereye\"] with a shapes= list and a reason quoting the measured bare-venv numbers is added to the card profile; lobes init REFUSES a resolved shape hosting both, and the refusal names both the reason and the resolving shape",
-        "The containerized ComfyUI boots alone and completes one FLUX render; the transcript RECORDS the comfy-aimdo headroom figure, whether DynamicVRAM is still detected, and the pinned-memory line beside the bare-venv baseline (7788 MB / 112149.0) as OBSERVATIONS for the co-residency milestone (r2), never as a v1 gate"
+        "A [[exclusive_roles]] group declaring roles=[\"cortex\",\"innereye\"] with a shapes= list and a reason quoting the measured bare-venv numbers is added to the card profile; lobes init REFUSES a resolved shape hosting both, and the refusal names both the reason and the resolving shape"
       ],
-      "deps": [],
+      "deps": [
+        "t5"
+      ],
       "covers": [
         "c41",
         "h34"
       ],
-      "instruction": "v1 never co-resides (c41), so these numbers are recorded, not acted on. Do NOT design a budget around them and do NOT block on them. If aimdo does read the host total from inside the cgroup, note it plainly against r2 \u2014 that is the finding the co-residency milestone needs, and it changes nothing for v1."
+      "instruction": "v1 never co-resides (c41). This task is the DECLARATION and its guard only \u2014 pure card-profile data plus the co-residency test. The aimdo observations moved to t2, which is where a container actually exists to observe."
     },
     {
       "id": "t2",
@@ -480,7 +481,7 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "The image pins ComfyUI v0.33.2 and installs torch from the stock https://download.pytorch.org/whl/cu130 index, matching the venv it replaces",
-        "The built image renders at least one FLUX job, proving the containerized stack matches the bare venv"
+        "The built image renders at least one FLUX job, proving the containerized stack matches the bare venv; and the run RECORDS the comfy-aimdo headroom figure, whether DynamicVRAM is still detected, and the pinned-memory line beside the bare-venv baseline (7788 MB / 112149.0) as OBSERVATIONS for the co-residency milestone (r2), never as a v1 gate"
       ],
       "deps": [
         "t1"
@@ -543,20 +544,24 @@
     },
     {
       "id": "t5",
-      "summary": "Register innereye as the eleventh role in lobes/roles.py",
+      "summary": "Register innereye as the eleventh role ATOMICALLY: every role-keyed table, declaration-only",
       "origin": "llm",
       "status": "confirmed",
       "acceptance_criteria": [
         "innereye is in ROLES, ROLE_BACKEND and ROLE_PATH with hardcoded _INNEREYE_MODEL/_INNEREYE_RUNTIME constants, and is deliberately ABSENT from ROLE_ROLE_HINT so GATEWAY_FRONTED_ROLES excludes it \u2014 exactly as stt/tts do",
         "A dropped or unhosted innereye reports feasible:false on both capabilities surfaces, is omitted from /v1/models, and 404s role_infeasible on every alias \u2014 never half-served (#92)",
-        "ROLE_PATH[\"innereye\"] is the single facade string; no other role's ROLE_PATH row changes"
+        "ROLE_PATH[\"innereye\"] is the single facade string; no other role's ROLE_PATH row changes",
+        "Every role-keyed table carries an innereye entry and the FULL suite is green: the repo's own all-or-nothing invariants pass (test_role_service_map, test_every_proxyable_role_resolves_a_served_name, test_every_config_env_key_reaches_the_gateway_container, test_up_no_deps_isolation[innereye])",
+        "Regenerated goldens are INSPECTED, not merely passing: the diff shows INNEREYE_* keys and the 11th role in the capabilities wire, and nothing else"
       ],
       "deps": [],
       "covers": [
         "c15",
-        "h2"
+        "h2",
+        "c6",
+        "h15"
       ],
-      "instruction": "Follow the stt/tts escape from the catalog exactly \u2014 no SupportedModel entry, no role_hint. Adding a role is irreversible (roles.py:95-98); the operator decision is recorded as c15, do not re-litigate it here."
+      "instruction": "Approved deviation d2: registering a role is atomically cross-cutting and cannot be split file-disjoint \u2014 the repo's own invariant tests enforce all-or-nothing. This task now absorbs t14 (profiles/schema.py ROLES + shape_render.ROLE_SERVICE), t7 (goldens), and the stub table entries formerly scoped to t3 and t10. DECLARATION ONLY: stub values, feasible:false, no behaviour. All behaviour stays with t6/t9/t10/t2/t3/t13."
     },
     {
       "id": "t6",
@@ -582,7 +587,7 @@
       "id": "t7",
       "summary": "Regenerate the profile and shape goldens for the new role prefix",
       "origin": "llm",
-      "status": "confirmed",
+      "status": "rejected",
       "acceptance_criteria": [
         "tests/goldens/regen.py is run and the resulting diff is INSPECTED, not merely passing: it shows INNEREYE_* keys and nothing else across the ~41 affected .env goldens",
         "switch-plans.txt is unchanged, confirming the non-vLLM tenant stayed out of SUPPORTED_MODELS"
@@ -667,7 +672,8 @@
       "status": "confirmed",
       "acceptance_criteria": [
         "A peer that has never been told an origin can discover the render lane from GET /capabilities alone",
-        "The mesh behaviour is decided and observable: either the lane never appears in another member's roster, or it appears and a cross-box render is demonstrated end to end \u2014 never advertised-but-unreachable (#92)"
+        "The mesh behaviour is decided and observable: either the lane never appears in another member's roster, or it appears and a cross-box render is demonstrated end to end \u2014 never advertised-but-unreachable (#92)",
+        "The render lane's gateway-side readiness probe uses a path ComfyUI actually serves (MEASURED: /health 404s; / , /system_stats and /object_info return 200), so a wired-and-up innereye reports ready:true \u2014 without parameterizing the shared /health literal for any other lane"
       ],
       "deps": [
         "t5",
@@ -721,7 +727,6 @@
       ],
       "deps": [
         "t4",
-        "t7",
         "t10",
         "t12"
       ],
@@ -736,6 +741,22 @@
         "h32"
       ],
       "instruction": "This is the task that converts every DECLARED surface to VALIDATED. Nothing in docs or lobes capabilities may claim validated before this transcript lands (#108). Include the negative controls \u2014 a probe without them is vacuous."
+    },
+    {
+      "id": "t14",
+      "summary": "Role vocabulary for the profile machinery: schema.ROLES, ROLE_SERVICE, and the role-keyed table audit",
+      "origin": "llm",
+      "status": "rejected",
+      "acceptance_criteria": [
+        "innereye is in lobes/profiles/schema.py ROLES and in lobes/profiles/shape_render.py ROLE_SERVICE; a card declaring it in an [[exclusive_roles]] group LOADS, and lobes init renders on every built-in card (spark, thor, orin, base) without a KeyError",
+        "Every role-keyed table that iterates unconditionally is audited and named in the commit message \u2014 at minimum KNOB_LANE_ROLES and SPECULATIVE_CONFIG_ROLES \u2014 with each either given an innereye entry or explicitly justified as not needing one",
+        "The four test files that resolve shapes or profiles at module level (test_deployment_lock, test_shape_budgets, test_shape_contract_matrix, test_shape_goldens) COLLECT without error"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": "This task exists because of approved deviation d1: the plan assumed one role registry and there are two. lobes.roles.ROLES (t5) is the Colleague-facing registry; lobes.profiles.schema.ROLES is the profile-machinery one that schema.py:317 validates exclusive_roles against. Add the vocabulary ONLY \u2014 no budget knobs, no veto wiring, no RoleProfile fields. That is t6's scope and it lands after you. Do NOT regenerate goldens; t7 owns that and now has spark-innereye on its list too."
     }
   ],
   "risks": [
@@ -750,6 +771,14 @@
     {
       "id": "r2",
       "text": "Co-residency milestone: before innereye is ever hosted alongside a heavy generate lane, the aimdo-in-container numbers must be measured \u2014 the headroom figure, whether DynamicVRAM is still detected, and the pinned-memory line, each against the bare-venv baseline (7788 MB / 112149.0). Until then the exclusive_roles group stands and no declared peak should be trusted as a co-residency budget",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "MEASURED 2026-09-16 on the Spark (docs/evidence/2026-09-16-t2-comfyui-container-spark.txt): comfy-aimdo reads the HOST totals from inside the container \u2014 7788 MB headroom, 112149.0 pinned, 'DynamicVRAM support detected and enabled', Total VRAM/RAM 124611 MB \u2014 every figure IDENTICAL to the bare venv. GET /system_stats likewise reports host totals. This CONFIRMS the risk rather than relaxing it: the declared peak is not a co-residency budget, and the exclusive_roles group (c41) is the right and necessary mechanism. Narrow scope: the container ran with NO --memory limit, which is also what the shipped compose service does, so this measures the default shape and says nothing about a memory-limited cgroup \u2014 that stays untested and is the residual"
+    },
+    {
+      "id": "r3",
+      "text": "A memory-limited cgroup is untested: every aimdo measurement to date ran a container with no --memory cap. Whether a --memory-limited comfyui service changes the headroom figure or the pinned-memory reservation is unknown, and would be the first thing to try if co-residency is ever revisited",
       "kind": "unknown_nonblocking",
       "task_id": null,
       "resolved": false,

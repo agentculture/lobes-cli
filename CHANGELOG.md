@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.79.0] - 2026-09-16
+
+### Added
+
+- innereye, the eleventh Colleague role: ComfyUI hosted as a lobes-managed tenant behind a job-scoped /v1/render facade (#268)
+- Dockerfile.comfyui and the comfyui compose service, expose-only with no host port, read-only model mount and a non-root user
+- declared_peak_gib, the first non-fractional budget knob, consumed only by the exclusive_roles co-residency veto
+- per-backend readiness probe paths; the render lane probes /object_info because ComfyUI serves no /health
+
+### Changed
+
+- colleague-stack.md moves from ten roles to eleven
+
+### Fixed
+
+- lobes up remediation for an opt-in core role now names the real hosting shape instead of a hardcoded thor- prefix, which was already wrong for associate
+
 ## [0.78.3] - 2026-09-13
 
 ### Changed

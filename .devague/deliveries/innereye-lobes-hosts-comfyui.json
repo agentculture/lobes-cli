@@ -1,0 +1,58 @@
+{
+  "plan_slug": "innereye-lobes-hosts-comfyui",
+  "schema_version": 2,
+  "created": "2026-09-16T09:35:22Z",
+  "updated": "2026-09-16T10:36:21Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "The plan assumed ONE role registry; there are TWO. lobes.roles.ROLES (the Colleague-facing registry, t5's file) and lobes.profiles.schema.ROLES (the profile-machinery registry, 8 names) are separate constants, and schema.py:317 validates [[exclusive_roles]] against the SECOND one. t5 landing therefore does NOT unblock t1, contrary to the sequencing this run briefed. A second blocker sits behind it: shape_render.ROLE_SERVICE, which compose_profile iterates unconditionally whether or not a role is hosted. Both were verified empirically (a temporary local patch to schema.ROLES, reverted) and independently re-checked. Resolution: carve t6a (role vocabulary for the profile machinery: schema.ROLES + ROLE_SERVICE + an audit of KNOB_LANE_ROLES/SPECULATIVE_CONFIG_ROLES) and reorder t1 behind it. t1's committed work is blocked, not wrong",
+      "task_ref": "t1",
+      "reason": "The brief I gave the t1 agent named the wrong registry. The task agent caught it, tested the correction rather than asserting it, and reported it as a reasoning-degradation finding \u2014 which is the mechanism working",
+      "affects": [
+        "t5",
+        "t6",
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Registering a role is ATOMICALLY CROSS-CUTTING and cannot be decomposed into file-disjoint tasks. t5 landed correctly within its file boundary and left 9 failures \u2014 all of them the repo's OWN invariant tests asserting a role is registered everywhere or nowhere (test_role_service_map_covers_exactly_the_ten_roles, test_every_proxyable_role_resolves_a_served_name, test_every_config_env_key_reaches_the_gateway_container, test_every_up_target_is_isolated_with_no_deps[innereye]). t14 has the identical problem: adding innereye to schema.ROLES churns the ~41 shape goldens and cannot merge green alone. Resolution: collapse t5 + t14 + t7 and the stub entries currently scoped to t3/t10 into ONE atomic registration merge, declaration-only (stub values, feasible:false, no behaviour), completed on the existing agent/innereye-t5 branch. The behavioural tasks are unchanged: t6 budget/veto, t9 facade, t10 real lifecycle, t2/t3 container, t13 acceptance. Cost accepted: one wide task instead of four narrow ones, less parallelism \u2014 the alternative is a knowingly-red main branch, which the TDD gate forbids",
+      "task_ref": "t5",
+      "reason": "The decomposition was mine and it fought an invariant the codebase already enforces. Third surfacing of the issue #269 root cause: adding a role should fail loudly and completely, or not at all",
+      "affects": [
+        "t7",
+        "t14",
+        "t3",
+        "t10",
+        "t1"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "The gateway's readiness probe has no owner for the render lane. gateway/_readiness.py hardcodes _HEALTH_PATH='/health' (line 96) and ComfyUI 0.33.2 does NOT serve it \u2014 MEASURED live on the Spark 2026-09-16: /health -> 404, while / -> 200, /system_stats -> 200, /object_info -> 200. So a wired innereye would advertise feasible:true, ready:false forever, directly contradicting success signal c25 ('GET /capabilities reports innereye feasible and ready'). Frame claim c8 anticipated a bespoke probe but its instruction scoped the answer to a COMPOSE healthcheck and explicitly told the implementer NOT to parameterize the shared /health literal \u2014 that covers docker-level health, not the gateway-level ready bit that reaches /capabilities. Resolution: t11 (capabilities and mesh advert) gains the gateway-side readiness probe path for the render lane",
+      "task_ref": "t11",
+      "reason": "Found by the t9 agent, which flagged it as 'likely' rather than asserting it, and deliberately wrote no test encoding the guess. I measured it live against the running ComfyUI and it is true",
+      "affects": [
+        "t9",
+        "t13",
+        "t10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 3
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
