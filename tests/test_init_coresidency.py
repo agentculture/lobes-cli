@@ -41,7 +41,7 @@ import pytest
 from lobes.cli import main
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile
+from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shape_render import overcommitted_groups, shape_env
 from lobes.profiles.shapes import builtin_shape_names, resolve_shape
 from lobes.runtime import _compose, _detect
@@ -208,6 +208,65 @@ def test_a_shape_hosting_both_cortex_and_innereye_is_flagged_by_the_predicate() 
     )
     over = overcommitted_groups(both_hosted, profile)
     assert [tuple(g.roles) for g in over] == [("cortex", "innereye")]
+
+
+def test_an_undeclared_peak_is_not_a_clash_either() -> None:
+    """The declared-peak veto (t6, issue #268): presence, never arithmetic.
+
+    ``innereye`` has no ``gpu_mem_util`` fraction to fall back on, so its
+    half of the declaration is ``declared_peak_gib`` (schema.RoleProfile)
+    instead. A card that names the group but never actually declares the
+    figure gets the SAME non-clash treatment as an infeasible member
+    (``test_an_infeasible_member_is_not_a_clash``) — the guard never invents
+    a number to compare, it only checks the operator supplied one.
+    """
+    profile = resolve_profile(_INNEREYE_CARD)
+    peakless = Profile(
+        name=profile.name,
+        summary=profile.summary,
+        roles={
+            role: (rp if role != "innereye" else RoleProfile(feasible=rp.feasible))
+            for role, rp in profile.roles.items()
+        },
+        host_env=profile.host_env,
+        gpu_access=profile.gpu_access,
+        exclusive_roles=profile.exclusive_roles,
+    )
+    assert profile.role("innereye").declared_peak_gib is not None  # sanity: real card has it
+    assert peakless.role("innereye").declared_peak_gib is None
+    machine_as_brain = resolve_shape(_DEFAULT_SHAPE)
+    both_hosted = dataclasses.replace(
+        machine_as_brain, hosts=machine_as_brain.hosts + ("innereye",)
+    )
+    assert overcommitted_groups(both_hosted, peakless) == ()
+
+
+def test_declared_peak_gib_is_never_summed_or_compared_in_shape_render() -> None:
+    """AC1's grep, run as a test: the knob's only functional reference in
+    ``shape_render.py`` is the presence check in ``_counts_toward_clash`` —
+    no summation, no comparison against a card total. A future edit that
+    starts doing arithmetic with this field in this module trips this test
+    before it trips a live boot.
+    """
+    import inspect
+
+    from lobes.profiles import shape_render
+
+    source = inspect.getsource(shape_render)
+    lines_with_knob = [line for line in source.splitlines() if "declared_peak_gib" in line]
+    assert lines_with_knob  # the knob IS referenced somewhere in this module
+    for line in lines_with_knob:
+        assert "+" not in line
+        assert "sum(" not in line
+        assert "total" not in line.lower()
+        assert "gpu_mem_util" not in line
+
+    # The two ACTUAL code statements (not comments/docstring prose) are a
+    # frozenset membership test and a plain `is None` presence check — never
+    # arithmetic.
+    peak_gate_source = inspect.getsource(shape_render._counts_toward_clash)
+    assert 'KNOB_LANE_ROLES.get("declared_peak_gib", frozenset())' in source
+    assert "rp.declared_peak_gib is None" in peak_gate_source
 
 
 def test_an_infeasible_member_is_not_a_clash() -> None:

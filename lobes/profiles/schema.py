@@ -145,6 +145,21 @@ KNOB_NAMES: tuple[str, ...] = (
     # deployment serving a checkpoint that emits a different call shape (e.g.
     # qwen3_xml) can now say so in a profile instead of editing the template.
     "tool_call_parser",
+    # `declared_peak_gib` (issue #268, plan innereye-lobes-hosts-comfyui, t6)
+    # -- a per-card, peak-GiB FIGURE for the `innereye` role only (gated by
+    # KNOB_LANE_ROLES below). It is deliberately NOT a `gpu_mem_util`
+    # fraction: ComfyUI has no --gpu-memory-utilization equivalent at all --
+    # its footprint is per-GRAPH, not per-server (idle ~0, ~32 GB
+    # mid-FLUX-render, larger for the Wan 2.1 14B video path) -- so giving it
+    # a fraction would misrepresent a footprint this shape-dependent as a
+    # fixed server budget. It is DECLARED, not measured by lobes (the #108
+    # honesty rule), and its ONLY consumer is
+    # `shape_render.overcommitted_groups`' co-residency veto: a role gated
+    # for this knob that has not declared a value does not count toward a
+    # clash, mirroring the existing "an infeasible member is not a clash"
+    # rule. It is never summed with another role's budget and never compared
+    # against a card's total memory -- see that function's docstring.
+    "declared_peak_gib",
 )
 
 
@@ -203,6 +218,11 @@ KNOB_LANE_ROLES: dict[str, frozenset[str]] = {
     "async_scheduling": _WORKER_ONLY,
     "prefix_caching": _WORKER_ONLY | frozenset({"associate"}),
     "tool_call_parser": frozenset({"worker", "associate"}),
+    # `declared_peak_gib` is gated to `innereye` ONLY -- no vLLM lane has a
+    # fixed-GiB knob (every other role's budget is a gpu_mem_util fraction),
+    # and declaring it for any other role would render a `.env` key nothing
+    # reads, exactly the silent no-op this table exists to refuse loudly.
+    "declared_peak_gib": frozenset({"innereye"}),
 }
 
 
@@ -478,6 +498,7 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "async_scheduling": (_is_optional_bool, _BOOL_OR_NONE),
     "prefix_caching": (_is_optional_bool, _BOOL_OR_NONE),
     "tool_call_parser": (_is_optional_str, _STR_OR_NONE),
+    "declared_peak_gib": (_is_optional_number, "int/float or None"),
 }
 
 
@@ -601,6 +622,13 @@ class RoleProfile:
     # different call shape -- `qwen3_xml`, say -- can say so in a profile
     # instead of hand-editing the packaged compose file.
     tool_call_parser: str | None = None
+    # `declared_peak_gib` -- see KNOB_NAMES' entry above for the full
+    # rationale. A plain float/int (never a fraction, never a bool -- the
+    # same `_is_optional_number` type family as `gpu_mem_util`), gated to the
+    # `innereye` role alone by KNOB_LANE_ROLES. DECLARED, not measured by
+    # lobes; consumed ONLY by shape_render.overcommitted_groups (never
+    # summed, never compared against a card total).
+    declared_peak_gib: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view — every declared field, ``None`` included.

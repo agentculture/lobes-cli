@@ -67,6 +67,8 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "async_scheduling",
         "prefix_caching",
         "tool_call_parser",
+        # the innereye co-residency veto's declared peak (t6, issue #268)
+        "declared_peak_gib",
     }
 
 
@@ -100,6 +102,49 @@ def test_speculative_config_is_accepted_for_lanes_that_do_consume_it() -> None:
         assert (
             RoleProfile.from_dict(role, {"speculative_config": token}).speculative_config == token
         )
+
+
+def test_declared_peak_gib_is_rejected_for_every_lane_but_innereye() -> None:
+    """`declared_peak_gib` (t6, issue #268) is gated to `innereye` alone.
+
+    No vLLM lane has a fixed-GiB knob -- every other role's budget is a
+    ``gpu_mem_util`` fraction -- so declaring a peak for any of them would
+    render an ``.env`` key nothing reads, the exact silent no-op
+    ``KNOB_LANE_ROLES`` exists to refuse loudly (mirrors
+    ``test_speculative_config_is_rejected_for_lanes_that_cannot_consume_it``).
+    """
+    for role in (
+        "cortex",
+        "senses",
+        "muse",
+        "worker",
+        "associate",
+        "hand",
+        "embedder",
+        "reranker",
+    ):
+        with pytest.raises(ModelGearError) as excinfo:
+            RoleProfile.from_dict(role, {"declared_peak_gib": 31.42})
+        assert "declared_peak_gib" in str(excinfo.value)
+        assert "DECLARED_PEAK_GIB" in str(excinfo.value)
+
+
+def test_declared_peak_gib_is_accepted_for_innereye() -> None:
+    rp = RoleProfile.from_dict("innereye", {"declared_peak_gib": 31.42})
+    assert rp.declared_peak_gib == 31.42
+
+
+def test_declared_peak_gib_rejects_a_fraction_typo_and_a_bool() -> None:
+    """Same type-validation contract every other numeric knob gets.
+
+    ``bool`` is a subclass of ``int`` in Python, so a stray ``true``/``false``
+    TOML mistake must fail loudly rather than silently pass as a number (the
+    same trap ``_is_optional_number``'s own docstring names).
+    """
+    with pytest.raises(ModelGearError):
+        RoleProfile.from_dict("innereye", {"declared_peak_gib": "32"})
+    with pytest.raises(ModelGearError):
+        RoleProfile.from_dict("innereye", {"declared_peak_gib": True})
 
 
 def test_role_profile_round_trips_through_dict() -> None:

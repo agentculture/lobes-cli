@@ -160,6 +160,14 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     "async_scheduling": "ASYNC_SCHEDULING",
     "prefix_caching": "PREFIX_CACHING",
     "tool_call_parser": "TOOL_CALL_PARSER",
+    # declared_peak_gib -> INNEREYE_DECLARED_PEAK_GIB (t6, issue #268): the
+    # same generic pass-through every other knob gets, gated to the
+    # `innereye` role alone at LOAD time (schema.KNOB_LANE_ROLES). Nothing in
+    # the compose template expands this slot -- it is a DECLARED figure for
+    # the co-residency veto to read (shape_render.overcommitted_groups), not
+    # a vLLM flag -- but the render path stays uniform for the same reason
+    # every other knob's does: one mapping table, no special-cased knob.
+    "declared_peak_gib": "DECLARED_PEAK_GIB",
 }
 
 # The two argparse.BooleanOptionalAction tokens vLLM's --enforce-eager /
