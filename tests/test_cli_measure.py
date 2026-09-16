@@ -382,7 +382,7 @@ def test_measure_role_wraps_family_result_with_common_fields(measure_server: str
     assert set(out["metrics"]) == set(RM.LLM_METRIC_KEYS)
 
 
-def test_measure_role_family_assignment_covers_all_ten_roles() -> None:
+def test_measure_role_family_assignment_covers_all_eleven_roles() -> None:
     assert RM._FAMILY_BY_ROLE == {
         "cortex": "llm",
         "senses": "llm",
@@ -394,6 +394,9 @@ def test_measure_role_family_assignment_covers_all_ten_roles() -> None:
         "reranker": "embed_rerank",
         "stt": "audio",
         "tts": "audio",
+        # `innereye` (issue #82, t5): no probe wired yet — see
+        # RM._measure_render_role, a never-raising stub.
+        "innereye": "render",
     }
     assert set(RM._FAMILY_BY_ROLE) == set(ROLES)
 

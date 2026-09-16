@@ -60,6 +60,8 @@ _EXPECTED_ROLES = {
     "reranker",
     "stt",
     "tts",
+    # The ELEVENTH role (issue #82, t5) — the ComfyUI render tenant.
+    "innereye",
 }
 _MUSE_ID = "nvidia/Gemma-4-31B-IT-NVFP4"
 # the catalog worker default — issue #244, t1 moved this from
@@ -128,10 +130,10 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_registry_returns_exactly_the_ten_roles() -> None:
+def test_registry_returns_exactly_the_eleven_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 10
+    assert len(registry) == 11
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -922,16 +924,17 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
         "rerank",
         "stt",
         "tts",
+        "innereye",
     }
     assert set(ROLE_BACKEND) == _EXPECTED_ROLES
 
 
 # ---------------------------------------------------------------------------
-# All nine roles expose the identical key set
+# All eleven roles expose the identical key set
 # ---------------------------------------------------------------------------
 
 
-def test_all_nine_roles_expose_identical_key_set() -> None:
+def test_all_eleven_roles_expose_identical_key_set() -> None:
     """Every role's asdict keys are identical — no role has extra or missing fields."""
     import dataclasses
 
@@ -947,6 +950,7 @@ def test_all_nine_roles_expose_identical_key_set() -> None:
         "reranker",
         "stt",
         "tts",
+        "innereye",
     ):
         assert set(dataclasses.asdict(registry[name]).keys()) == first_keys
 
@@ -969,15 +973,15 @@ _ALL_ROLE_TABLES = {
     "ROLE_FORBIDDEN": roles_mod.ROLE_FORBIDDEN,
 }
 
-# Tables scoped to the gateway-fronted (non-audio) roles only: stt/tts are
-# path-routed sidecars with no catalog entry and no token context, so their
-# absence here is by design, not an omission.
+# Tables scoped to the gateway-fronted (catalog-backed) roles only: stt/tts
+# and innereye are path-routed lanes with no catalog entry and no token
+# context, so their absence here is by design, not an omission.
 _GATEWAY_ROLE_TABLES = {
     "ROLE_ROLE_HINT": roles_mod.ROLE_ROLE_HINT,
     "ROLE_MAX_MODEL_LEN_ENV": roles_mod.ROLE_MAX_MODEL_LEN_ENV,
 }
 
-_AUDIO = ("stt", "tts")
+_NO_CATALOG_ROLES = ("stt", "tts", "innereye")
 
 
 @pytest.mark.parametrize("table_name", sorted(_ALL_ROLE_TABLES))
@@ -992,17 +996,18 @@ def test_every_role_has_an_entry_in_every_all_role_table(table_name: str) -> Non
 @pytest.mark.parametrize("table_name", sorted(_GATEWAY_ROLE_TABLES))
 def test_every_gateway_role_has_an_entry_in_every_gateway_role_table(table_name: str) -> None:
     table = _GATEWAY_ROLE_TABLES[table_name]
-    expected = [role for role in roles_mod.ROLES if role not in _AUDIO]
+    expected = [role for role in roles_mod.ROLES if role not in _NO_CATALOG_ROLES]
     missing = [role for role in expected if role not in table]
     assert not missing, f"{table_name} is missing: {missing}"
     extra = [key for key in table if key not in expected]
     assert not extra, f"{table_name} has entries for non-roles: {extra}"
 
 
-def test_roles_has_ten_entries_including_hand_and_associate() -> None:
-    assert len(roles_mod.ROLES) == 10
+def test_roles_has_eleven_entries_including_hand_associate_and_innereye() -> None:
+    assert len(roles_mod.ROLES) == 11
     assert "hand" in roles_mod.ROLES
     assert "associate" in roles_mod.ROLES
+    assert "innereye" in roles_mod.ROLES
 
 
 def test_hand_responsibilities_and_forbidden_match_the_v1_contract() -> None:
@@ -1106,3 +1111,141 @@ def test_a_peer_supplied_window_wins_over_the_null() -> None:
     )["worker"]
     assert not worker.feasible  # proxying never makes this box a host
     assert worker.context == 128000
+
+
+# ---------------------------------------------------------------------------
+# innereye — the eleventh role (issue #82, t5): the ComfyUI render tenant
+# ---------------------------------------------------------------------------
+#
+# Follows the stt/tts escape from the catalog exactly (no SupportedModel
+# entry, no role_hint — c15), but its FEASIBILITY default follows
+# muse/worker/associate instead (OPT_IN_BACKENDS), not the audio overlay's
+# sleeping-lobe posture. Adding a role is irreversible (see the ROLES
+# docstring) — these tests pin the contract, not re-litigate the decision.
+
+
+def test_innereye_registered_in_backend_and_path_but_absent_from_role_hint() -> None:
+    assert ROLE_BACKEND["innereye"] == "innereye"
+    assert ROLE_PATH["innereye"] == "/v1/render"
+    assert "innereye" not in ROLE_ROLE_HINT
+    # Absence from ROLE_ROLE_HINT is what excludes it from the gateway-fronted
+    # loop — GATEWAY_FRONTED_ROLES is DERIVED from ROLE_ROLE_HINT membership.
+    assert "innereye" not in roles_mod.GATEWAY_FRONTED_ROLES
+
+
+def test_innereye_path_is_the_single_facade_string_and_unique() -> None:
+    """ROLE_PATH["innereye"] is the ONLY row this role adds; no other role's
+    ROLE_PATH row points at /v1/render, and no other role's row changed."""
+    assert ROLE_PATH["innereye"] == "/v1/render"
+    for role, path in ROLE_PATH.items():
+        if role != "innereye":
+            assert path != "/v1/render"
+    # No other role's path drifted from the pre-innereye contract.
+    assert ROLE_PATH["cortex"] == "/v1/chat/completions"
+    assert ROLE_PATH["senses"] == "/v1/chat/completions"
+    assert ROLE_PATH["muse"] == "/v1/chat/completions"
+    assert ROLE_PATH["worker"] == "/v1/chat/completions"
+    assert ROLE_PATH["associate"] == "/v1/chat/completions"
+    assert ROLE_PATH["hand"] == "/v1/chat/completions"
+    assert ROLE_PATH["embedder"] == "/v1/embeddings"
+    assert ROLE_PATH["reranker"] == "/v1/rerank"
+    assert ROLE_PATH["stt"] == "/v1/audio/transcriptions"
+    assert ROLE_PATH["tts"] == "/v1/audio/speech"
+
+
+def test_innereye_responsibilities_and_forbidden() -> None:
+    assert roles_mod.ROLE_RESPONSIBILITIES["innereye"] == ("image_generation",)
+    assert roles_mod.ROLE_FORBIDDEN["innereye"] == (
+        "final_decision",
+        "repo_action",
+        "security_decision",
+    )
+
+
+def test_innereye_defaults_infeasible_when_unwired_and_unflagged() -> None:
+    """A dropped/unhosted innereye reports feasible:false — never a silent
+    fallback to a generate lane, and never the audio overlay's
+    sleeping-lobe (feasible:true) default."""
+    registry = _registry(_full_env())
+    info = registry["innereye"]
+    assert info.feasible is False
+    assert info.loaded is False
+    assert info.ready is False
+    assert info.endpoint == ""
+    assert info.model == "comfyanonymous/ComfyUI-0.33.2"
+    assert info.runtime == "comfyui"
+    assert info.path == "/v1/render"
+
+
+def test_innereye_defaults_infeasible_on_a_minimal_primary_only_fleet() -> None:
+    registry = _registry(_primary_only_env())
+    assert "innereye" in registry  # present, never omitted
+    info = registry["innereye"]
+    assert info.feasible is False
+    assert info.loaded is False
+
+
+def test_innereye_explicit_feasible_true_does_not_fabricate_loaded() -> None:
+    """An operator can override the OPT_IN_BACKENDS default to feasible:true
+    (e.g. declaring intent ahead of the backend actually being wired), but
+    that alone must never fabricate loaded/ready — there is still nothing to
+    dial (issue #92's "advertised implies reachable")."""
+    env = _full_env() | {"INNEREYE_FEASIBLE": "true"}
+    registry = _registry(env)
+    info = registry["innereye"]
+    assert info.feasible is True
+    assert info.loaded is False
+    assert info.ready is False
+    assert info.endpoint == ""
+
+
+def test_innereye_explicit_feasible_false_is_honored() -> None:
+    env = _full_env() | {"INNEREYE_FEASIBLE": "false"}
+    table, _server = build_config(env)
+    assert "innereye" in table.infeasible
+    registry = _registry(env)
+    assert registry["innereye"].feasible is False
+
+
+def test_innereye_wired_backend_resolves_loaded_and_ready() -> None:
+    """Forward-compatibility: once a later task wires a Backend named
+    "innereye" into the routing table (with INNEREYE_FEASIBLE not falsy),
+    the SAME resolver in this module reports it loaded/ready with no further
+    change to lobes.roles required."""
+    import dataclasses
+
+    from lobes.gateway._routing import Backend
+
+    env = _full_env() | {"INNEREYE_FEASIBLE": "true"}
+    table, server = build_config(env)
+    innereye_backend = Backend(
+        name="innereye",
+        base_url="http://comfyui:8188",
+        served_name="comfyanonymous/ComfyUI-0.33.2",
+    )
+    table = dataclasses.replace(table, backends=(*table.backends, innereye_backend))
+    registry = build_role_registry(table, server, env=env, gateway_url=_DEFAULT_TEST_GATEWAY_URL)
+    info = registry["innereye"]
+    assert info.feasible is True
+    assert info.loaded is True
+    assert info.ready is True
+    assert info.endpoint == _DEFAULT_TEST_GATEWAY_URL
+
+
+def test_innereye_keeps_the_full_metadata_block_shape() -> None:
+    import dataclasses
+
+    registry = _registry(_full_env())
+    cortex_keys = set(dataclasses.asdict(registry["cortex"]).keys())
+    assert set(dataclasses.asdict(registry["innereye"]).keys()) == cortex_keys
+
+
+def test_innereye_context_and_tools_are_honestly_empty() -> None:
+    """No catalog entry means no token context or tool-calling claim — like
+    stt/tts, not like a chat lane."""
+    registry = _registry(_full_env())
+    info = registry["innereye"]
+    assert info.context == 0
+    assert info.quant == ""
+    assert info.mtp is False
+    assert info.tools is False
