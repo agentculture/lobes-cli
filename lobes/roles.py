@@ -1,10 +1,10 @@
-"""The role registry — the ten first-class, Colleague-facing lobes (issue #81).
+"""The role registry — the eleven first-class, Colleague-facing lobes (issue #81).
 
-lobes exposes the fleet not as a bag of model ids but as TEN discoverable
+lobes exposes the fleet not as a bag of model ids but as ELEVEN discoverable
 *roles*, each resolved to a live endpoint + metadata so a caller (Colleague)
 can address a capability by role — ``cortex``, ``senses``, ``muse``,
 ``worker``, ``associate``, ``hand``, ``embedder``, ``reranker``, ``stt``,
-``tts`` — without hardcoding any single model endpoint:
+``tts``, ``innereye`` — without hardcoding any single model endpoint:
 
 * ``cortex``   → the ``primary`` generate backend (Qwen 3.6 27B NVFP4 MTP).
   The authoritative reasoning/action/decision layer — the final authority.
@@ -58,6 +58,17 @@ can address a capability by role — ``cortex``, ``senses``, ``muse``,
   (issue #149) — see :data:`STT_REALTIME_RESPONSIBILITY`.
 * ``tts``      → the Chatterbox sidecar behind the audio overlay →
   ``POST /v1/audio/speech``. Opt-in.
+* ``innereye`` → the ComfyUI render tenant (issue #82) →
+  ``POST /v1/render`` (job-scoped submit/status/artifact facade; the fan-out
+  itself is a separate task, not this module's concern). Like ``stt``/``tts``
+  it carries NO :class:`~lobes.catalog.SupportedModel` catalog entry and NO
+  ``role_hint`` — ComfyUI is not a switchable vLLM gear, so there is nothing
+  in ``lobes.catalog`` for it to cite (the operator decision recorded as
+  c15). UNLIKE ``stt``/``tts`` it is OPT-IN like ``muse``/``worker``/
+  ``associate``: an unwired ``innereye`` defaults to INFEASIBLE rather than
+  the audio overlay's sleeping-lobe default, so ``model=innereye`` on a box
+  that does not host it 404s ``role_infeasible`` rather than reading as a
+  merely-not-yet-ready generate lane.
 
 This module is the SHARED core the CLI (``lobes capabilities``, t5) and the
 gateway (``GET /capabilities``, t6) both consume, so the role→endpoint contract
@@ -88,16 +99,17 @@ from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
 from lobes.gateway._replicas import ReplicaState
 from lobes.gateway._routing import RoutingTable
 
-# The ten first-class roles, in canonical order: generate lanes (cortex,
-# senses, muse, worker, hand), pooling lanes, then the opt-in audio overlay.
-# Downstream (CLI/gateway) iterate this for a stable ordering.
+# The eleven first-class roles, in canonical order: generate lanes (cortex,
+# senses, muse, worker, hand), pooling lanes, the opt-in audio overlay, then
+# the opt-in render tenant. Downstream (CLI/gateway) iterate this for a
+# stable ordering.
 #
 # ADDING A ROLE IS EFFECTIVELY IRREVERSIBLE. Every name here becomes a public
 # address on `GET /capabilities`, `lobes capabilities`, the `model=` alias
 # space and the `lobes up <role>` surface — and removing one later breaks every
-# caller that learned to use it. Ten is the count today (the tenth,
-# `associate`, landed with the lightning-on-orin plan's t6); read
-# docs/colleague-stack.md before proposing a tenth.
+# caller that learned to use it. Eleven is the count today (the eleventh,
+# `innereye`, landed with issue #82's t5 — the operator decision recorded as
+# c15); read docs/colleague-stack.md before proposing a twelfth.
 ROLES: tuple[str, ...] = (
     "cortex",
     "senses",
@@ -115,6 +127,13 @@ ROLES: tuple[str, ...] = (
     "reranker",
     "stt",
     "tts",
+    # The ELEVENTH role (issue #82, t5): `innereye` is the ComfyUI image-render
+    # tenant. It follows the stt/tts escape from the catalog exactly (no
+    # SupportedModel entry, no role_hint — see the module docstring), but
+    # unlike stt/tts it is OPT-IN like muse/worker/associate: an unwired
+    # innereye defaults to INFEASIBLE, not the audio overlay's sleeping-lobe
+    # default (see lobes.gateway._config.OPT_IN_BACKENDS).
+    "innereye",
 )
 
 # role → the internal gateway backend NAME that serves it — the key space the
@@ -140,6 +159,9 @@ ROLE_BACKEND: dict[str, str] = {
     "reranker": "rerank",
     "stt": "stt",
     "tts": "tts",
+    # `innereye` is its own backend name too, like the audio sidecars above —
+    # a path-routed render tenant, not a model-routed vLLM lane.
+    "innereye": "innereye",
 }
 
 # The inverse of :data:`ROLE_BACKEND` — backend name → the role it serves.
@@ -197,7 +219,44 @@ ROLE_PATH: dict[str, str] = {
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
     "tts": "/v1/audio/speech",
+    # `innereye`'s single facade string (issue #82, t5) — the job-scoped
+    # submit/status/artifact family a later task (t9) wires into the gateway's
+    # do_GET/do_POST chains. This is the ONLY row this task adds to ROLE_PATH;
+    # no other role's path changes.
+    "innereye": "/v1/render",
 }
+
+# Roles this box never auto-wires into ITS OWN mesh advert (task t11, issue
+# #92 c9/h20) — even when hosted, feasible, and carrying a real fingerprint.
+#
+# The mesh forwarder (``lobes.gateway.server.open_upstream``) is POST-only,
+# single-hop, single-response — it dials one upstream and relays ONE
+# response back. A render is submit-then-poll-then-GET-binary: a job id
+# comes back from the submit call, a caller polls its status, then fetches a
+# separate binary artifact — three round trips with server-held state
+# between them, none of which the forwarder's shape can carry. Forwarding a
+# cross-box render is therefore genuinely not possible today without new,
+# stateful forwarding code, which is explicitly out of scope for the render
+# facade (frame claim c9, confirmed: "the mesh gives discovery for free but
+# NOT reach"). Announcing the role anyway would be exactly the
+# advertised-but-unreachable trap issue #92 forbids.
+#
+# This is deliberately narrower than "every path-routed role": the audio
+# roles (``stt``/``tts``) are ALSO path-routed (see :data:`ROLE_PATH`) but
+# ARE forwardable — a single POST-in/response-out call each — and already
+# participate in the mesh via :func:`probe_audio_peer_ready` /
+# :data:`PeerSpec`. Only ``GET /v1/realtime`` (the WebSocket session, never
+# a role of its own) is excluded from proxying for an unrelated reason
+# (stateful socket, not a mesh-forwarding limitation).
+#
+# Discovery on the HOSTING box is untouched by this set: ``GET
+# /capabilities`` always lists ``innereye`` (wired or not — see
+# ``role_registry_from_table``), so a peer that has never been told an
+# origin can still learn the lane exists by asking this box directly. This
+# set only narrows what THIS box puts in its own mesh heartbeat/announce —
+# see :func:`lobes.gateway._mesh_routes._role_info_from_capability_entry`,
+# its sole consumer.
+MESH_UNFORWARDABLE_ROLES: frozenset[str] = frozenset({"innereye"})
 
 # The two audio-overlay sidecars — hardcoded here (as in the gateway/realtime
 # code) because they are NOT in the switchable catalog (lobes/catalog.py): they
@@ -207,6 +266,14 @@ _STT_MODEL = "nvidia/parakeet-tdt-0.6b-v2"  # Parakeet TDT 0.6B, NeMo ASR
 _STT_RUNTIME = "parakeet"
 _TTS_MODEL = "ResembleAI/chatterbox"  # Chatterbox, Resemble AI 0.5B, Apache-2.0
 _TTS_RUNTIME = "chatterbox"
+# The ComfyUI render tenant (issue #82) — hardcoded for the same reason as the
+# audio sidecars above: it is NOT in the switchable catalog (lobes/catalog.py),
+# so there is no SupportedModel/role_hint to derive a served id from. Named
+# for the pinned server version this deployment runs (docs/plans/
+# 2026-09-16-innereye-lobes-hosts-comfyui.md) rather than a HF-style
+# checkpoint id — ComfyUI is a render SERVER, not a model weight.
+_INNEREYE_MODEL = "comfyanonymous/ComfyUI-0.33.2"
+_INNEREYE_RUNTIME = "comfyui"
 _VLLM_RUNTIME = "vllm"  # the seven gateway-fronted roles all serve on vLLM
 
 # Canonical responsibilities per role (issue #81 worked examples — PROVISIONAL,
@@ -375,6 +442,15 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
     # addition is applied at build time by _resolve_audio_role, never here.
     "stt": ("transcribe", "audio_input_to_text"),
     "tts": ("speech_output", "synthesize"),
+    # `innereye` (issue #82, t5): the ComfyUI image-render tenant. Every other
+    # role's responsibilities vocabulary is a COMPREHENSION or a DOER/decider
+    # token (`image_understanding` on cortex/worker is "can look at an
+    # image", never "can make one") — there is no GENERATION/OUTPUT token in
+    # the existing vocabulary, so `image_generation` is introduced here as
+    # the new one. It is a runtime-only division-of-labour claim like every
+    # other responsibilities token (see the module docstring's provisional
+    # wording), never an answer-quality claim.
+    "innereye": ("image_generation",),
 }
 
 # The /v1/realtime WebSocket server-VAD session capability (issue #149, task
@@ -435,6 +511,10 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     "reranker": (),
     "stt": (),
     "tts": (),
+    # `innereye` renders on request; it never decides, never touches the
+    # repo, and never makes a security call — the same non-deciding-role
+    # triple every other proposing/serving lobe carries (senses/muse/hand).
+    "innereye": ("final_decision", "repo_action", "security_decision"),
 }
 
 # role → the deployment env var that carries the SERVED ``--max-model-len`` for
@@ -968,7 +1048,7 @@ def build_role_registry(
     peer_ready: Mapping[str, bool | None] | None = None,
     peer_context: Mapping[str, int | None] | None = None,
 ) -> dict[str, RoleInfo]:
-    """Resolve the ten first-class roles to live metadata — the #81 contract.
+    """Resolve the eleven first-class roles to live metadata — the #81 contract.
 
     This is the ONE canonical builder both the CLI (t5) and gateway (t6) call.
     Its inputs are exactly what :func:`lobes.gateway._config.build_config`
@@ -1043,9 +1123,10 @@ def build_role_registry(
         and every deployment with no proxied roles) leaves every role's
         ``ready`` exactly as before: a proxied role without a live peer
         signal is honestly not-ready, never hardcoded true.
-    :returns: an ordered ``dict`` keyed by role name with EXACTLY the ten roles.
-        Every role is always present — an unconfigured/opt-in role (stt/tts with
-        ``audio_url`` unset, or an unwired embed/rerank/multimodal backend) is
+    :returns: an ordered ``dict`` keyed by role name with EXACTLY the eleven
+        roles. Every role is always present — an unconfigured/opt-in role
+        (stt/tts with ``audio_url`` unset, an unwired embed/rerank/multimodal
+        backend, or an unwired ``innereye``) is
         returned with ``loaded=False``, never omitted and never raising.
 
     Readiness (``RoleInfo.ready``) is no longer a bare alias of ``loaded``
@@ -1112,6 +1193,46 @@ def build_role_registry(
             ready_signal=audio_ready_signal,
             peer_ready=peer_ready,
         )
+
+    # `innereye` — the eleventh role (issue #82, t5). Its "is a Backend
+    # wired" signal comes from `table.backends` (like the gateway-fronted
+    # roles), not a dedicated overlay URL field (like stt/tts's `audio_url`)
+    # — no such field exists yet; a later task's gateway plumbing is what
+    # actually wires a `Backend(name="innereye", ...)` into the table. Until
+    # then `innereye_configured` is always False, which — combined with
+    # innereye being in `OPT_IN_BACKENDS` (`lobes.gateway._config`) — means
+    # this resolves `loaded=False, feasible=False, ready=False` on every
+    # deployment that has not declared `INNEREYE_FEASIBLE`: the honest
+    # "declared but unhosted" contract (#92), satisfied from the very PR that
+    # registers the role.
+    innereye_backend = next((b for b in table.backends if b.name == ROLE_BACKEND["innereye"]), None)
+    innereye_configured = innereye_backend is not None
+    # The ENDPOINT is the gateway origin whenever the role is feasible, wired
+    # or not — the gateway-fronted rule (`_gateway_role` sets `endpoint =
+    # gateway` unconditionally), NOT the stt/tts rule. The audio lanes blank
+    # their endpoint on an unwired OVERLAY because `AUDIO_URL` names a real
+    # second origin that may be absent; innereye has no such field, so the
+    # only origin it ever has is this box's gateway. `loaded`/`ready` (below)
+    # carry the "is anything actually behind it" honesty, and the INFEASIBLE
+    # branch of `_resolve_innereye_role` still blanks the endpoint outright.
+    innereye_endpoint = gateway
+    innereye_local_signal = (
+        None if backend_ready is None else backend_ready.get(ROLE_BACKEND["innereye"]) is True
+    )
+    innereye_ready_signal = (
+        innereye_configured
+        and bool(innereye_endpoint)
+        and (innereye_local_signal if innereye_local_signal is not None else True)
+    )
+    # NOTE the clamp above stays on `innereye_configured`, not on the endpoint:
+    # a feasible-but-unwired tenant advertises the facade origin and ready:false.
+    registry["innereye"] = _resolve_innereye_role(
+        table,
+        endpoint=innereye_endpoint,
+        configured=innereye_configured,
+        ready_signal=innereye_ready_signal,
+        peer_ready=peer_ready,
+    )
     return registry
 
 
@@ -1164,6 +1285,56 @@ def _resolve_audio_role(
     if peer_ready is not None and role in table.peer_proxied:
         peer_signal = peer_ready.get(role) is True
     return _audio_role(role, model, runtime, "", False, ready=peer_signal, feasible=False)
+
+
+def _resolve_innereye_role(
+    table: RoutingTable,
+    *,
+    endpoint: str,
+    configured: bool,
+    ready_signal: bool,
+    peer_ready: Mapping[str, bool | None] | None,
+) -> RoleInfo:
+    """The eleventh role's :class:`RoleInfo` — the ComfyUI render tenant (#82, t5).
+
+    Structurally mirrors :func:`_resolve_audio_role` (the feasible/infeasible
+    branch split, and the peer-proxied fallback on the infeasible branch), but
+    ``configured``/``endpoint`` are derived by the caller from ``table.backends``
+    (a wired ``Backend(name="innereye", ...)``) rather than from a dedicated
+    overlay URL field like ``ServerConfig.audio_url`` — no such field exists
+    for this role. A later task's gateway plumbing is what actually wires that
+    Backend; this function only reacts to it, so no further change here is
+    needed once it lands.
+
+    Feasibility comes from ``table.infeasible``, exactly as it does for
+    stt/tts — but ``innereye``'s DEFAULT differs: it is a member of
+    :data:`lobes.gateway._config.OPT_IN_BACKENDS` (t5), so an
+    unwired-and-unflagged ``innereye`` resolves INFEASIBLE, never the audio
+    overlay's sleeping-lobe default (``feasible:true`` while unwired). That
+    inversion lives entirely in ``_config.py``'s ``_is_feasible`` — this
+    function stays agnostic to WHY a name is or isn't in ``table.infeasible``.
+    """
+    if "innereye" not in table.infeasible:
+        return _audio_role(
+            "innereye",
+            _INNEREYE_MODEL,
+            _INNEREYE_RUNTIME,
+            endpoint,
+            configured,
+            ready=ready_signal,
+        )
+    peer_signal = False
+    if peer_ready is not None and "innereye" in table.peer_proxied:
+        peer_signal = peer_ready.get("innereye") is True
+    return _audio_role(
+        "innereye",
+        _INNEREYE_MODEL,
+        _INNEREYE_RUNTIME,
+        "",
+        False,
+        ready=peer_signal,
+        feasible=False,
+    )
 
 
 def annotate_peer_referrals(payload: dict[str, dict], table: RoutingTable) -> dict[str, dict]:

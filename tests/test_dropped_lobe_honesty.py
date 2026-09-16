@@ -390,6 +390,9 @@ def test_spark_cli_and_gateway_agree_on_dropped_senses() -> None:
         "reranker": True,
         "stt": True,
         "tts": True,
+        # `innereye` (issue #82, t5) is opt-in-hosted like muse/worker/
+        # associate and no shape hosts it, so it is infeasible on both boxes.
+        "innereye": False,
     }
 
 
@@ -412,6 +415,7 @@ def test_thor_cli_and_gateway_agree_on_dropped_cortex() -> None:
         "reranker": True,
         "stt": True,
         "tts": True,
+        "innereye": False,
     }
 
 

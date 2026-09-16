@@ -73,7 +73,7 @@ from typing import Mapping
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.render import profile_env, role_engine
-from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile, RoleProfile
+from lobes.profiles.schema import KNOB_LANE_ROLES, ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
 
 # role -> the compose SERVICE (the `services:` key the compose template
@@ -95,6 +95,11 @@ ROLE_SERVICE: dict[str, str] = {
     "reranker": "vllm-rerank",
     "stt": "stt",
     "tts": "chatterbox",
+    # `innereye` (issue #82) — the ComfyUI render tenant. `compose_profile`
+    # iterates this table unconditionally, whether or not the card hosts the
+    # role, so the eleventh role needs an entry here from the render that
+    # merely KNOWS the name. Mirrors lobes.cli._commands.up.ROLE_SERVICE.
+    "innereye": "comfyui",
     "minor": "vllm-minor",
 }
 
@@ -158,11 +163,29 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "associate": {
         "ASSOCIATE_BASE_URL": "http://vllm-associate:8000",
     },
+    # `innereye` (issue #82) mirrors the three above STRUCTURALLY, and is
+    # registered here for the same all-or-nothing reason every other
+    # role-keyed table is: `shape_env` indexes BOTH this table and
+    # OPT_IN_CORE_COMPOSE_PROFILE below with a bare `[role]` for every
+    # OPT_IN_CORE_ROLES member a shape hosts, so a name present in that tuple
+    # but absent here is a KeyError the moment an innereye-hosting shape
+    # exists.
+    #
+    # DECLARATION ONLY, and honestly incomplete until the rest of the plan
+    # lands: the `comfyui` service, its `innereye` compose-profile gate, and
+    # the gateway-side reader for INNEREYE_BASE_URL (an `_optional_backend`
+    # in lobes/gateway/_config.py) are all separate tasks. Until they land
+    # this pair is inert — no built-in shape hosts the role, so nothing
+    # indexes it and no golden renders it.
+    "innereye": {
+        "INNEREYE_BASE_URL": "http://comfyui:8188",
+    },
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
     "worker": "worker",
     "associate": "associate",
+    "innereye": "innereye",
 }
 
 
@@ -239,6 +262,13 @@ def _overlay(base: RoleProfile, override: RoleProfile) -> RoleProfile:
     return RoleProfile(**merged)
 
 
+# Roles that MAY declare a `declared_peak_gib` figure (schema.KNOB_LANE_ROLES'
+# entry for that knob -- today just `innereye`). Read ONCE here rather than
+# re-deriving it inline so the single reference this module makes to the knob
+# is easy to grep for.
+_PEAK_DECLARABLE_ROLES: frozenset[str] = KNOB_LANE_ROLES.get("declared_peak_gib", frozenset())
+
+
 def compose_profile(shape: Shape, profile: Profile) -> Profile:
     """The synthetic per-role :class:`Profile` a (shape, card) pair resolves to.
 
@@ -288,7 +318,12 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         elif role in OPT_IN_CORE_ROLES:
             # Pass the card's opt-in-role declaration through unchanged (a
             # base.toml veto keeps its marker; an undeclared role renders
-            # nothing) -- see the docstring's third bullet.
+            # nothing; a feasible role's own knobs -- e.g. innereye's
+            # `declared_peak_gib` -- pass through too) -- see the docstring's
+            # third bullet, and see `overcommitted_groups`/
+            # `_counts_toward_clash` for the one place that field is actually
+            # CONSUMED (never here -- this is unconditional passthrough,
+            # unchanged from before that knob existed).
             if role in profile.roles:
                 roles[role] = profile.role(role)
         else:
@@ -300,6 +335,26 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         host_env=profile.host_env,
         gpu_access=profile.gpu_access,
     )
+
+
+def _counts_toward_clash(role: str, rp: RoleProfile) -> bool:
+    """Whether a HOSTED, FEASIBLE role member counts toward a co-residency clash.
+
+    Almost always yes -- this exists for exactly one case: a role that CAN
+    declare a ``declared_peak_gib`` figure (today only ``innereye``, since it
+    has no ``gpu_mem_util`` fraction to fall back on -- see that field's
+    docstring in :mod:`lobes.profiles.schema`) but whose card has not
+    actually declared one. The veto is operator-declaration-driven, never
+    arithmetic: it never sums ``declared_peak_gib`` with anything, and never
+    compares it against a card's total memory. This is its ONLY reference
+    outside the knob's own schema/render plumbing, and all it does is check
+    PRESENCE -- an un-declared peak on a peak-capable role is treated the
+    same way an infeasible role already is: not a clash, because there is
+    nothing here to weigh it against.
+    """
+    if role in _PEAK_DECLARABLE_ROLES and rp.declared_peak_gib is None:
+        return False
+    return True
 
 
 def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles, ...]:
@@ -328,7 +383,11 @@ def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles
     over: list[ExclusiveRoles] = []
     for group in profile.exclusive_roles:
         hosted = [
-            role for role in group.roles if shape.hosts_role(role) and composed.role(role).feasible
+            role
+            for role in group.roles
+            if shape.hosts_role(role)
+            and composed.role(role).feasible
+            and _counts_toward_clash(role, composed.role(role))
         ]
         if len(hosted) > 1:
             over.append(group)

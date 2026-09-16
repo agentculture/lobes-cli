@@ -1,0 +1,143 @@
+ACCEPTANCE — innereye (ComfyUI) as a lobes-managed tenant
+DGX Spark GB10 (spark-f8a9), 2026-09-16. Plan task t13, issue #268.
+Branch feat/innereye-comfyui-tenant @ 0.79.0. Cross-box peer: Jetson AGX Thor.
+
+Deployment: a SCRATCH dir, /home/spark/.lobes-accept, scaffolded with
+  lobes init --shape spark-innereye --profile spark --apply
+The operator's production ~/.lobes was NOT touched.
+
+Rendered .env (the shape doing its job):
+  COMPOSE_PROFILES=innereye
+  INNEREYE_BASE_URL=http://comfyui:8188
+  INNEREYE_DECLARED_PEAK_GIB=31.42
+  PRIMARY_FEASIBLE=false        <- cortex dropped; the exclusive_roles pair
+
+GATEWAY CAVEAT, stated plainly: the gateway was NOT the packaged image.
+Dockerfile.gateway installs lobes-cli==${MODEL_GEAR_VERSION} from an index,
+and 0.79.0 is unpublished. Because the gateway is stdlib-only, it was run as
+  docker run --network lobes-accept_default -v <repo>:/src:ro \
+    -e PYTHONPATH=/src python:3.12-slim python -m lobes.gateway
+i.e. the MERGED SOURCE under test, on the compose network, reaching comfyui
+by service name. What this does NOT prove: that the packaged gateway image
+builds and runs at 0.79.0. That is untested here.
+
+== 1. ONE COMMAND BRINGS THE BACKEND WARM ==
+$ lobes up innereye --compose-dir /home/spark/.lobes-accept
+DRY RUN — would run: docker compose -f docker-compose.yml -f
+  docker-compose.shape.yml up -d --no-deps comfyui (START target innereye: comfyui).
+$ lobes up innereye --apply --compose-dir /home/spark/.lobes-accept
+>> starting innereye (comfyui) ... >> innereye started
+Container reached health=healthy on its own /object_info healthcheck.
+  docker inspect: health=healthy user=1000:1000
+  mounts: /opt/ComfyUI/models(ro) /opt/ComfyUI/output(rw)
+          /logs/model-gear(rw) /usr/local/bin/mg-logwrap(ro)
+
+== 2. ISOLATION — expose-only, NOT loopback-binding ==
+$ docker port model-gear-comfyui
+  (empty — no published ports)
+$ docker ps --format '{{.Ports}}'  ->  8188/tcp     (no host binding)
+
+NEGATIVE CONTROLS, and note the FIRST ATTEMPT WAS CONFOUNDED:
+  first run, host->127.0.0.1:8188 returned 200. Investigated rather than
+  accepted: `ss -ltnp` showed pid 3031785 `python main.py --listen 127.0.0.1`
+  — the BARE VENV was still running and answering. The container was not
+  publishing anything. The venv was stopped and the control re-run:
+  host -> 127.0.0.1:8188            : REFUSED (000, nothing listening)
+  thor -> 100.127.105.72:8188       : REFUSED (000)  [over the tailnet]
+POSITIVE CONTROL (proving the refusals are not a dead service):
+  in-container -> localhost:8188/object_info : 200
+  container health: healthy
+
+== 3. AUTH — 401 by negative control, not assumed from the prefix ==
+  POST /v1/render            no bearer -> 401
+  GET  /v1/render/jobs/<id>  no bearer -> 401
+  thor -> POST /v1/render    no bearer -> 401   [over the tailnet]
+  thor -> GET  /v1/render/jobs/<id> no bearer -> 401
+ATTRIBUTION CONTROL (the 401 is the auth gate, not an unwired route):
+  GET /v1/render/jobs/deadbeef WITH bearer -> 404 render_job_not_found
+  body: "no render job `deadbeef` was issued by this gateway. Only jobs
+  submitted through POST /v1/render are addressable here, and a gateway
+  restart forgets the ids it issued."
+
+== 4. GET /capabilities REPORTS innereye FEASIBLE AND READY ==
+  model: comfyanonymous/ComfyUI-0.33.2      runtime: comfyui
+  endpoint: http://127.0.0.1:8001           path: /v1/render
+  feasible: True   ready: True   loaded: True
+  responsibilities: ['image_generation']
+  forbidden: ['final_decision','repo_action','security_decision']
+ready:True is task t11's per-backend probe working: ComfyUI serves NO /health
+(MEASURED: 404), so the render lane probes /object_info. On the pre-t11 code
+this row would have read ready:false forever.
+`lobes capabilities --json` agrees with the wire on every field above.
+
+== 5. END-TO-END RENDER THROUGH THE FACADE ==
+POST /v1/render -> {"job_id":"572b21e926f5402b907876723509cb1a","status":"queued"}
+  ComfyUI staged 9318MB + 22700MB + 159MB, "Prompt executed in 42.09 seconds"
+  (identical staging to the bare-venv baseline)
+GET  /v1/render/jobs/<id>            -> state completed, artifacts [flux_output_00008_.png]
+GET  /v1/render/jobs/<id>/artifacts/flux_output_00008_.png -> 1444977 bytes
+  PNG 1024x1024 8-bit RGB
+  sha256 through the gateway == sha256 on disk (byte-for-byte IDENTICAL)
+  on-disk owner: spark:spark (1000:1000) — task t4's guarantee, live
+
+METHOD ERROR, recorded rather than hidden: the first submission's prompt did
+NOT apply. The mapping file nests its targets under a "fields" key and a
+target may be a string OR a list; the submitting script looked at top level,
+found nothing, substituted nothing, and the graph's baked-in prompt rendered.
+The render itself was a valid end-to-end proof; the PROMPT was not under
+control. Re-run with the mapping read correctly:
+  job fca1ee79aa87464bb70142b008686f55 -> flux_output_00009_.png, 931167 bytes
+  "Prompt executed in 26.87 seconds" (faster: models already resident)
+  and the image matched the requested prompt.
+
+== 6. ENUMERATION IS REFUSED ==
+  GET /v1/render/jobs/<jobA>/artifacts/flux_output_00007_.png -> 404
+  (a real artifact of a DIFFERENT job, asked for under job A's id)
+There is no outward spelling of /history, /queue, or a caller-parameterised
+/view at all.
+
+== 7. CROSS-BOX: THE THOR RENDERS AND FETCHES OVER THE TAILNET ==
+Thor (100.105.216.63) -> Spark (100.127.105.72:8001), direct tailnet route.
+  thor: no-bearer POST /v1/render            -> 401
+  thor: no-bearer GET  /v1/render/jobs/<id>  -> 401
+  thor: bearer    GET  job status            -> {"state":"completed",...}
+  thor: bearer    GET  artifacts index       -> flux_output_00009_.png
+  thor: bearer    GET  artifact bytes        -> 931167 bytes
+  sha256 fetched by the Thor:
+    49515180d5b2ecd77a56188a2e3205ff198ff414a4d4fb41af17bd12f8743791
+  sha256 on the Spark's disk: IDENTICAL
+The Thor reached the render lane through the gateway's bearer while port 8188
+stayed refused to it. That is the whole shape of the ask in issue #268.
+
+== 8. OVERLAPPING SUBMISSIONS (what any MAX_ACTIVE must rest on) ==
+Two jobs submitted back to back through the facade:
+  A 7057b765... -> completed, flux_output_00010_.png
+  B 82140f7c... -> completed, flux_output_00011_.png
+ComfyUI SERIALIZED them: A executed in 26.80s, B ran after it, and
+GET /queue drained to {"queue_running":[],"queue_pending":[]}.
+Host memory during the pair peaked at 86 GiB of 121 — the SAME figure as a
+single render (85 GiB in the baseline). The peak did NOT approximately
+double. This supports, but does not prove, the c34 assumption that the
+declared peak is per-server-at-a-time rather than per-in-flight-job; n=1 pair,
+one graph, no video path.
+
+== 9. r2 OBSERVATION — aimdo IN THE SHIPPED SERVICE ==
+  Total VRAM 124611 MB, total RAM 124611 MB
+  Enabled pinned memory 112149.0
+  comfy-aimdo integrated Linux GPU RAM headroom: 7788 MB
+  DynamicVRAM support detected and enabled
+Every figure IDENTICAL to the bare venv. comfy-aimdo reads the HOST totals
+from inside the container; it is cgroup-blind. This CONFIRMS the co-residency
+risk rather than relaxing it, and is why v1 declares cortex/innereye mutually
+exclusive (c41) instead of budgeting them together. The service runs with no
+--memory cap, so a memory-limited cgroup remains untested (plan risk r3).
+
+== WHAT THIS TRANSCRIPT DOES NOT COVER ==
+- The PACKAGED gateway image at 0.79.0 (see the caveat at the top).
+- innereye-the-client driving the facade: the adapter speaks raw ComfyUI and
+  has no bearer support. agentculture/innereye#5 tracks adoption. Every
+  request here was made with curl.
+- The Wan 2.1 14B video path — never exercised, and it is the LARGER one.
+- A memory-limited cgroup (r3), and pressure-policy shedding for this lane,
+  which is parked and deliberately unwired (plan risk, frame vagueness v3).
+- Any co-residency measurement. By design: v1 never co-resides.

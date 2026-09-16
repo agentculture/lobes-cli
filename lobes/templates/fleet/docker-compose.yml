@@ -1761,6 +1761,122 @@ services:
       retries: 5
       start_period: 600s
 
+  # --- innereye render tenant (ComfyUI, the eleventh Colleague role, issue #82) -
+  # The `innereye` role's backend (shape_render.ROLE_SERVICE["innereye"] ==
+  # "comfyui"). Built from ./Dockerfile.comfyui (t2, built and render-validated
+  # on the DGX Spark 2026-09-16), which reproduces the vendor playbook's venv
+  # install. Gated behind the "innereye" compose profile, the SAME opt-in
+  # mechanic as muse/worker/associate above: a plain `docker compose up`
+  # never starts it, and an innereye-hosting shape writes
+  # COMPOSE_PROFILES=innereye + INNEREYE_BASE_URL into .env.
+  #
+  # This lane reuses the fleet's existing shapes VERBATIM: restart:
+  # unless-stopped, the shipped `deploy.resources.reservations.devices` GPU
+  # request (a csv-mode board gets it rewritten to `runtime: nvidia` the same
+  # way every other GPU_SERVICES entry does — see lobes/runtime/_compose.py),
+  # env_file chaining to .env + .secrets.env, and the mg-logwrap entrypoint
+  # (issue #50 durable-logs contract) — none of that is bespoke to ComfyUI.
+  #
+  # volumes: carries the two fleet-standard files every other lane mounts
+  # (mg-logwrap + the durable log dir) PLUS two ComfyUI-specific mounts and a
+  # `user:` override (t4) — see the rationale comment above the `volumes:`
+  # key below.
+  comfyui:
+    build:
+      context: .
+      dockerfile: Dockerfile.comfyui
+    image: ${INNEREYE_IMAGE:-lobes/comfyui:local}
+    container_name: model-gear-comfyui
+    profiles:
+      - innereye
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: all, capabilities: [gpu] }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
+      - MG_LOG_NAME=comfyui   # → /logs/model-gear/comfyui-<boot>.log
+    # `user:` — the FIRST fleet service to set this (t4). Every other lane
+    # above runs as whatever the image's own USER directive leaves it as (root
+    # for the vLLM images); Dockerfile.comfyui already `USER 1000:1000`s
+    # inside the image (t2), and this pins the SAME uid:gid at the compose
+    # layer so a freshly rendered artifact is owned by a real host user, not
+    # root, and the operator can delete it / write into the output tree
+    # without sudo. Overridable for a host whose non-root deploy user is not
+    # uid/gid 1000.
+    user: "${COMFY_UID:-1000}:${COMFY_GID:-1000}"
+    volumes:
+      # The model weights tree, mounted READ-ONLY — the SAME structural
+      # statement the llama.cpp GGUF lane makes above (docker-compose.yml,
+      # the llamacpp-primary service's `volumes:` comment): this lane never
+      # writes to the tree it did not create. Unlike llama.cpp's single mmap'd
+      # file, ComfyUI reads a whole checkpoint/LoRA/VAE tree, but the
+      # rationale is identical — the served weights are whatever the operator
+      # placed, byte-for-byte, never something the container downloaded or
+      # mutated. Accepted consequence (instruction): downloading a checkpoint
+      # from inside the ComfyUI UI itself is ruled out by this mount, on
+      # purpose. No operator-specific absolute path is baked into the
+      # packaged template — only a $HOME-relative fallback, exactly like
+      # LLAMACPP_MODEL_DIR/HF_CACHE above; rendering on a box whose weights
+      # live elsewhere needs exactly one env knob, COMFY_MODELS.
+      - ${COMFY_MODELS:-${HOME:-/root}/comfy/ComfyUI/models}:/opt/ComfyUI/models:ro
+      # The render OUTPUT tree — separately owned from the read-only models
+      # mount above, and read-write: this is the one place this lane is
+      # meant to write. Same one-env-knob pattern, COMFY_OUTPUT.
+      - ${COMFY_OUTPUT:-${HOME:-/root}/comfy/ComfyUI/output}:/opt/ComfyUI/output
+      # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # ComfyUI ships NO authentication (innereye challenge finding c36). On the
+    # bare venv this was answered by `start-comfy.sh`'s `--listen 127.0.0.1` —
+    # copying that literally into a container would make the lane unreachable
+    # from the gateway too, since loopback inside the container is the
+    # CONTAINER's own loopback, not the compose network. The SAME no-authn
+    # property is instead answered here by publishing no host port at all
+    # (`expose:`, never `ports:`, matching every other model lane above):
+    # this service is reachable ONLY as http://comfyui:8188 on the compose
+    # network — never from the host, and never off-box — with the gateway's
+    # job-scoped /v1/render facade as the sole outward exposure.
+    expose:
+      - "8188"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Split ENTRYPOINT/CMD in the image lets the flags be overridden without
+    # losing the interpreter (Dockerfile.comfyui's own comment) — but
+    # overriding `entrypoint:` here for mg-logwrap means the full invocation,
+    # image ENTRYPOINT included, has to be respelled as `command:`. Binds
+    # 0.0.0.0, NEVER 127.0.0.1 — see the rationale comment above (c36); do not
+    # "restore" the bare venv's loopback bind here.
+    command:
+      - python3.12
+      - /opt/ComfyUI/main.py
+      - --listen
+      - "0.0.0.0"
+      - --port
+      - "8188"
+    # ComfyUI ships no /health route (unlike every vLLM lane above), so this
+    # probes its own native `/object_info` endpoint instead — the SAME path
+    # the gateway's readiness cache uses for this backend (server.py's
+    # _COMFY_READY_PATH, issue #92/t11). That endpoint only answers once
+    # ComfyUI's HTTP server and its full node registry have finished
+    # initializing, so this reports UNHEALTHY during that startup window
+    # rather than healthy immediately — it does not, and cannot, track
+    # per-workflow CHECKPOINT loading (ComfyUI loads model weights lazily,
+    # per render job, never at boot), so a healthy container does not imply a
+    # warm model; it implies the render server itself is up and answering.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/object_info"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+
   gateway:
     build:
       context: .
@@ -1879,6 +1995,18 @@ services:
       # `model=associate` 404s role_infeasible, never a silent fallback.
       - ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}
       - ASSOCIATE_SERVED_NAME=${ASSOCIATE_SERVED_NAME:-}
+      # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
+      # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
+      # opt-in mechanics as muse/worker/associate above: an innereye-hosting
+      # shape renders INNEREYE_BASE_URL, and an empty default leaves the
+      # backend unwired so the render family 404s role_infeasible rather than
+      # half-serving. Passed through here because `_config.build_config` reads
+      # it — see tests/test_gateway_env_passthrough_guard.py, which fails on
+      # any key the config reads that compose does not plumb. The `comfyui`
+      # SERVICE these point at is a separate task on the same plan; this is
+      # only the gateway's reader wiring.
+      - INNEREYE_BASE_URL=${INNEREYE_BASE_URL:-}
+      - INNEREYE_SERVED_NAME=${INNEREYE_SERVED_NAME:-}
       # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
       # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
       # every supported card, which is the whole point of the role, so it is
@@ -1934,6 +2062,16 @@ services:
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
+      # The /v1/render lane's two REQUEST-BODY caps, in bytes. The gateway
+      # buffers a POST body whole, and render is the one lane that forwards a
+      # caller's bytes to a WRITABLE upstream (ComfyUI's /upload/image writes
+      # into its input tree), so an unbounded body costs gateway memory and then
+      # backend disk. Two caps because the payloads differ by orders of
+      # magnitude: a ComfyUI API-format workflow graph is tens of KB, an input
+      # image is legitimately several MB. Both are RENDER-ONLY — no other POST
+      # route is capped by them. Set either to 0 to disable that cap.
+      - GATEWAY_RENDER_MAX_WORKFLOW_BYTES=${GATEWAY_RENDER_MAX_WORKFLOW_BYTES:-1048576}
+      - GATEWAY_RENDER_MAX_UPLOAD_BYTES=${GATEWAY_RENDER_MAX_UPLOAD_BYTES:-33554432}
       # Pressure-policy thresholds (issue #68) — the gateway degrades the generate
       # lane to `minor` when host swap%/iowait% exceed these. Passed here so
       # operators can tune per box via .env; defaults match the code
@@ -1963,6 +2101,11 @@ services:
       # dropped core role (absent = feasible — the sleeping-lobe default).
       - STT_FEASIBLE=${STT_FEASIBLE:-}
       - TTS_FEASIBLE=${TTS_FEASIBLE:-}
+      # The innereye render tenant (issue #82) — opt-in-hosted like
+      # muse/worker/associate, so an ABSENT INNEREYE_FEASIBLE means
+      # INFEASIBLE (lobes/gateway/_config.py's OPT_IN_BACKENDS), not the
+      # stt/tts sleeping-lobe default.
+      - INNEREYE_FEASIBLE=${INNEREYE_FEASIBLE:-}
       # Retired (t14): the operator-typed peer family (honest referral,
       # proxy-lobes, and the replica-pool plural form) that used to be
       # passed through here is gone from lobes.gateway._config.build_config
@@ -2000,6 +2143,7 @@ services:
       - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
       - STT_MAX_ACTIVE=${STT_MAX_ACTIVE:-}
       - TTS_MAX_ACTIVE=${TTS_MAX_ACTIVE:-}
+      - INNEREYE_MAX_ACTIVE=${INNEREYE_MAX_ACTIVE:-}
       # GATEWAY_CAPACITY_KILL_SWITCH (issue #199): truthy pins EVERY
       # resolved capacity — local and peer alike — back to the 1.0
       # sentinel, reproducing today's ranking exactly while leaving the
@@ -2120,6 +2264,18 @@ services:
       - TTS_REASONING_PARSER=${TTS_REASONING_PARSER:-}
       - TTS_TOOL_CALL_PARSER=${TTS_TOOL_CALL_PARSER:-}
       - TTS_SPECULATIVE_CONFIG=${TTS_SPECULATIVE_CONFIG-}
+      # INNEREYE_*: the render tenant is ComfyUI, not a vLLM lane — none of
+      # these five knobs has any meaning for it and no `comfyui` service
+      # expands them. Passed through anyway, exactly as the pooling gears and
+      # the audio sidecars above are: the gateway derives the fingerprint
+      # cross-product from FEASIBLE_ENV mechanically, and a key it reads but
+      # compose omits is silently inert (tests/test_gateway_env_passthrough_
+      # guard.py is the standing guard). Harmless ${VAR:-} no-ops today.
+      - INNEREYE_QUANTIZATION=${INNEREYE_QUANTIZATION:-}
+      - INNEREYE_KV_CACHE_DTYPE=${INNEREYE_KV_CACHE_DTYPE:-}
+      - INNEREYE_REASONING_PARSER=${INNEREYE_REASONING_PARSER:-}
+      - INNEREYE_TOOL_CALL_PARSER=${INNEREYE_TOOL_CALL_PARSER:-}
+      - INNEREYE_SPECULATIVE_CONFIG=${INNEREYE_SPECULATIVE_CONFIG-}
       # Mesh join (mesh-brain-join, t4): the six LOBES_MESH_* keys the
       # gateway's MeshConfig parses (lobes/gateway/_mesh_config.py, t1). Same
       # silent-inert trap as the capacity block above: the gateway does not

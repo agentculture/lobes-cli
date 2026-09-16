@@ -104,6 +104,7 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
         "hand",
         "embedder",
         "reranker",
+        "innereye",
         "stt",
         "tts",
     )
@@ -118,7 +119,10 @@ def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     # worker-hosting shape).
     # `associate` (lightning-on-orin plan, t6) joined muse/worker on exactly
     # the same terms: an opt-in core role no card hosts by default.
-    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate")
+    # `innereye` (issue #82) joined on the same terms again: the ComfyUI
+    # render tenant draws from the same card budget the gears do, so only an
+    # explicit innereye-hosting shape may host it.
+    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate", "innereye")
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
@@ -151,6 +155,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "hand",
         "embedder",
         "reranker",
+        "innereye",
         "stt",
         "tts",
         "minor",
@@ -278,6 +283,12 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "orin-lobe",
         "orin-cortex",
         "orin-associate",
+        # The innereye/cortex co-residency "way out" (issue #268, plan
+        # innereye-lobes-hosts-comfyui, t1): the DGX Spark hosts the opt-in
+        # `innereye` ComfyUI tenant and drops `cortex` to a peer, because
+        # decision c41 forbids the two co-residing on a unified-memory card.
+        # DECLARED/UNVALIDATED -- the `comfyui` compose service is t2's.
+        "spark-innereye",
     }
 
 
@@ -304,6 +315,33 @@ def test_spark_lobe_hosts_cortex_embedder_reranker_and_audio_no_senses() -> None
     assert spark_lobe is not None
     assert set(spark_lobe.hosts) == {"cortex", "hand", "embedder", "reranker", "stt", "tts"}
     assert "senses" not in spark_lobe.hosts
+
+
+def test_spark_innereye_hosts_innereye_and_senses_but_never_cortex() -> None:
+    """The spark-side resolution of the cortex/innereye clash (issue #268, t1).
+
+    `spark-innereye` is `spark-lobe`'s mirror image for THIS exclusive group:
+    everything machine-as-brain would host on the GB10 MINUS `cortex`, PLUS
+    the opt-in `innereye` ComfyUI tenant. Hosting it is a DECLARATION only --
+    the `comfyui` compose service (t2) and the gateway-side
+    INNEREYE_BASE_URL reader (a later task) do not exist yet, so a box on
+    this shape still advertises `innereye` infeasible (proven in
+    tests/test_shape_contract_matrix.py). It carries NO overrides on
+    purpose: a reclaimed budget for the surviving lanes is t2's to measure.
+    """
+    spark_innereye = load_builtin_shape("spark-innereye")
+    assert spark_innereye is not None
+    assert set(spark_innereye.hosts) == {
+        "senses",
+        "innereye",
+        "hand",
+        "embedder",
+        "reranker",
+        "stt",
+        "tts",
+    }
+    assert "cortex" not in spark_innereye.hosts
+    assert dict(spark_innereye.overrides) == {}
 
 
 def test_thor_lobe_hosts_senses_embedder_reranker_and_audio_no_cortex() -> None:

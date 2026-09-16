@@ -239,11 +239,39 @@ def test_build_config_reads_gateway_public_url() -> None:
 
 
 def test_capabilities_payload_gateway_url_applies_to_all_roles() -> None:
-    env = _full_env(AUDIO_URL="http://realtime:8080")
+    # Every role must be DECLARED-ON for this guard to say anything: an
+    # unwired audio overlay blanks stt/tts's endpoint, and the opt-in
+    # `innereye` render tenant (issue #82) is infeasible-by-default, which
+    # blanks its endpoint the same way. AUDIO_URL and INNEREYE_FEASIBLE are
+    # what turn the two channels on, so the assertion below is about the
+    # gateway origin (#87) and not about feasibility.
+    env = _full_env(AUDIO_URL="http://realtime:8080", INNEREYE_FEASIBLE="true")
     table, cfg = build_config(env)
     payload = S.capabilities_payload(table, cfg, env=env, gateway_url="https://tunnel.example")
     for role in ROLES:
         assert payload[role]["endpoint"] == "https://tunnel.example"
+
+
+def test_render_lane_discoverable_from_capabilities_with_no_peer_origin_declared() -> None:
+    """Acceptance criterion 1 (task t11, issue #92 c9/h20): a peer that has
+    never been told an origin for the render lane can still discover it
+    exists from this box's own `GET /capabilities` alone.
+
+    No `INNEREYE_*` env var is set at all here — there is no
+    `INNEREYE_PEER_ORIGIN` (innereye has no such peer-referral channel to
+    begin with), so this is the plainest possible "never told an origin"
+    case. The role must still appear in the payload (never omitted) so a
+    peer probing this box's capabilities learns the lane's existence,
+    contract (path, responsibilities) and current feasibility — even though
+    it is unwired and therefore feasible:false."""
+    env = _full_env()
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    assert "innereye" in payload
+    entry = payload["innereye"]
+    assert entry["path"] == "/v1/render"
+    assert entry["feasible"] is False  # unwired, honestly reported — never fabricated
+    assert entry["ready"] is False
 
 
 def test_capabilities_payload_threads_audio_ready() -> None:

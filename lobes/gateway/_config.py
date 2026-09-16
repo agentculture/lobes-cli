@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from lobes.catalog import TIER_ROLE, resolve_tier
-from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
+from lobes.gateway._routing import RENDER_TASK, Backend, RoutingTable, tier_aliases
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
 # sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP). NOTE this is the served-name a
@@ -92,6 +92,15 @@ _DEFAULT_ASSOCIATE = resolve_tier("associate").id
 # It also took over the `minor`/`cheap` capability tier from Qwen/Qwen3.5-4B —
 # see lobes.catalog.TIER_ROLE.
 _DEFAULT_HAND = "LiquidAI/LFM2.5-1.2B-Instruct"
+# The `innereye` render tenant (issue #82) — the ELEVENTH Colleague role. It is
+# NOT a vLLM lane and has no operator-chosen served name: its "model" is the
+# pinned ComfyUI RELEASE, which is why this is a literal rather than a catalog
+# lookup (the tenant deliberately has no SupportedModel entry — it must never
+# appear in `lobes switch`'s plans). Spelled here AND in lobes.roles
+# (`_INNEREYE_MODEL`); tests/test_gateway_render_facade.py pins the two equal,
+# because _peer_served_name resolves a proxied innereye from the roles
+# constant while build_config resolves a local one from this.
+_DEFAULT_INNEREYE = "comfyanonymous/ComfyUI-0.33.2"
 
 # Per-backend "this machine's per-machine profile declares it CANNOT be served
 # AT ALL" signal (issue #92's "advertised implies reachable" extended to the
@@ -135,6 +144,13 @@ FEASIBLE_ENV: dict[str, str] = {
     # until an operator explicitly sets STT_FEASIBLE/TTS_FEASIBLE=false.
     "stt": "STT_FEASIBLE",
     "tts": "TTS_FEASIBLE",
+    # The opt-in innereye role (issue #82, t5) — the ComfyUI render tenant,
+    # the eleventh Colleague role. Rides the same channel as
+    # muse/worker/associate (see OPT_IN_BACKENDS below), NOT the stt/tts
+    # sleeping-lobe default: an unwired-and-unflagged innereye is honestly
+    # infeasible, so `model=innereye` 404s role_infeasible instead of
+    # silently reading as a not-yet-ready generate lane.
+    "innereye": "INNEREYE_FEASIBLE",
 }
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
@@ -152,7 +168,10 @@ _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 # ``MUSE_FEASIBLE``/``WORKER_FEASIBLE`` always wins over this default. worker
 # joined muse on this channel via the thor-worker-lobe plan (t3) — the second
 # opt-in-core role, same honesty contract.
-OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate"})
+# `innereye` joined this set with issue #82's t5: the ComfyUI render tenant is
+# opt-in-hosted like muse/worker/associate, never default-hosted like the
+# audio overlay — see FEASIBLE_ENV above.
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate", "innereye"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -238,6 +257,7 @@ MAX_ACTIVE_ENV: dict[str, str] = {
     "rerank": "RERANK_MAX_ACTIVE",
     "stt": "STT_MAX_ACTIVE",
     "tts": "TTS_MAX_ACTIVE",
+    "innereye": "INNEREYE_MAX_ACTIVE",
 }
 
 # The sentinel every replica ranks at today (weight hardcoded 1.0 everywhere
@@ -405,6 +425,28 @@ def _is_feasible(env: Mapping[str, str], backend_name: str, *, wired: bool = Tru
     return True
 
 
+# The /v1/render lane's default body caps (review finding 1). Both are
+# operator-overridable — see ServerConfig.render_max_* below for the knobs and
+# the reasoning, and RENDER_BODY_LIMIT_ENV for the env keys.
+#
+# 1 MiB for a workflow: a real ComfyUI API-format graph is tens of KB, so this
+# is roughly 30x headroom and still nothing a caller can weaponise.
+DEFAULT_RENDER_MAX_WORKFLOW_BYTES = 1024 * 1024
+# 32 MiB for an input image: comfortably above the several-MB images the lane
+# exists to accept (an uncompressed 4K PNG lands well inside it), and strictly
+# BELOW read_chunked_body's pre-existing 64 MiB ceiling, so the render cap is a
+# genuine narrowing of what the gateway already tolerated rather than a raise.
+DEFAULT_RENDER_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+
+# The env keys for the two caps above, keyed by the ServerConfig field they
+# fill. The refusal body names the knob it broke, so the mapping is read by the
+# 413 path too — one place to change a spelling.
+RENDER_BODY_LIMIT_ENV: dict[str, str] = {
+    "render_max_workflow_bytes": "GATEWAY_RENDER_MAX_WORKFLOW_BYTES",
+    "render_max_upload_bytes": "GATEWAY_RENDER_MAX_UPLOAD_BYTES",
+}
+
+
 @dataclass(frozen=True)
 class ServerConfig:
     """Where the gateway listens and how patient it is with backends."""
@@ -462,6 +504,28 @@ class ServerConfig:
     # end. Default False (off) — the pool's capacity signal is live by
     # default wherever a capacity is declared.
     capacity_kill_switch: bool = False
+    # The /v1/render lane's two REQUEST-BODY caps, in bytes (review finding 1).
+    # The gateway buffers a POST body whole before forwarding it, and the render
+    # family is the one lane that forwards a caller's bytes to a WRITABLE
+    # upstream endpoint (ComfyUI's /upload/image writes into its input tree), so
+    # an unbounded body costs gateway memory and then backend disk.
+    #
+    # Two caps, not one, because the two payloads differ by orders of magnitude:
+    # a ComfyUI API-format workflow graph is JSON in the tens of KB, while an
+    # input image is legitimately several MB. A single cap would either leave the
+    # submit route absurdly generous or make the upload route useless.
+    #
+    # Deliberately RENDER-SCOPED. The unbounded read is pre-existing and shared
+    # by every POST route; retrofitting a global cap onto chat completions and
+    # /v1/audio/* multipart is a separate change with its own blast radius. See
+    # lobes.gateway.server._Handler._post_body_limit, which answers None for
+    # every non-render route so those lanes are byte-identical.
+    #
+    # Set either knob to 0 (or a negative) to disable that cap — the documented
+    # escape hatch for a deployment whose workflows or inputs genuinely exceed
+    # these, restoring the pre-limit behaviour for that route only.
+    render_max_workflow_bytes: int = DEFAULT_RENDER_MAX_WORKFLOW_BYTES
+    render_max_upload_bytes: int = DEFAULT_RENDER_MAX_UPLOAD_BYTES
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -909,6 +973,35 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-middle:8000",
             default_name=_DEFAULT_MIDDLE,
         ),
+        # The opt-in `innereye` RENDER tenant — ComfyUI 0.33.2 behind the
+        # gateway's /v1/render facade (issue #82, t9). Wired only when
+        # INNEREYE_BASE_URL is present, which an innereye-hosting deployment
+        # shape renders (spark-innereye; see lobes.profiles.shape_render's
+        # EXTRA_ENV). Absent by default, so every existing deployment's
+        # routing table is unchanged; the unwired backend is also INFEASIBLE
+        # by default (OPT_IN_BACKENDS above), so a render request on a box
+        # that does not host it 404s role_infeasible.
+        #
+        # `task=RENDER_TASK` is load-bearing, not decoration: the render lane
+        # is PATH-routed (/v1/render), exactly as /v1/audio/* is, so its id
+        # must not be reachable through a request's `model` field nor
+        # advertised on /v1/models. See _routing.model_routed_backends, which
+        # is the single place that subtraction happens.
+        #
+        # There is no INNEREYE_SERVED_NAME in any rendered .env and none is
+        # expected — the name is the pinned ComfyUI release, not an operator
+        # choice — but the key is read anyway so the backend follows the same
+        # <PREFIX>_BASE_URL/<PREFIX>_SERVED_NAME convention as every sibling
+        # rather than becoming a special case.
+        _optional_backend(
+            env,
+            name="innereye",
+            url_key="INNEREYE_BASE_URL",
+            name_key="INNEREYE_SERVED_NAME",
+            default_url="http://comfyui:8188",
+            default_name=_DEFAULT_INNEREYE,
+            task=RENDER_TASK,
+        ),
         _optional_backend(
             env,
             name="embed",
@@ -1050,5 +1143,15 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         api_key=_gateway_api_key(env),
         local_capacities=_local_capacities(env),
         capacity_kill_switch=_as_bool(env, CAPACITY_KILL_SWITCH_ENV),
+        render_max_workflow_bytes=_as_int(
+            env,
+            RENDER_BODY_LIMIT_ENV["render_max_workflow_bytes"],
+            DEFAULT_RENDER_MAX_WORKFLOW_BYTES,
+        ),
+        render_max_upload_bytes=_as_int(
+            env,
+            RENDER_BODY_LIMIT_ENV["render_max_upload_bytes"],
+            DEFAULT_RENDER_MAX_UPLOAD_BYTES,
+        ),
     )
     return table, server

@@ -72,7 +72,12 @@ from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.profiles.shape_render import GATEWAY_SERVICE
-from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
+from lobes.profiles.shapes import (
+    DEFAULT_HOSTED_ROLES,
+    OPT_IN_CORE_ROLES,
+    builtin_shape_names,
+    load_builtin_shape,
+)
 from lobes.runtime import _compose, _env
 
 # role → the compose SERVICE name (the top-level key under ``services:`` — NOT the
@@ -89,6 +94,13 @@ ROLE_SERVICE: dict[str, str] = {
     "reranker": "vllm-rerank",
     "stt": "stt",
     "tts": "chatterbox",
+    # `innereye` (issue #82) — the ComfyUI render tenant, the eleventh role.
+    # Its service is `comfyui` (NOT a `vllm-*` gear: it is not a vLLM lane at
+    # all), and like muse/worker/associate it is an opt-in core role, so
+    # `lobes up innereye` is gated by _opt_in_core_activated below. The
+    # service itself is declared by a later task; this entry is the role's
+    # lifecycle registration only.
+    "innereye": "comfyui",
 }
 
 # The roles whose service lives in the audio overlay (docker-compose.audio.yml):
@@ -143,6 +155,22 @@ def _resolve(target: str) -> tuple[list[str], bool]:
     )
 
 
+def _hosting_shapes_for(role: str) -> tuple[str, ...]:
+    """Every built-in shape that actually hosts ``role``, sorted by name.
+
+    Looked up from the shapes themselves rather than assumed from a naming
+    convention: the opt-in core roles do NOT all live behind a
+    ``thor-<role>`` shape (``associate``'s is ``orin-associate``, and
+    ``innereye``'s is ``spark-innereye``), so a hardcoded ``f"thor-{role}"``
+    would point an operator at a shape that does not exist for those two.
+    """
+    return tuple(
+        name
+        for name in builtin_shape_names()
+        if (shape := load_builtin_shape(name)) is not None and shape.hosts_role(role)
+    )
+
+
 def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
     """Raise USER_ERROR when an opt-in core role's compose profile isn't active.
 
@@ -156,16 +184,29 @@ def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
     profiles = _env.read_env(Path(deploy_dir) / _compose.ENV_FILE, "COMPOSE_PROFILES") or ""
     if target in [p.strip() for p in profiles.split(",")]:
         return
+    hosting_shapes = _hosting_shapes_for(target)
+    if hosting_shapes:
+        example_shape = hosting_shapes[0]
+        remediation = (
+            f"re-scaffold with a {target}-hosting shape "
+            f"('lobes init --shape {example_shape} --apply'), then retry"
+        )
+    else:
+        # No built-in shape hosts this role today (a future opt-in core role
+        # added here before its shape lands) -- name the gap honestly rather
+        # than a guessed shape name that would 404 in `resolve_shape`.
+        remediation = (
+            f"no built-in shape hosts '{target}' yet; write a custom shape that "
+            f"lists it in 'hosts' and re-scaffold with 'lobes init --shape <name> "
+            "--apply', then retry"
+        )
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=(
             f"role '{target}' is opt-in and this deployment does not activate it "
             f"(COMPOSE_PROFILES in .env does not include '{target}')"
         ),
-        remediation=(
-            f"re-scaffold with a {target}-hosting shape "
-            f"('lobes init --shape thor-{target} --apply'), then retry"
-        ),
+        remediation=remediation,
     )
 
 

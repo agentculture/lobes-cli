@@ -1,0 +1,206 @@
+# lobes innereye — ComfyUI as a managed tenant, arm64 GPU container.
+#
+# `lobes init --fleet` scaffolds this next to docker-compose.yml, which builds it
+# as the `comfyui` service (the `innereye` role's backend). The container serves
+# ComfyUI's OWN native HTTP API on 8188 inside the compose network; nothing of
+# that surface is published to the host — the gateway's job-scoped /v1/render
+# facade is the only outward exposure. See docs/deployment-shapes.md and the
+# innereye reference doc.
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS IMAGE REPRODUCES (and why it is built, not pulled)
+# ---------------------------------------------------------------------------
+# There is no official ComfyUI image that matches the working DGX Spark install,
+# so this file reproduces it EXACTLY, step for step, from the recipe NVIDIA's
+# dgx-spark-playbooks prescribes (nvidia/playbook-comfyui/assets/setup.sh) and
+# that the bare venv on this box was built from:
+#
+#   python3 -m venv ... (Python 3.12.3)
+#   pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+#   git clone --branch v0.33.2 https://github.com/comfyanonymous/ComfyUI.git
+#   pip3 install -r requirements.txt
+#
+# Three properties of that recipe are load-bearing and are preserved below:
+#
+#  1. The torch index is the STOCK upstream https://download.pytorch.org/whl/cu130
+#     index — NOT a custom GB10/Jetson build. The playbook's cu130 wheels run on
+#     the DGX Spark's GB10 (sm_121) directly. Do not substitute an NGC pytorch
+#     base or a Jetson wheel index; neither was what the venv was validated on.
+#
+#  2. ComfyUI is pinned to the TAG v0.33.2, which is commit 7cee3ceb. The tag is
+#     asserted against that commit at build time (below), so a re-tag upstream
+#     fails the build loudly instead of silently shipping different code.
+#
+#  3. torch/torchvision are installed BEFORE requirements.txt, exactly as the
+#     playbook orders it. requirements.txt lists bare `torch`/`torchvision`/
+#     `torchaudio`, so this ordering is what makes pip keep the cu130 wheels and
+#     resolve only torchaudio (2.11.0, plain PyPI) — the same split the venv has.
+#     Reordering these two steps silently swaps in CPU-only torch wheels.
+#
+# custom_nodes carries NO third-party nodes in the deployment this replaces (only
+# ComfyUI's own websocket_image_save.py and an inert .example), so stock ComfyUI
+# is the whole of what needs reproducing. Nothing is vendored in.
+#
+# NOT INSTALLED: the lobes-cli wheel. Unlike Dockerfile.gateway / .realtime /
+# .chatterbox — whose ENTRYPOINT *is* a lobes module — this container runs
+# upstream ComfyUI's own main.py and imports no lobes code. Adding the wheel here
+# would pull a second dependency tree (and its own torch pin) alongside the
+# playbook's, for nothing. The lobes half of this lane lives entirely in the
+# gateway.
+#
+# MODEL WEIGHTS ARE NOT BAKED IN. The ~65G tree is bind-mounted READ-ONLY at
+# /opt/ComfyUI/models by the compose service; renders land in a separately-owned
+# read-write /opt/ComfyUI/output.
+#
+# Base: nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+#   - the same lean CUDA runtime base Dockerfile.chatterbox uses (arm64 tag
+#     confirmed on Docker Hub, proven on this box)
+#   - ships NO torch, so the playbook's cu130 wheels are the only ones present
+#   - Ubuntu 24.04's system python3.12 is 3.12.3 — the venv's exact interpreter
+#
+# BUILT AND RENDER-VALIDATED 2026-09-16 on the DGX Spark GB10 (arm64, sm_121):
+# one FLUX.1-dev text-to-image job rendered from this image against the same
+# weight tree as the bare venv. See
+# docs/evidence/2026-09-16-t2-comfyui-container-spark.txt. CI is CPU-only x86 and
+# does NOT build this Dockerfile.
+# ---------------------------------------------------------------------------
+FROM nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+
+# The pinned ComfyUI release and the commit that tag must resolve to.
+ARG COMFYUI_REF=v0.33.2
+ARG COMFYUI_COMMIT=7cee3ceb
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1
+
+# ---------------------------------------------------------------------------
+# System dependencies
+# ---------------------------------------------------------------------------
+# curl / ca-certificates — bootstrap pip, and TLS for the pytorch index
+# git                    — ComfyUI is installed by clone-at-tag, as the playbook does
+# libgomp1               — OpenMP runtime torch/scipy link against
+# libgl1 / libglib2.0-0  — the GL + glib shared objects the optional image stack
+#                          (PyOpenGL, spandrel, kornia) dlopens on import
+# python3.12(-dev)       — Ubuntu 24.04's system Python is 3.12.3, the venv's
+#
+# NOTE: python3-pip is intentionally NOT installed via apt — same reason as
+# Dockerfile.chatterbox: Ubuntu 24.04 ships a RECORD-less, Debian-patched pip
+# that trips PEP 668 "externally-managed-environment" on every install.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        libgomp1 \
+        libgl1 \
+        libglib2.0-0 \
+        python3.12 \
+        python3.12-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bootstrap a fresh pip (bypasses Debian's pip stub and the PEP 668 guard — both
+# safe to remove inside a container).
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED \
+    && curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# ---------------------------------------------------------------------------
+# STEP 1 of the playbook recipe: torch + torchvision from the STOCK cu130 index.
+#
+# Versions are pinned to what the validated bare venv on the DGX Spark resolved
+# to (torch 2.14.0+cu130 / torchvision 0.29.0+cu130) so the image is
+# reproducible, while the INDEX stays the playbook's own. --index-url (not
+# --extra-index-url) keeps resolution on that index, as the playbook writes it.
+#
+# This step MUST precede requirements.txt — see property (3) in the header.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir \
+        torch==2.14.0+cu130 \
+        torchvision==0.29.0+cu130 \
+        --index-url https://download.pytorch.org/whl/cu130
+
+# ---------------------------------------------------------------------------
+# STEP 2: ComfyUI itself, pinned to the tag the playbook pins.
+#
+# Cloned (not pip-installed) because ComfyUI is run as a checkout — main.py, its
+# requirements.txt, and the models/output trees the compose service mounts over.
+# The commit assertion turns an upstream re-tag into a build failure.
+# ---------------------------------------------------------------------------
+RUN git clone --branch "${COMFYUI_REF}" --depth 1 \
+        https://github.com/comfyanonymous/ComfyUI.git /opt/ComfyUI \
+    && cd /opt/ComfyUI \
+    && actual="$(git rev-parse --short=8 HEAD)" \
+    && expected="${COMFYUI_COMMIT}" \
+    && case "${actual}" in "${expected}"*) ;; *) \
+        echo "ComfyUI ${COMFYUI_REF} resolved to ${actual}, expected ${expected}" >&2; \
+        exit 1 ;; esac \
+    && echo "OK — ComfyUI ${COMFYUI_REF} @ ${actual}"
+
+WORKDIR /opt/ComfyUI
+
+# ---------------------------------------------------------------------------
+# STEP 3: ComfyUI's own requirements, unmodified.
+#
+# This is what brings in comfy-aimdo 0.4.13 and comfy-kitchen 0.2.31 (the
+# DynamicVRAM / pinned-memory machinery the bare-venv baseline records), plus
+# torchaudio 2.11.0 from plain PyPI. Both comfy-* pins live in the checkout's own
+# requirements.txt at this tag — they are not re-pinned here, so the tag stays
+# the single source of truth for the dependency set.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir -r /opt/ComfyUI/requirements.txt
+
+# ---------------------------------------------------------------------------
+# Build-stage verification (network-free): assert the recipe actually produced
+# the cu130 torch build and the aimdo/kitchen stack, rather than a CPU-only
+# wheel silently resolved from PyPI. Single logical line — each statement ends
+# with `;` and physical lines are continued with a trailing backslash (a
+# multi-line `python3 -c` WITHOUT continuations makes Docker parse each body line
+# as its own instruction; same trap as Dockerfile.vllm-gemma4).
+#
+# torch.cuda is NOT probed here: there is no GPU during `docker build`.
+# ---------------------------------------------------------------------------
+RUN python3.12 -c "import torch, torchvision; \
+    assert torch.__version__.endswith('+cu130'), 'torch is not a cu130 build: ' + torch.__version__; \
+    assert torchvision.__version__.endswith('+cu130'), 'torchvision is not a cu130 build: ' + torchvision.__version__; \
+    import comfy_aimdo, comfy_kitchen; \
+    print('OK — torch', torch.__version__, 'torchvision', torchvision.__version__, '; comfy-aimdo/comfy-kitchen import')"
+
+# ---------------------------------------------------------------------------
+# Non-root runtime.
+#
+# The compose service runs this as user "1000:1000" (it is the first fleet
+# service to set `user:` at all), so every path ComfyUI writes must already be
+# owned by that uid in the image — a root-owned checkout would fail on the first
+# write. The dirs are pre-created so ownership applies even before the compose
+# volumes land on top of output/ (read-write) and models/ (read-only).
+#
+# HOME is pinned inside the checkout rather than left to /etc/passwd, so caches
+# land somewhere writable regardless of which uid the operator maps.
+# ---------------------------------------------------------------------------
+ENV HOME=/opt/ComfyUI/.home \
+    XDG_CACHE_HOME=/opt/ComfyUI/.cache \
+    HF_HOME=/opt/ComfyUI/.cache/huggingface
+RUN mkdir -p /opt/ComfyUI/output /opt/ComfyUI/temp /opt/ComfyUI/input \
+        /opt/ComfyUI/user /opt/ComfyUI/models \
+        "${HOME}" "${XDG_CACHE_HOME}" \
+    && chown -R 1000:1000 /opt/ComfyUI
+
+USER 1000:1000
+
+EXPOSE 8188
+
+# ---------------------------------------------------------------------------
+# The listen address is deliberately 0.0.0.0, NOT the bare venv's 127.0.0.1.
+#
+# start-comfy.sh binds loopback because ComfyUI ships no authentication and that
+# was the only isolation a host process had. In a container loopback would make
+# the lane unreachable from the gateway — the SAME no-authn property is answered
+# instead by publishing no host port (`expose:`, never `ports:`) so the service
+# is reachable only as http://comfyui:8188 on the compose network. Do not
+# "restore" the loopback bind here; it would break the lane, not harden it.
+#
+# Split ENTRYPOINT/CMD so the flags can be overridden (`docker run <image>
+# --port 9188`) without losing the interpreter, and so a compose `entrypoint:`
+# wrapper can take over cleanly.
+# ---------------------------------------------------------------------------
+ENTRYPOINT ["python3.12", "/opt/ComfyUI/main.py"]
+CMD ["--listen", "0.0.0.0", "--port", "8188"]

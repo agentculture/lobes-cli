@@ -34,21 +34,28 @@ Card detection is injected (``monkeypatch.setattr(_detect, "detect_card", …)``
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from lobes.cli import main
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile
+from lobes.profiles.schema import ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shape_render import overcommitted_groups, shape_env
 from lobes.profiles.shapes import builtin_shape_names, resolve_shape
 from lobes.runtime import _compose, _detect
 
 _DEFAULT_SHAPE = "machine-as-brain"
-# The one built-in card that declares a co-residency limit today. Named as a
-# fixture value, never matched on inside the implementation — the guard reads
-# the DECLARATION, so a second card declaring one gets the behaviour for free.
+# The two built-in cards that declare a co-residency limit today. Named as
+# fixture values, never matched on inside the implementation — the guard
+# reads the DECLARATION, so a third card declaring one gets the behaviour for
+# free.
 _DECLARING_CARD = "orin"
+# spark's cortex/innereye clash (issue #268, plan
+# innereye-lobes-hosts-comfyui, t1, decision c41).
+_INNEREYE_CARD = "spark"
+_INNEREYE_RESOLVING_SHAPE = "spark-innereye"
 
 
 def _fake_card(resolved: str) -> _detect.DetectedCard:
@@ -74,9 +81,13 @@ def _declaring_cards() -> list[str]:
 # --- the declaration itself --------------------------------------------------
 
 
-def test_exactly_one_builtin_card_declares_a_co_residency_limit() -> None:
-    """Guards the "every other card is unaffected" claim at its source."""
-    assert _declaring_cards() == [_DECLARING_CARD]
+def test_exactly_two_builtin_cards_declare_a_co_residency_limit() -> None:
+    """Guards the "every other card is unaffected" claim at its source.
+
+    ``orin`` (cortex/senses/associate) and ``spark`` (cortex/innereye, c41,
+    issue #268) are the two declaring cards today.
+    """
+    assert sorted(_declaring_cards()) == sorted([_DECLARING_CARD, _INNEREYE_CARD])
 
 
 def test_the_declared_group_is_the_measured_heavy_generate_lobes() -> None:
@@ -107,6 +118,23 @@ def test_the_machine_registry_overlay_does_not_drop_the_declaration() -> None:
 
     assert load_builtin(_DECLARING_CARD).exclusive_roles  # post-overlay
     assert resolve_profile(_DECLARING_CARD).exclusive_roles  # and post-resolution
+
+
+def test_the_spark_group_is_cortex_and_innereye() -> None:
+    """The other half of the "every declaring card" claim: spark's own group
+    (issue #268, decision c41 — v1 never co-resides cortex and innereye)."""
+    groups = resolve_profile(_INNEREYE_CARD).exclusive_roles
+    assert len(groups) == 1
+    group = groups[0]
+    assert set(group.roles) == {"cortex", "innereye"}
+    assert set(group.roles) <= set(ROLES)
+    assert group.shapes == (_INNEREYE_RESOLVING_SHAPE,)
+    # The refusal quotes the reason back at the operator; these are the
+    # measured bare-venv numbers (c41) — an empty/paraphrased reason would
+    # make the refusal unverifiable.
+    assert "7788" in group.reason
+    assert "112149.0" in group.reason
+    assert "124611" in group.reason
 
 
 def test_every_declared_resolving_shape_exists_and_actually_resolves_the_group() -> None:
@@ -143,10 +171,102 @@ def test_default_shape_over_hosts_the_declaring_card() -> None:
     assert [tuple(g.roles) for g in over] == [("cortex", "senses", "associate")]
 
 
-@pytest.mark.parametrize("card", [name for name in builtin_names() if name != _DECLARING_CARD])
+@pytest.mark.parametrize(
+    "card", [name for name in builtin_names() if name not in (_DECLARING_CARD, _INNEREYE_CARD)]
+)
 @pytest.mark.parametrize("shape", builtin_shape_names())
 def test_no_other_card_over_hosts_under_any_shape(card: str, shape: str) -> None:
     assert overcommitted_groups(resolve_shape(shape), resolve_profile(card)) == ()
+
+
+@pytest.mark.parametrize("shape", builtin_shape_names())
+def test_no_builtin_shape_over_hosts_spark_either(shape: str) -> None:
+    """spark's own half of the "no other shape over-hosts" claim — kept as a
+    dedicated parametrization (rather than folded into the loop above) so a
+    failure names spark explicitly, matching how ``_DECLARING_CARD`` (orin)
+    is proven the same way via ``test_default_shape_over_hosts_the_declaring_card``
+    plus this file's other predicate tests.
+    """
+    assert overcommitted_groups(resolve_shape(shape), resolve_profile(_INNEREYE_CARD)) == ()
+
+
+def test_a_shape_hosting_both_cortex_and_innereye_is_flagged_by_the_predicate() -> None:
+    """The predicate itself, proven directly against a SYNTHETIC shape.
+
+    No built-in shape today actually hosts ``cortex`` and ``innereye``
+    together — wiring the real innereye container into ``machine-as-brain``
+    (or any other built-in) is t2's job ("the aimdo observations moved to
+    t2, which is where a container actually exists to observe"), not t1's.
+    This proves the GUARD mechanism itself refuses the clash regardless, by
+    constructing the shape :func:`overcommitted_groups` would see once a
+    future shape does host both — never by mutating a built-in shape file.
+    """
+    profile = resolve_profile(_INNEREYE_CARD)
+    machine_as_brain = resolve_shape(_DEFAULT_SHAPE)
+    both_hosted = dataclasses.replace(
+        machine_as_brain, hosts=machine_as_brain.hosts + ("innereye",)
+    )
+    over = overcommitted_groups(both_hosted, profile)
+    assert [tuple(g.roles) for g in over] == [("cortex", "innereye")]
+
+
+def test_an_undeclared_peak_is_not_a_clash_either() -> None:
+    """The declared-peak veto (t6, issue #268): presence, never arithmetic.
+
+    ``innereye`` has no ``gpu_mem_util`` fraction to fall back on, so its
+    half of the declaration is ``declared_peak_gib`` (schema.RoleProfile)
+    instead. A card that names the group but never actually declares the
+    figure gets the SAME non-clash treatment as an infeasible member
+    (``test_an_infeasible_member_is_not_a_clash``) — the guard never invents
+    a number to compare, it only checks the operator supplied one.
+    """
+    profile = resolve_profile(_INNEREYE_CARD)
+    peakless = Profile(
+        name=profile.name,
+        summary=profile.summary,
+        roles={
+            role: (rp if role != "innereye" else RoleProfile(feasible=rp.feasible))
+            for role, rp in profile.roles.items()
+        },
+        host_env=profile.host_env,
+        gpu_access=profile.gpu_access,
+        exclusive_roles=profile.exclusive_roles,
+    )
+    assert profile.role("innereye").declared_peak_gib is not None  # sanity: real card has it
+    assert peakless.role("innereye").declared_peak_gib is None
+    machine_as_brain = resolve_shape(_DEFAULT_SHAPE)
+    both_hosted = dataclasses.replace(
+        machine_as_brain, hosts=machine_as_brain.hosts + ("innereye",)
+    )
+    assert overcommitted_groups(both_hosted, peakless) == ()
+
+
+def test_declared_peak_gib_is_never_summed_or_compared_in_shape_render() -> None:
+    """AC1's grep, run as a test: the knob's only functional reference in
+    ``shape_render.py`` is the presence check in ``_counts_toward_clash`` —
+    no summation, no comparison against a card total. A future edit that
+    starts doing arithmetic with this field in this module trips this test
+    before it trips a live boot.
+    """
+    import inspect
+
+    from lobes.profiles import shape_render
+
+    source = inspect.getsource(shape_render)
+    lines_with_knob = [line for line in source.splitlines() if "declared_peak_gib" in line]
+    assert lines_with_knob  # the knob IS referenced somewhere in this module
+    for line in lines_with_knob:
+        assert "+" not in line
+        assert "sum(" not in line
+        assert "total" not in line.lower()
+        assert "gpu_mem_util" not in line
+
+    # The two ACTUAL code statements (not comments/docstring prose) are a
+    # frozenset membership test and a plain `is None` presence check — never
+    # arithmetic.
+    peak_gate_source = inspect.getsource(shape_render._counts_toward_clash)
+    assert 'KNOB_LANE_ROLES.get("declared_peak_gib", frozenset())' in source
+    assert "rp.declared_peak_gib is None" in peak_gate_source
 
 
 def test_an_infeasible_member_is_not_a_clash() -> None:
@@ -217,6 +337,44 @@ def test_the_refusal_quotes_the_measured_reason(tmp_path, monkeypatch, capsys) -
     _patch_detect(monkeypatch, _DECLARING_CARD)
     assert main(["init", str(tmp_path / "d"), "--apply"]) == EXIT_USER_ERROR
     assert "61.3" in capsys.readouterr().err
+
+
+def test_init_refuses_when_the_resolved_default_shape_hosts_both_cortex_and_innereye(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """The acceptance proof for the spark/innereye group, end to end through
+    ``lobes init``.
+
+    No shipped built-in shape hosts ``cortex`` and ``innereye`` together yet
+    (wiring the real innereye container into a shape is t2's job — see
+    :func:`test_a_shape_hosting_both_cortex_and_innereye_is_flagged_by_the_predicate`),
+    so this injects what the DEFAULT shape (``machine-as-brain``) will
+    resolve to once it does, by patching ``resolve_shape`` at the one call
+    site ``init`` uses it from — never by editing a built-in shape file. The
+    refusal path itself (``_guard_coresidency``) is exercised completely
+    unmodified.
+    """
+    _patch_detect(monkeypatch, _INNEREYE_CARD)
+
+    real_resolve_shape = resolve_shape
+
+    def fake_resolve_shape(name: str):
+        shape = real_resolve_shape(name)
+        if name == _DEFAULT_SHAPE:
+            shape = dataclasses.replace(shape, hosts=shape.hosts + ("innereye",))
+        return shape
+
+    monkeypatch.setattr("lobes.cli._commands.init.resolve_shape", fake_resolve_shape)
+
+    target = tmp_path / "deploy"
+    rc = main(["init", str(target), "--apply"])
+    assert rc == EXIT_USER_ERROR
+    err = capsys.readouterr().err
+    assert "cortex" in err
+    assert "innereye" in err
+    assert "7788" in err  # the reason, quoted back
+    assert _INNEREYE_RESOLVING_SHAPE in err  # the concrete way out
+    assert not target.exists(), "a refusal must not scaffold anything"
 
 
 # --- `lobes init`: what still works -----------------------------------------

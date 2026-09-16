@@ -76,6 +76,31 @@ def test_reannounce_builder_is_wired_and_rebuilds_a_fresh_announcement() -> None
     assert "cortex" in fresh.roles
 
 
+def test_render_lane_never_enters_the_mesh_announcement_even_when_wired_and_ready() -> None:
+    """Task t11, issue #92 c9/h20: the render lane (`innereye`) must never
+    appear in this box's own mesh advert.
+
+    The mesh forwarder is POST-only, single-hop, single-response
+    (`open_upstream`); a render is submit-then-poll-then-GET-binary, so a
+    cross-box render through it is not possible without new forwarding code
+    (out of scope here — frame claim c9: "the mesh gives discovery for free
+    but NOT reach"). Advertising the lane anyway would be exactly the
+    advertised-but-unreachable trap #92 forbids, so v1 keeps it OUT of the
+    mesh roster entirely — proven here even with the lane fully wired
+    (INNEREYE_BASE_URL set) and with `readiness_cache=None` (i.e. the
+    "everything is ready" path that would otherwise include it)."""
+    env = _env(
+        INNEREYE_BASE_URL="http://comfyui:8188",
+        INNEREYE_FEASIBLE="true",
+    )
+    table, cfg = build_config(env)
+    assert any(b.name == "innereye" for b in table.backends), "innereye must be wired for this test"
+    routes, _ = build_mesh_wiring(table, cfg, None, {}, start=False, env=env)
+    assert routes is not None
+    ann = routes._announcement_builder()
+    assert "innereye" not in ann.roles
+
+
 def test_announcement_is_the_hosted_slice_of_this_box_s_own_capabilities() -> None:
     """The first live cutover announced all six roles with empty served ids:
     the announcement must be built from /capabilities, hosted roles only."""

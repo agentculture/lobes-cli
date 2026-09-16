@@ -110,8 +110,8 @@ class TestSingleModelDeploymentSkipsTheCheck:
         assert "gateway_passthrough" not in ids
 
 
-class TestKeyEnumerationCoversAllTenPrefixes:
-    def test_all_ten_role_prefixes_present(self):
+class TestKeyEnumerationCoversAllElevenPrefixes:
+    def test_all_eleven_role_prefixes_present(self):
         prefixes = set(doctor_module._GATEWAY_ROLE_PREFIXES)
         assert prefixes == {
             "PRIMARY",
@@ -124,6 +124,9 @@ class TestKeyEnumerationCoversAllTenPrefixes:
             "RERANK",
             "STT",
             "TTS",
+            # `innereye` (issue #82, t5) — derived automatically from
+            # FEASIBLE_ENV, no doctor.py logic change needed.
+            "INNEREYE",
         }
 
     def test_self_origin_and_fingerprint_suffixes_are_relevant_keys(self):

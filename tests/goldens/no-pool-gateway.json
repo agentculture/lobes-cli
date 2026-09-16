@@ -100,6 +100,28 @@
         "runtime": "vllm",
         "tools": true
       },
+      "innereye": {
+        "context": 0,
+        "endpoint": "",
+        "feasible": false,
+        "forbidden_responsibilities": [
+          "final_decision",
+          "repo_action",
+          "security_decision"
+        ],
+        "loaded": false,
+        "model": "comfyanonymous/ComfyUI-0.33.2",
+        "mtp": false,
+        "path": "/v1/render",
+        "quant": "",
+        "ready": false,
+        "responsibilities": [
+          "image_generation"
+        ],
+        "role": "innereye",
+        "runtime": "comfyui",
+        "tools": false
+      },
       "muse": {
         "context": null,
         "endpoint": "http://gateway.test:8000",

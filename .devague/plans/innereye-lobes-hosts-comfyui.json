@@ -1,0 +1,789 @@
+{
+  "slug": "innereye-lobes-hosts-comfyui",
+  "title": "innereye: lobes hosts ComfyUI",
+  "frame_slug": "innereye-lobes-hosts-comfyui",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-09-16T09:02:49Z",
+  "updated": "2026-09-16T10:53:45Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes hosts ComfyUI as a managed tenant: one command warms the image backend after a reboot, its peak cost is DECLARED against the same card the gears draw from so a known-bad pairing is refused, and a peer on another machine reaches it through the gateway's bearer \u2014 while ComfyUI itself publishes no host port and is reachable only on the compose network",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "ComfyUI never binds anything but 127.0.0.1 in the shipped compose service, and the container publishes no host port \u2014 verifiable by reading the rendered compose and by a negative control: a request to the box's tailnet address on 8188 is refused",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "boundary",
+      "text": "ComfyUI keeps binding 127.0.0.1 and lobes terminates auth in front of it: the gateway's do_POST runs _authorized() unconditionally before route dispatch (lobes/gateway/server.py do_POST), so any new POST family inherits the bearer for free, but do_GET only gates paths under /v1/ (server.py:4426) \u2014 so the render family must be spelled /v1/... or it ships unauthenticated",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "ComfyUI's binding is loopback-only in the shipped compose service and the container publishes no host port, proven by a negative control from off-box; and an unauthenticated request to the render family is refused 401",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Fronting ComfyUI needs three distinct pieces of new gateway machinery, none of which is a reuse: (a) a named path family wired into both do_GET and do_POST; (b) a method-general upstream opener \u2014 open_upstream (server.py:583-620) hardcodes conn.request('POST', ...), so every GET the render lane needs cannot be relayed at all today; (c) GET-side streaming relay \u2014 _relay_streaming already handles arbitrary binary chunked bodies but is never called from do_GET. A fourth piece, a raw-socket WS tunnel, is NOT needed: innereye never opens a websocket (c11), and c18 names that a non-goal",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "Each of the three pieces is separately demonstrable: the family answers on both methods, a GET is relayed upstream at all, and artifact bytes arrive intact through the streaming relay \u2014 with a byte-for-byte comparison against the same render fetched directly from ComfyUI on loopback",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "lobes does not, and will not here, compute a memory budget: nothing in render.py, schema.py, shapes.py or shape_render.py ever sums gpu_mem_util across roles or compares it to the card's total. Budgets are declared env text the operator is solely responsible for. The one multi-role guard, overcommitted_groups (shape_render.py:305-335), is a boolean co-residency veto driven by an operator-authored exclusive_roles list whose arithmetic is a prose reason string \u2014 so 'budgeted co-residency' for ComfyUI means a DECLARATION plus a veto, not an accounting engine",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "Grepping every reference to the declared peak shows the co-residency veto as its only consumer \u2014 no summation, no comparison against card total",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Adding innereye to the closed ROLES tuple churns roughly 41 golden .env files (5 top-level + 36 shape goldens), because profile_env (render.py:321) and compose_profile (shape_render.py:278) iterate ROLES unconditionally \u2014 every (shape, card) pair gains at least an INNEREYE_FEASIBLE=false line even on cards silent about it. The hand precedent (shapes.py:97-105) demands the diff show the new prefix and nothing else, so a regeneration that merely makes goldens pass does not satisfy the contract",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The regenerated golden diff shows INNEREYE_* keys and nothing else \u2014 inspected, not merely passing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Start-on-demand and shed-to-stopped are a NEW CAPABILITY CLASS, not an extension of the pressure policy. decide() (_pressure_policy.py:353-469) is a pure function whose only action is a 429 + Retry-After, and the gateway package never imports lobes.runtime._compose at all \u2014 every compose call site is a lobes/cli/_commands/*.py file. Making a request arrival start a container crosses a separation the codebase currently holds absolutely: the request path has no lifecycle actuator",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A test fails on any _compose import under lobes/gateway/, so the separation cannot be crossed silently by a later refactor",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Whatever shape the tenant takes, its readiness probe is bespoke: runtime/_health.py:18-25 and gateway/_readiness.py:96 both hardcode the literal path /health, which ComfyUI does not have. The existing escape is a hand-authored compose healthcheck block, exactly as Chatterbox probes /v1/health/ready with a raw python3.12 urllib CMD because its base image ships no curl (docker-compose.audio.yml:50-65)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The compose healthcheck flips the service to healthy only after ComfyUI actually answers \u2014 verified by watching it stay unhealthy during the model-loading window rather than reporting healthy immediately",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "The mesh gives discovery for free but NOT reach: Announcement/RoleInfo/Fingerprint verification (_mesh_wire.py:64-146, _mesh_routing.py:214-259) would advertise an innereye lane fine, but the only forward primitive is open_upstream (server.py:581-621), whose method is hardcoded POST, single-hop, and single-response. ComfyUI's submit-then-poll-then-GET-binary shape has no home in it \u2014 mirroring how /v1/realtime needed its own bespoke bridge rather than reusing the POST forwarder",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "Whatever v1 chooses, the mesh behaviour is stated and observable: either the lane never appears in another member's roster, or it appears and a cross-box render is demonstrated end to end. It is never advertised-but-unreachable (#92)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "innereye holds NO filesystem coupling to the ComfyUI host, by explicit design: 'Nothing touches the local filesystem. Artifacts come back over /view and the model list over the API, never by reading ComfyUI's output/ or models/ directories. That is what lets the same adapter drive a server on another host' (comfyui.py:24-27). So lobes may containerize ComfyUI and move its model directory freely \u2014 but lobes inherits the disk growth innereye states it will never clean: ComfyUI keeps its own counter-named copy of every artifact under output/ (SERVER_SIDE_COPY_NOTE, comfyui.py:70-73)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "The output directory's growth is either bounded by a stated policy or explicitly assigned to the operator in the doc \u2014 it is not left silently unowned",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "OPERATOR DECISION (the fork issue #268 asked lobes to make): innereye becomes the ELEVENTH first-class role in lobes.roles.ROLES, following the stt/tts precedent \u2014 hardcoded model/runtime constants instead of a catalog entry, absent from ROLE_ROLE_HINT so it escapes GATEWAY_FRONTED_ROLES, while riding the shared ROLES/ROLE_BACKEND/FEASIBLE_ENV channels. One discovery surface for the mesh wins over the separate-tenant-class option. ROLE_PATH's one-string-per-role constraint must therefore be RESOLVED, not worked around",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The role is either fully served or honestly refused \u2014 a dropped or unhosted innereye reports feasible:false on both capabilities surfaces, is omitted from /v1/models, and 404s role_infeasible on every alias, never half-served (#92)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "OPERATOR DECISION: v1 ships MANUAL lifecycle only \u2014 lobes owns start/stop/status, and a request to a cold backend gets an honest 503 + warming, never a silent boot. The gateway's data plane keeps its absolute separation from lobes.runtime._compose. Start-on-demand is explicitly NOT in v1",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The gateway package imports no compose machinery: a test greps lobes/gateway/ for _compose and fails on any hit",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "requirement",
+      "text": "OPERATOR DECISION: the ~32 GB peak is declared as a peak-GiB figure that participates ONLY in the existing exclusive_roles co-residency veto (shape_render.py:305-335) \u2014 a mechanism that already works by operator declaration plus a prose reason, never arithmetic. It prevents a known-bad pairing; it does not meter anything, and the docs must say so",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "No code path sums the declared peak with any gpu_mem_util fraction \u2014 the value's only consumer is the co-residency veto, verifiable by grepping its every reference",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "OPERATOR DECISION: ComfyUI is CONTAINERIZED as a compose service, because compose is what lets lobes maintain it \u2014 it inherits restart policy, env_file chaining, the GPU device-request block, log wrapping, and the lobes up <role> / --down lifecycle that every other tenant already uses, instead of a second supervision mechanism generalized out of _tunnel.py's pidfile pattern",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The service reproduces the working install exactly: ComfyUI pinned to v0.33.2 and torch installed from the stock https://download.pytorch.org/whl/cu130 index \u2014 and it renders at least one FLUX job, proving the containerized stack matches the venv it replaces",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "OPERATOR DECISION: the model directory is a HOST BIND MOUNT, not a docker named volume \u2014 the weights must stay accessible from outside Docker. The existing 65G tree at $HOME/comfy/ComfyUI/models is a real local directory with no extra_model_paths.yaml, so it binds in directly and the host keeps read/write access to it independently of the container's lifecycle",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "After the container is removed entirely, the host can still read and write every weight under the model directory, and a re-created container sees the same files \u2014 verifiable by removing the service and listing the tree",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "audience",
+      "text": "The lobes operator running a card that hosts image generation, and innereye as the only client today \u2014 plus any mesh peer that wants to render without being told an origin out of band",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "A peer that has never been told an origin can discover the render lane from GET /capabilities alone",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "after_state",
+      "text": "One lobes command warms the image backend after a reboot and 'lobes capabilities' says whether it is warm; ComfyUI runs as a compose service that publishes no host port, reachable only as http://comfyui:8188 on the compose network, with its 65G model tree bind-mounted read-only from the host; the gateway fronts it at /v1/render behind the same bearer the fleet already enforces; and innereye renders against it once it has been taught the facade wire",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Every element is separately observable: the up verb, the capabilities readiness bit, the loopback binding, the bind mount, and an innereye render through the gateway \u2014 the last of which requires innereye to have adopted the facade wire first (c27), so it is a cross-repo dependency, not a lobes-side check",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "before_state",
+      "text": "ComfyUI is a hand-started foreground venv process with no supervision, no restart policy, no structured logging and no lifecycle manager of any kind \u2014 no systemd unit, no cron, nothing in shell history. It sits entirely outside lobes' accounting, and it is currently DOWN",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The before-state is checkable on the box today and was: no systemd unit, no crontab entry, no running process, and a start-comfy.sh with no daemonization",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "why_it_matters",
+      "text": "Two GPU tenants share one unified-memory card. The fleet is carefully budgeted; the renderer is started by hand and is invisible to that budget, so neither side can assume the card. The operator wants one place to manage the load, and lobes is already that place",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "The spec claims only declaration and refusal, never metering \u2014 no sentence promises lobes will measure or cap the renderer's memory",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "success_signal",
+      "text": "After a reboot, exactly 1 lobes command brings the backend warm; GET /capabilities reports innereye with feasible and ready; an unauthenticated request to the render family is refused 401 while port 8188 is refused from both off-box and the host; and at least 1 end-to-end FLUX render completes through the gateway with its artifact bytes returned",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "All four signals appear in one acceptance transcript under docs/evidence/, including the negative control for the 401 and the loopback refusal",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "The render lane is a single advertised facade path, /v1/render, under which the gateway owns the fan-out to ComfyUI's submit, poll and artifact-fetch endpoints. It lands under /v1/ deliberately so the GET branch inherits the existing bearer gate at server.py:4426, and the fan-out needs a method-general upstream opener because open_upstream is POST-only today",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "An unauthenticated GET under /v1/render is refused 401, proven by negative control \u2014 not merely assumed from the path prefix",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "CONTRADICTION between two confirmed decisions: the security story (c1, c2, h1) says ComfyUI 'never stops binding 127.0.0.1', but the compose decision (c19) makes that impossible. Every fleet lane binds --host=0.0.0.0 INSIDE its container and gets its isolation from 'expose:' with NO published host port \u2014 'No host port \u2014 reachable only as http://vllm-primary:8000 on the compose net' (docker-compose.yml:99). A container binding 127.0.0.1 is unreachable from the gateway container. So the isolation property must be RESTATED: ComfyUI binds 0.0.0.0 inside the container and is unreachable from the host or network because the service publishes no port \u2014 not because of its bind address",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "The negative control is against the PUBLISHED surface, not the bind address: from off-box and from the host, port 8188 is refused, while the gateway reaches the service over the compose network \u2014 proving isolation comes from the absent port publication",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The start-comfy.sh loopback comment innereye asked lobes to preserve (issue #268: 'I'd ask that whatever lobes scaffolds preserves it') must be CARRIED FORWARD IN MEANING, not verbatim: the containerized equivalent is a comment on the compose service explaining that it deliberately publishes no host port, citing challenge finding c36 the same way the shell script did. Copying '--listen 127.0.0.1' into the container would silently break the gateway instead",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The rendered compose carries the rationale comment, and a reviewer reading only the compose file can tell why no ports: key is present",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "The bind mount needs a UID decision or it breaks its own guarantee. The host tree is 1000:1000 (spark), and no fleet Dockerfile carries a USER directive \u2014 containers run as root, so every artifact ComfyUI writes to the bind-mounted output/ lands root-owned and the host user cannot delete it. c20 promises the host keeps READ AND WRITE access; for the read-mostly models/ tree that survives, but for output/ it does not. Either run the container as 1000:1000, or mount models/ read-only and keep writes in a separately-owned path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Proven by round trip: render through the container, then as the host user delete the produced artifact and write a file into the mounted tree \u2014 both succeed without sudo",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Cutover displaces the existing client \u2014 innereye reaches http://127.0.0.1:8188 ON THE HOST today, and once the service is containerized with no published port that address stops answering until innereye adopts the facade wire (c27). OPERATOR DECISION: downtime is ACCEPTED \u2014 innereye is in an experimentation phase and is not being productized, so the two repos need not be sequenced to avoid a gap. The rollback path is kept anyway because it is nearly free: with the compose service stopped, start-comfy.sh still brings the venv up against the same tree",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "There is a stated rollback: with the compose service stopped, start-comfy.sh still brings the working venv up against the same model tree and innereye renders against it unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "The model path must be an env knob with a default, never a literal in the packaged template \u2014 lobes is scaffold-based and the same compose file ships in the wheel to every box. Follow the HF cache precedent, '${HF_CACHE:-${HOME:-/root}/.cache/huggingface}' (docker-compose.yml:88), and the llama.cpp GGUF precedent at :321-325, which mounts the weight READ-ONLY as 'the structural statement' that the lane never writes to it \u2014 the same argument applies to a 65G tree lobes did not create",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "The packaged template contains no operator-specific absolute path: a box with the weights elsewhere sets one env knob and the render lane works, verified by rendering the compose on a card whose tree is not under $HOME/comfy",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "The facade must not leak ComfyUI's unauthenticated surfaces. Behind /v1/render sit GET /history (every prior prompt, including other users' and other agents') and GET /view (every prior output, by guessable counter-named filenames like flux_output_00003_.png). A prefix-style or over-broad fan-out would hand any bearer-holder the whole render history; the facade should expose only the job a caller submitted, or the doc must state plainly that any authorized caller can read all render history",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "Negative control: an authorized caller asking for a job id it did not submit gets a refusal, OR the doc explicitly states shared-history visibility as an accepted property \u2014 one or the other, never silence",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "SOLUTION (c28/c29): the comfyui compose service binds --listen 0.0.0.0 --port 8188 inside the container and declares expose: [\"8188\"] with NO ports: key, reachable only as http://comfyui:8188 on the compose net. A comment on the service carries innereye's loopback rationale forward in meaning, citing finding c36 and explaining that the no-authn property is answered here by publishing no host port",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "Both negative controls are in the acceptance transcript: off-box and host-side requests to 8188 refused, gateway reach demonstrated",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "requirement",
+      "text": "SOLUTION (c30/c32): volumes are ${COMFY_MODELS:-${HOME:-/root}/comfy/ComfyUI/models}:/opt/ComfyUI/models:ro and a separately-owned ${COMFY_OUTPUT:-...}:/opt/ComfyUI/output read-write, plus the standard log dir and mg-logwrap mounts; the service declares user: \"${COMFY_UID:-1000}:${COMFY_GID:-1000}\". The read-only models mount follows the llama.cpp GGUF precedent (docker-compose.yml:321-325) as the structural statement that lobes never writes to a 65G tree it did not create. ACCEPTED CONSEQUENCE: downloading a checkpoint from inside ComfyUI is ruled out; the operator provisions weights",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "Round trip proven: render through the container, then as the host user delete the artifact and write into the output tree without sudo; and the models mount rejects a write from inside the container",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "SOLUTION (c35): /v1/render is JOB-SCOPED, not a prefix relay \u2014 the gateway issues the job id on submit and serves status and artifacts only for ids it issued, which closes both the /history prompt leak and /view counter-name enumeration",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "Negative control: an authorized caller requesting a job id it did not submit is refused \u2014 or the doc carries the shared-visibility statement instead",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c39",
+      "kind": "requirement",
+      "text": "SOLUTION (c33/c34): the deployments/ catalog entry's VARIATION.md states that a lock restore yields a service definition and not a renderable deployment, because the 65G weight tree is host state no lock carries; and the acceptance run includes two overlapping render submissions to measure whether ComfyUI serializes them, which is what any MAX_ACTIVE value must rest on",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "The overlapping-submission measurement appears in the acceptance transcript with its observed peak, and VARIATION.md carries the not-renderable sentence verbatim",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "boundary",
+      "text": "Two different exposures, deliberately not the same: INSIDE the compose network the comfyui service offers ComfyUI's whole native API and its whole output tree; OUTWARD through the gateway only the job-scoped /v1/render facade is published (c38). The bind-mounted output directory is how the operator reaches artifacts, including ComfyUI's own duplicate copies \u2014 lobes owns no retention policy for them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "Demonstrated both ways: from inside the compose network a native ComfyUI endpoint answers, and from off-box the same endpoint is unreachable while /v1/render works",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "boundary",
+      "text": "V1 SCOPE: innereye and the heavy generate lanes are declared MUTUALLY EXCLUSIVE on one card via the existing [[exclusive_roles]] mechanism (schema.py:219-250), so v1 never attempts co-residency. This is why the unmeasured comfy-aimdo behaviour does not block first support: every bad outcome in that risk is conditional on sharing the card. Co-residency is a LATER milestone, gated on the aimdo measurement and expected to be answered by topology \u2014 a second Spark hosting cortex while this one hosts innereye, which is the mesh-brain end-state (#112, decision 3) rather than a workaround",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "lobes init REFUSES to scaffold a deployment whose resolved shape would host both innereye and a heavy generate lane, and the refusal text names both the reason and the resolving shape \u2014 demonstrated, not merely declared",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Declare the innereye/cortex exclusive_roles group and prove lobes init refuses the bad shape",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A [[exclusive_roles]] group declaring roles=[\"cortex\",\"innereye\"] with a shapes= list and a reason quoting the measured bare-venv numbers is added to the card profile; lobes init REFUSES a resolved shape hosting both, and the refusal names both the reason and the resolving shape"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c41",
+        "h34"
+      ],
+      "instruction": "v1 never co-resides (c41). This task is the DECLARATION and its guard only \u2014 pure card-profile data plus the co-residency test. The aimdo observations moved to t2, which is where a container actually exists to observe."
+    },
+    {
+      "id": "t2",
+      "summary": "Dockerfile.comfyui: reproduce the working install as a locally-built image",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The image pins ComfyUI v0.33.2 and installs torch from the stock https://download.pytorch.org/whl/cu130 index, matching the venv it replaces",
+        "The built image renders at least one FLUX job, proving the containerized stack matches the bare venv; and the run RECORDS the comfy-aimdo headroom figure, whether DynamicVRAM is still detected, and the pinned-memory line beside the bare-venv baseline (7788 MB / 112149.0) as OBSERVATIONS for the co-residency milestone (r2), never as a v1 gate"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c19",
+        "h5"
+      ],
+      "instruction": "Model on Dockerfile.chatterbox: locally built, not pulled; a lean CUDA base; the lobes-cli wheel install pattern. custom_nodes carries no third-party nodes, so nothing beyond stock ComfyUI needs reproducing."
+    },
+    {
+      "id": "t3",
+      "summary": "Compose service skeleton: expose-only isolation, healthcheck, logging, GPU access",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The service binds --listen 0.0.0.0 --port 8188 in-container and declares expose: [\"8188\"] with NO ports: key; a comment on the service carries innereye's loopback rationale forward in meaning, citing finding c36 and explaining that the no-authn property is answered by publishing no host port",
+        "A bespoke healthcheck probes GET / or GET /object_info (ComfyUI has no /health) and reports unhealthy during the model-loading window rather than healthy immediately; the shared /health literal in runtime/_health.py and gateway/_readiness.py is NOT parameterized",
+        "Negative controls pass: requests to 8188 from off-box AND from the host are both refused, while the gateway reaches the service as http://comfyui:8188 on the compose network"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c28",
+        "h22",
+        "c29",
+        "h23",
+        "c8",
+        "h19",
+        "c36",
+        "h29"
+      ],
+      "instruction": "Reuse the fleet template's existing shapes verbatim: restart: unless-stopped, deploy.resources.reservations.devices for GPU, env_file chaining to .env and .secrets.env, mg-logwrap entrypoint. Do NOT copy --listen 127.0.0.1 from start-comfy.sh \u2014 in a container that makes the lane unreachable from the gateway."
+    },
+    {
+      "id": "t4",
+      "summary": "Compose volumes and ownership: read-only weights, writable output, non-root user",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Volumes are ${COMFY_MODELS:-${HOME:-/root}/comfy/ComfyUI/models}:/opt/ComfyUI/models:ro and a separately-owned ${COMFY_OUTPUT:-...}:/opt/ComfyUI/output read-write; the packaged template contains no operator-specific absolute path",
+        "The service declares user: \"${COMFY_UID:-1000}:${COMFY_GID:-1000}\"; a freshly rendered artifact inspected from the host is owned 1000:1000, not root, and the host user can delete it and write into the output tree without sudo",
+        "A write attempt to the models mount from inside the container is rejected, and rendering the compose on a box whose weights are not under $HOME/comfy needs exactly one env knob"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c20",
+        "h6",
+        "c30",
+        "h24",
+        "c32",
+        "h26",
+        "c37",
+        "h30"
+      ],
+      "instruction": "The read-only models mount follows the llama.cpp GGUF precedent at docker-compose.yml:321-325 as the structural statement that lobes never writes to a 65G tree it did not create. No fleet service sets user: today \u2014 this is the first, and it is load-bearing. Accepted consequence: downloading a checkpoint from inside ComfyUI is ruled out."
+    },
+    {
+      "id": "t5",
+      "summary": "Register innereye as the eleventh role ATOMICALLY: every role-keyed table, declaration-only",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "innereye is in ROLES, ROLE_BACKEND and ROLE_PATH with hardcoded _INNEREYE_MODEL/_INNEREYE_RUNTIME constants, and is deliberately ABSENT from ROLE_ROLE_HINT so GATEWAY_FRONTED_ROLES excludes it \u2014 exactly as stt/tts do",
+        "A dropped or unhosted innereye reports feasible:false on both capabilities surfaces, is omitted from /v1/models, and 404s role_infeasible on every alias \u2014 never half-served (#92)",
+        "ROLE_PATH[\"innereye\"] is the single facade string; no other role's ROLE_PATH row changes",
+        "Every role-keyed table carries an innereye entry and the FULL suite is green: the repo's own all-or-nothing invariants pass (test_role_service_map, test_every_proxyable_role_resolves_a_served_name, test_every_config_env_key_reaches_the_gateway_container, test_up_no_deps_isolation[innereye])",
+        "Regenerated goldens are INSPECTED, not merely passing: the diff shows INNEREYE_* keys and the 11th role in the capabilities wire, and nothing else"
+      ],
+      "deps": [],
+      "covers": [
+        "c15",
+        "h2",
+        "c6",
+        "h15"
+      ],
+      "instruction": "Approved deviation d2: registering a role is atomically cross-cutting and cannot be split file-disjoint \u2014 the repo's own invariant tests enforce all-or-nothing. This task now absorbs t14 (profiles/schema.py ROLES + shape_render.ROLE_SERVICE), t7 (goldens), and the stub table entries formerly scoped to t3 and t10. DECLARATION ONLY: stub values, feasible:false, no behaviour. All behaviour stays with t6/t9/t10/t2/t3/t13."
+    },
+    {
+      "id": "t6",
+      "summary": "Profile and shape wiring: INNEREYE_* env family and the declared-peak co-residency veto",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The declared peak is a per-card figure whose ONLY consumer is the exclusive_roles co-residency veto in shape_render.py \u2014 grepping its every reference shows no summation and no comparison against card total",
+        "No budget arithmetic is added anywhere; the render lane's INNEREYE_* keys follow the ROLE_ENV_PREFIX/_KNOB_ENV_SUFFIX convention in render.py"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c17",
+        "h4",
+        "c5",
+        "h17"
+      ],
+      "instruction": "Resist the symmetry pull: the tenant has no gpu_mem_util fraction and must not be given a fake one. The veto works by operator declaration plus a prose reason, never arithmetic \u2014 that is the mechanism, not a limitation to fix."
+    },
+    {
+      "id": "t7",
+      "summary": "Regenerate the profile and shape goldens for the new role prefix",
+      "origin": "llm",
+      "status": "rejected",
+      "acceptance_criteria": [
+        "tests/goldens/regen.py is run and the resulting diff is INSPECTED, not merely passing: it shows INNEREYE_* keys and nothing else across the ~41 affected .env goldens",
+        "switch-plans.txt is unchanged, confirming the non-vLLM tenant stayed out of SUPPORTED_MODELS"
+      ],
+      "deps": [
+        "t6"
+      ],
+      "covers": [
+        "c6",
+        "h15"
+      ],
+      "instruction": "Per the hand precedent at shapes.py:97-105, a regeneration that merely makes the goldens pass does not satisfy the contract. Read the diff."
+    },
+    {
+      "id": "t8",
+      "summary": "Gateway plumbing: a method-general upstream opener and a GET-side streaming relay",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "open_upstream (server.py:583-620) accepts a method instead of hardcoding conn.request('POST', ...), or a GET-side helper exists alongside it; existing POST callers are unchanged in behaviour",
+        "_relay_streaming is reachable from do_GET and relays arbitrary binary chunked bodies; artifact bytes fetched through it are byte-for-byte identical to the same render fetched directly from ComfyUI on the compose network"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h14"
+      ],
+      "instruction": "This is pure plumbing in lobes/gateway/server.py and lands BEFORE the facade routes (t9) so the two do not collide in the same file. _relay_streaming already handles binary correctly \u2014 it has simply never been called from a GET route. Stdlib only: no requests/httpx."
+    },
+    {
+      "id": "t9",
+      "summary": "The /v1/render facade: job-scoped routes, fan-out, and the auth placement",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "The family is spelled under /v1/ and wired into BOTH the do_GET and do_POST if/elif chains; an unauthenticated GET under /v1/render is refused 401, proven by negative control rather than assumed from the prefix",
+        "The facade is job-scoped: the gateway issues the job id on submit and serves status and artifacts only for ids it issued; an authorized caller requesting a job id it did not submit is refused",
+        "The fan-out reaches ComfyUI's submit, poll and artifact-fetch endpoints without exposing /history or /view enumeration outward"
+      ],
+      "deps": [
+        "t8",
+        "t5"
+      ],
+      "covers": [
+        "c2",
+        "h16",
+        "c26",
+        "h12",
+        "c35",
+        "h28",
+        "c38",
+        "h31"
+      ],
+      "instruction": "Mirror how is_audio_path routes /v1/audio/* to a single backend without model-field routing. The bearer is per-branch, not middleware: every POST inherits it, but GET only inherits it under /v1/ (server.py:4426) \u2014 that is why the family must be spelled /v1/render. If v1 declines to track issued ids, the doc must instead state shared-history visibility plainly; h28 forbids silence."
+    },
+    {
+      "id": "t10",
+      "summary": "Lifecycle: the up target, the cold-backend 503, and the no-actuator guard",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes up innereye starts and --down stops exactly that service, carrying --no-deps like every other target; lobes capabilities reports whether it is warm",
+        "A request reaching a cold backend returns an honest warming response with a Retry-After \u2014 never a silent boot",
+        "A test fails on any _compose import under lobes/gateway/, so a later refactor cannot quietly put a lifecycle actuator in the data plane"
+      ],
+      "deps": [
+        "t5",
+        "t3"
+      ],
+      "covers": [
+        "c16",
+        "h3",
+        "c7",
+        "h18"
+      ],
+      "instruction": "Start-on-demand is explicitly NOT in v1 (c18). The import-absence test is the load-bearing artifact here: it is what keeps the separation the codebase currently holds absolutely."
+    },
+    {
+      "id": "t11",
+      "summary": "Capabilities and mesh advert for the render lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A peer that has never been told an origin can discover the render lane from GET /capabilities alone",
+        "The mesh behaviour is decided and observable: either the lane never appears in another member's roster, or it appears and a cross-box render is demonstrated end to end \u2014 never advertised-but-unreachable (#92)",
+        "The render lane's gateway-side readiness probe uses a path ComfyUI actually serves (MEASURED: /health 404s; / , /system_stats and /object_info return 200), so a wired-and-up innereye reports ready:true \u2014 without parameterizing the shared /health literal for any other lane"
+      ],
+      "deps": [
+        "t5",
+        "t9"
+      ],
+      "covers": [
+        "c21",
+        "h7",
+        "c9",
+        "h20"
+      ],
+      "instruction": "Decide explicitly whether v1 announces the lane to the mesh or keeps it off. Note that no operator-facing producer sets 'private' today \u2014 declared_lane_config (server.py:4981-4994) never emits the key \u2014 so 'announce it private' is not currently expressible without adding that producer. The mesh Fingerprint is (served_id, quantization, max_model_len, runtime); three of the four are meaningless here and would verify by matching unknowns."
+    },
+    {
+      "id": "t12",
+      "summary": "The reference doc, the non-goals, and the catalog entry",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A new reference doc carries an explicit Boundary / non-goals section following docs/realtime-pipeline.md:682-716, naming: no start-on-demand actuator, no metering or summing of GPU memory, no websocket proxy",
+        "The doc states the TWO exposures side by side \u2014 ComfyUI's full native API and output tree inside the compose network, versus only the job-scoped /v1/render facade outward \u2014 so no reader concludes the native surface is reachable off-box",
+        "The doc claims only declaration and refusal, never metering; the output directory's growth is either bounded by a stated policy or explicitly assigned to the operator, not left silently unowned",
+        "A rollback is stated: with the compose service stopped, start-comfy.sh still brings the venv up against the same tree; and VARIATION.md states that a lock restore yields a service definition, not a renderable deployment"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [
+        "c12",
+        "h21",
+        "c23",
+        "h9",
+        "c24",
+        "h10",
+        "c31",
+        "h25",
+        "c40",
+        "h33"
+      ],
+      "instruction": "Downtime is accepted (c31) \u2014 do NOT sequence the repos to avoid a gap, but DO file the facade-adoption issue on agentculture/innereye so the client knows its wire changed. Per #108 every surface says DECLARED/UNVALIDATED until the t13 transcript lands."
+    },
+    {
+      "id": "t13",
+      "summary": "Live acceptance run on the DGX Spark and its evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A transcript under docs/evidence/ records all four success signals: exactly 1 lobes command brings the backend warm after a reboot; GET /capabilities reports innereye feasible and ready; an unauthenticated request to the render family is refused 401 while 8188 is refused from both off-box and the host; and at least 1 end-to-end FLUX render completes through the gateway with its artifact bytes returned",
+        "Two overlapping render submissions are measured: the transcript records whether ComfyUI serialized them and the observed peak, which is what any MAX_ACTIVE value rests on",
+        "The innereye leg is recorded honestly as a cross-repo dependency \u2014 a render through the gateway requires innereye to have adopted the facade wire first, so its absence is stated, not silently skipped"
+      ],
+      "deps": [
+        "t4",
+        "t10",
+        "t12"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c22",
+        "h13",
+        "c25",
+        "h11",
+        "c39",
+        "h32"
+      ],
+      "instruction": "This is the task that converts every DECLARED surface to VALIDATED. Nothing in docs or lobes capabilities may claim validated before this transcript lands (#108). Include the negative controls \u2014 a probe without them is vacuous."
+    },
+    {
+      "id": "t14",
+      "summary": "Role vocabulary for the profile machinery: schema.ROLES, ROLE_SERVICE, and the role-keyed table audit",
+      "origin": "llm",
+      "status": "rejected",
+      "acceptance_criteria": [
+        "innereye is in lobes/profiles/schema.py ROLES and in lobes/profiles/shape_render.py ROLE_SERVICE; a card declaring it in an [[exclusive_roles]] group LOADS, and lobes init renders on every built-in card (spark, thor, orin, base) without a KeyError",
+        "Every role-keyed table that iterates unconditionally is audited and named in the commit message \u2014 at minimum KNOB_LANE_ROLES and SPECULATIVE_CONFIG_ROLES \u2014 with each either given an innereye entry or explicitly justified as not needing one",
+        "The four test files that resolve shapes or profiles at module level (test_deployment_lock, test_shape_budgets, test_shape_contract_matrix, test_shape_goldens) COLLECT without error"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [],
+      "instruction": "This task exists because of approved deviation d1: the plan assumed one role registry and there are two. lobes.roles.ROLES (t5) is the Colleague-facing registry; lobes.profiles.schema.ROLES is the profile-machinery one that schema.py:317 validates exclusive_roles against. Add the vocabulary ONLY \u2014 no budget knobs, no veto wiring, no RoleProfile fields. That is t6's scope and it lands after you. Do NOT regenerate goldens; t7 owns that and now has spark-innereye on its list too."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "CO-RESIDENCY risk (not a v1 risk): comfy-aimdo sizes itself from the whole unified pool \u2014 measured on the bare venv as 112149.0 pinned memory and 7788 MB headroom against 'Total VRAM 124611 MB, total RAM 124611 MB' \u2014 and its behaviour inside a cgroup is unmeasured. If it reads the host total from within a container, a declared peak is a function of start order rather than a property of the workload, and the c17 mechanism would be the wrong tool. Every one of those outcomes is CONDITIONAL on sharing the card, which v1 forbids (c41)",
+      "kind": "unknown_blocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "Resolved for v1 by SCOPE, not by measurement: c41 declares innereye and the heavy generate lanes mutually exclusive on one card via [[exclusive_roles]], so v1 never attempts co-residency and the unmeasured aimdo behaviour cannot bite. The measurement is NOT discarded \u2014 it is re-raised as r2 against the co-residency milestone, which is expected to be answered by topology (a second Spark hosting cortex) rather than by budgeting."
+    },
+    {
+      "id": "r2",
+      "text": "Co-residency milestone: before innereye is ever hosted alongside a heavy generate lane, the aimdo-in-container numbers must be measured \u2014 the headroom figure, whether DynamicVRAM is still detected, and the pinned-memory line, each against the bare-venv baseline (7788 MB / 112149.0). Until then the exclusive_roles group stands and no declared peak should be trusted as a co-residency budget",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": true,
+      "resolution": "MEASURED 2026-09-16 on the Spark (docs/evidence/2026-09-16-t2-comfyui-container-spark.txt): comfy-aimdo reads the HOST totals from inside the container \u2014 7788 MB headroom, 112149.0 pinned, 'DynamicVRAM support detected and enabled', Total VRAM/RAM 124611 MB \u2014 every figure IDENTICAL to the bare venv. GET /system_stats likewise reports host totals. This CONFIRMS the risk rather than relaxing it: the declared peak is not a co-residency budget, and the exclusive_roles group (c41) is the right and necessary mechanism. Narrow scope: the container ran with NO --memory limit, which is also what the shipped compose service does, so this measures the default shape and says nothing about a memory-limited cgroup \u2014 that stays untested and is the residual"
+    },
+    {
+      "id": "r3",
+      "text": "A memory-limited cgroup is untested: every aimdo measurement to date ran a container with no --memory cap. Whether a --memory-limited comfyui service changes the headroom figure or the pinned-memory reservation is unknown, and would be the first thing to try if co-residency is ever revisited",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

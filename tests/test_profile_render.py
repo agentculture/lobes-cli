@@ -28,6 +28,7 @@ def test_role_env_prefix_covers_every_profile_role() -> None:
         "hand": "HAND",
         "embedder": "EMBED",
         "reranker": "RERANK",
+        "innereye": "INNEREYE",
     }
 
 
@@ -48,8 +49,32 @@ def test_spark_profile_env_matches_compose_defaults() -> None:
     assert env["MULTIMODAL_ATTENTION_BACKEND"] == "TRITON_ATTN"
     assert env["EMBED_MODEL"] == "Qwen/Qwen3-Embedding-0.6B"
     assert env["RERANK_MODEL"] == "Qwen/Qwen3-Reranker-0.6B"
+    # innereye (t6, issue #268): a DECLARED peak-GiB figure, not a
+    # gpu_mem_util fraction -- innereye has no MODEL/SERVED_NAME/knob keys
+    # beyond this one.
+    assert env["INNEREYE_DECLARED_PEAK_GIB"] == "31.42"
+    assert not any(k.startswith("INNEREYE_") and k != "INNEREYE_DECLARED_PEAK_GIB" for k in env)
     # No feasibility markers — every role is feasible=True on spark.
     assert not any(k.endswith("_FEASIBLE") for k in env)
+
+
+def test_declared_peak_gib_renders_via_the_role_prefix_knob_suffix_convention() -> None:
+    """The innereye render lane's only key follows the generic convention.
+
+    No special-cased branch in ``_role_env``/``profile_env`` -- the same
+    generic ``_KNOB_ENV_SUFFIX`` loop every other knob goes through, with no
+    ``MODEL``/``SERVED_NAME`` keys since ``model`` stays ``None``.
+    """
+    profile = Profile(
+        name="synthetic",
+        roles={"innereye": RoleProfile(declared_peak_gib=31.42)},
+    )
+    assert profile_env(profile) == {"INNEREYE_DECLARED_PEAK_GIB": "31.42"}
+
+
+def test_a_silent_innereye_profile_renders_no_peak_key() -> None:
+    profile = Profile(name="synthetic", roles={"innereye": RoleProfile()})
+    assert profile_env(profile) == {}
 
 
 def test_thor_profile_env_carries_machine_derived_divergences() -> None:

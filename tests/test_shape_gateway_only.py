@@ -109,17 +109,32 @@ def test_every_core_role_flags_off_with_no_knob_leak_on_every_card(card: str) ->
     env = shape_env(shape, profile)
     for role in CORE_ROLES:
         prefix = ROLE_ENV_PREFIX[role]
+        # innereye's `declared_peak_gib` (t6, issue #268) is a card-level FACT,
+        # not a serving decision — it passes through on every shape exactly
+        # like `host_env` does, hosted or not, because it is what the
+        # co-residency veto reads regardless of which shape is being
+        # considered. It is the one legitimate exception to "dropped role,
+        # no knob leak" below.
+        allowed_stray = f"{prefix}_DECLARED_PEAK_GIB" if role == "innereye" else None
         if role in OPT_IN_CORE_ROLES:
             # Non-hosted opt-in core roles pass the card's own declaration
             # through: the base card's veto renders its marker, a silent card
             # renders NOTHING (the gateway's OPT_IN_BACKENDS unwired default
             # carries the infeasibility) — the convention test_shape_goldens
-            # pins for every shape x card.
-            expected = "false" if role in profile.roles else None
+            # pins for every shape x card. A card that is FEASIBLE but only
+            # carries a card-level fact (no marker at all) is the third case.
+            if role in profile.roles and not profile.role(role).feasible:
+                expected = "false"
+            else:
+                expected = None
         else:
             expected = "false"
         assert env.get(f"{prefix}_FEASIBLE") == expected, role
-        stray = [k for k in env if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE"]
+        stray = [
+            k
+            for k in env
+            if k.startswith(f"{prefix}_") and k != f"{prefix}_FEASIBLE" and k != allowed_stray
+        ]
         assert stray == [], f"dropped {role} leaked {stray}"
 
 
@@ -163,9 +178,14 @@ def test_golden_carries_only_flagged_off_markers_and_card_passthrough(card: str)
     golden = shape_golden_path("gateway-only", card).read_text(encoding="utf-8")
     for role in CORE_ROLES:
         prefix = ROLE_ENV_PREFIX[role]
+        # innereye's `declared_peak_gib` (t6, issue #268) is the one
+        # legitimate non-marker line for a dropped role — a card-level fact
+        # the co-residency veto reads, passed through regardless of hosting
+        # (see test_every_core_role_flags_off_with_no_knob_leak_on_every_card).
+        allowed = f"{prefix}_DECLARED_PEAK_GIB=31.42" if role == "innereye" else None
         for line in golden.splitlines():
             if line.startswith(f"{prefix}_"):
-                assert line == f"{prefix}_FEASIBLE=false", f"unexpected line {line!r}"
+                assert line in (f"{prefix}_FEASIBLE=false", allowed), f"unexpected line {line!r}"
     # The five non-opt-in core roles flag off on EVERY card.
     for role in _ALWAYS_DROPPED_ROLES:
         assert f"{ROLE_ENV_PREFIX[role]}_FEASIBLE=false" in golden

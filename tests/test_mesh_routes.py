@@ -48,10 +48,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from lobes.gateway._mesh_config import build_mesh_config
+from lobes.gateway._mesh_config import MeshConfig, build_mesh_config
 from lobes.gateway._mesh_roster import Roster
 from lobes.gateway._mesh_routes import (
     MeshRoutes,
+    announcement_from_capabilities,
     build_mesh_routes,
     dispatch_mesh,
     is_mesh_route,
@@ -956,6 +957,91 @@ class TestAnnouncementFingerprints:
             readiness_cache=readiness_cache,
         )
         assert "cortex" not in announcement.roles
+
+    def test_announcement_never_carries_the_render_lane(self) -> None:
+        """Task t11, issue #92 c9/h20: the low-level `_build_announcement`
+        entry point (`declared_lane_configs`) must never announce `innereye`
+        even when it is hosted, ready, and carries a real declared lane —
+        mirroring the guard in `_role_info_from_capability_entry` below."""
+        _, announcement = build_mesh_routes(
+            env=_mesh_key_env(name="box-7"),
+            self_origin="http://box-7.local:8000",
+            declared_lane_configs={
+                "primary": {
+                    "model": "unsloth/Qwen3.8-27B-NVFP4",
+                    "runtime": "vllm",
+                    "context": "262144",
+                    "quant": "NVFP4",
+                    "responsibilities": "reasoning",
+                    "forbidden_responsibilities": "",
+                },
+                "innereye": {
+                    "model": "comfyanonymous/ComfyUI-0.33.2",
+                    "runtime": "comfyui",
+                    "context": "0",
+                    "quant": "",
+                    "responsibilities": "image_generation",
+                    "forbidden_responsibilities": "",
+                },
+            },
+            local_capacities={"primary": 4.0},
+        )
+        assert "cortex" in announcement.roles
+        assert "innereye" not in announcement.roles
+
+    def test_announcement_from_capabilities_never_carries_the_render_lane(self) -> None:
+        """The PRODUCTION path: `announcement_from_capabilities` is what
+        `build_mesh_wiring`'s heartbeat actually uses (built from this box's
+        own `GET /capabilities` payload). Even a fully feasible, fingerprinted
+        `innereye` entry must be dropped."""
+        cfg = MeshConfig(
+            enabled=True,
+            key="sk-test",
+            name="box-8",
+            seeds=(),
+            heartbeat_s=60,
+            missed_max=3,
+            ledger_path=None,
+        )
+        payload = {
+            "cortex": {
+                "feasible": True,
+                "proxied": False,
+                "model": "unsloth/Qwen3.8-27B-NVFP4",
+                "runtime": "vllm",
+                "context": 262144,
+                "quant": "NVFP4",
+                "responsibilities": ("reasoning",),
+                "forbidden_responsibilities": (),
+                "fingerprint": {
+                    "served_id": "unsloth/Qwen3.8-27B-NVFP4",
+                    "quantization": "NVFP4",
+                    "max_model_len": 262144,
+                    "runtime": "vllm",
+                },
+            },
+            "innereye": {
+                "feasible": True,
+                "proxied": False,
+                "model": "comfyanonymous/ComfyUI-0.33.2",
+                "runtime": "comfyui",
+                "context": 0,
+                "quant": "",
+                "responsibilities": ("image_generation",),
+                "forbidden_responsibilities": (),
+                "fingerprint": {
+                    "served_id": "comfyanonymous/ComfyUI-0.33.2",
+                    "quantization": "unknown",
+                    "max_model_len": 0,
+                    "runtime": "comfyui",
+                },
+            },
+        }
+        announcement = announcement_from_capabilities(
+            cfg, payload, self_origin="http://box-8.local:8000"
+        )
+        assert "cortex" in announcement.roles
+        assert "innereye" not in announcement.roles
 
 
 # ===========================================================================

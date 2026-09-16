@@ -392,6 +392,7 @@ def test_endpoint_works_for_every_role(tmp_path, capsys) -> None:
         "reranker": "http://localhost:8000",
         "stt": "",
         "tts": "",
+        "innereye": "",
     }
     assert set(expected) == set(ROLES)
     for role in ROLES:

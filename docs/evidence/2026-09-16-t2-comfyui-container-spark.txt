@@ -1,0 +1,163 @@
+CONTAINERIZED ComfyUI — Dockerfile.comfyui on the DGX Spark GB10 (spark-f8a9)
+2026-09-16, task t2 of the innereye-lobes-hosts-comfyui plan.
+
+WHAT THIS IS AND IS NOT
+=======================
+This records (a) that `lobes/templates/fleet/Dockerfile.comfyui` BUILDS and
+RENDERS a real FLUX job — task t2's second acceptance criterion — and (b) the
+containerized comfy-aimdo numbers set beside the bare-venv baseline in
+docs/evidence/2026-09-16-baseline-comfyui-venv-spark.txt.
+
+The aimdo numbers here are OBSERVATIONS for plan risk r2 (the co-residency
+milestone). They are NOT a v1 gate. Frame claim c41 declares cortex and
+innereye mutually exclusive, so v1 NEVER co-resides and nothing below is
+permitted to relax the exclusive_roles group declared in t1.
+
+This is also NOT the t13 acceptance run. At the time of this run there was no
+comfyui compose service (t3), no volume/ownership wiring (t4), no
+/v1/render facade reachable end to end and no INNEREYE_BASE_URL reader. Per the
+#108 rule nothing here may be cited as evidence that the innereye ROLE works.
+The image was exercised directly with `docker run`, not through lobes.
+
+Method note: the bare venv from the baseline run was still up on 8188 holding
+34.3 GiB of cached weights. It was NOT stopped. It was asked to drop its model
+cache with its own POST /free {"unload_models":true,"free_memory":true} (HTTP
+200, RSS 34.3 -> 2.2 GiB), which is non-destructive — the process stayed
+serving and answers /system_stats 200 both before and after everything below.
+The container was published on 127.0.0.1:18188 so it could never collide with
+it.
+
+== BUILD ==
+$ docker build -f Dockerfile.comfyui -t lobes/comfyui:local .
+exit 0, image 10.5 GB, base nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04 (arm64)
+
+Two build-stage assertions passed, so the pins are proven by the build itself
+and not merely written down:
+
+  ComfyUI tag -> commit
+    OK — ComfyUI v0.33.2 @ 7cee3ceb
+
+  torch is a STOCK cu130 build, and the aimdo stack imports
+    OK — torch 2.14.0+cu130 torchvision 0.29.0+cu130 ;
+         comfy-aimdo/comfy-kitchen import
+
+Resolved dependency set vs. the bare venv it replaces — IDENTICAL on every
+version that matters:
+
+  component                 container        bare venv
+  Python                    3.12.3           3.12.3
+  torch                     2.14.0+cu130     2.14.0+cu130
+  torchvision               0.29.0+cu130     0.29.0+cu130
+  torchaudio                2.11.0           2.11.0
+  transformers              5.17.0           5.17.0
+  safetensors               0.8.0            0.8.0
+  comfy-aimdo               0.4.13           0.4.13
+  comfy-kitchen             0.2.31           0.2.31
+  comfyui-frontend-package  1.49.6           1.49.6
+  ComfyUI                   0.33.2           0.33.2 (7cee3ceb)
+
+== RUN ==
+$ docker run --rm -d --name lobes-comfyui-t2 --gpus all \
+    -v /home/spark/comfy/ComfyUI/models:/opt/ComfyUI/models:ro \
+    -v <scratch>/comfy-out:/opt/ComfyUI/output \
+    -p 127.0.0.1:18188:8188 lobes/comfyui:local
+
+Container argv, from GET /system_stats — the image's own CMD, no override:
+  ["/opt/ComfyUI/main.py", "--listen", "0.0.0.0", "--port", "8188"]
+0.0.0.0 is deliberate (the bare venv binds 127.0.0.1). In a container loopback
+would make the lane unreachable from the gateway; the no-authn property is
+answered by publishing no host port instead — t3's `expose:`-not-`ports:`.
+
+== r2 OBSERVATIONS — comfy-aimdo IN A CONTAINER vs THE BARE VENV ==
+The whole question r2 parks is whether comfy-aimdo sizes itself from the host's
+whole unified pool when it runs inside a container cgroup. Measured answer on
+this box, with this image, at this start order:
+
+  observable                         CONTAINER       BARE VENV (baseline)
+  Total VRAM / total RAM             124611 MB       124611 MB
+  Enabled pinned memory              112149.0        112149.0
+  aimdo integrated GPU RAM headroom  7788 MB         7788 MB
+  aimdo inited for GPU               NVIDIA GB10     NVIDIA GB10
+                                     (VRAM 124610)   (VRAM 124610)
+  DynamicVRAM support                detected and    detected and
+                                     enabled         enabled
+  comfy-aimdo version                0.4.13          0.4.13
+
+Verbatim container startup banner:
+  Total VRAM 124611 MB, total RAM 124611 MB
+  Device: cuda:0 NVIDIA GB10 : cudaMallocAsync
+  Using async weight offloading with 2 streams
+  Enabled pinned memory 112149.0
+  aimdo: comfy-aimdo integrated Linux GPU RAM headroom: 7788 MB
+  aimdo: comfy-aimdo inited for GPU: NVIDIA GB10 (VRAM: 124610 MB)
+  DynamicVRAM support detected and enabled
+  comfy-aimdo version: 0.4.13
+
+GET /system_stats reported ram_total 130663657472 and vram_total 130663657472 —
+the HOST totals, identical to the baseline's 130.7 GB.
+
+READ THIS AS A NARROW RESULT. Every figure is bit-identical to the bare venv,
+which is exactly the outcome r2 warned about: comfy-aimdo read the HOST's
+totals from inside the container, not a cgroup-scoped view. The container was
+run with no `--memory` / `--memory-swap` limit, which is also what the t3/t4
+compose service does today, so this measures the default shape and says
+NOTHING about what aimdo would report under a memory-limited cgroup — untested.
+r2's own conclusion therefore stands unchanged and is, if anything, confirmed:
+a declared peak for this tenant is not a co-residency budget, the exclusive_roles
+group stays, and co-residency remains unmeasured.
+
+== THE RENDER (task t2 acceptance criterion 2) ==
+graph:    /home/spark/comfy/graphs/flux-text-to-image.api.json (unmodified except
+          the prompt text, set to the baseline's prompt for like-for-like)
+prompt:   "a lobed brain made of glowing circuitry, one lobe rendering an
+           image, dark background, cinematic"
+submitted POST /prompt directly to the container (no gateway, no facade — neither
+exists yet), polled GET /history/<id>
+prompt_id: adbcd29e-cc13-481c-8dbc-05a079045d3d
+status:    success, completed true
+artifact:  flux_output_00001_.png
+
+Staging lines, container vs baseline — IDENTICAL:
+  Model FluxClipModel_     ...  9318MB Staged.     (baseline  9318MB)
+  Model Flux               ... 22700MB Staged.     (baseline 22700MB)
+  0 models unloaded.                               (baseline  same)
+  Model AutoencodingEngine ...   159MB Staged.     (baseline   159MB)
+  total staged 32177 MB (~31.4 GiB), same as baseline
+
+  Prompt executed in 41.84 seconds   (baseline 42.05 seconds)
+A 0.2 s difference on a single unrepeated sample is noise, not a measured
+speedup; it is recorded only to show the containerized stack is not
+categorically slower.
+
+Artifact on the host, from the read-write output mount:
+  -rw-r--r-- 1 spark spark 847157 Sep 16 13:48 flux_output_00001_.png
+  PNG image data, 1024 x 1024, 8-bit/color RGB, non-interlaced
+Owned by uid/gid 1000 (spark), NOT root — the image runs USER 1000:1000.
+
+Negative control on the read-only weights mount, from inside the container:
+  $ id
+  uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu)
+  $ touch /opt/ComfyUI/models/WRITE_TEST
+  touch: cannot touch '/opt/ComfyUI/models/WRITE_TEST': Read-only file system
+This is an image-level check only. The compose-level volume, ownership and
+isolation controls — and their off-box negative controls — belong to t3/t4 and
+are proven there, not here.
+
+== HOST MEMORY, `free -g` ==
+                          total  used  free  buff/cache  available
+before the render          121    22    66      34          99
+during/after the render    121    88     4      31          33
+after the container stopped 121   23    68      31          97
+
+The 88 GiB figure is the same order as the baseline's 85 GiB with ComfyUI as
+the only GPU tenant, and for the same reason: `free` counts the whole system and
+the 112149.0 pinned-memory reservation dominates the 31.4 GiB of staged weights.
+It is an observation, not a peak-RSS attribution, and it is the reason c41
+exists. Swap use did not move (10 GiB before and after); the box did not thrash.
+
+== WHAT REMAINS UNMEASURED ==
+- comfy-aimdo under a MEMORY-LIMITED cgroup. Untested; this run had no limit.
+- Co-residency itself. No generate lane was running during any part of this run,
+  by design (c41). Everything above is a solo-tenant measurement.
+- Concurrent/overlapping renders and the observed peak — t13 owns that.
+- Anything reached through the gateway. No facade was in the path.
