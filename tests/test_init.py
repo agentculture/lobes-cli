@@ -426,6 +426,7 @@ def test_init_fleet_dry_run_json(tmp_path, capsys) -> None:
         ".env",
         "Dockerfile.gateway",
         "Dockerfile.vllm-gemma4",  # custom vLLM image for vllm-multimodal (issue #71)
+        "Dockerfile.comfyui",  # innereye ComfyUI render tenant image (issue #82, t2/t3)
         "mg-logwrap.sh",
         "cf-tunnel.env.example",
         "qwen3_reranker.jinja",  # reranker chat template (#227), fleet-only

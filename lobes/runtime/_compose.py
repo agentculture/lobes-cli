@@ -124,6 +124,11 @@ GPU_SERVICES: tuple[str, ...] = (
     # board, so omitting it would leave associate unable to create its
     # container on the one card that matters.
     "vllm-associate",
+    # The opt-in `comfyui` render tenant (innereye, issue #82, t3). It
+    # declares the same SHIPPED `deploy.resources` GPU request as every other
+    # entry here, so a csv-mode board needs it rewritten to `runtime: nvidia`
+    # too, exactly like the other opt-in lanes above.
+    "comfyui",
 )
 GPU_SERVICES_AUDIO: tuple[str, ...] = ("chatterbox", "stt")
 
@@ -170,6 +175,12 @@ FLEET_TEMPLATES = {
     # Layers a Transformers build (gemma4_unified) on the NGC 26.05 base.
     # Authored in t1; wired to vllm-multimodal's build: block in t2.
     "fleet/Dockerfile.vllm-gemma4": "Dockerfile.vllm-gemma4",
+    # The innereye ComfyUI render tenant's image (issue #82, t2/t3). The
+    # `comfyui` compose service's `build.dockerfile` now references this
+    # file, so it MUST be scaffolded alongside docker-compose.yml or
+    # `docker compose build comfyui` fails with "Dockerfile.comfyui: no such
+    # file" — see tests/test_init.py::test_every_compose_referenced_dockerfile_is_scaffolded.
+    "fleet/Dockerfile.comfyui": "Dockerfile.comfyui",
     LOG_WRAPPER: LOG_WRAPPER,
     CF_TUNNEL_EXAMPLE: CF_TUNNEL_EXAMPLE,
     # See RERANK_TEMPLATE's comment above for provenance/sha256.
