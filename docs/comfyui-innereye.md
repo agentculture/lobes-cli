@@ -214,11 +214,36 @@ profile; this one does the opposite, so lobes reads the **profile marker**,
 not the mere presence of a service block, when it asks which lanes a shape
 drops — a published UI is never mistaken for a dropped `innereye`.
 
-**Never parsed as a port number.** The value is consumed only to render that
-one compose line; no CLI verb resolves it into an `int`. That is deliberate:
-`VLLM_PORT` *is* parsed, its parser rejects docker's `IP:port` form, and
-every verb that resolves it then fails outright (issue #272). This knob does
-not inherit that bug because it never takes that path.
+**A literal bind, validated at render time.** The rendered text is the whole
+truth about what gets published, so the value has to *be* an address, not an
+expression that becomes one later. The accepted grammar:
+
+- **port** — 1 to 65535, digits only. A bare port binds `127.0.0.1`.
+- **interface** — an IPv4 address (`100.127.105.72`), a hostname
+  (`localhost`, `host.example`), or a **bracketed** IPv6 literal
+  (`[::1]:8188`, with an optional `%zone`).
+- nothing else. Anything outside `[A-Za-z0-9.\-:\[\]%]` is refused, which
+  notably rules out `$` and `\`: compose would interpolate
+  `INNEREYE_UI_PORT=${BIND_HOST}:8188` **itself**, possibly to `0.0.0.0`,
+  producing a wide bind from a file whose literal text named a narrow one;
+  and a backslash lands inside the generated double-quoted YAML scalar, where
+  `\q` is an invalid escape — `lobes init --apply` would report success and
+  every later compose command would fail to load the file.
+- a **third** colon-separated segment is refused: the container port is always
+  `8188` and is never typed. `127.0.0.1:8188:9000` is an error, not a mapping.
+- **bare (unbracketed) IPv6 is refused**, with a message saying to bracket it.
+  `::1:8188` is itself a valid IPv6 address, so it cannot be told apart from
+  `host:port`; guessing would be worse than asking.
+
+Every rejection is a `lobes` user error naming the broken rule and the whole
+grammar — never a silently rendered file that `docker compose` chokes on.
+
+**Never routed through the CLI's port resolver.** Validating the digits above
+is *not* the same as resolving the value as a port. `VLLM_PORT` *is* resolved,
+its parser rejects docker's `IP:port` form, and every verb that resolves it
+then fails outright (issue #272). This knob is consumed at render time only,
+to emit that one compose line; no CLI verb hands it to that resolver, so it
+does not inherit that bug.
 
 ## Declaration, not metering
 

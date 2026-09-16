@@ -103,7 +103,10 @@ Mutation safety is unchanged: dry-run by default, ``--apply`` to write.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
+import re
+import string
 from pathlib import Path
 from typing import Sequence
 
@@ -159,11 +162,12 @@ SHAPE_DROPPED_PROFILE = "shape-dropped"
 # in the template can make a `ports:` key ABSENT, and a published-but-empty
 # port is not a thing. This is the same reason the GPU-access overrides exist.
 #
-# It is NEVER parsed into an int (issue #272). `VLLM_PORT` is parsed, its
-# parser rejects docker's `IP:port` form, and every CLI verb that resolves the
-# port then fails outright. This knob is consumed at RENDER time only — to emit
-# one compose `ports:` entry — and the CLI never probes ComfyUI's UI port, so
-# it stays an opaque string. Keep it that way.
+# The value is never routed through the CLI's port resolver (issue #272).
+# `VLLM_PORT` is, its parser rejects docker's `IP:port` form, and every CLI verb
+# that resolves the port then fails outright. This knob is consumed at RENDER
+# time only — to emit one compose `ports:` entry — and no verb probes ComfyUI's
+# UI port. Validating the value HERE, at render time, is a different thing from
+# that: it is what keeps a bad value from reaching compose at all.
 INNEREYE_UI_PORT_KEY = "INNEREYE_UI_PORT"
 _INNEREYE_UI_SERVICE = "comfyui"
 _INNEREYE_UI_CONTAINER_PORT = "8188"
@@ -172,9 +176,100 @@ _INNEREYE_UI_CONTAINER_PORT = "8188"
 # publish an unauthenticated ComfyUI to every device on the home WiFi. A wider
 # bind has to be typed as an explicit interface.
 _INNEREYE_UI_DEFAULT_HOST = "127.0.0.1"
-# Characters that would let a .env value break out of the one YAML scalar this
-# renders into. Not a port validator (see #272 above) — a shape guard.
-_INNEREYE_UI_FORBIDDEN = set(" \t\r\n\"'#")
+# The ONLY characters a bind value may contain. An ALLOWLIST, not a denylist,
+# because the two things that must never survive are the ones a denylist keeps
+# missing:
+#
+# * `$` — compose interpolates `${BIND_HOST}:8188` itself, LATER, possibly to
+#   `0.0.0.0`. The rendered file would name a narrow bind in its literal text
+#   and produce a wide one at `docker compose up`, defeating the whole
+#   "type the wider address explicitly" rule.
+# * `\` — the value lands inside a double-quoted YAML scalar, where `\q` is an
+#   invalid escape. `lobes init --apply` would report success and every LATER
+#   compose command would fail to load the generated file.
+_INNEREYE_UI_ALLOWED = frozenset(string.ascii_letters + string.digits + ".-:[]%")
+# One hostname label: 1-63 of [A-Za-z0-9-], never leading or trailing `-`.
+_HOSTNAME_LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)\Z")
+_PORT_DIGITS = re.compile(r"[0-9]{1,5}\Z")
+# Every rejection gets the same remediation: the whole accepted grammar. The
+# `message` says which rule this value broke; the remediation says what to type.
+_INNEREYE_UI_HINT = (
+    f"set {INNEREYE_UI_PORT_KEY}=8188 (binds {_INNEREYE_UI_DEFAULT_HOST} only) "
+    f"or {INNEREYE_UI_PORT_KEY}=<interface>:8188 for a wider bind. The value is "
+    "a LITERAL host bind: the port must be 1-65535, the interface an IPv4 "
+    "address, a hostname, or a BRACKETED IPv6 literal ([::1]:8188), and the "
+    "container port is always 8188 and never typed. Shell/compose expansions "
+    "($VAR, ${VAR}) are not resolved by lobes and are refused."
+)
+
+
+def _innereye_ui_reject(value: str, reason: str) -> "ModelGearError":
+    """The one rejection shape: a user error naming the rule and the grammar."""
+    return ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=f"invalid {INNEREYE_UI_PORT_KEY}={value!r}: {reason}",
+        remediation=_INNEREYE_UI_HINT,
+    )
+
+
+def _is_ipv6_literal(text: str) -> bool:
+    try:
+        ipaddress.IPv6Address(text)
+    except ValueError:
+        return False
+    return True
+
+
+def _innereye_ui_valid_host(host: str) -> bool:
+    """Is ``host`` a plausible LITERAL bind interface?
+
+    IPv4 address, bracketed IPv6 literal (with an optional ``%zone``), or a
+    hostname. An all-digits host is refused on purpose: ``8188:8188`` reads as
+    docker's ``hostPort:containerPort``, but this knob's container port is
+    fixed, so it would render the nonsense bind ``8188:8188:8188``.
+    """
+    if host.startswith("[") or host.endswith("]"):
+        if not (host.startswith("[") and host.endswith("]")):
+            return False
+        addr, sep, zone = host[1:-1].partition("%")
+        if sep and not _HOSTNAME_LABEL.match(zone):
+            return False
+        return _is_ipv6_literal(addr)
+    if set(host) & set(":[]%"):
+        return False
+    if not host:
+        return False
+    if set(host) <= set(string.digits + "."):
+        # Digits and dots can only be an IPv4 address; `256.0.0.1` and `8188`
+        # must not fall through to the hostname rule and be accepted as names.
+        try:
+            ipaddress.IPv4Address(host)
+        except ValueError:
+            return False
+        return True
+    if len(host) > 253:
+        return False
+    return all(_HOSTNAME_LABEL.match(label) for label in host.split("."))
+
+
+def _innereye_ui_split(value: str, spec: str) -> tuple[str, str]:
+    """Split a bind value into ``(host, port)``, defaulting the host to loopback."""
+    if spec.startswith("["):
+        end = spec.find("]")
+        if end == -1:
+            raise _innereye_ui_reject(value, "unterminated IPv6 bracket")
+        host, rest = spec[: end + 1], spec[end + 1 :]
+        if not rest.startswith(":"):
+            raise _innereye_ui_reject(value, "expected [ipv6]:port")
+        return host, rest[1:]
+    if ":" not in spec:
+        return _INNEREYE_UI_DEFAULT_HOST, spec
+    if spec.count(":") > 1:
+        if _is_ipv6_literal(spec):
+            raise _innereye_ui_reject(value, "bare IPv6 literal — bracket it, then add the port")
+        raise _innereye_ui_reject(value, "too many colons for <interface>:<port>")
+    host, _sep, port = spec.partition(":")
+    return host, port
 
 
 def innereye_ui_publish(value: str | None) -> str | None:
@@ -187,36 +282,30 @@ def innereye_ui_publish(value: str | None) -> str | None:
       interface binds exactly that interface (``0.0.0.0`` included, if the
       operator types it).
 
-    The value is never converted to an int; it is split on its LAST ``:`` so an
-    IPv6 literal (``[::1]:8188``) survives, and otherwise passed through
-    verbatim. Unset / blank is off.
+    The grammar is deliberately narrow, because the rendered text is the whole
+    truth about what gets published: the port is 1-65535, the interface is an
+    IPv4 address / hostname / BRACKETED IPv6 literal, and nothing that compose
+    or a shell would expand later is allowed through. Anything else is a user
+    error here rather than a broken ``docker compose`` command later. Unset /
+    blank is off.
+
+    Bare (unbracketed) IPv6 is REFUSED, not guessed at: ``::1:8188`` is a valid
+    IPv6 address in its own right, so it cannot be told apart from
+    ``host:port`` — the rejection says to write ``[::1]:8188``.
     """
     if value is None:
         return None
     spec = value.strip()
     if not spec:
         return None
-    if _INNEREYE_UI_FORBIDDEN & set(spec):
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message=f"invalid {INNEREYE_UI_PORT_KEY}={value!r}: not a port or interface:port",
-            remediation=(
-                f"set {INNEREYE_UI_PORT_KEY}=8188 (binds {_INNEREYE_UI_DEFAULT_HOST} only) "
-                f"or {INNEREYE_UI_PORT_KEY}=<interface>:8188 for a wider bind"
-            ),
-        )
-    host, sep, port = spec.rpartition(":")
-    if sep and not (host and port):
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message=f"invalid {INNEREYE_UI_PORT_KEY}={value!r}: empty interface or port",
-            remediation=(
-                f"set {INNEREYE_UI_PORT_KEY}=8188 (binds {_INNEREYE_UI_DEFAULT_HOST} only) "
-                f"or {INNEREYE_UI_PORT_KEY}=<interface>:8188 for a wider bind"
-            ),
-        )
-    if not sep:
-        host, port = _INNEREYE_UI_DEFAULT_HOST, spec
+    stray = sorted(set(spec) - _INNEREYE_UI_ALLOWED)
+    if stray:
+        raise _innereye_ui_reject(value, f"unexpected character {stray[0]!r}")
+    host, port = _innereye_ui_split(value, spec)
+    if not _PORT_DIGITS.match(port) or not 1 <= int(port) <= 65535:
+        raise _innereye_ui_reject(value, f"{port!r} is not a port in 1-65535")
+    if not _innereye_ui_valid_host(host):
+        raise _innereye_ui_reject(value, f"{host!r} is not an interface to bind")
     return f"{host}:{port}:{_INNEREYE_UI_CONTAINER_PORT}"
 
 

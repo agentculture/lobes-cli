@@ -15,10 +15,11 @@ that property up DELIBERATELY, and nothing about it may happen by accident:
    interface — this box has a LAN address as well as a tailnet one, and
    ``0.0.0.0`` on an unauthenticated ComfyUI would publish it to the whole
    home WiFi.
-3. **Never parsed into an int** (issue #272). ``VLLM_PORT``'s parser rejects
-   docker's ``IP:port`` form and every verb that resolves the port then fails;
-   this knob is consumed only at RENDER time to emit a compose ``ports:``
-   entry, so it stays an opaque string.
+3. **A literal bind, never routed through the port resolver** (issue #272).
+   The value is validated at RENDER time — it must be a real port and a real
+   interface, with nothing a shell or compose would expand later — but it is
+   never handed to ``_env.parse_port``, whose rejection of docker's ``IP:port``
+   form is what breaks every verb that resolves ``VLLM_PORT``.
 4. **Every surface says what is given up** — ``env.example``, the generated
    compose comment, and ``docs/comfyui-innereye.md``.
 """
@@ -32,7 +33,7 @@ import yaml
 
 from lobes.cli import main
 from lobes.cli._commands import init as init_cmd
-from lobes.cli._errors import ModelGearError
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.loader import resolve_profile
 from lobes.profiles.shapes import resolve_shape
 from lobes.runtime import _compose, _detect, _env
@@ -166,6 +167,126 @@ class TestBindForms:
         with pytest.raises(ModelGearError):
             init_cmd.innereye_ui_publish(value)
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("host.example:8188", "host.example:8188:8188"),
+            ("localhost:8188", "localhost:8188:8188"),
+            ("[::]:8188", "[::]:8188:8188"),  # nosec B104 — the explicit opt-in
+            ("[fe80::1%eth0]:8188", "[fe80::1%eth0]:8188:8188"),
+            ("1", "127.0.0.1:1:8188"),
+            ("65535", "127.0.0.1:65535:8188"),
+        ],
+    )
+    def test_further_accepted_forms(self, value: str, expected: str) -> None:
+        assert init_cmd.innereye_ui_publish(value) == expected
+
+
+# --- criterion 2b: the value is a literal bind, not an expression -----------
+
+
+class TestValueGrammar:
+    """What the knob accepts, and why a rejection is a rejection.
+
+    The loopback default is only a safety property if the RENDERED text is the
+    whole truth. A compose interpolation expression (``${BIND_HOST}:8188``)
+    would be resolved by compose itself — possibly to ``0.0.0.0`` — long after
+    lobes printed a bind address that looked narrow, which is exactly the
+    "name the wider address explicitly" rule being defeated (Qodo finding 1).
+    A backslash is a second kind of lie: it survives the old guard and lands
+    inside a double-quoted YAML scalar, so ``--apply`` succeeds and every LATER
+    compose command fails to load the file (finding 4). And a host/port that is
+    not a plausible literal at all (``abc``, ``65536``) is refused here rather
+    than at the next ``docker compose`` invocation (finding 3).
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "${BIND_HOST}:8188",
+            "$BIND_HOST:8188",
+            "${PORT}",
+            "$PORT",
+            "8188$",
+            "${BIND_HOST:-0.0.0.0}:8188",  # nosec B104 — a rejected value
+        ],
+    )
+    def test_compose_interpolation_is_refused(self, value: str) -> None:
+        with pytest.raises(ModelGearError) as excinfo:
+            init_cmd.innereye_ui_publish(value)
+        assert "$" in str(excinfo.value.remediation) or "literal" in str(excinfo.value.remediation)
+
+    @pytest.mark.parametrize("value", ["\\q", "8188\\", "127.0.0.1\\:8188", "a\\nb:8188"])
+    def test_backslash_is_refused(self, value: str) -> None:
+        with pytest.raises(ModelGearError):
+            init_cmd.innereye_ui_publish(value)
+
+    @pytest.mark.parametrize(
+        "value",
+        ["abc", "65536", "0", "-1", "81.88", "999999", "08188x", "+8188"],
+    )
+    def test_implausible_port_is_refused(self, value: str) -> None:
+        with pytest.raises(ModelGearError) as excinfo:
+            init_cmd.innereye_ui_publish(value)
+        assert "1-65535" in str(excinfo.value.remediation)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "127.0.0.1:8188:9000",
+            "[::1]:8188:9000",
+            "1.2.3.4:5:6",
+        ],
+    )
+    def test_third_segment_is_refused(self, value: str) -> None:
+        """The container port is fixed at 8188; the knob names only the host side."""
+        with pytest.raises(ModelGearError) as excinfo:
+            init_cmd.innereye_ui_publish(value)
+        assert "8188" in str(excinfo.value.remediation)
+
+    @pytest.mark.parametrize("value", ["::1:8188", "fe80::1:8188", "::8188"])
+    def test_bare_ipv6_is_refused_with_a_bracket_hint(self, value: str) -> None:
+        """Bare IPv6 is genuinely ambiguous with ``host:port``; brackets settle it."""
+        with pytest.raises(ModelGearError) as excinfo:
+            init_cmd.innereye_ui_publish(value)
+        assert "[::1]:8188" in str(excinfo.value.remediation)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "256.0.0.1:8188",
+            "[zz::1]:8188",
+            "[::1]8188",
+            "[::1]:",
+            "[::1",
+            "-bad.example:8188",
+            "bad-.example:8188",
+            "host_name:8188",
+            "8188:8188",
+        ],
+    )
+    def test_implausible_host_is_refused(self, value: str) -> None:
+        with pytest.raises(ModelGearError):
+            init_cmd.innereye_ui_publish(value)
+
+    def test_rejection_is_a_user_error_with_a_hint(self) -> None:
+        with pytest.raises(ModelGearError) as excinfo:
+            init_cmd.innereye_ui_publish("${BIND_HOST}:8188")
+        assert excinfo.value.code == EXIT_USER_ERROR
+        assert _KEY in str(excinfo.value.remediation)
+
+    def test_init_refuses_rather_than_rendering_a_broken_overlay(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """``--apply`` must FAIL on a bad value, not succeed into an unloadable file."""
+        _patch_detect(monkeypatch)
+        target = tmp_path / "deploy"
+        assert main(["init", str(target), "--apply"]) == 0
+        _env.set_env(target / ".env", _KEY, "${BIND_HOST}:8188")
+        assert main(["init", str(target), "--apply"]) == EXIT_USER_ERROR
+        overlay = target / _compose.SHAPE_OVERLAY
+        assert not overlay.is_file() or "$" not in overlay.read_text(encoding="utf-8")
+
     def test_bare_port_binds_loopback_in_the_overlay(self, tmp_path, monkeypatch) -> None:
         target = _init_with_knob(tmp_path, monkeypatch, "8188")
         assert _overlay(target)["services"][_SERVICE]["ports"] == ["127.0.0.1:8188:8188"]
@@ -205,14 +326,30 @@ class TestBindForms:
 
 
 class TestNotAPort:
-    def test_render_never_parses_the_value_as_an_int(self, monkeypatch) -> None:
-        """``int()`` is never called on the knob — the #272 trap, pinned."""
+    def test_the_knob_never_reaches_the_cli_port_resolver(self, tmp_path, monkeypatch) -> None:
+        """The #272 trap, pinned at the trap itself.
 
-        def _boom(*_args, **_kwargs):  # pragma: no cover - only on failure
-            raise AssertionError("the UI knob must not be parsed into an int")
+        This test used to monkeypatch ``int`` and assert the render path never
+        called it at all. That over-stated the rule: #272 is that ``VLLM_PORT``'s
+        resolver (``_env.parse_port``) rejects docker's ``IP:port`` form, so every
+        verb that resolves a port fails outright if THIS value is ever fed to it.
+        Validating the knob's digits at render time is not that and is safe;
+        routing the value through the port resolver is the actual trap. So the
+        assertion is narrowed to the resolver: no CLI verb, and no part of the
+        render path, may hand ``INNEREYE_UI_PORT``'s value to ``parse_port``.
+        """
+        knob = "100.127.105.72:8188"
+        real_parse_port = _env.parse_port
 
-        monkeypatch.setattr(init_cmd, "int", _boom, raising=False)
-        assert init_cmd.innereye_ui_publish("100.127.105.72:8188") == "100.127.105.72:8188:8188"
+        def _spy(value, source="VLLM_PORT"):
+            if str(value).strip() == knob:
+                raise AssertionError(f"{_KEY} must never reach the port resolver (#272)")
+            return real_parse_port(value, source)
+
+        monkeypatch.setattr(_env, "parse_port", _spy)
+        target = _init_with_knob(tmp_path, monkeypatch, knob)
+        assert main(["status", "--compose-dir", str(target), "--json"]) in (0, 1)
+        assert init_cmd.innereye_ui_publish(knob) == "100.127.105.72:8188:8188"
 
     def test_cli_port_resolution_ignores_the_knob(self, tmp_path, monkeypatch) -> None:
         """Setting the knob does not break any verb that resolves a port."""
@@ -230,7 +367,8 @@ class TestDisclosure:
         text = _ENV_EXAMPLE.read_text(encoding="utf-8")
         start = text.index("INNEREYE_UI_PORT")
         section = text[max(0, start - 2000) : start + 200]
-        assert "/history" in section and "/view" in section
+        assert "/history" in section
+        assert "/view" in section
         assert "no authentication" in section.lower()
         assert "127.0.0.1" in section
 
@@ -238,7 +376,8 @@ class TestDisclosure:
         target = _init_with_knob(tmp_path, monkeypatch, "8188")
         text = (target / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
         assert "no authentication" in text.lower()
-        assert "/history" in text and "/view" in text
+        assert "/history" in text
+        assert "/view" in text
         assert "c36" in text
 
     def test_doc_documents_the_third_exposure(self) -> None:

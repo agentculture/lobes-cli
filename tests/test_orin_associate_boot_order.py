@@ -122,6 +122,7 @@ def test_boot_order_blocks_are_not_read_as_dropped_lobes() -> None:
     text = render_shape_override(resolve_shape("orin-associate"), resolve_profile("orin"))
     parked = _compose.shape_parked_service_keys(text)
     assert "vllm-associate" not in parked
-    assert "vllm-embed" not in parked and "vllm-rerank" not in parked
+    assert "vllm-embed" not in parked
+    assert "vllm-rerank" not in parked
     # The shape genuinely drops the two heavy default lobes; those ARE parked.
     assert {"vllm-primary", "vllm-multimodal"} <= parked
