@@ -223,7 +223,15 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # _config.FEASIBLE_ENV. No `comfyui` service exists yet (that is a later
     # task in the same plan), so `gateway` is again the ONLY service that
     # moved.
-    "gateway": "e07406a3d3f7d4ea4c10a48effa69306b1090bf5abdbbb05448d91b16f8fb39d",
+    #
+    # Recomputed again 2026-09-16 for the /v1/render facade (issue #82, t9):
+    # `gateway` GAINED the two INNEREYE_BASE_URL/INNEREYE_SERVED_NAME
+    # passthrough lines, because build_config now READS them (an
+    # `_optional_backend` like every sibling role) and
+    # tests/test_gateway_env_passthrough_guard.py fails on any key the config
+    # reads that compose does not plumb. Still no `comfyui` service (a later
+    # task), so `gateway` remains the ONLY service that moved.
+    "gateway": "75df1f9561fbd821de5fc2f12afd6b4f229592b148c59f58009c63e0c3c15ae2",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

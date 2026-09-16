@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from lobes.catalog import TIER_ROLE, resolve_tier
-from lobes.gateway._routing import Backend, RoutingTable, tier_aliases
+from lobes.gateway._routing import RENDER_TASK, Backend, RoutingTable, tier_aliases
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
 # sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP). NOTE this is the served-name a
@@ -92,6 +92,15 @@ _DEFAULT_ASSOCIATE = resolve_tier("associate").id
 # It also took over the `minor`/`cheap` capability tier from Qwen/Qwen3.5-4B —
 # see lobes.catalog.TIER_ROLE.
 _DEFAULT_HAND = "LiquidAI/LFM2.5-1.2B-Instruct"
+# The `innereye` render tenant (issue #82) — the ELEVENTH Colleague role. It is
+# NOT a vLLM lane and has no operator-chosen served name: its "model" is the
+# pinned ComfyUI RELEASE, which is why this is a literal rather than a catalog
+# lookup (the tenant deliberately has no SupportedModel entry — it must never
+# appear in `lobes switch`'s plans). Spelled here AND in lobes.roles
+# (`_INNEREYE_MODEL`); tests/test_gateway_render_facade.py pins the two equal,
+# because _peer_served_name resolves a proxied innereye from the roles
+# constant while build_config resolves a local one from this.
+_DEFAULT_INNEREYE = "comfyanonymous/ComfyUI-0.33.2"
 
 # Per-backend "this machine's per-machine profile declares it CANNOT be served
 # AT ALL" signal (issue #92's "advertised implies reachable" extended to the
@@ -919,6 +928,35 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             name_key="MIDDLE_SERVED_NAME",
             default_url="http://vllm-middle:8000",
             default_name=_DEFAULT_MIDDLE,
+        ),
+        # The opt-in `innereye` RENDER tenant — ComfyUI 0.33.2 behind the
+        # gateway's /v1/render facade (issue #82, t9). Wired only when
+        # INNEREYE_BASE_URL is present, which an innereye-hosting deployment
+        # shape renders (spark-innereye; see lobes.profiles.shape_render's
+        # EXTRA_ENV). Absent by default, so every existing deployment's
+        # routing table is unchanged; the unwired backend is also INFEASIBLE
+        # by default (OPT_IN_BACKENDS above), so a render request on a box
+        # that does not host it 404s role_infeasible.
+        #
+        # `task=RENDER_TASK` is load-bearing, not decoration: the render lane
+        # is PATH-routed (/v1/render), exactly as /v1/audio/* is, so its id
+        # must not be reachable through a request's `model` field nor
+        # advertised on /v1/models. See _routing.model_routed_backends, which
+        # is the single place that subtraction happens.
+        #
+        # There is no INNEREYE_SERVED_NAME in any rendered .env and none is
+        # expected — the name is the pinned ComfyUI release, not an operator
+        # choice — but the key is read anyway so the backend follows the same
+        # <PREFIX>_BASE_URL/<PREFIX>_SERVED_NAME convention as every sibling
+        # rather than becoming a special case.
+        _optional_backend(
+            env,
+            name="innereye",
+            url_key="INNEREYE_BASE_URL",
+            name_key="INNEREYE_SERVED_NAME",
+            default_url="http://comfyui:8188",
+            default_name=_DEFAULT_INNEREYE,
+            task=RENDER_TASK,
         ),
         _optional_backend(
             env,

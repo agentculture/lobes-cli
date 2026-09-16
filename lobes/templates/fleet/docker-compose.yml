@@ -1879,6 +1879,18 @@ services:
       # `model=associate` 404s role_infeasible, never a silent fallback.
       - ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}
       - ASSOCIATE_SERVED_NAME=${ASSOCIATE_SERVED_NAME:-}
+      # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
+      # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
+      # opt-in mechanics as muse/worker/associate above: an innereye-hosting
+      # shape renders INNEREYE_BASE_URL, and an empty default leaves the
+      # backend unwired so the render family 404s role_infeasible rather than
+      # half-serving. Passed through here because `_config.build_config` reads
+      # it — see tests/test_gateway_env_passthrough_guard.py, which fails on
+      # any key the config reads that compose does not plumb. The `comfyui`
+      # SERVICE these point at is a separate task on the same plan; this is
+      # only the gateway's reader wiring.
+      - INNEREYE_BASE_URL=${INNEREYE_BASE_URL:-}
+      - INNEREYE_SERVED_NAME=${INNEREYE_SERVED_NAME:-}
       # `hand` gear — the NINTH Colleague role (LFM2.5-1.2B, the fine-tuning
       # base). DEFAULT-ON, unlike muse/worker: at ~2.4 GiB bf16 it co-resides on
       # every supported card, which is the whole point of the role, so it is
