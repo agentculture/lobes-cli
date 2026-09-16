@@ -11,6 +11,12 @@ is covered automatically the moment its TOML lands. Today the cells are:
   lane is the opt-in 31B ``muse`` lobe;
 * ``orin-small``  drops BOTH heavies (``cortex`` AND ``senses``) — its generate
   lane is the opt-in 4B ``minor`` gear;
+* ``spark-innereye`` drops ``cortex`` only (the Qwen primary lives on a peer)
+  and is the first shape to HOST a role the gateway cannot yet reach — the
+  ``innereye`` ComfyUI tenant, whose container and gateway reader are later
+  tasks on issue #82's plan. Its cell assertions therefore say the honest
+  thing: hosted, declared in the env, ``feasible: false``, absent from
+  ``/v1/models``, serving nothing (see ``_HOSTED_BUT_UNWIRED_ROLES``);
 * ``machine-as-brain`` drops no DEFAULT role; since the opt-in core ``muse``
   lobe landed it contributes exactly one cell (``muse`` — like every shape
   that doesn't host it), while its default path stays regression-pinned by the
@@ -104,10 +110,27 @@ _MODEL_ID: dict[str, str] = {
 }
 _MINOR_ID = "Qwen/Qwen3.5-4B"
 
+# `innereye` (issue #82) has no entry in _MODEL_ID above because it is not a
+# vLLM lane and has no operator-chosen served name: the role's model string is
+# the pinned ComfyUI RELEASE, fixed in lobes.roles, not an env knob. Mirrored
+# here (rather than imported) for the same reason every other id above is
+# spelled out: the matrix asserts against a literal so a silent change to the
+# constant shows up as a failing cell.
+_INNEREYE_ID = "comfyanonymous/ComfyUI-0.33.2"
+
 # role -> the (url_key, name_key) env pair that WIRES its gateway backend —
 # mirrors the gateway service's environment block in the fleet compose template
 # (and _config.build_config's _optional_backend keys).
-_WIRE_ENV: dict[str, tuple[str, str]] = {
+#
+# `innereye` is the one core role whose pair has NO served-name half (hence the
+# `str | None`): it is a ComfyUI container, not a vLLM lane, so
+# shape_render.EXTRA_ENV emits a bare `INNEREYE_BASE_URL` and nothing else (see
+# the rendered tests/goldens/shapes/spark-innereye__*.env). That key is what a
+# box on an innereye-hosting shape really gets today; `build_config` does not
+# read it yet (the gateway-side `_optional_backend` reader is a later task on
+# issue #82's plan), which is exactly why a shape that HOSTS innereye still
+# advertises it infeasible below — declared, never half-served (#92).
+_WIRE_ENV: dict[str, tuple[str, str | None]] = {
     "cortex": ("PRIMARY_URL", "PRIMARY_SERVED_NAME"),
     "senses": ("MULTIMODAL_BASE_URL", "MULTIMODAL_SERVED_NAME"),
     "muse": ("MUSE_BASE_URL", "MUSE_SERVED_NAME"),
@@ -116,7 +139,21 @@ _WIRE_ENV: dict[str, tuple[str, str]] = {
     "hand": ("HAND_BASE_URL", "HAND_SERVED_NAME"),
     "embedder": ("EMBED_URL", "EMBED_SERVED_NAME"),
     "reranker": ("RERANK_URL", "RERANK_SERVED_NAME"),
+    "innereye": ("INNEREYE_BASE_URL", None),
 }
+
+# The one core role a shape can HOST while the gateway still, honestly,
+# advertises it infeasible. `innereye`'s compose service (`comfyui`) and the
+# gateway's reader for its base URL are separate, later tasks on issue #82's
+# plan; until both land, `INNEREYE_BASE_URL` is a rendered-but-unread key and
+# `innereye` sits in the gateway's OPT_IN_BACKENDS, whose unwired default is
+# INFEASIBLE. The honesty contract is therefore satisfied in the strict
+# direction (#92: advertised implies reachable): the box declares the tenant
+# in its env, advertises `feasible: false`, omits it from /v1/models, and
+# serves nothing — rather than advertising a render lane that is not there.
+# When the wiring lands, THIS set is what should shrink; a cell asserting a
+# hosted role is feasible must never be relaxed to make it pass.
+_HOSTED_BUT_UNWIRED_ROLES: frozenset[str] = frozenset({"innereye"})
 
 
 def _peer_origin(role: str) -> str:
@@ -244,6 +281,21 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-small", "muse"),
         ("orin-small", "worker"),
         ("orin-small", "associate"),
+        # spark-innereye (issue #268, plan innereye-lobes-hosts-comfyui, t1)
+        # is the "way out" the GB10 card's [[exclusive_roles]] group names: it
+        # hosts the opt-in `innereye` ComfyUI tenant and drops `cortex` to a
+        # peer, because decision c41 forbids the two co-residing on a
+        # unified-memory card. It keeps `senses`, so — unlike thor-muse /
+        # thor-worker / orin-small — it drops exactly ONE default heavy, plus
+        # the three opt-in core generate roles it does not host. `innereye`
+        # itself contributes NO cell: it is not a generate role (it is absent
+        # from TIER_ROLE, so _is_generate_role filters it), and on this shape
+        # it is HOSTED anyway — hosted but, until its container and gateway
+        # reader land, still honestly infeasible (_HOSTED_BUT_UNWIRED_ROLES).
+        ("spark-innereye", "cortex"),
+        ("spark-innereye", "muse"),
+        ("spark-innereye", "worker"),
+        ("spark-innereye", "associate"),
         ("spark-lobe", "senses"),
         ("spark-lobe", "muse"),
         ("spark-lobe", "worker"),
@@ -303,8 +355,14 @@ def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
         backend = ROLE_BACKEND[role]
         if shape.hosts_role(role):
             url_key, name_key = _WIRE_ENV[role]
-            env[url_key] = f"http://vllm-{backend}:8000"
-            env[name_key] = _MODEL_ID[role]
+            if name_key is None:
+                # innereye: the rendered key, verbatim from shape_render's
+                # EXTRA_ENV (and the spark-innereye goldens) — a ComfyUI
+                # origin, not a `vllm-*` service, and no served name.
+                env[url_key] = "http://comfyui:8188"
+            else:
+                env[url_key] = f"http://vllm-{backend}:8000"
+                env[name_key] = _MODEL_ID[role]
         else:
             # A non-hosted OPT-IN core role (muse) renders NO marker on a
             # silent card (see shape_render.compose_profile) — the gateway's
@@ -377,10 +435,21 @@ def test_cell_capabilities_flag_dropped_role_on_gateway_and_cli(shape_name: str,
     assert payload[role]["feasible"] is False
     assert payload[role]["ready"] is False
     assert payload[role]["model"]  # still NAMES what would have served it
-    # Every hosted core role is unaffected (audio roles are always feasible).
+    # Every hosted core role is unaffected (audio roles are always feasible) —
+    # except the hosted-but-unwired ones, which are asserted infeasible on
+    # purpose (see _HOSTED_BUT_UNWIRED_ROLES: innereye's container and gateway
+    # reader are later tasks, so the box must NOT advertise it yet).
     for hosted in CORE_ROLES:
-        if shape.hosts_role(hosted):
-            assert payload[hosted]["feasible"] is True, hosted
+        if not shape.hosts_role(hosted):
+            continue
+        if hosted in _HOSTED_BUT_UNWIRED_ROLES:
+            assert payload[hosted]["feasible"] is False, hosted
+            assert payload[hosted]["ready"] is False, hosted
+            # ...and no endpoint is published for it, so no caller can be
+            # pointed at a lane that does not exist.
+            assert payload[hosted]["endpoint"] == "", hosted
+            continue
+        assert payload[hosted]["feasible"] is True, hosted
     # The CLI's offline registry (`lobes capabilities`) agrees, role for role.
     gateway_registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     cli_registry = role_registry_from_env(env, gateway_url=_GATEWAY_URL)
@@ -400,10 +469,15 @@ def test_cell_v1_models_omits_dropped_role(shape_name: str, role: str) -> None:
     table, _cfg = build_config(_gateway_env(shape))
     ids = {e["id"] for e in list_models_payload(table, _all_ready(table))["data"]}
     assert _MODEL_ID[role] not in ids
-    # Every hosted core role's id IS advertised.
+    # Every hosted core role's id IS advertised...
     for hosted in CORE_ROLES:
-        if shape.hosts_role(hosted):
+        if shape.hosts_role(hosted) and hosted not in _HOSTED_BUT_UNWIRED_ROLES:
             assert _MODEL_ID[hosted] in ids, hosted
+    # ...and a hosted-but-unwired one is NOT: /v1/models is the list a caller
+    # may address, and innereye is neither reachable (no gateway reader yet)
+    # nor an OpenAI chat/pooling model at all — its facade is POST /v1/render.
+    if shape.hosts_role("innereye"):
+        assert _INNEREYE_ID not in ids
 
 
 # ============================================================================
