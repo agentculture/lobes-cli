@@ -221,14 +221,13 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
     if not shape_present:
         return False
     overlay_text = (Path(deploy_dir) / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
-    # The gateway key is subtracted, not treated as dropped: overrides scaffolded
-    # BEFORE #222 also name `gateway` (they carried `depends_on: !reset null` to
-    # clear the base template's edge). Since #222 the base template declares no
-    # gateway `depends_on` and the override stops emitting the block, but an
-    # existing deployment dir keeps its old file until re-scaffolded — so this
-    # subtraction stays for those, and `lobes up gateway` must not be refused on
-    # one of them.
-    dropped = _compose._override_service_keys(overlay_text) - {GATEWAY_SERVICE}
+    # Only the blocks carrying the `shape-dropped` profile marker count as drops.
+    # The override also holds blocks that do NOT park anything: a pre-#222
+    # `gateway: depends_on: !reset null`, the associate-first start-order
+    # reversals (#260), and a `comfyui: ports:` block when INNEREYE_UI_PORT
+    # publishes the ComfyUI UI. Reading mere presence as "dropped" would refuse
+    # `lobes up` for a lane this deployment very much hosts.
+    dropped = _compose.shape_parked_service_keys(overlay_text) - {GATEWAY_SERVICE}
     blocked = sorted(set(services) & dropped)
     if blocked:
         raise ModelGearError(

@@ -144,14 +144,81 @@ explicitly, so the 503 never claims a cold backend it did not observe. This
 covers every buffered round trip: submit, polling, the artifact index,
 cancel and upload.
 
-**No reader should conclude the native ComfyUI surface is reachable
-off-box.** It categorically is not: the `comfyui` service declares
+**By default the native ComfyUI surface is not reachable off-box — and that
+default is now defeasible.** As shipped, the `comfyui` service declares
 `expose: ["8188"]` with **no** `ports:` key, so port 8188 answers only to
 other containers on the compose network — never to the host, and never to
 anything outside the box. The isolation property is the absent port
 publication, not a bind address (see "Rollback", below, for why the
 scaffolded compose service binds `0.0.0.0` inside the container rather than
-copying the venv script's `--listen 127.0.0.1`).
+copying the venv script's `--listen 127.0.0.1`). An operator can give that
+property up on purpose, with one knob — the third exposure, next. Nothing
+else in this doc's outward story changes: the gateway still publishes only
+the six `/v1/render` spellings, whether or not the knob is set.
+
+### The third exposure — `INNEREYE_UI_PORT`, opt-in, default off
+
+`INNEREYE_UI_PORT` in the deployment's `.env` publishes **ComfyUI's own web
+UI** — and with it ComfyUI's whole native API — on a host address. Unset (the
+shipped state; `env.example` carries it commented out) nothing is published
+and the rendered deployment is byte-identical to one from before the knob
+existed.
+
+**What it gives up, stated plainly.** ComfyUI ships **no authentication of
+any kind** (innereye challenge finding `c36`) — that is *why* the service
+publishes nothing by default, and there is no password to add instead. The
+absent port publication **is** the access control. Anyone who can reach the
+published address can:
+
+- **spend the GPU** — submit any workflow, for as long as they like;
+- **read every prior prompt** — `GET /history` returns the whole queue
+  history, including workflows submitted through the `/v1/render` facade by
+  other callers;
+- **download every prior output** — `GET /view` serves any file in the
+  output tree by name.
+
+None of those three are reachable through the job-scoped facade: it has no
+outward spelling of `/history` or `/queue`, mints its own job ids, and serves
+artifacts only per-job. Setting this knob is therefore not "the same surface
+with a port on it" — it is a strictly larger surface than anything the
+facade exposes.
+
+**Two forms, loopback by default.**
+
+| value | rendered bind |
+|---|---|
+| `INNEREYE_UI_PORT=8188` | `127.0.0.1:8188:8188` — **loopback only** |
+| `INNEREYE_UI_PORT=100.127.105.72:8188` | `100.127.105.72:8188:8188` — that interface only |
+
+A bare port number binds loopback, never `0.0.0.0`. A wider bind (a LAN
+address, a tailnet address, or `0.0.0.0` itself) has to be typed as an
+explicit interface, because a box with a home-WiFi address as well as a
+tailnet one would otherwise publish an unauthenticated ComfyUI to every
+device on the LAN by way of a value that looked like it only named a port.
+Reaching a loopback-bound UI from elsewhere is then an `ssh -L` tunnel — an
+authenticated channel, chosen deliberately, rather than an open port.
+
+**Rendered by lobes, not hand-written.** The knob is read at render time and
+emitted as a `ports:` entry into the GENERATED `docker-compose.shape.yml`,
+carrying the same warning as a comment. Compose has no conditional-block
+syntax — no `${VAR}` in the packaged template can make a `ports:` key
+*absent* — so a generated override is the only way an opt-in port can exist
+without a hand-edited `docker-compose.override.yml` that no re-render would
+survive (the 2026-08-25 Spark incident; see `docs/deployment-lock.md`). Set
+it in `.env`, then re-run `lobes init [--shape …] --apply`; the dry run and
+the `--json` payload both name the address that would be published. Clearing
+the knob and re-rendering removes the publication again.
+
+That file's other blocks park a dropped lobe in the inert `shape-dropped`
+profile; this one does the opposite, so lobes reads the **profile marker**,
+not the mere presence of a service block, when it asks which lanes a shape
+drops — a published UI is never mistaken for a dropped `innereye`.
+
+**Never parsed as a port number.** The value is consumed only to render that
+one compose line; no CLI verb resolves it into an `int`. That is deliberate:
+`VLLM_PORT` *is* parsed, its parser rejects docker's `IP:port` form, and
+every verb that resolves it then fails outright (issue #272). This knob does
+not inherit that bug because it never takes that path.
 
 ## Declaration, not metering
 

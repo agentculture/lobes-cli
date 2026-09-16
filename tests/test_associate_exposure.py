@@ -182,6 +182,9 @@ class TestTheRenderedDeploymentAddsNoPort:
         # tag, which no stdlib/PyYAML safe loader knows. The assertion is a
         # plain absence, so text is the honest instrument here.
         overlay = (tmp_path / _compose.SHAPE_OVERLAY).read_text(encoding="utf-8")
+        # This deployment sets no INNEREYE_UI_PORT — the ONE knob that can put a
+        # `ports:` key in this file, opt-in and default off (see
+        # tests/test_innereye_ui_port.py). Nothing about `associate` can.
         assert "ports:" not in overlay, "the shape overlay must never publish a host port"
         assert "network_mode" not in overlay
 

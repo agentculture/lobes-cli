@@ -750,11 +750,17 @@ def _dropped_role_prefixes(deploy_dir: Path) -> tuple[str, ...]:
     Read back from the generated ``docker-compose.shape.yml`` (the single
     source of truth for the drop decision) so the staleness diff never demands
     knobs for a lobe this box deliberately does not host.
+
+    Only the PARKED blocks count (:func:`lobes.runtime._compose.shape_parked_service_keys`):
+    the same file also carries start-order reversals and, when
+    ``INNEREYE_UI_PORT`` is set, a ``comfyui`` block that publishes the lane
+    rather than dropping it — reading those as drops would silently stop
+    checking a hosted role's knobs.
     """
     path = deploy_dir / _compose.SHAPE_OVERLAY
     if not path.is_file():
         return ()
-    services = _compose._override_service_keys(path.read_text(encoding="utf-8")) - {"gateway"}
+    services = _compose.shape_parked_service_keys(path.read_text(encoding="utf-8")) - {"gateway"}
     service_to_role = {service: role for role, service in ROLE_SERVICE.items()}
     return tuple(
         ROLE_ENV_PREFIX[service_to_role[s]] + "_"

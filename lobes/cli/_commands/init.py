@@ -146,6 +146,112 @@ DEFAULT_SHAPE = "machine-as-brain"
 # rather than merely be flagged off in .env (brain-shapes t4b, issue #113).
 SHAPE_DROPPED_PROFILE = "shape-dropped"
 
+# --- INNEREYE_UI_PORT: the opt-in publication of ComfyUI's OWN web UI --------
+#
+# The `comfyui` service ships `expose: ["8188"]` with NO `ports:` key, because
+# ComfyUI ships no authentication of any kind (innereye challenge finding c36).
+# This knob lets an operator give that property up DELIBERATELY. Default OFF:
+# unset (the shipped state — env.example carries it commented out) renders
+# exactly what it rendered before the knob existed.
+#
+# It is rendered into the GENERATED shape override rather than the packaged
+# compose template because compose has no conditional-block syntax: no ${VAR}
+# in the template can make a `ports:` key ABSENT, and a published-but-empty
+# port is not a thing. This is the same reason the GPU-access overrides exist.
+#
+# It is NEVER parsed into an int (issue #272). `VLLM_PORT` is parsed, its
+# parser rejects docker's `IP:port` form, and every CLI verb that resolves the
+# port then fails outright. This knob is consumed at RENDER time only — to emit
+# one compose `ports:` entry — and the CLI never probes ComfyUI's UI port, so
+# it stays an opaque string. Keep it that way.
+INNEREYE_UI_PORT_KEY = "INNEREYE_UI_PORT"
+_INNEREYE_UI_SERVICE = "comfyui"
+_INNEREYE_UI_CONTAINER_PORT = "8188"
+# The bind an operator gets when they type only a port number. Loopback, never
+# 0.0.0.0: a box with a LAN address as well as a tailnet one would otherwise
+# publish an unauthenticated ComfyUI to every device on the home WiFi. A wider
+# bind has to be typed as an explicit interface.
+_INNEREYE_UI_DEFAULT_HOST = "127.0.0.1"
+# Characters that would let a .env value break out of the one YAML scalar this
+# renders into. Not a port validator (see #272 above) — a shape guard.
+_INNEREYE_UI_FORBIDDEN = set(" \t\r\n\"'#")
+
+
+def innereye_ui_publish(value: str | None) -> str | None:
+    """The compose ``ports:`` entry for ``INNEREYE_UI_PORT``, or ``None`` when off.
+
+    Two accepted forms, both ending at the container's fixed ``8188``:
+
+    * ``8188`` → ``127.0.0.1:8188:8188`` — a bare port binds LOOPBACK.
+    * ``100.127.105.72:8188`` → ``100.127.105.72:8188:8188`` — an explicit
+      interface binds exactly that interface (``0.0.0.0`` included, if the
+      operator types it).
+
+    The value is never converted to an int; it is split on its LAST ``:`` so an
+    IPv6 literal (``[::1]:8188``) survives, and otherwise passed through
+    verbatim. Unset / blank is off.
+    """
+    if value is None:
+        return None
+    spec = value.strip()
+    if not spec:
+        return None
+    if _INNEREYE_UI_FORBIDDEN & set(spec):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"invalid {INNEREYE_UI_PORT_KEY}={value!r}: not a port or interface:port",
+            remediation=(
+                f"set {INNEREYE_UI_PORT_KEY}=8188 (binds {_INNEREYE_UI_DEFAULT_HOST} only) "
+                f"or {INNEREYE_UI_PORT_KEY}=<interface>:8188 for a wider bind"
+            ),
+        )
+    host, sep, port = spec.rpartition(":")
+    if sep and not (host and port):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"invalid {INNEREYE_UI_PORT_KEY}={value!r}: empty interface or port",
+            remediation=(
+                f"set {INNEREYE_UI_PORT_KEY}=8188 (binds {_INNEREYE_UI_DEFAULT_HOST} only) "
+                f"or {INNEREYE_UI_PORT_KEY}=<interface>:8188 for a wider bind"
+            ),
+        )
+    if not sep:
+        host, port = _INNEREYE_UI_DEFAULT_HOST, spec
+    return f"{host}:{port}:{_INNEREYE_UI_CONTAINER_PORT}"
+
+
+def _innereye_ui_value(target: Path) -> str | None:
+    """The deployment's own ``INNEREYE_UI_PORT``, read from its ``.env``.
+
+    Operator-typed state, like ``COMPOSE_PROFILES`` — never a card/shape
+    decision, so it is read back out of ``.env`` rather than rendered into it.
+    A deployment dir with no ``.env`` yet (the first-ever scaffold, before the
+    merge pass) has no knob, hence no publication.
+    """
+    env_path = target / _compose.ENV_FILE
+    if not env_path.is_file():
+        return None
+    return _env.read_env_file(env_path).get(INNEREYE_UI_PORT_KEY)
+
+
+def _innereye_ui_lines(publish: str | None) -> list[str]:
+    """The generated ``comfyui: ports:`` block, or no lines at all when off."""
+    if publish is None:
+        return []
+    return [
+        "  # ComfyUI's OWN web UI, published because this deployment's .env sets",
+        f"  # {INNEREYE_UI_PORT_KEY}. WHAT THIS GIVES UP: ComfyUI ships no authentication",
+        "  # of any kind (innereye challenge finding c36), which is why the base",
+        "  # template publishes no host port at all. Anyone who can",
+        "  # reach this address can spend the GPU, read EVERY prior prompt via GET",
+        "  # /history and download EVERY prior output via GET /view — none of which",
+        "  # the job-scoped /v1/render facade exposes. A bare port number binds",
+        f"  # {_INNEREYE_UI_DEFAULT_HOST} only; the interface below is what the knob asked for.",
+        f"  {_INNEREYE_UI_SERVICE}:",
+        "    ports:",
+        f'      - "{publish}"',
+    ]
+
 
 def _shape_dropped_services(shape: Shape, profile: Profile) -> list[str]:
     """The base-fleet core compose SERVICES a (shape, card) pair must NOT run, sorted.
@@ -185,11 +291,14 @@ def _shape_dropped_services(shape: Shape, profile: Profile) -> list[str]:
     return sorted(dropped)
 
 
-def render_shape_override(shape: Shape, profile: Profile) -> str | None:
+def render_shape_override(
+    shape: Shape, profile: Profile, *, ui_port: str | None = None
+) -> str | None:
     """The ``docker-compose.shape.yml`` override text for a (shape, card) pair.
 
-    ``None`` when the shape drops no core role (machine-as-brain / bare init) — the
-    caller writes no file, keeping the scaffold byte-identical to before this flag.
+    ``None`` when the shape drops no core role (machine-as-brain / bare init) AND
+    the deployment publishes no ComfyUI UI port — the caller writes no file,
+    keeping the scaffold byte-identical to before either knob existed.
     Otherwise a docker-compose *override* (mirrors ``docker-compose.audio.yml``):
     each dropped core service is parked in the inert :data:`SHAPE_DROPPED_PROFILE`.
 
@@ -203,7 +312,8 @@ def render_shape_override(shape: Shape, profile: Profile) -> str | None:
     ``lobes init --shape ... --apply`` rewrites the file either way.
     """
     dropped = _shape_dropped_services(shape, profile)
-    if not dropped:
+    publish = innereye_ui_publish(ui_port)
+    if not dropped and publish is None:
         return None
     lines = [
         "# lobes deployment-SHAPE override — GENERATED by "
@@ -225,12 +335,22 @@ def render_shape_override(shape: Shape, profile: Profile) -> str | None:
         "# such dependency at all — an unconditional one meant ANY gateway restart",
         "# started every heavy lane, including one this box declares infeasible — so",
         "# there is nothing left here to reset.",
+        "#",
+        "# This file is also where the deployment's OWN opt-in compose edits are",
+        f"# rendered — today exactly one, the {INNEREYE_UI_PORT_KEY} publication of",
+        "# ComfyUI's web UI (see the block below when present). Compose cannot",
+        "# conditionally omit a key, so an opt-in host-port publication can only",
+        "# come from a generated override like this one. The two kinds of block are NOT",
+        f'# interchangeable: only a `profiles: ["{SHAPE_DROPPED_PROFILE}"]` block parks a',
+        "# service, and that marker is what lobes reads back (see",
+        "# lobes/runtime/_compose.py's shape_parked_service_keys).",
         "services:",
     ]
     for service in dropped:
         lines.append(f"  {service}:")
         lines.append(f'    profiles: ["{SHAPE_DROPPED_PROFILE}"]')
     lines.extend(_associate_first_boot_lines(shape, profile))
+    lines.extend(_innereye_ui_lines(publish))
     return "\n".join(lines) + "\n"
 
 
@@ -289,7 +409,7 @@ def _sync_shape_override(target: Path, shape: Shape, profile: Profile) -> None:
     (brain-shapes t4b, criterion 3).
     """
     override_path = target / _compose.SHAPE_OVERLAY
-    text = render_shape_override(shape, profile)
+    text = render_shape_override(shape, profile, ui_port=_innereye_ui_value(target))
     if text is None:
         if override_path.exists():
             override_path.unlink()
@@ -300,37 +420,54 @@ def _sync_shape_override(target: Path, shape: Shape, profile: Profile) -> None:
 def _shape_override_plan(target: Path, shape: Shape, profile: Profile) -> dict:
     """What ``--apply`` would do to ``docker-compose.shape.yml`` — for the dry-run plan.
 
-    ``action`` is ``write`` (shape drops a lobe), ``remove`` (a stale override is on
-    disk but the selected shape drops nothing), or ``none``.
+    ``action`` is ``write`` (shape drops a lobe, or the deployment publishes the
+    ComfyUI UI), ``remove`` (a stale override is on disk but the selected shape
+    drops nothing and nothing is published), or ``none``.
     """
     dropped = _shape_dropped_services(shape, profile)
-    if dropped:
-        return {"file": _compose.SHAPE_OVERLAY, "action": "write", "disables": dropped}
+    publish = innereye_ui_publish(_innereye_ui_value(target))
+    base = {"file": _compose.SHAPE_OVERLAY, "disables": dropped, "innereye_ui": publish}
+    if dropped or publish is not None:
+        return {**base, "action": "write"}
     if (target / _compose.SHAPE_OVERLAY).exists():
-        return {"file": _compose.SHAPE_OVERLAY, "action": "remove", "disables": []}
-    return {"file": _compose.SHAPE_OVERLAY, "action": "none", "disables": []}
+        return {**base, "action": "remove", "disables": []}
+    return {**base, "action": "none", "disables": []}
 
 
 def _shape_override_plan_line(plan: dict) -> str | None:
     """A human dry-run line for the shape-override plan, or ``None`` when nothing changes."""
     if plan["action"] == "write":
-        return (
-            f"  {plan['file']} (parks {', '.join(plan['disables'])} in the inert "
-            f"'{SHAPE_DROPPED_PROFILE}' profile)"
-        )
+        what = []
+        if plan["disables"]:
+            what.append(
+                f"parks {', '.join(plan['disables'])} in the inert "
+                f"'{SHAPE_DROPPED_PROFILE}' profile"
+            )
+        if plan["innereye_ui"]:
+            what.append(
+                f"PUBLISHES ComfyUI's unauthenticated web UI on {plan['innereye_ui']} "
+                f"({INNEREYE_UI_PORT_KEY})"
+            )
+        return f"  {plan['file']} ({'; '.join(what)})"
     if plan["action"] == "remove":
         return f"  {plan['file']} (stale — would be REMOVED: this shape drops no lobe)"
     return None
 
 
-def _shape_override_written(shape: Shape, profile: Profile) -> dict:
+def _shape_override_written(target: Path, shape: Shape, profile: Profile) -> dict:
     """Post-``--apply`` shape-override state, for the JSON payload.
 
     ``_sync_shape_override`` has just run, so ``written`` (True iff the pair parks
-    a core service) matches the file now on disk.
+    a core service or publishes the ComfyUI UI) matches the file now on disk.
     """
     dropped = _shape_dropped_services(shape, profile)
-    return {"file": _compose.SHAPE_OVERLAY, "written": bool(dropped), "disables": dropped}
+    publish = innereye_ui_publish(_innereye_ui_value(target))
+    return {
+        "file": _compose.SHAPE_OVERLAY,
+        "written": bool(dropped) or publish is not None,
+        "disables": dropped,
+        "innereye_ui": publish,
+    }
 
 
 # --- csv-mode GPU access (the card's gpu_access declaration) -----------------
@@ -891,12 +1028,12 @@ def _apply_payload(
         payload["profile_forced"] = bool(profile_name)
         payload["detected_card"] = card.resolved
         payload["shape"] = shape.name
-        payload["shape_override"] = _shape_override_written(shape, profile)
+        payload["shape_override"] = _shape_override_written(target, shape, profile)
         payload["gpu_override"] = _gpu_override_written(profile)
     return payload
 
 
-def _override_note(shape: Shape | None, profile) -> str:
+def _override_note(target: Path, shape: Shape | None, profile) -> str:
     """The human report's lines for the two GENERATED compose overlays.
 
     Fleet-only; the caller guards on that. Empty when the shape drops nothing
@@ -908,6 +1045,13 @@ def _override_note(shape: Shape | None, profile) -> str:
         note = (
             f"\n  {_compose.SHAPE_OVERLAY} (drops {', '.join(dropped)}: "
             f"parked in the inert '{SHAPE_DROPPED_PROFILE}' profile)"
+        )
+    publish = innereye_ui_publish(_innereye_ui_value(target))
+    if publish is not None:
+        note += (
+            f"\n  {_compose.SHAPE_OVERLAY} ({INNEREYE_UI_PORT_KEY}: PUBLISHES ComfyUI's "
+            f"web UI on {publish} — ComfyUI has NO authentication; anyone who can "
+            "reach it can spend the GPU and read every prior prompt and output)"
         )
     if profile.gpu_access == GPU_ACCESS_RUNTIME:
         note += (
@@ -964,7 +1108,7 @@ def _emit_apply(
         else "docker login nvcr.io && lobes serve --apply"
     )
     profile_note = f"\n>> profile: {profile.name}\n>> shape: {shape.name}" if fleet else ""
-    override_note = _override_note(shape, profile) if fleet else ""
+    override_note = _override_note(target, shape, profile) if fleet else ""
     emit_result(
         f">> scaffolded {target}:\n"
         + "\n".join(f"  {p.name}" for p in written)
