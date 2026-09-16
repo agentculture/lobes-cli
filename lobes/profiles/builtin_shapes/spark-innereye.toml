@@ -1,0 +1,25 @@
+# The DGX Spark half of the innereye/cortex co-residency clash (issue #268,
+# plan innereye-lobes-hosts-comfyui, t1) -- the "way out" builtin/spark.toml's
+# `[[exclusive_roles]]` group names in its own `shapes` list.
+#
+# v1 never co-resides `cortex` and `innereye` (decision c41): the bare-venv
+# measurement quoted in builtin/spark.toml's exclusive_roles `reason` found
+# only 7788 MB of GPU RAM headroom for comfy-aimdo against a 124611 MB total
+# unified pool -- not enough margin to share the box with a co-resident vLLM
+# `cortex` lane (gpu_mem_util 0.30-0.58 of that SAME pool). This shape is the
+# spark-side resolution: keep `innereye` local, drop `cortex` to a peer.
+#
+# Structurally this is `spark-lobe`/`orin-lobe` for THIS clash: everything
+# machine-as-brain would host on this card MINUS `cortex`, PLUS `innereye`.
+# No `[overrides]` table -- t1's scope is the declaration and the guard only
+# ("pure card-profile data plus the co-residency test"); a reclaimed budget
+# for the surviving roles (if any is warranted once innereye actually runs,
+# t2's job -- "the aimdo observations moved to t2, which is where a container
+# actually exists to observe") is deliberately NOT decided here.
+name = "spark-innereye"
+summary = "DGX Spark innereye-lobe (DECLARED, UNVALIDATED -- t2 wires the real container) -- ComfyUI/innereye + senses + hand + embedder + reranker + audio, no cortex"
+
+# `hand` is hosted by every built-in shape (see machine-as-brain.toml's own
+# comment) -- its ~2.4 GiB footprint and per-card budget are unaffected by
+# which heavy lobe this shape drops.
+hosts = ["senses", "innereye", "hand", "embedder", "reranker", "stt", "tts"]

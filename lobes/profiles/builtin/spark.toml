@@ -93,3 +93,36 @@ feasible = true
 model = "Qwen/Qwen3-Reranker-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+
+# --- co-residency: cortex vs innereye (issue #268, plan innereye-lobes-hosts-comfyui, t1) --
+#
+# `innereye` is the ComfyUI tenant this card can host -- and, per decision c41,
+# v1 NEVER co-resides it with `cortex`. This is a co-residency fact, not a
+# per-role feasibility one (mirrors builtin/orin.toml's own
+# `[[exclusive_roles]]` block exactly -- see that file and
+# lobes/profiles/schema.py's `ExclusiveRoles` docstring for the mechanism):
+# both roles are individually servable on the GB10, the board just cannot run
+# both processes at once without contending for the SAME unified pool.
+#
+# MEASURED bare-venv (c41; not yet a container -- the actual innereye service
+# is t2's job, "where a container actually exists to observe"): running
+# comfy-aimdo directly in a bare venv on this GB10 left a GPU RAM headroom of
+# only 7788 MB with "Enabled pinned memory 112149.0" pinned, against a card
+# that reports "Total VRAM 124611 MB, total RAM 124611 MB" -- i.e. VRAM total
+# EQUALS RAM total, because the GB10 is UNIFIED memory. There is exactly one
+# pool here, not two: comfy-aimdo's own reported headroom is what is left of
+# the WHOLE 124611 MB after everything else resident (including a co-resident
+# cortex lane, at gpu_mem_util 0.30-0.58 of that same pool) has taken its
+# share -- so cortex and innereye are not two independent budgets that happen
+# to summed over-commit, they are two claims on one number.
+#
+# `shapes` names the way out: `spark-innereye` hosts `innereye` and drops
+# `cortex` instead of co-residing it (see
+# lobes/profiles/builtin_shapes/spark-innereye.toml). A bare `lobes init` on
+# this card therefore REFUSES once `innereye` is a hostable role (naming this
+# reason and `spark-innereye`); `lobes init --shape machine-as-brain` (typed
+# explicitly) still warns and proceeds, matching `--profile`'s own precedent.
+[[exclusive_roles]]
+roles = ["cortex", "innereye"]
+shapes = ["spark-innereye"]
+reason = "MEASURED bare-venv (c41): comfy-aimdo GPU RAM headroom 7788 MB, \"Enabled pinned memory 112149.0\", against \"Total VRAM 124611 MB, total RAM 124611 MB\" on the GB10 -- a unified-memory card where VRAM total EQUALS RAM total, so cortex and innereye contend for the SAME pool, not two separate ones"
