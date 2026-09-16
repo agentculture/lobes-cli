@@ -588,8 +588,16 @@ def open_upstream(
     *,
     connect_timeout: float,
     read_timeout: float,
+    method: str = "POST",
 ) -> _Upstream:
-    """POST ``body`` to ``backend`` and return the opened response.
+    """Send ``body`` to ``backend`` with ``method`` and return the opened response.
+
+    ``method`` defaults to ``"POST"``, which is what every caller before the
+    innereye work passed implicitly — a default, not a new decision at those
+    call sites, so their behaviour is byte-identical. It is keyword-only, so no
+    positional call site can be re-read by accident. A ``"GET"`` call takes the
+    same socket treatment (below) and the same failure contract; the body is
+    simply empty.
 
     Uses a short ``connect_timeout`` for establishing the socket (so a down
     backend fails over fast) then a long ``read_timeout`` for the response (a
@@ -614,7 +622,7 @@ def open_upstream(
         conn.connect()
         if conn.sock is not None:
             conn.sock.settimeout(read_timeout)
-        conn.request("POST", path, body=body, headers=dict(headers))
+        conn.request(method, path, body=body, headers=dict(headers))
         resp = conn.getresponse()
     except (OSError, http.client.HTTPException, ValueError) as exc:
         if conn is not None:
@@ -4461,7 +4469,31 @@ class _Handler(BaseHTTPRequestHandler):
         elif route == "/capabilities":
             self._get_capabilities(mesh_snapshot=mesh_snapshot)
         else:
-            self._send_json(404, _not_found_body(route))
+            # The GET-side upstream seam. Every branch above answers from a
+            # hand-built body and opens no socket; this is the one place a GET
+            # may open an upstream and hand the bytes back through the SAME
+            # delivery path POST uses (`_deliver` → `_relay_streaming`), so a
+            # binary body is re-chunked verbatim rather than parsed. It is a
+            # SEAM, not a route: the shipped default returns None and the 404
+            # below is reached exactly as before.
+            relayed = self._dispatch_get_upstream(route, mesh_snapshot=mesh_snapshot)
+            if relayed is not None:
+                self._deliver(relayed)
+            else:
+                self._send_json(404, _not_found_body(route))
+
+    def _dispatch_get_upstream(
+        self, route: str, *, mesh_snapshot: RoutingSnapshot | None = None
+    ) -> GatewayResponse | None:
+        """Build a relayable response for a GET ``route``, or None to 404.
+
+        The default implementation answers None for every route, which keeps
+        `do_GET` byte-identical to its pre-seam behaviour. A route family that
+        needs to stream arbitrary upstream bytes out of a GET overrides this
+        (call :func:`open_upstream` with ``method="GET"`` and return a
+        ``GatewayResponse`` carrying ``upstream=`` and ``streaming=True``).
+        """
+        return None
 
     # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
     def _handle_realtime(
@@ -4783,6 +4815,17 @@ class _Handler(BaseHTTPRequestHandler):
         # a mid-relay client disconnect release exactly as a clean completion
         # does — a leaked counter would make this box look permanently full
         # with no way back.
+        self._deliver(resp)
+
+    # --- relay helpers ---
+    def _deliver(self, resp: GatewayResponse) -> None:
+        """Send a built :class:`GatewayResponse`: a gateway body, or a relay.
+
+        Shared by :meth:`do_POST` and :meth:`do_GET` so BOTH verbs get the same
+        delivery contract — the same buffered/streaming choice, the same
+        upstream close, and the same `release` in a `finally`. Method-agnostic
+        by construction: nothing here reads `self.command`.
+        """
         try:
             if resp.upstream is None:
                 self._send_simple(resp.status, resp.headers, resp.body or b"")
@@ -4797,7 +4840,6 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             resp.release()
 
-    # --- relay helpers ---
     def _read_body(self) -> bytes:
         cl = self.headers.get("Content-Length")
         if cl is not None:
