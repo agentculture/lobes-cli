@@ -95,6 +95,11 @@ ROLE_SERVICE: dict[str, str] = {
     "reranker": "vllm-rerank",
     "stt": "stt",
     "tts": "chatterbox",
+    # `innereye` (issue #82) — the ComfyUI render tenant. `compose_profile`
+    # iterates this table unconditionally, whether or not the card hosts the
+    # role, so the eleventh role needs an entry here from the render that
+    # merely KNOWS the name. Mirrors lobes.cli._commands.up.ROLE_SERVICE.
+    "innereye": "comfyui",
     "minor": "vllm-minor",
 }
 
@@ -158,11 +163,29 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "associate": {
         "ASSOCIATE_BASE_URL": "http://vllm-associate:8000",
     },
+    # `innereye` (issue #82) mirrors the three above STRUCTURALLY, and is
+    # registered here for the same all-or-nothing reason every other
+    # role-keyed table is: `shape_env` indexes BOTH this table and
+    # OPT_IN_CORE_COMPOSE_PROFILE below with a bare `[role]` for every
+    # OPT_IN_CORE_ROLES member a shape hosts, so a name present in that tuple
+    # but absent here is a KeyError the moment an innereye-hosting shape
+    # exists.
+    #
+    # DECLARATION ONLY, and honestly incomplete until the rest of the plan
+    # lands: the `comfyui` service, its `innereye` compose-profile gate, and
+    # the gateway-side reader for INNEREYE_BASE_URL (an `_optional_backend`
+    # in lobes/gateway/_config.py) are all separate tasks. Until they land
+    # this pair is inert — no built-in shape hosts the role, so nothing
+    # indexes it and no golden renders it.
+    "innereye": {
+        "INNEREYE_BASE_URL": "http://comfyui:8188",
+    },
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
     "worker": "worker",
     "associate": "associate",
+    "innereye": "innereye",
 }
 
 

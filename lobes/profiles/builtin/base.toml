@@ -96,3 +96,16 @@ feasible = true
 model = "Qwen/Qwen3-Reranker-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+
+# The opt-in `innereye` render tenant (ComfyUI, issue #82) is vetoed on an
+# unrecognised card for the same reason as muse/worker/associate: this
+# profile's whole premise is that a first boot on unknown hardware must not
+# OOM, and a render backend draws from the very same card budget the gears
+# do. An innereye-hosting shape rendered against THIS card stays
+# innereye-less; write a custom card profile to override.
+#
+# NOTE this block carries `feasible` and NOTHING else, on purpose: ComfyUI is
+# not a vLLM lane, so it has no gpu_mem_util fraction, no max_model_len and no
+# served name to declare here.
+[roles.innereye]
+feasible = false
