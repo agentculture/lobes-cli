@@ -588,8 +588,16 @@ def open_upstream(
     *,
     connect_timeout: float,
     read_timeout: float,
+    method: str = "POST",
 ) -> _Upstream:
-    """POST ``body`` to ``backend`` and return the opened response.
+    """Send ``body`` to ``backend`` with ``method`` and return the opened response.
+
+    ``method`` defaults to ``"POST"``, which is what every caller before the
+    innereye work passed implicitly — a default, not a new decision at those
+    call sites, so their behaviour is byte-identical. It is keyword-only, so no
+    positional call site can be re-read by accident. A ``"GET"`` call takes the
+    same socket treatment (below) and the same failure contract; the body is
+    simply empty.
 
     Uses a short ``connect_timeout`` for establishing the socket (so a down
     backend fails over fast) then a long ``read_timeout`` for the response (a
@@ -614,7 +622,7 @@ def open_upstream(
         conn.connect()
         if conn.sock is not None:
             conn.sock.settimeout(read_timeout)
-        conn.request("POST", path, body=body, headers=dict(headers))
+        conn.request(method, path, body=body, headers=dict(headers))
         resp = conn.getresponse()
     except (OSError, http.client.HTTPException, ValueError) as exc:
         if conn is not None:
@@ -1037,6 +1045,12 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "rerank": "RERANK_SERVED_NAME",
 }
 
+# Backend names that resolve their served id from a hardcoded constant rather
+# than from :data:`_PEER_SERVED_NAME_ENV` above or :data:`_PEER_ROLE_HINT`
+# below: the two audio sidecars and the innereye render tenant, none of which
+# is a switchable catalog gear. See _peer_served_name's early return.
+_FIXED_SIDECAR_BACKENDS: frozenset[str] = frozenset({"stt", "tts", "innereye"})
+
 # Backend name → the catalog ``role_hint`` of its canonical model — the same
 # fallback lobes.roles uses to NAME an unwired role's model.
 #
@@ -1053,8 +1067,8 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
 # missing from these two, so its proxy knob did nothing on a box that only
 # REACHES worker (no ``WORKER_BASE_URL``, hence no wired Backend to resolve
 # off).
-# ``stt``/``tts`` are proxyable too but resolve via _peer_served_name's
-# fixed-sidecar early return, not these tables.
+# ``stt``/``tts``/``innereye`` are proxyable too but resolve via
+# _peer_served_name's fixed-sidecar early return, not these tables.
 # tests/test_gateway_proxy.py::test_every_proxyable_role_resolves_a_served_name
 # is the standing guard.
 _PEER_ROLE_HINT: dict[str, str] = {
@@ -1095,14 +1109,16 @@ def _peer_served_name(table: RoutingTable, name: str, env: Mapping[str, str]) ->
     simply never advertises ready, and a forward naming it surfaces the peer's
     own honest 404.
     """
-    if name in ("stt", "tts"):
-        # First-class audio roles (issue #129): fixed sidecar checkpoints, not
-        # catalog gears — the id is the SAME constant lobes.roles advertises on
-        # /capabilities (lazy import: matches capabilities_payload's own
-        # deferred lobes.roles import below).
-        from lobes.roles import _STT_MODEL, _TTS_MODEL
+    if name in _FIXED_SIDECAR_BACKENDS:
+        # Fixed non-catalog tenants: the two audio sidecars (issue #129) and
+        # the innereye ComfyUI render tenant (issue #82). None has a
+        # SupportedModel entry, so neither _PEER_SERVED_NAME_ENV nor
+        # _PEER_ROLE_HINT can resolve them — the id is the SAME constant
+        # lobes.roles advertises on /capabilities (lazy import: matches
+        # capabilities_payload's own deferred lobes.roles import below).
+        from lobes.roles import _INNEREYE_MODEL, _STT_MODEL, _TTS_MODEL
 
-        return _STT_MODEL if name == "stt" else _TTS_MODEL
+        return {"stt": _STT_MODEL, "tts": _TTS_MODEL, "innereye": _INNEREYE_MODEL}[name]
     wired = next((b.served_name for b in table.backends if b.name == name), None)
     if wired:
         return wired
@@ -4461,7 +4477,31 @@ class _Handler(BaseHTTPRequestHandler):
         elif route == "/capabilities":
             self._get_capabilities(mesh_snapshot=mesh_snapshot)
         else:
-            self._send_json(404, _not_found_body(route))
+            # The GET-side upstream seam. Every branch above answers from a
+            # hand-built body and opens no socket; this is the one place a GET
+            # may open an upstream and hand the bytes back through the SAME
+            # delivery path POST uses (`_deliver` → `_relay_streaming`), so a
+            # binary body is re-chunked verbatim rather than parsed. It is a
+            # SEAM, not a route: the shipped default returns None and the 404
+            # below is reached exactly as before.
+            relayed = self._dispatch_get_upstream(route, mesh_snapshot=mesh_snapshot)
+            if relayed is not None:
+                self._deliver(relayed)
+            else:
+                self._send_json(404, _not_found_body(route))
+
+    def _dispatch_get_upstream(
+        self, route: str, *, mesh_snapshot: RoutingSnapshot | None = None
+    ) -> GatewayResponse | None:
+        """Build a relayable response for a GET ``route``, or None to 404.
+
+        The default implementation answers None for every route, which keeps
+        `do_GET` byte-identical to its pre-seam behaviour. A route family that
+        needs to stream arbitrary upstream bytes out of a GET overrides this
+        (call :func:`open_upstream` with ``method="GET"`` and return a
+        ``GatewayResponse`` carrying ``upstream=`` and ``streaming=True``).
+        """
+        return None
 
     # --- GET /v1/realtime: the WebSocket tunnel (issue #149) ---------------
     def _handle_realtime(
@@ -4783,6 +4823,17 @@ class _Handler(BaseHTTPRequestHandler):
         # a mid-relay client disconnect release exactly as a clean completion
         # does — a leaked counter would make this box look permanently full
         # with no way back.
+        self._deliver(resp)
+
+    # --- relay helpers ---
+    def _deliver(self, resp: GatewayResponse) -> None:
+        """Send a built :class:`GatewayResponse`: a gateway body, or a relay.
+
+        Shared by :meth:`do_POST` and :meth:`do_GET` so BOTH verbs get the same
+        delivery contract — the same buffered/streaming choice, the same
+        upstream close, and the same `release` in a `finally`. Method-agnostic
+        by construction: nothing here reads `self.command`.
+        """
         try:
             if resp.upstream is None:
                 self._send_simple(resp.status, resp.headers, resp.body or b"")
@@ -4797,7 +4848,6 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             resp.release()
 
-    # --- relay helpers ---
     def _read_body(self) -> bytes:
         cl = self.headers.get("Content-Length")
         if cl is not None:

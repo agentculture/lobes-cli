@@ -28,6 +28,7 @@ def test_role_env_prefix_covers_every_profile_role() -> None:
         "hand": "HAND",
         "embedder": "EMBED",
         "reranker": "RERANK",
+        "innereye": "INNEREYE",
     }
 
 

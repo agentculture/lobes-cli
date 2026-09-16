@@ -135,6 +135,13 @@ FEASIBLE_ENV: dict[str, str] = {
     # until an operator explicitly sets STT_FEASIBLE/TTS_FEASIBLE=false.
     "stt": "STT_FEASIBLE",
     "tts": "TTS_FEASIBLE",
+    # The opt-in innereye role (issue #82, t5) — the ComfyUI render tenant,
+    # the eleventh Colleague role. Rides the same channel as
+    # muse/worker/associate (see OPT_IN_BACKENDS below), NOT the stt/tts
+    # sleeping-lobe default: an unwired-and-unflagged innereye is honestly
+    # infeasible, so `model=innereye` 404s role_infeasible instead of
+    # silently reading as a not-yet-ready generate lane.
+    "innereye": "INNEREYE_FEASIBLE",
 }
 
 _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
@@ -152,7 +159,10 @@ _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 # ``MUSE_FEASIBLE``/``WORKER_FEASIBLE`` always wins over this default. worker
 # joined muse on this channel via the thor-worker-lobe plan (t3) — the second
 # opt-in-core role, same honesty contract.
-OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate"})
+# `innereye` joined this set with issue #82's t5: the ComfyUI render tenant is
+# opt-in-hosted like muse/worker/associate, never default-hosted like the
+# audio overlay — see FEASIBLE_ENV above.
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate", "innereye"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -238,6 +248,7 @@ MAX_ACTIVE_ENV: dict[str, str] = {
     "rerank": "RERANK_MAX_ACTIVE",
     "stt": "STT_MAX_ACTIVE",
     "tts": "TTS_MAX_ACTIVE",
+    "innereye": "INNEREYE_MAX_ACTIVE",
 }
 
 # The sentinel every replica ranks at today (weight hardcoded 1.0 everywhere

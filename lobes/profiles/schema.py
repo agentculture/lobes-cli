@@ -74,6 +74,19 @@ ROLES: tuple[str, ...] = (
     "hand",
     "embedder",
     "reranker",
+    # `innereye` (issue #82) — the ComfyUI render tenant, the eleventh
+    # Colleague role. It is in scope for the PROFILE machinery (unlike
+    # stt/tts/minor) for one reason: it is a per-card HOSTING decision an
+    # `[[exclusive_roles]]` group has to be able to NAME (that validator, in
+    # `_exclusive_group` below, checks its roles against this tuple), and a
+    # card profile must be able to veto it the way base.toml vetoes
+    # muse/worker/associate. It carries NO budget knobs of its own today —
+    # ComfyUI is not a vLLM lane, has no gpu_mem_util fraction and no
+    # max_model_len — so every card is silent on it and it renders nothing
+    # beyond a `feasible` marker. NOTE this tuple is a DIFFERENT registry
+    # from `lobes.roles.ROLES` (issue #269 tracks the divergence): that one
+    # is the Colleague CONTRACT set, this one is the per-machine knob set.
+    "innereye",
 )
 
 # The machine knobs a compose template substitutes per role/gear. Order here

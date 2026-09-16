@@ -551,6 +551,16 @@ def test_services_cover_exactly_the_hosted_feasible_roles() -> None:
                 assert (ROLE_SERVICE[role] in services) == shape.hosts_role(role)
 
 
+# Roles whose ROLE_SERVICE entry is REGISTERED but whose compose service has
+# not been declared yet. `innereye` (issue #82) is registered as the eleventh
+# role — every role-keyed table needs the name, because `compose_profile` /
+# `shape_services` index ROLE_SERVICE unconditionally — while the `comfyui`
+# service itself is a separate, later task in the same plan. No built-in shape
+# hosts the role, so nothing ever selects the missing service (see
+# test_services_cover_exactly_the_hosted_feasible_roles).
+_SERVICE_PENDING_ROLES: frozenset[str] = frozenset({"innereye"})
+
+
 def test_role_service_constants_exist_in_compose_templates() -> None:
     """The role->service map mirrors the SHIPPED compose files (kept honest here).
 
@@ -565,7 +575,17 @@ def test_role_service_constants_exist_in_compose_templates() -> None:
     )
     service_keys = set(re.findall(r"^  ([a-z][a-z0-9-]*):\s*$", combined, re.MULTILINE))
     for role, service in ROLE_SERVICE.items():
+        if role in _SERVICE_PENDING_ROLES:
+            continue
         assert service in service_keys, f"{service!r} (role {role}) is not a compose service"
+    # ...and the exemption is SELF-RETIRING: the moment the service lands in
+    # the template this fails, forcing the name out of the list rather than
+    # letting it rot into a place a real gap could hide.
+    for role in _SERVICE_PENDING_ROLES:
+        assert ROLE_SERVICE[role] not in service_keys, (
+            f"{ROLE_SERVICE[role]!r} (role {role}) IS a compose service now — "
+            "drop it from _SERVICE_PENDING_ROLES so the mirror is checked again"
+        )
     assert GATEWAY_SERVICE in service_keys
     assert REALTIME_SERVICE in service_keys
 

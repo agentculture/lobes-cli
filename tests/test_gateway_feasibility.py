@@ -100,16 +100,21 @@ def test_feasible_env_names_the_four_profile_scoped_backends() -> None:
         "rerank": "RERANK_FEASIBLE",
         "stt": "STT_FEASIBLE",
         "tts": "TTS_FEASIBLE",
+        # `innereye` (issue #82, t5) rides the same channel too — see
+        # OPT_IN_BACKENDS below (it defaults infeasible, not sleeping-lobe).
+        "innereye": "INNEREYE_FEASIBLE",
     }
 
 
-# The opt-in muse AND worker lobes both default to INFEASIBLE whenever they
-# are unwired and unflagged (OPT_IN_BACKENDS in lobes.gateway._config) — so on
-# every env in this module that doesn't wire MUSE_BASE_URL / WORKER_BASE_URL,
-# `muse` and `worker` are the honest baseline members of table.infeasible.
-# Every pre-muse (and pre-worker) expectation below composes with these two
+# The opt-in muse/worker/associate/innereye lobes all default to INFEASIBLE
+# whenever they are unwired and unflagged (OPT_IN_BACKENDS in
+# lobes.gateway._config) — so on every env in this module that doesn't wire
+# MUSE_BASE_URL / WORKER_BASE_URL / ASSOCIATE_BASE_URL / (innereye has no
+# _BASE_URL wiring at all yet — issue #82, t5), those four are the honest
+# baseline members of table.infeasible. Every pre-muse (and pre-worker/
+# pre-associate/pre-innereye) expectation below composes with these
 # deliberate deltas.
-_BASELINE = frozenset({"muse", "worker", "associate"})
+_BASELINE = frozenset({"muse", "worker", "associate", "innereye"})
 
 
 # --- worker (the eighth/opt-in-core role): mirrors muse's own coverage ------

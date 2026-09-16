@@ -172,19 +172,27 @@ _EXPECTED_PEER_ROLE_HINT = {
 def test_per_backend_channel_is_additive_only_over_the_nine_pre_existing_backends(
     actual: dict, expected: dict, name: str
 ) -> None:
-    """Filtering associate back out reproduces exactly the pre-associate dict.
+    """Filtering associate (and, since issue #82 t5, innereye) back out
+    reproduces exactly the pre-associate dict.
 
     A regression here means an existing role's env KEY was renamed, an
     existing value was edited, or an existing role was dropped from the
     channel — any of which is a real behavioural change to the nine
-    pre-existing roles, not an addition.
+    pre-existing roles, not an addition. `innereye` only ever appears in
+    FEASIBLE_ENV today (server._PEER_SERVED_NAME_ENV/_PEER_ROLE_HINT have no
+    entry for it — it has no catalog role_hint to peer on), so filtering it
+    out of the other two dicts here is a harmless no-op.
     """
-    filtered = {k: v for k, v in actual.items() if k != "associate"}
+    filtered = {k: v for k, v in actual.items() if k not in ("associate", "innereye")}
     assert filtered == expected, f"{name} changed for a pre-existing backend"
 
 
 def test_opt_in_backends_only_gained_associate() -> None:
-    assert OPT_IN_BACKENDS - {"associate"} == {"muse", "worker"}
+    # `innereye` (issue #82, t5) also joined this set after associate — see
+    # lobes.roles's module docstring for why it defaults infeasible like
+    # muse/worker/associate rather than the audio overlay's sleeping-lobe
+    # posture.
+    assert OPT_IN_BACKENDS - {"associate", "innereye"} == {"muse", "worker"}
 
 
 def test_never_proxied_backends_is_still_empty() -> None:

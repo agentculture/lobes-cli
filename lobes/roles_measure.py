@@ -1,8 +1,8 @@
 """Per-role RUNTIME measurement — issue #81, task t8.
 
-Probes each of the ten first-class roles (:data:`lobes.roles.ROLES`) on its own
-live endpoint and reports **runtime/serving** metrics, organised BY ROLE and
-grouped by the metric family its ``runtime`` implies:
+Probes each of the eleven first-class roles (:data:`lobes.roles.ROLES`) on its
+own live endpoint and reports **runtime/serving** metrics, organised BY ROLE
+and grouped by the metric family its ``runtime`` implies:
 
 * **LLM roles** (``cortex``, ``senses``): TTFT, decode throughput, prefill
   throughput, served context, and — when the vLLM ``/metrics`` scrape is
@@ -13,6 +13,10 @@ grouped by the metric family its ``runtime`` implies:
   size, loaded state.
 * **stt / tts** (audio overlay sidecars): input/output duration, latency,
   real-time factor (RTF), failure rate.
+* **innereye** (ComfyUI render tenant, issue #82): no probe is wired yet — a
+  stub always reports ``ready=False``/empty metrics rather than raising. Its
+  gateway wiring and job-scoped facade are later tasks; this module only
+  guarantees `lobes measure` does not crash on the eleventh role.
 
 RUNTIME-ONLY — boundary c7/h14
 -------------------------------
@@ -107,7 +111,15 @@ AUDIO_METRIC_KEYS: frozenset[str] = frozenset(
     }
 )
 
-ALLOWED_METRIC_KEYS: frozenset[str] = LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS
+# `innereye` (issue #82, t5): no runtime probe is wired yet, so it carries no
+# metric vocabulary of its own — see :func:`_measure_render_role`. Kept as a
+# named, empty frozenset (rather than inlining `frozenset()` at the dispatch
+# site) so a future render probe has an obvious place to add keys.
+RENDER_METRIC_KEYS: frozenset[str] = frozenset()
+
+ALLOWED_METRIC_KEYS: frozenset[str] = (
+    LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS | RENDER_METRIC_KEYS
+)
 
 _LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "associate", "hand")
 _EMBED_RERANK_ROLES: tuple[str, ...] = ("embedder", "reranker")
@@ -128,6 +140,14 @@ _FAMILY_BY_ROLE: dict[str, str] = {
     "reranker": "embed_rerank",
     "stt": "audio",
     "tts": "audio",
+    # `innereye` (issue #82, t5): a render-job lane, not a chat/pooling/audio
+    # one — none of the three existing families fit. No probe is wired for it
+    # yet (the facade itself is a later task); it rides a fourth family,
+    # "render", whose only member is :func:`_measure_render_role`, a stub that
+    # never opens a socket and always reports not-ready with empty metrics —
+    # see that function's docstring for why this is deliberate, not an
+    # oversight.
+    "innereye": "render",
 }
 
 _EMBED_RERANK_PATH: dict[str, str] = {"embedder": "/v1/embeddings", "reranker": "/v1/rerank"}
@@ -392,6 +412,22 @@ def _measure_stt_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> di
     return {"ready": True, "metrics": metrics}
 
 
+def _measure_render_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> dict:
+    """RUNTIME probe for innereye — issue #82, t5: registration only, no probe.
+
+    innereye's gateway wiring and job-scoped facade (`/v1/render`) are later
+    tasks (t8/t9); this module has nothing to dial yet. Deliberately a STUB,
+    not an omission from :data:`_MEASURE_FN` — an omitted dispatch entry
+    would raise ``KeyError`` the moment ``lobes measure`` (or
+    :func:`measure_registry`'s default all-roles sweep) reaches the eleventh
+    role, the exact crash-not-a-degraded-reading failure this module's
+    docstring promises never happens. Always reports ``ready=False`` with
+    empty metrics — never opens a socket, exactly like every other probe here
+    when its role is not ``loaded``.
+    """
+    return {"ready": False, "metrics": _empty_metrics(RENDER_METRIC_KEYS)}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -407,6 +443,7 @@ _MEASURE_FN = {
     "reranker": _measure_embed_rerank_role,
     "stt": _measure_stt_role,
     "tts": _measure_tts_role,
+    "innereye": _measure_render_role,
 }
 
 

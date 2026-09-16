@@ -215,7 +215,15 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # <PREFIX>_PEER_ORIGINS/_PEER_API_KEYS passthrough lines for all ten role
     # prefixes — build_config no longer reads any of them. `gateway` is again
     # the ONLY service that moved.
-    "gateway": "d7c052144f00e8c69702251ff71542bed53286a9f534cd752be9d3511180bece",
+    #
+    # Recomputed 2026-09-16 for the `innereye` role registration (issue #82):
+    # `gateway` GAINED seven INNEREYE_* passthrough lines — the feasibility
+    # flag, the capacity knob, and the five lane-fingerprint keys the guard in
+    # tests/test_gateway_env_passthrough_guard.py derives mechanically from
+    # _config.FEASIBLE_ENV. No `comfyui` service exists yet (that is a later
+    # task in the same plan), so `gateway` is again the ONLY service that
+    # moved.
+    "gateway": "e07406a3d3f7d4ea4c10a48effa69306b1090bf5abdbbb05448d91b16f8fb39d",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

@@ -254,7 +254,7 @@ def test_lobes_up_addresses_associate_and_the_bundle_excludes_it() -> None:
 
 
 def test_associate_is_an_opt_in_core_role_on_every_layer() -> None:
-    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate")
+    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate", "innereye")
     assert "associate" in OPT_IN_BACKENDS
     assert "associate" in PROFILE_ROLES
     assert ROLE_ENV_PREFIX["associate"] == "ASSOCIATE"
@@ -394,7 +394,9 @@ def test_a_deployment_declaring_no_associate_config_is_otherwise_unchanged() -> 
     """
     env = _base_env()
     table, _cfg = build_config(env)
-    assert table.infeasible == frozenset({"muse", "worker", "associate"})
+    # `innereye` (issue #82, t5) joined the same unwired-opt-in infeasible
+    # default after associate landed.
+    assert table.infeasible == frozenset({"muse", "worker", "associate", "innereye"})
     # No associate knob declared anywhere => no peer channel armed for it.
     assert "associate" not in table.peer_origins
     assert "associate" not in table.peer_proxied

@@ -43,6 +43,10 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "hand",
         "embedder",
         "reranker",
+        # `innereye` (issue #82) is a Profile-machinery role so an
+        # [[exclusive_roles]] group can name it and a card can veto it — it
+        # declares no knobs of its own (ComfyUI is not a vLLM lane).
+        "innereye",
     )
     assert set(KNOB_NAMES) == {
         "gpu_mem_util",
