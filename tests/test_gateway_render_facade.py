@@ -495,8 +495,18 @@ def test_an_unreachable_comfyui_yields_a_retryable_503(comfy) -> None:
         httpd.shutdown()
         httpd.server_close()
     assert status == 503
-    assert headers.get("Retry-After")
-    assert json.loads(raw)["error"]["type"] == "render_backend_unavailable"
+    assert headers.get("Retry-After") == str(S.RENDER_RETRY_AFTER_SECONDS)
+    payload = json.loads(raw)["error"]
+    assert payload["type"] == "render_backend_unavailable"
+    message = payload["message"]
+    # AC2 (t10): the body must be an HONEST warming response, never a claim
+    # that a boot is (or will be) triggered automatically -- lobes has no
+    # lifecycle actuator in the data plane (see
+    # test_gateway_no_lifecycle_actuator.py). It should instead point at the
+    # real, manual remedy.
+    assert "warming" in message
+    assert "lobes never starts it automatically" in message
+    assert "lobes up innereye --apply" in message
 
 
 # ===========================================================================

@@ -342,6 +342,104 @@ def test_up_muse_with_activation_targets_vllm_muse(tmp_path, capsys) -> None:
     assert payload["dry_run"] is True
 
 
+def test_up_innereye_without_activation_is_a_user_error_naming_its_own_shape(
+    tmp_path, capsys
+) -> None:
+    """`lobes up innereye` on a plain machine-as-brain deployment errors up
+    front, naming ``spark-innereye`` -- innereye's ACTUAL hosting shape, not a
+    guessed ``thor-innereye`` (t10 fix: the remediation used to hardcode
+    ``f"thor-{target}"``, which is wrong for both ``innereye`` (whose shape is
+    ``spark-innereye``) and ``associate`` (whose shape is ``orin-associate``);
+    see ``test_up_associate_without_activation_names_orin_associate`` below for
+    the sibling regression check)."""
+    _scaffold_fleet(tmp_path)
+    rc = main(["up", "innereye", "--compose-dir", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "COMPOSE_PROFILES" in err
+    assert "spark-innereye" in err
+    assert "thor-innereye" not in err
+
+
+def test_up_associate_without_activation_names_orin_associate(tmp_path, capsys) -> None:
+    """Sibling regression check for the same fix: ``associate``'s hosting shape
+    is ``orin-associate``, never a guessed ``thor-associate``."""
+    _scaffold_fleet(tmp_path)
+    rc = main(["up", "associate", "--compose-dir", str(tmp_path)])
+    assert rc != 0
+    err = capsys.readouterr().err
+    assert "orin-associate" in err
+    assert "thor-associate" not in err
+
+
+def test_up_innereye_with_activation_targets_comfyui(tmp_path, capsys) -> None:
+    """On an innereye-activated deployment (COMPOSE_PROFILES=innereye in .env
+    -- what the spark-innereye shape render writes), `lobes up innereye` plans
+    exactly the `comfyui` service, --no-deps included like every other
+    target (AC1)."""
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=innereye\n", encoding="utf-8")
+    rc = main(["up", "innereye", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["services"] == ["comfyui"]
+    assert payload["command"] == "docker compose up -d --no-deps comfyui"
+    assert payload["dry_run"] is True
+
+
+def test_up_innereye_down_dry_run_plans_scoped_stop(tmp_path, capsys) -> None:
+    """`--down` on innereye is a scoped `docker compose stop comfyui` -- never
+    a project-wide `down` that would remove the rest of the fleet."""
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=innereye\n", encoding="utf-8")
+    rc = main(["up", "innereye", "--down", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["services"] == ["comfyui"]
+    assert payload["command"] == "docker compose stop comfyui"
+
+
+def test_up_innereye_apply_invokes_runner_with_only_comfyui(tmp_path, monkeypatch) -> None:
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=innereye\n", encoding="utf-8")
+    captured: dict = {}
+
+    def fake_run(deploy_dir, argv):
+        captured["argv"] = argv
+        return _ok()
+
+    monkeypatch.setattr(_compose, "run_compose", fake_run)
+    rc = main(["up", "innereye", "--compose-dir", str(tmp_path), "--apply", "--json"])
+    assert rc == 0
+    assert captured["argv"] == ["docker", "compose", "up", "-d", "--no-deps", "comfyui"]
+
+
+def test_up_colleague_stack_excludes_the_opt_in_innereye_lobe(tmp_path, capsys) -> None:
+    """colleague-stack stays the DEFAULT-HOSTED roles -- innereye is an opt-in
+    core role (like muse/worker/associate) and must never be swept into the
+    bundle."""
+    _scaffold_fleet_audio(tmp_path)
+    rc = main(["up", "colleague-stack", "--compose-dir", str(tmp_path), "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert "comfyui" not in payload["services"]
+
+
+def test_hosting_shapes_for_looks_up_real_shapes_not_a_naming_convention() -> None:
+    """Unit-level check on the helper itself: every opt-in core role's
+    hosting shape(s) come from the shapes' own declared ``hosts``, not a
+    ``thor-<role>`` guess."""
+    assert up_cmd._hosting_shapes_for("muse") == ("thor-muse",)
+    assert up_cmd._hosting_shapes_for("worker") == ("thor-worker",)
+    assert up_cmd._hosting_shapes_for("associate") == ("orin-associate",)
+    assert up_cmd._hosting_shapes_for("innereye") == ("spark-innereye",)
+    # A role no shape hosts at all returns empty rather than raising -- the
+    # caller falls back to an honest "no built-in shape hosts this yet"
+    # message instead of a guess. No built-in TOML declares a role by this
+    # made-up name, so this exercises that fallback path.
+    assert up_cmd._hosting_shapes_for("not-a-real-role") == ()
+
+
 def test_up_colleague_stack_excludes_the_opt_in_muse_lobe(tmp_path, capsys) -> None:
     """colleague-stack stays the DEFAULT-HOSTED roles — bundling an opt-in,
     profile-gated service (muse or worker) would break the bundle on every
