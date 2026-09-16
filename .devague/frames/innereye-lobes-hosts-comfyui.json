@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-16T06:25:34Z",
-  "updated": "2026-09-16T10:20:53Z",
+  "updated": "2026-09-16T11:20:03Z",
   "claims": [
     {
       "id": "c1",
@@ -1107,6 +1107,28 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "control-absent",
+      "what": "Claimed a render proved a controlled prompt when it had not. The first acceptance submission read the graph mapping at top level, but the mapping nests its targets under a 'fields' key, so nothing was substituted and the graph's baked-in prompt rendered. The end-to-end path WAS genuinely proven; the prompt was not under control, and I only caught it because the returned image was visibly not what I asked for",
+      "skipped_check": "verifying the submitted graph actually carried my prompt before treating the render as a controlled test",
+      "refs": [
+        "t13 acceptance, first render"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "n-below-claim",
+      "what": "n=1 on the concurrency measurement. The overlapping-submission result (ComfyUI serialized the pair; peak host memory 86 GiB, the same as a single render, not double) rests on ONE pair, ONE graph, and never exercised the Wan 2.1 video path \u2014 which is the larger of the two. It is filed as supporting, not proving, the c34 assumption that any MAX_ACTIVE value would rest on",
+      "skipped_check": "repeating the pair, and any measurement of the video path",
+      "refs": [
+        "t13 acceptance \u00a78"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [

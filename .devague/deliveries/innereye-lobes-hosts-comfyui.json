@@ -2,7 +2,7 @@
   "plan_slug": "innereye-lobes-hosts-comfyui",
   "schema_version": 2,
   "created": "2026-09-16T09:35:22Z",
-  "updated": "2026-09-16T10:36:21Z",
+  "updated": "2026-09-16T11:19:48Z",
   "deviations": [
     {
       "id": "d1",
@@ -52,7 +52,335 @@
       "seq": 3
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_init_coresidency.py (67 tests) + docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a71",
+      "behavior_text": "lobes init refuses a resolved default shape hosting both cortex and innereye, naming the reason and spark-innereye as the way out",
+      "contract_text": "v1 declares innereye and the heavy generate lanes mutually exclusive via [[exclusive_roles]]",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "suite green at the named commit; the CLI-refusal test monkeypatches resolve_shape at init.py's own call site rather than editing the shared machine-as-brain.toml",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "docs/evidence/2026-09-16-t2-comfyui-container-spark.txt + tests/test_comfyui_dockerfile.py",
+      "behavior_text": "the image pins ComfyUI v0.33.2 and stock cu130 torch, renders a FLUX job, and records the aimdo figures beside the bare-venv baseline",
+      "contract_text": "the built image renders at least one FLUX job, proving the containerized stack matches the bare venv",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE: built, ran with the GPU attached, staged 9318/22700/159 MB and executed in 41.84s against the baseline's 42.05s",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a72 + tests/test_comfyui_compose.py",
+      "behavior_text": "the service publishes no host port; 8188 is refused from the host AND from the Thor over the tailnet while the gateway reaches it on the compose net",
+      "contract_text": "ComfyUI keeps binding loopback and lobes terminates auth in front of it \u2014 restated as: publishes no host port",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE negative controls, both re-run after a CONFOUND (the bare venv was still listening on 8188) was found via ss and removed; positive control in-container /object_info 200",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a71,\u00a75 + tests/test_comfyui_volumes.py",
+      "behavior_text": "models mounted read-only from an env knob, output writable, user 1000:1000; artifacts host-owned and host-deletable, models mount rejects an in-container write",
+      "contract_text": "the model directory is a HOST BIND MOUNT and the host keeps read/write access",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE through the compose service: Config.User 1000:1000, in-container write to models refused 'Read-only file system', rendered artifact on disk owned spark:spark",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "the full suite (5151 passed) incl. tests/test_roles.py + docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a74",
+      "behavior_text": "innereye is registered in every role-keyed table; the repo's own all-or-nothing invariants pass, and capabilities reports the role on both surfaces",
+      "contract_text": "innereye is registered everywhere or nowhere; an unhosted innereye is honestly refused, never half-served",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "the invariant tests named in the task (test_role_service_map, test_every_proxyable_role_resolves_a_served_name, test_every_config_env_key_reaches_the_gateway_container, test_up_no_deps_isolation[innereye]) all pass; lobes capabilities --json agrees with the wire field-for-field",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_init_coresidency.py::test_declared_peak_gib_is_never_summed_or_compared_in_shape_render",
+      "behavior_text": "the declared peak's only dereference outside schema.py is a presence check in overcommitted_groups; it is never summed nor compared against a card total",
+      "contract_text": "the peak's ONLY consumer is the exclusive_roles co-residency veto; it meters nothing",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "a source-scanning test rejects '+', 'sum(', 'total' and 'gpu_mem_util' on any line mentioning the knob, and asserts the two specific statements expected",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_gateway_get_relay.py (6 tests)",
+      "behavior_text": "open_upstream carries a method without changing POST callers; _relay_streaming is reachable from do_GET and relays binary byte-for-byte",
+      "contract_text": "a method-general upstream opener and a GET-side streaming relay",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "byte-for-byte proven against a stdlib stub upstream (256 KiB non-UTF-8 blob, sha256 equality); the real-ComfyUI half was proven separately live in the t13 transcript \u00a75",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_gateway_render_facade.py (41 tests) + docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a73,\u00a75,\u00a76,\u00a77",
+      "behavior_text": "the facade is job-scoped: a foreign job id and a counter-named artifact of another job are both refused without dialing ComfyUI; no outward /history, /queue or parameterised /view exists; unauthenticated is 401",
+      "contract_text": "the gateway issues the job id and serves only ids it issued; enumeration is refused",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE: 401 on POST and GET with no bearer (and from the Thor); with bearer an unissued id 404s render_job_not_found; job A asking for job B's real artifact 404s; artifact bytes byte-identical to disk",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_gateway_no_lifecycle_actuator.py + tests/test_cli_up.py + docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a71",
+      "behavior_text": "lobes up innereye starts exactly comfyui with --no-deps and --down stops only it; a cold backend yields 503 + Retry-After naming the manual remedy; no _compose import exists under lobes/gateway/",
+      "contract_text": "manual lifecycle only; the data plane never starts or stops anything",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE dry-run then apply; the AST-based import guard has a control test proving the scanner still finds real hits elsewhere, and its blind spots (a string-built importlib call) are documented not implied",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_gateway_readiness.py + tests/test_mesh_routes.py + docs/evidence/2026-09-16-accept-innereye-spark.txt \u00a74,\u00a77",
+      "behavior_text": "a peer discovers the lane from GET /capabilities alone; the lane never enters a mesh announcement; the render lane's readiness probes /object_info so a wired-and-up innereye reports ready:true",
+      "contract_text": "discovery without advertised-but-unreachable reach",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "LIVE: capabilities reported feasible/ready/loaded true on the hosting box and was fetched from the Thor over the tailnet; mesh non-advert is asserted at BOTH announcement entry points after the first fix was found to be dead code for the live heartbeat path",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "docs/comfyui-innereye.md + docs/colleague-stack.md (markdownlint clean)",
+      "behavior_text": "the doc states the two exposures side by side, names the three non-goals, assigns output growth to the operator, states the rollback, and labels every lobes-side surface DECLARED/UNVALIDATED",
+      "contract_text": "the reference doc and the catalog statement",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "READ, not executed: this is prose. A dedicated deployments/ catalog entry was deliberately NOT fabricated since no box's lock has been captured for this shape; the required not-a-renderable-deployment statement lives in the doc instead",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "docs/evidence/2026-09-16-accept-innereye-spark.txt (all nine sections)",
+      "behavior_text": "all four success signals pass with negative controls, the overlapping-submission measurement is recorded, and the cross-box fetch from the Thor is byte-identical",
+      "contract_text": "one transcript carries all four success signals with negative controls and an honest statement of the innereye dependency",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "LIVE on the DGX Spark with the Jetson AGX Thor as a real cross-box peer. TWO honesty caveats are IN the transcript: the gateway under test was merged SOURCE not the packaged image (0.79.0 unpublished), and innereye-the-client never drove the facade \u2014 every request was curl",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-16T14:18:01",
+        "commit": "8d04f09"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "The isolation property is 'the service publishes no host port', NOT 'ComfyUI binds 127.0.0.1'. A container bound to loopback is unreachable from the gateway; every fleet lane binds 0.0.0.0 in-container and isolates via expose-only. The announcement, after-state and success-signal claims were all amended to say so.",
+      "caused_by": [
+        "c28"
+      ],
+      "evidence_refs": [
+        "e3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "A per-backend readiness probe path. gateway/_readiness.py hardcoded /health, which ComfyUI 404s, so a wired innereye would have advertised feasible:true, ready:false forever \u2014 contradicting the plan's own success signal. probe_backend_ready now takes a health_path and the render lane probes /object_info.",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [
+        "e10"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "declared_peak_gib \u2014 the first non-fractional budget knob in the codebase, lane-gated to innereye alone. Every prior role budget is a gpu_mem_util fraction; ComfyUI has no equivalent flag, so a fake fraction would have misrepresented a per-graph footprint as a fixed server budget.",
+      "caused_by": [
+        "c17"
+      ],
+      "evidence_refs": [
+        "e6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "user: on a fleet compose service \u2014 comfyui is the first. Without it every artifact would land root-owned in a bind-mounted directory the host user could not clear, silently breaking the guarantee that the weights and outputs stay reachable outside Docker.",
+      "caused_by": [
+        "c30"
+      ],
+      "evidence_refs": [
+        "e4"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "Registering a role is ATOMICALLY cross-cutting: t5 was re-scoped to absorb the retired t14 and t7 because the repo's own invariant tests assert a role is registered everywhere or nowhere. The planned file-disjoint decomposition was not achievable for this change class.",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e5"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "removed",
+      "behavior_text": "No websocket proxy was built. The plan originally owed a raw-socket WS tunnel; innereye never opens a websocket (its stdlib-only rule makes /ws impractical), so the most expensive piece of gateway work was dropped and named a non-goal instead.",
+      "caused_by": [
+        "c11"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "added",
+      "behavior_text": "The lobes up remediation for an opt-in core role now resolves the real hosting shape from each built-in shape's declared hosts, instead of a hardcoded thor-{role} guess that was ALREADY wrong for associate (orin-associate) before innereye existed.",
+      "caused_by": [
+        "c16"
+      ],
+      "evidence_refs": [
+        "e9"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
