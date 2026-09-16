@@ -32,7 +32,11 @@ ComfyUI's schema; that is the live acceptance run (t13).
 
 from __future__ import annotations
 
+import contextlib
+import http.client
+import io
 import json
+import socket
 import threading
 import urllib.error
 import urllib.parse
@@ -70,9 +74,31 @@ class _StubComfy(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     paths: list[str] = []
+    # Paths this stub answers by sending HEADERS and then dying mid-body — the
+    # exact failure finding 4 names (ComfyUI returns headers, then resets).
+    break_paths: set[str] = set()
 
     def _record(self) -> None:
         type(self).paths.append(f"{self.command} {self.path}")
+
+    def _broken(self) -> None:
+        """Headers, a truncated body, then a hard close.
+
+        ``Content-Length`` promises far more than is written and the connection
+        is torn down, so the gateway's buffered ``read_all()`` raises
+        ``http.client.IncompleteRead`` — a response-phase failure, well after
+        ``open_upstream`` returned.
+        """
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "4096")
+        self.end_headers()
+        self.wfile.write(b'{"prompt')
+        self.wfile.flush()
+        self.close_connection = True
+
+    def _is_broken(self) -> bool:
+        return self.path.split("?", 1)[0] in type(self).break_paths
 
     def _json(self, status: int, obj: dict) -> None:
         body = json.dumps(obj).encode()
@@ -85,6 +111,9 @@ class _StubComfy(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler API
         self._record()
         self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if self._is_broken():
+            self._broken()
+            return
         route = self.path.split("?", 1)[0]
         if route == "/prompt":
             self._json(200, {"prompt_id": _PROMPT_ID, "number": 3, "node_errors": {}})
@@ -97,6 +126,9 @@ class _StubComfy(BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
         self._record()
+        if self._is_broken():
+            self._broken()
+            return
         route, _, query = self.path.partition("?")
         if route == f"/api/jobs/{_PROMPT_ID}":
             self._json(
@@ -137,6 +169,7 @@ class _QuietServer(ThreadingHTTPServer):
 @pytest.fixture
 def comfy():
     _StubComfy.paths = []
+    _StubComfy.break_paths = set()
     httpd = _QuietServer(("127.0.0.1", 0), _StubComfy)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     host, port = httpd.server_address
@@ -162,6 +195,20 @@ def _env(comfy_url: str | None, **over) -> dict:
 @pytest.fixture
 def gateway(comfy):
     table, cfg = build_config(_env(comfy))
+    httpd = _QuietServer(("127.0.0.1", 0), S._make_handler(table, cfg))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    host, port = httpd.server_address
+    try:
+        yield f"http://{host}:{port}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+@contextlib.contextmanager
+def _serve(comfy_url: str | None, **over):
+    """A live gateway over an ad-hoc env — the `gateway` fixture, parameterised."""
+    table, cfg = build_config(_env(comfy_url, **over))
     httpd = _QuietServer(("127.0.0.1", 0), S._make_handler(table, cfg))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     host, port = httpd.server_address
@@ -555,3 +602,328 @@ def test_extract_job_artifacts_dedupes_and_is_bounded() -> None:
     assert [a["filename"] for a in extract_job_artifacts(dupes)] == ["a.png", "b.png"]
     many = {"o": [{"filename": f"{i}.png"} for i in range(2000)]}
     assert len(extract_job_artifacts(many)) <= 512
+
+
+# ===========================================================================
+# Request-body size limits on the render lane (review finding 1)
+# ===========================================================================
+#
+# Qodo, HIGH: ``do_POST`` reads the complete request body without a size limit
+# and ``_render_upload`` hands that in-memory value straight to ComfyUI's
+# WRITABLE upload endpoint, so any admitted caller can exhaust gateway memory
+# (and then backend storage) with one arbitrarily large fixed-length or chunked
+# image.
+#
+# The fix is deliberately RENDER-SCOPED. The unbounded read is pre-existing and
+# common to every POST route (chat completions, /v1/audio/* multipart); a global
+# cap is a separate change with its own blast radius. So the mechanism is
+# general (``_read_body(limit)`` + a strict ``read_chunked_body``) but its
+# DEFAULT is inert — ``_post_body_limit`` answers ``None`` everywhere except the
+# render family, which is asserted below rather than asserted about the code.
+
+
+def _post_chunked(base, path, chunks, *, key=_API_KEY, ctype="application/json"):
+    """POST a ``Transfer-Encoding: chunked`` body from a raw socket.
+
+    urllib cannot spell chunked, and the point of this helper is to control the
+    framing exactly: a refusal must land even though no ``Content-Length`` ever
+    declared the size.
+    """
+    parts = urllib.parse.urlsplit(base)
+    sock = socket.create_connection((parts.hostname, parts.port), timeout=30)
+    try:
+        head = (
+            f"POST {path} HTTP/1.1\r\n"
+            f"Host: {parts.hostname}:{parts.port}\r\n"
+            f"Authorization: Bearer {key}\r\n"
+            f"Content-Type: {ctype}\r\n"
+            "Transfer-Encoding: chunked\r\n\r\n"
+        )
+        sock.sendall(head.encode())
+        try:
+            for chunk in chunks:
+                sock.sendall(b"%x\r\n" % len(chunk) + chunk + b"\r\n")
+            sock.sendall(b"0\r\n\r\n")
+        except OSError:
+            # The gateway may refuse and close before the last chunk lands —
+            # that IS the incremental enforcement, not a test failure.
+            pass
+        resp = http.client.HTTPResponse(sock)
+        resp.begin()
+        return resp.status, dict(resp.getheaders()), resp.read()
+    finally:
+        sock.close()
+
+
+def test_the_body_limit_defaults_are_render_sized() -> None:
+    _table, cfg = build_config(_env("http://comfyui:8188"))
+    # A ComfyUI API-format graph is tens of KB; 1 MiB is ~30x headroom.
+    assert cfg.render_max_workflow_bytes == 1024 * 1024
+    # An input image is legitimately several MB; 32 MiB is generous and still
+    # strictly below read_chunked_body's pre-existing 64 MiB ceiling.
+    assert cfg.render_max_upload_bytes == 32 * 1024 * 1024
+
+
+def test_the_body_limits_are_operator_configurable() -> None:
+    _table, cfg = build_config(
+        _env(
+            "http://comfyui:8188",
+            GATEWAY_RENDER_MAX_WORKFLOW_BYTES="4096",
+            GATEWAY_RENDER_MAX_UPLOAD_BYTES="8192",
+        )
+    )
+    assert cfg.render_max_workflow_bytes == 4096
+    assert cfg.render_max_upload_bytes == 8192
+
+
+def test_an_oversized_fixed_length_workflow_is_refused_413(comfy) -> None:
+    with _serve(comfy, GATEWAY_RENDER_MAX_WORKFLOW_BYTES="512") as base:
+        status, headers, raw = _call(
+            base + RENDER_PATH,
+            method="POST",
+            body=b"x" * 4096,
+            headers={"Content-Type": "application/json"},
+        )
+    assert status == 413
+    payload = json.loads(raw)["error"]
+    assert payload["type"] == "render_payload_too_large"
+    assert "GATEWAY_RENDER_MAX_WORKFLOW_BYTES" in payload["message"]
+    # Rejected BEFORE the body was read, so the connection cannot be reused.
+    assert headers.get("Connection", "").lower() == "close"
+    # ...and nothing reached ComfyUI, in memory or on disk.
+    assert _StubComfy.paths == []
+
+
+def test_an_oversized_chunked_workflow_is_refused_413(comfy) -> None:
+    """No ``Content-Length`` to pre-check: the cap must bite WHILE decoding."""
+    with _serve(comfy, GATEWAY_RENDER_MAX_WORKFLOW_BYTES="512") as base:
+        status, headers, raw = _post_chunked(base, RENDER_PATH, [b"y" * 256] * 8)
+    assert status == 413
+    assert json.loads(raw)["error"]["type"] == "render_payload_too_large"
+    assert headers.get("Connection", "").lower() == "close"
+    assert _StubComfy.paths == []
+
+
+def test_an_oversized_fixed_length_upload_is_refused_413(comfy) -> None:
+    with _serve(comfy, GATEWAY_RENDER_MAX_UPLOAD_BYTES="1024") as base:
+        status, _h, raw = _call(
+            base + "/v1/render/uploads/image",
+            method="POST",
+            body=b"z" * 8192,
+            headers={"Content-Type": "multipart/form-data; boundary=b"},
+        )
+    assert status == 413
+    payload = json.loads(raw)["error"]
+    assert payload["type"] == "render_payload_too_large"
+    assert "GATEWAY_RENDER_MAX_UPLOAD_BYTES" in payload["message"]
+    assert "POST /upload/image" not in _StubComfy.paths
+
+
+def test_an_oversized_chunked_upload_is_refused_413(comfy) -> None:
+    with _serve(comfy, GATEWAY_RENDER_MAX_UPLOAD_BYTES="1024") as base:
+        status, _h, raw = _post_chunked(
+            base,
+            "/v1/render/uploads/image",
+            [b"z" * 512] * 8,
+            ctype="multipart/form-data; boundary=b",
+        )
+    assert status == 413
+    assert json.loads(raw)["error"]["type"] == "render_payload_too_large"
+    assert "POST /upload/image" not in _StubComfy.paths
+
+
+def test_the_upload_limit_is_larger_than_the_workflow_limit(comfy) -> None:
+    """A body over the workflow cap but under the upload cap is an UPLOAD, and
+    must still be served — the two limits are genuinely per-route."""
+    with _serve(
+        comfy,
+        GATEWAY_RENDER_MAX_WORKFLOW_BYTES="512",
+        GATEWAY_RENDER_MAX_UPLOAD_BYTES="65536",
+    ) as base:
+        big = b"--b\r\nContent-Disposition: form-data; name=image\r\n\r\n" + b"p" * 4096
+        status, _h, raw = _call(
+            base + "/v1/render/uploads/image",
+            method="POST",
+            body=big + b"\r\n--b--\r\n",
+            headers={"Content-Type": "multipart/form-data; boundary=b"},
+        )
+        assert status == 200, raw
+        assert json.loads(raw)["type"] == "input"
+        # ...while the same size submitted as a WORKFLOW is refused.
+        assert (
+            _call(
+                base + RENDER_PATH,
+                method="POST",
+                body=b"x" * 4096,
+                headers={"Content-Type": "application/json"},
+            )[0]
+            == 413
+        )
+
+
+def test_a_body_within_the_limit_is_unaffected(comfy) -> None:
+    with _serve(comfy, GATEWAY_RENDER_MAX_WORKFLOW_BYTES="65536") as base:
+        assert _submit(base)
+        # ...including a chunked one, which takes the incremental path.
+        status, _h, raw = _post_chunked(
+            base, RENDER_PATH, [json.dumps({"prompt": {"1": {}}}).encode()]
+        )
+    assert status == 200, raw
+    assert json.loads(raw)["job_id"]
+
+
+def test_a_non_positive_limit_disables_the_cap(comfy) -> None:
+    """The documented escape hatch: 0 means "no limit", the pre-fix behaviour."""
+    with _serve(comfy, GATEWAY_RENDER_MAX_WORKFLOW_BYTES="0") as base:
+        status, _h, raw = _call(
+            base + RENDER_PATH,
+            method="POST",
+            body=json.dumps({"prompt": {"1": {}}, "pad": "x" * 200_000}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+    assert status == 200, raw
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/v1/chat/completions",
+        "/v1/completions",
+        "/v1/embeddings",
+        "/v1/rerank",
+        "/v1/score",
+        "/v1/audio/transcriptions",
+        "/v1/audio/speech",
+        "/mesh/announce",
+    ],
+)
+def test_no_non_render_post_route_carries_a_body_limit(path) -> None:
+    """The scoping guarantee, asserted by construction: every lane but render
+    answers None, so `_read_body` behaves exactly as it did before the fix."""
+    table, cfg = build_config(_env("http://comfyui:8188"))
+    handler = S._make_handler(table, cfg)
+    assert S._Handler._post_body_limit(_FakeHandler(handler, path)) is None
+
+
+@pytest.mark.parametrize(
+    "path,attr",
+    [
+        ("/v1/render", "render_max_workflow_bytes"),
+        ("/v1/render/uploads/image", "render_max_upload_bytes"),
+        ("/v1/render/jobs/abc/cancel", "render_max_workflow_bytes"),
+        # An unrouted render spelling is capped too: it is refused after the
+        # body is read, so an uncapped read would still have happened.
+        ("/v1/render/nope", "render_max_workflow_bytes"),
+    ],
+)
+def test_every_render_post_route_carries_a_body_limit(path, attr) -> None:
+    table, cfg = build_config(_env("http://comfyui:8188"))
+    handler = S._make_handler(table, cfg)
+    limit = S._Handler._post_body_limit(_FakeHandler(handler, path))
+    assert limit == getattr(cfg, attr)
+
+
+class _FakeHandler:
+    """Just enough of a handler for `_post_body_limit`, which reads only
+    `self.path` and `self.server_config`."""
+
+    def __init__(self, handler_cls, path: str) -> None:
+        self.path = path
+        self.server_config = handler_cls.server_config
+
+
+def test_the_default_chunked_reader_is_unchanged() -> None:
+    """The general mechanism's inert default: without `strict`,
+    `read_chunked_body` still TRUNCATES at its cap rather than raising, so
+    every pre-existing caller behaves byte-identically."""
+    wire = io.BytesIO(b"8\r\n" + b"a" * 8 + b"\r\n8\r\n" + b"b" * 8 + b"\r\n0\r\n\r\n")
+    assert S.read_chunked_body(wire, 4) == b"a" * 8
+    wire.seek(0)
+    with pytest.raises(S.RequestBodyTooLarge):
+        S.read_chunked_body(wire, 4, strict=True)
+
+
+# ===========================================================================
+# A mid-response upstream failure is the structured retryable 503 (finding 4)
+# ===========================================================================
+#
+# Qodo, MEDIUM: `_render_response` translates only `UpstreamError`, but
+# `_render_fetch` calls `read_all()` AFTER `open_upstream`'s wrapping block has
+# returned. ComfyUI answering headers and then resetting therefore let the read
+# exception escape the handler and abort the client connection, losing the
+# documented structured answer.
+#
+# The same `503 render_backend_unavailable` + `Retry-After` is reused, not a new
+# code: from the caller's side the two are the same fact (the render backend did
+# not complete this request, try again shortly), and the existing body is the
+# only place the "lobes never starts it automatically" honesty lives. The
+# message names the mid-response case explicitly so the 503 is not claiming a
+# cold backend it did not observe.
+
+
+def _assert_retryable_503(status, headers, raw) -> None:
+    assert status == 503
+    assert headers.get("Retry-After") == str(S.RENDER_RETRY_AFTER_SECONDS)
+    payload = json.loads(raw)["error"]
+    assert payload["type"] == "render_backend_unavailable"
+    assert "mid-response" in payload["message"]
+    assert "lobes up innereye --apply" in payload["message"]
+
+
+def test_a_midresponse_failure_on_submit_is_the_retryable_503(comfy, gateway) -> None:
+    _StubComfy.break_paths = {"/prompt"}
+    status, headers, raw = _call(
+        gateway + RENDER_PATH,
+        method="POST",
+        body=json.dumps({"prompt": {"1": {}}}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    _assert_retryable_503(status, headers, raw)
+
+
+def test_a_midresponse_failure_on_polling_is_the_retryable_503(comfy, gateway) -> None:
+    job_id = _submit(gateway)
+    _StubComfy.break_paths = {f"/api/jobs/{_PROMPT_ID}"}
+    _assert_retryable_503(*_call(gateway + f"/v1/render/jobs/{job_id}"))
+
+
+def test_a_midresponse_failure_on_the_artifact_index_is_the_retryable_503(comfy, gateway) -> None:
+    job_id = _submit(gateway)
+    _StubComfy.break_paths = {f"/api/jobs/{_PROMPT_ID}"}
+    _assert_retryable_503(*_call(gateway + f"/v1/render/jobs/{job_id}/artifacts"))
+
+
+def test_a_midresponse_failure_on_artifact_bytes_is_the_retryable_503(comfy, gateway) -> None:
+    job_id = _submit(gateway)
+    _StubComfy.break_paths = {f"/api/jobs/{_PROMPT_ID}"}
+    _assert_retryable_503(*_call(gateway + f"/v1/render/jobs/{job_id}/artifacts/{_ARTIFACT}"))
+
+
+def test_a_midresponse_failure_on_cancel_is_the_retryable_503(comfy, gateway) -> None:
+    job_id = _submit(gateway)
+    _StubComfy.break_paths = {f"/api/jobs/{_PROMPT_ID}/cancel"}
+    _assert_retryable_503(
+        *_call(gateway + f"/v1/render/jobs/{job_id}/cancel", method="POST", body=b"")
+    )
+
+
+def test_a_midresponse_failure_on_upload_is_the_retryable_503(comfy, gateway) -> None:
+    _StubComfy.break_paths = {"/upload/image"}
+    _assert_retryable_503(
+        *_call(
+            gateway + "/v1/render/uploads/image",
+            method="POST",
+            body=b"--b\r\n\r\nx\r\n--b--\r\n",
+            headers={"Content-Type": "multipart/form-data; boundary=b"},
+        )
+    )
+
+
+def test_the_client_connection_survives_a_midresponse_failure(comfy, gateway) -> None:
+    """The regression in one line: before the fix the exception unwound out of
+    the handler and the caller got a dropped socket instead of an answer. A
+    SECOND request on the same gateway proves the handler unwound cleanly."""
+    _StubComfy.break_paths = {"/prompt"}
+    assert _call(gateway + RENDER_PATH, method="POST", body=b"{}")[0] == 503
+    _StubComfy.break_paths = set()
+    assert _submit(gateway)

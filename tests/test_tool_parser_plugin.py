@@ -57,6 +57,17 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed for the /v1/render body caps (review finding 1 on the innereye
+    # PR): ONLY `gateway` moved, and it moved by GAINING two environment
+    # passthroughs — GATEWAY_RENDER_MAX_WORKFLOW_BYTES (1 MiB) and
+    # GATEWAY_RENDER_MAX_UPLOAD_BYTES (32 MiB), the per-route request-body caps
+    # the render facade enforces before buffering a submission or an input
+    # image. Both are render-scoped: no other POST lane reads them, and no vLLM
+    # lane reads them at all, which is why no other service's hash moves.
+    # Required by tests/test_gateway_env_passthrough_guard.py — a knob
+    # _config.py parses but compose never plumbs is inert in every real
+    # deployment.
+    #
     # Recomputed 2026-08-31 for issue #120: the three Gemma-family lanes
     # moved their attention backend off the dead VLLM_ATTENTION_BACKEND env
     # onto --attention-config (the #109 gate closed).
@@ -231,7 +242,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # tests/test_gateway_env_passthrough_guard.py fails on any key the config
     # reads that compose does not plumb. Still no `comfyui` service (a later
     # task), so `gateway` remains the ONLY service that moved.
-    "gateway": "75df1f9561fbd821de5fc2f12afd6b4f229592b148c59f58009c63e0c3c15ae2",
+    "gateway": "c60c2428ad2026358d5c7038e539854cf3830bebe8a7fdb78e5359ffa54fb805",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

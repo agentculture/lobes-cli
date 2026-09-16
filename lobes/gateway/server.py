@@ -77,7 +77,11 @@ from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
-from lobes.gateway._config import NEVER_PROXIED_BACKENDS, ServerConfig
+from lobes.gateway._config import (
+    NEVER_PROXIED_BACKENDS,
+    RENDER_BODY_LIMIT_ENV,
+    ServerConfig,
+)
 from lobes.gateway._mesh_config import MeshConfigError
 from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
@@ -530,13 +534,45 @@ def sse_error_frame(message: str) -> bytes:
     return b"data: " + payload.encode("utf-8") + b"\n\n"
 
 
-def read_chunked_body(rfile, max_bytes: int = 64 * 1024 * 1024) -> bytes:
+class RequestBodyTooLarge(Exception):
+    """A request body exceeded the limit its route declares (→ HTTP 413).
+
+    Carries what the refusal needs to be actionable: the size the caller
+    DECLARED (``None`` on a chunked body, where nothing declares it up front),
+    the limit it broke, and the name of the env knob that sets that limit — so
+    the operator is told which value to raise rather than being left to guess
+    between two per-route caps.
+    """
+
+    def __init__(self, declared: int | None, limit: int, knob: str) -> None:
+        self.declared = declared
+        self.limit = limit
+        self.knob = knob
+        super().__init__(f"request body over the {limit}-byte {knob} limit")
+
+
+def read_chunked_body(rfile, max_bytes: int = 64 * 1024 * 1024, *, strict: bool = False) -> bytes:
     """Decode an HTTP/1.1 ``Transfer-Encoding: chunked`` request body from ``rfile``.
 
     Clients/proxies may send a chunked body with no ``Content-Length``; reading
     only by length would forward an empty payload. Stops at the zero-length
     chunk, ignores chunk extensions, and caps the total at ``max_bytes`` so a
     malformed/huge stream can't exhaust memory.
+
+    ``strict`` is the caller's choice of what "over the cap" MEANS, and its
+    default keeps every pre-existing call site byte-identical:
+
+    * ``False`` (the default, and what every non-render lane still passes) —
+      the total is TRUNCATED at ``max_bytes`` and the request proceeds, exactly
+      as it did before the render lane grew limits.
+    * ``True`` — :class:`RequestBodyTooLarge` is raised INCREMENTALLY, as soon
+      as a chunk header declares bytes that would take the total past the cap,
+      so the oversized payload is never read into memory at all. The caller is
+      then responsible for closing the connection: the rest of the body is
+      still on the socket and would poison the next request's framing.
+
+    ``knob`` is not a parameter here — the strict caller
+    (:meth:`_Handler._read_body`) re-raises with the route's own knob name.
     """
     body = bytearray()
     while len(body) <= max_bytes:
@@ -551,6 +587,10 @@ def read_chunked_body(rfile, max_bytes: int = 64 * 1024 * 1024) -> bytes:
         if size == 0:
             rfile.readline()  # consume the trailing CRLF after the last chunk
             break
+        if strict and len(body) + size > max_bytes:
+            # Refuse on the chunk HEADER, before those bytes are read: the whole
+            # point is that an oversized body never lands in gateway memory.
+            raise RequestBodyTooLarge(None, max_bytes, "")
         body += rfile.read(size)
         rfile.readline()  # consume the CRLF following each chunk
     return bytes(body)
@@ -4421,6 +4461,29 @@ def _render_upstream_headers(body: bytes, content_type: str | None) -> list[tupl
     return headers
 
 
+def _render_read_all(up: "_Upstream", backend: Backend) -> bytes:
+    """Read a buffered ComfyUI response, as an :class:`UpstreamError` on failure.
+
+    Review finding 4. :func:`open_upstream` wraps only the CONNECT-and-send
+    phase; the read happens after it returns, so ComfyUI answering headers and
+    then resetting, stalling past the read timeout, or sending a truncated body
+    used to let ``OSError``/``http.client.HTTPException`` escape the handler
+    entirely — the client lost the facade's documented structured answer and got
+    an aborted connection instead.
+
+    Re-raising as ``UpstreamError`` puts the response phase under the SAME
+    ``except`` clause in :meth:`_Handler._render_response` that the pre-connection
+    failure already took, so every buffered render round trip — submit, poll,
+    artifact index, cancel, upload — answers the one retryable 503. The message
+    prefix is what keeps that 503 honest about which of the two happened; see
+    that handler's body text.
+    """
+    try:
+        return up.read_all()
+    except (OSError, http.client.HTTPException, ValueError) as exc:
+        raise UpstreamError(f"{backend.name}: failed mid-response: {exc}") from exc
+
+
 def _render_job_state(payload: object, artifacts: tuple[dict[str, str], ...]) -> str:
     """A coarse, schema-tolerant state for one job: ``completed`` or ``pending``.
 
@@ -4768,9 +4831,21 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             return handlers[route.kind](backend, route, body)
         except UpstreamError as exc:
-            # The backend is wired but unreachable — a cold/stopped ComfyUI is
-            # the common case. Retryable, and never a silent boot: lobes has no
-            # lifecycle actuator in the data plane.
+            # The backend is wired but did not complete the round trip. Two
+            # distinct phases arrive here and BOTH are this same 503 (review
+            # finding 4): the connect-and-send failure open_upstream raises (a
+            # cold/stopped ComfyUI, the common case) and the response-phase
+            # failure _render_read_all re-raises (headers, then a reset, a stall
+            # or a truncated body).
+            #
+            # Reusing the code rather than minting a second one is deliberate:
+            # from the caller's side the two are one fact — the render backend
+            # did not answer, wait and retry — and this body is the only place
+            # the "lobes never starts it automatically" honesty lives. What the
+            # message must NOT do is claim a cold backend it did not observe, so
+            # the prose names the mid-response case too and `exc` carries which
+            # phase actually failed. Retryable, and never a silent boot: lobes
+            # has no lifecycle actuator in the data plane.
             return GatewayResponse(
                 status=503,
                 headers=[
@@ -4778,9 +4853,10 @@ class _Handler(BaseHTTPRequestHandler):
                     ("Retry-After", str(RENDER_RETRY_AFTER_SECONDS)),
                 ],
                 body=_render_error_body(
-                    f"the render backend is not reachable ({exc}) — it may be cold "
-                    "or still warming up. lobes never starts it automatically; an "
-                    "operator must bring it up with 'lobes up innereye --apply'. "
+                    f"the render backend did not complete this request ({exc}) — it "
+                    "may be cold, still warming up, or it may have dropped the "
+                    "connection mid-response. lobes never starts it automatically; "
+                    "an operator must bring it up with 'lobes up innereye --apply'. "
                     "Retry shortly.",
                     "render_backend_unavailable",
                 ),
@@ -4823,7 +4899,10 @@ class _Handler(BaseHTTPRequestHandler):
         """Dial ComfyUI and read the whole answer (never a stream)."""
         up = self._render_open(backend, path, method=method, body=body, ctype=ctype)
         try:
-            return up.status, up.read_all(), up.headers
+            # _render_read_all, never a bare read_all(): a response-phase
+            # failure here must reach _render_response's UpstreamError clause
+            # (review finding 4), not escape and abort the client connection.
+            return up.status, _render_read_all(up, backend), up.headers
         finally:
             up.close()
 
@@ -4952,7 +5031,7 @@ class _Handler(BaseHTTPRequestHandler):
         up = self._render_open(backend, f"{_COMFY_VIEW_PATH}?{query}", method="GET")
         if up.status != 200:
             try:
-                raw = up.read_all()
+                raw = _render_read_all(up, backend)
             finally:
                 up.close()
             return GatewayResponse(
@@ -5288,7 +5367,13 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             self._reject_unauthorized()
             return
-        body = self._read_body()
+        # Per-ROUTE body cap (review finding 1), render-scoped: every other
+        # lane's limit is None, so its read is the pre-limit one byte for byte.
+        try:
+            body = self._read_body(self._post_body_limit())
+        except RequestBodyTooLarge as exc:
+            self._reject_payload_too_large(exc)
+            return
         if is_audio_path(self.path):
             # /v1/audio/* → path-routed, per-ROLE since issue #129 — see
             # handle_audio_request: proxied lane / declared-off referral 404 /
@@ -5365,17 +5450,108 @@ class _Handler(BaseHTTPRequestHandler):
         finally:
             resp.release()
 
-    def _read_body(self) -> bytes:
+    def _post_body_limit(self) -> int | None:
+        """The maximum request-body size for THIS POST route, or ``None``.
+
+        **Render-scoped by construction** (review finding 1). Every route but
+        the ``/v1/render`` family answers ``None``, which makes
+        :meth:`_read_body` take exactly the code path it took before limits
+        existed — so chat completions, embeddings, rerank/score and the
+        ``/v1/audio/*`` multipart lanes are byte-identical. That is the whole
+        scoping guarantee, and it is asserted route-by-route in
+        tests/test_gateway_render_facade.py rather than argued here.
+
+        Within the family, uploads get their own (much larger) cap and
+        everything else — submit, cancel, and any render spelling the allowlist
+        will go on to 404 — gets the workflow cap. An unrouted render POST is
+        capped deliberately: its body is read BEFORE
+        :func:`parse_render_route` refuses it, so leaving it uncapped would
+        leave the memory cost exactly where the finding put it.
+
+        A non-positive knob value means "no limit" (the documented escape
+        hatch), and surfaces here as ``None`` — the same inert path a
+        non-render route takes.
+        """
+        if not is_render_path(self.path):
+            return None
+        route = parse_render_route(self.path, "POST")
+        cfg = self.server_config
+        if route is not None and route.kind == "upload":
+            limit = cfg.render_max_upload_bytes
+        else:
+            limit = cfg.render_max_workflow_bytes
+        return limit if limit > 0 else None
+
+    def _post_body_limit_knob(self) -> str:
+        """The env key behind :meth:`_post_body_limit` for this route — named in
+        the 413 body so the operator is told which of the two caps to raise."""
+        route = parse_render_route(self.path, "POST")
+        field = (
+            "render_max_upload_bytes"
+            if route is not None and route.kind == "upload"
+            else "render_max_workflow_bytes"
+        )
+        return RENDER_BODY_LIMIT_ENV[field]
+
+    def _read_body(self, limit: int | None = None) -> bytes:
+        """Read the request body, refusing one over ``limit`` before buffering it.
+
+        ``limit=None`` (the default, and what every non-render route passes) is
+        the pre-limit behaviour verbatim. With a limit:
+
+        * a ``Content-Length`` over it is refused WITHOUT reading a single byte
+          off the socket — the declared size is enough to know;
+        * a chunked body is refused incrementally, on the first chunk header
+          that would take the total past the cap (see :func:`read_chunked_body`
+          with ``strict=True``), since nothing declares its size up front.
+
+        Both raise :class:`RequestBodyTooLarge`, which leaves an unread body on
+        the socket — :meth:`_reject_payload_too_large` must therefore close the
+        connection rather than keep it alive.
+        """
         cl = self.headers.get("Content-Length")
         if cl is not None:
             try:
                 length = int(cl)
             except ValueError:
                 length = 0
+            if limit is not None and length > limit:
+                raise RequestBodyTooLarge(length, limit, self._post_body_limit_knob())
             return self.rfile.read(length) if length > 0 else b""
         if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
-            return read_chunked_body(self.rfile)
+            if limit is None:
+                return read_chunked_body(self.rfile)
+            try:
+                return read_chunked_body(self.rfile, limit, strict=True)
+            except RequestBodyTooLarge as exc:
+                # read_chunked_body knows the cap but not whose knob set it.
+                raise RequestBodyTooLarge(None, exc.limit, self._post_body_limit_knob()) from exc
         return b""
+
+    def _reject_payload_too_large(self, exc: RequestBodyTooLarge) -> None:
+        """Send the 413 and close the connection.
+
+        ``Connection: close`` for the same reason :meth:`_reject_unauthorized`
+        carries it: the refusal happens with the oversized body still unread on
+        the socket (that is the point — it was never buffered), so keeping the
+        connection alive would let those bytes be parsed as the NEXT request's
+        head. ``send_header('Connection', 'close')`` both advertises the close
+        and makes ``BaseHTTPRequestHandler`` perform it.
+        """
+        declared = (
+            f"declares {exc.declared} bytes, over" if exc.declared is not None else "streamed past"
+        )
+        self._send_simple(
+            413,
+            [("Content-Type", _CONTENT_TYPE_JSON), ("Connection", "close")],
+            _render_error_body(
+                f"this render request body {declared} the gateway's "
+                f"{exc.limit}-byte limit for this route, so it was refused without "
+                f"being read. Raise {exc.knob} on the gateway (0 disables the cap) "
+                "if this deployment genuinely needs larger bodies.",
+                "render_payload_too_large",
+            ),
+        )
 
     def _relay_buffered(self, resp: GatewayResponse) -> None:
         data = resp.upstream.read_all()

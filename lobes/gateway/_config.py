@@ -425,6 +425,28 @@ def _is_feasible(env: Mapping[str, str], backend_name: str, *, wired: bool = Tru
     return True
 
 
+# The /v1/render lane's default body caps (review finding 1). Both are
+# operator-overridable — see ServerConfig.render_max_* below for the knobs and
+# the reasoning, and RENDER_BODY_LIMIT_ENV for the env keys.
+#
+# 1 MiB for a workflow: a real ComfyUI API-format graph is tens of KB, so this
+# is roughly 30x headroom and still nothing a caller can weaponise.
+DEFAULT_RENDER_MAX_WORKFLOW_BYTES = 1024 * 1024
+# 32 MiB for an input image: comfortably above the several-MB images the lane
+# exists to accept (an uncompressed 4K PNG lands well inside it), and strictly
+# BELOW read_chunked_body's pre-existing 64 MiB ceiling, so the render cap is a
+# genuine narrowing of what the gateway already tolerated rather than a raise.
+DEFAULT_RENDER_MAX_UPLOAD_BYTES = 32 * 1024 * 1024
+
+# The env keys for the two caps above, keyed by the ServerConfig field they
+# fill. The refusal body names the knob it broke, so the mapping is read by the
+# 413 path too — one place to change a spelling.
+RENDER_BODY_LIMIT_ENV: dict[str, str] = {
+    "render_max_workflow_bytes": "GATEWAY_RENDER_MAX_WORKFLOW_BYTES",
+    "render_max_upload_bytes": "GATEWAY_RENDER_MAX_UPLOAD_BYTES",
+}
+
+
 @dataclass(frozen=True)
 class ServerConfig:
     """Where the gateway listens and how patient it is with backends."""
@@ -482,6 +504,28 @@ class ServerConfig:
     # end. Default False (off) — the pool's capacity signal is live by
     # default wherever a capacity is declared.
     capacity_kill_switch: bool = False
+    # The /v1/render lane's two REQUEST-BODY caps, in bytes (review finding 1).
+    # The gateway buffers a POST body whole before forwarding it, and the render
+    # family is the one lane that forwards a caller's bytes to a WRITABLE
+    # upstream endpoint (ComfyUI's /upload/image writes into its input tree), so
+    # an unbounded body costs gateway memory and then backend disk.
+    #
+    # Two caps, not one, because the two payloads differ by orders of magnitude:
+    # a ComfyUI API-format workflow graph is JSON in the tens of KB, while an
+    # input image is legitimately several MB. A single cap would either leave the
+    # submit route absurdly generous or make the upload route useless.
+    #
+    # Deliberately RENDER-SCOPED. The unbounded read is pre-existing and shared
+    # by every POST route; retrofitting a global cap onto chat completions and
+    # /v1/audio/* multipart is a separate change with its own blast radius. See
+    # lobes.gateway.server._Handler._post_body_limit, which answers None for
+    # every non-render route so those lanes are byte-identical.
+    #
+    # Set either knob to 0 (or a negative) to disable that cap — the documented
+    # escape hatch for a deployment whose workflows or inputs genuinely exceed
+    # these, restoring the pre-limit behaviour for that route only.
+    render_max_workflow_bytes: int = DEFAULT_RENDER_MAX_WORKFLOW_BYTES
+    render_max_upload_bytes: int = DEFAULT_RENDER_MAX_UPLOAD_BYTES
 
 
 def _parse_aliases(raw: str | None) -> dict[str, str]:
@@ -1099,5 +1143,15 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         api_key=_gateway_api_key(env),
         local_capacities=_local_capacities(env),
         capacity_kill_switch=_as_bool(env, CAPACITY_KILL_SWITCH_ENV),
+        render_max_workflow_bytes=_as_int(
+            env,
+            RENDER_BODY_LIMIT_ENV["render_max_workflow_bytes"],
+            DEFAULT_RENDER_MAX_WORKFLOW_BYTES,
+        ),
+        render_max_upload_bytes=_as_int(
+            env,
+            RENDER_BODY_LIMIT_ENV["render_max_upload_bytes"],
+            DEFAULT_RENDER_MAX_UPLOAD_BYTES,
+        ),
     )
     return table, server

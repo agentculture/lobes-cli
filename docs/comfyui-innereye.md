@@ -101,6 +101,49 @@ restart forgets every id it issued, and a pre-restart id is refused
 afterward (`render_job_not_found`) — this is fail-closed and deliberate,
 not a gap to file against.
 
+### Request-body caps on the write half
+
+Three of those six spellings carry a body, and the gateway buffers a POST
+body whole before forwarding it. The render family is the one lane that
+hands a caller's bytes to a **writable** upstream endpoint — ComfyUI's
+`/upload/image` writes into its input tree — so an unbounded body would
+cost gateway memory first and innereye's disk second. Two caps bound it,
+enforced **before** the body is buffered:
+
+| knob | default | applies to |
+|---|---|---|
+| `GATEWAY_RENDER_MAX_WORKFLOW_BYTES` | 1 MiB (`1048576`) | `POST /v1/render`, `POST /v1/render/jobs/{id}/cancel` |
+| `GATEWAY_RENDER_MAX_UPLOAD_BYTES` | 32 MiB (`33554432`) | `POST /v1/render/uploads/image` |
+
+Two caps and not one, because the payloads differ by orders of magnitude: a
+ComfyUI API-format workflow graph is JSON in the tens of KB, while an input
+image is legitimately several MB. A request over its route's cap is refused
+**`413 render_payload_too_large`** and the connection is closed — for a
+declared `Content-Length`, before a single byte is read off the socket; for a
+`Transfer-Encoding: chunked` body, on the first chunk header that would take
+the total past the cap, so the oversized payload never lands in memory
+either way. The refusal names the knob it broke. Setting a knob to `0`
+disables that cap.
+
+These caps are **render-scoped**. No other POST route is capped by them:
+chat completions, embeddings, rerank/score and the `/v1/audio/*` multipart
+lanes read their bodies exactly as they did before these knobs existed. A
+general request-body limit across every lane is a separate change with its
+own blast radius and is **not** what this is.
+
+### When ComfyUI answers headers and then dies
+
+A backend that is cold or stopped is refused before any bytes move, with the
+honest `503 render_backend_unavailable` + `Retry-After` described under
+"Boundary / non-goals". A backend that accepts the connection, sends
+response headers and then **resets, stalls past the read timeout, or sends a
+truncated body** is the same fact from the caller's side — the render
+backend did not answer this request — so it gets the **same** structured 503
+rather than a dropped connection. The message names the mid-response case
+explicitly, so the 503 never claims a cold backend it did not observe. This
+covers every buffered round trip: submit, polling, the artifact index,
+cancel and upload.
+
 **No reader should conclude the native ComfyUI surface is reachable
 off-box.** It categorically is not: the `comfyui` service declares
 `expose: ["8188"]` with **no** `ports:` key, so port 8188 answers only to

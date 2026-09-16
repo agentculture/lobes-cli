@@ -2062,6 +2062,16 @@ services:
       - GATEWAY_ALIASES=${GATEWAY_ALIASES:-}
       - GATEWAY_CONNECT_TIMEOUT=${GATEWAY_CONNECT_TIMEOUT:-5}
       - GATEWAY_READ_TIMEOUT=${GATEWAY_READ_TIMEOUT:-600}
+      # The /v1/render lane's two REQUEST-BODY caps, in bytes. The gateway
+      # buffers a POST body whole, and render is the one lane that forwards a
+      # caller's bytes to a WRITABLE upstream (ComfyUI's /upload/image writes
+      # into its input tree), so an unbounded body costs gateway memory and then
+      # backend disk. Two caps because the payloads differ by orders of
+      # magnitude: a ComfyUI API-format workflow graph is tens of KB, an input
+      # image is legitimately several MB. Both are RENDER-ONLY — no other POST
+      # route is capped by them. Set either to 0 to disable that cap.
+      - GATEWAY_RENDER_MAX_WORKFLOW_BYTES=${GATEWAY_RENDER_MAX_WORKFLOW_BYTES:-1048576}
+      - GATEWAY_RENDER_MAX_UPLOAD_BYTES=${GATEWAY_RENDER_MAX_UPLOAD_BYTES:-33554432}
       # Pressure-policy thresholds (issue #68) — the gateway degrades the generate
       # lane to `minor` when host swap%/iowait% exceed these. Passed here so
       # operators can tune per box via .env; defaults match the code
