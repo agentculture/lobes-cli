@@ -1,0 +1,301 @@
+{
+  "slug": "qwen3-8-flash-next-on-thor",
+  "title": "qwen3.8 flash next on thor",
+  "schema_version": 6,
+  "status": "drafting",
+  "created": "2026-09-13T12:31:42Z",
+  "updated": "2026-09-13T12:42:53Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The NemoClaw-Thor recipe for Qwen3.8-Flash-Next (RadixArk NVFP4, 125B MoE) on a Jetson AGX Thor is recorded as a reference doc in this repo, with every measurement attributed to the recipe author \u2014 not built, booted, measured, or reproduced on any fleet box",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The Jetson AGX Thor serves Qwen3.8-Flash-Next (RadixArk NVFP4, 125B MoE) on vLLM, reproduced from the NemoClaw-Thor fast recipe and measured in this fleet's own evidence",
+          "kind": "announcement",
+          "reason": "PR #267 Qodo 3999631524: the original announcement claimed a fleet reproduction that the operator decided against (2026-09-13, reference only)"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "kind": "decision",
+      "text": "operator first authorized dropping the Thor's lobes lanes for this work, then (2026-09-13) chose reference-only: the Thor keeps serving worker and nothing is booted",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "operator authorizes dropping the Thor's lobes lanes for this work and raising them again as needed (user, this session: 'We can drop lobes and raise as needed on thor. You have ssh thor control')",
+          "kind": "decision",
+          "reason": "superseded by the operator's doc-only decision in the same session"
+        }
+      ]
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "the NemoClaw-Thor fast recipe (serving/docs/QWEN38-FLASH-NEXT-FAST-THOR.md, commit 9c9c0873, 2026-09-06) is the starting recipe: RadixArk/Qwen3.8-Flash-Next-NVFP4 @7b719225, gpu_mem_util 0.90, BF16 KV, max_model_len 262144, max_num_seqs 4, embedded MTP n=3, fused SM110a GDN CUDA decode, flashinfer_cutlass MoE, PLE mmap MADV_RANDOM + parallel reads; its reported numbers (34.98 tok/s single-stream mean, 677,323 KV tokens / 2.58x, 68.10 tok/s 4-way short) are the author's, NOT yet reproduced here",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "the served image is a 3-layer LOCAL build pinned by sha: blazux/qwen3.8-Flash-DGX @4b723de2 (DET_ARCH=110a) -> Dockerfile.qwen38-flash-next-sm110 (SM110 flashinfer_cutlass MoE gate patch) -> Dockerfile.qwen38-flash-next-gdn-sm110 (vLLM @082cf021 fused GDN decode kernel, PR #53835 merged 2026-09-05, + PLE I/O patch); every sha and the resulting image ID are recorded in docs/image-ledger.md, following the lobes/vllm-gemma4:local precedent",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "pin, don't follow upstream: blazux/qwen3.8-Flash-DGX main is already 32 commits past the recipe's 4b723de2 pin (pushed 2026-09-13, incl. a 'temporary' block-fp8 MTP shim pending vllm#55513); the reproduction uses the recipe's pins, and a re-pin is a separate measured change",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "assumption",
+      "text": "the 2026-08-27 lobes conclusion that RadixArk/Qwen3.8-Flash-Next-NVFP4 cannot fit the Thor ('135 GB, SGLang-only, misses by ~13 GB'; VLLM_PLE_CPU_OFFLOAD a no-op on unified memory) is SUPERSEDED as a premise: the preview vLLM serves it with VLLM_PLE_MMAP=1 mapping the FP8 PLE table from NVMe, and HF reports the pinned revision at 126.0 GiB over 419 files",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "disk must be reclaimed before the checkpoint download: the Thor's single NVMe (WD SN5000S 1 TB) has 146 GB free against a 126 GiB checkpoint plus three new ~30 GB image layers; docker reports 105.9 GB reclaimable images and 52.7 GB reclaimable build cache",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "boundary",
+      "text": "the non-lobes stack on the Thor (culture-nodes prod-api/worker/scheduler/notifier, postgres:17, minio, backup) is not part of this work and is not stopped; it holds ~0.6 GiB resident, which counts against the recipe's 0.90 util and its ~7.2 GiB post-run available-memory margin",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "dropping lobes on the Thor removes the mesh's only worker host: the Spark reaches model=worker by proxy to the Thor (validated 2026-09-11), so for the window model=worker is unavailable mesh-wide, and restoring it means re-raising the captured thor-worker deployment",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "non_goal",
+      "text": "no new Colleague role and no role re-point in this scope: Flash-Next lands, if at all, as a catalog candidate; docs/colleague-stack.md says a different checkpoint is a catalog change and adding a role is effectively irreversible, and both 2026-08-27 specs recorded the same non-goal",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "integrating it as a lobes lane would touch: lobes/catalog.py (new engine=vllm candidate with moe_backend flashinfer_cutlass + MTP speculative_config; SupportedModel has no image field), lobes/templates/fleet/docker-compose.yml (vllm-primary has NO per-lane image override \u2014 only VLLM_NIGHTLY_IMAGE; vllm-worker has WORKER_IMAGE \u2014 and none passes the VLLM_PLE_*/VLLM_QSA_*/compile-cache env or -cc.splitting_ops), and a new solo Thor shape, since 0.90 util can't co-reside with thor-worker's lanes",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "vision: the checkpoint declares vision_config / image-text-to-text, but the NemoClaw recipe never tested image input; whether the preview image serves it on sm_110 is unmeasured",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "restart stability: the recipe recorded one CUDA Xid 13 (illegal instruction) on restart with the serialized compile cache, worked around with VLLM_DISABLE_COMPILE_CACHE=1, explicitly not a restart soak \u2014 root cause unknown",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "mixed-length concurrent prefill OOM: upstream vLLM issue allocates a dense num_prefills x max_chunk PLE short-conv buffer; the recipe's 4-way mixed smoke passed with ~7.2 GiB available but is 'not a guarantee'",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "PLE read performance depends on NVMe: the recipe's Thor storage model is unstated; this Thor's WD SN5000S may read the PLE table slower or faster, which feeds decode tok/s directly",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "whether dropping every lobes lane frees enough for 0.90 on this Thor given the recipe's own ~7-10 GiB available-memory margin and this box's 7.3 GiB already-swapped pages; boot log KV capacity is authoritative",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "moot: operator chose not to run the recipe; the Thor stays the worker host (2026-09-13)",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "operator instruction (this session)",
+      "finding": "Thor lobes lanes may be stopped for the Flash-Next window and re-raised as needed; ssh thor@thor control granted",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "NemoClaw-Thor serving/docs/QWEN38-FLASH-NEXT-FAST-THOR.md + serving/start-qwen38-flash-next-fast.sh",
+      "finding": "measured on a Thor 2026-09-05: 3-prompt coding probe, temp 0, thinking off, 512-token cap -> 34.98 tok/s mean (vs 24.97 Triton baseline); 19.58 GiB KV = 677,323 tokens; tool-call and 25,640-token retrieval smoke only; no full-256K request, no quality eval, no vision test",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "NemoClaw-Thor serving/docker/Dockerfile.qwen38-flash-next{,-gdn}-sm110 + patches/",
+      "finding": "overlay 1 lifts vLLM's SM110 exclusion in flashinfer_cutlass_moe.py (refuses if gate text not found exactly once); overlay 2 ADDs 4 files from vllm@082cf021 and builds thor_gdn ops (build.py/install.py/patch_ple_io.py), sets VLLM_GDN_DECODE_KERNEL=cuda",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "docs/image-ledger.md",
+      "finding": "no rule forbids an unpublished local image (lobes/vllm-gemma4:local precedent); registry pulls must be digest-pinned and source commits recorded",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "github blazux/qwen3.8-Flash-DGX (gh api compare 4b723de2...main)",
+      "finding": "ahead_by 32; latest commit 2c5701d0 2026-09-13 notes patch 11 is temporary pending vllm#55513",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "docs/specs/2026-08-27-flash-next-on-vllm.md + docs/experiments/qwen3.8-flash-next-gguf-llamacpp-vllm.md",
+      "finding": "both specs exported, execution deferred 2026-08-27 before stage 1; nothing ever booted; the NVFP4 was ruled out on footprint and the GGUF-via-vllm-gguf-plugin route chosen on paper; success bar there: >=25 tok/s single-stream at MAXN (~2x cortex's 12.1)",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "HF API RadixArk/Qwen3.8-Flash-Next-NVFP4 @7b719225",
+      "finding": "126.0 GiB, 419 files, many model-plefp8-*.safetensors shards (4.84 GiB each); arch Qwen4ExpForConditionalGeneration, vision_config present, 48 layers, 512 experts, mtp_num_hidden_layers 1, max_position_embeddings 262144; ungated",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "Thor host (ssh thor@thor: df, docker system df, lsblk)",
+      "finding": "/ 937G, 744G used, 146G free, 84%; images 212.5GB (105.9GB reclaimable); build cache 63.96GB (52.74GB reclaimable); lobes HF cache ~/.cache/huggingface = 73G, has no Flash-Next snapshot; recipe expects ~/thor-hf-cache",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "Thor host (docker ps / docker stats)",
+      "finding": "running: model-gear-gateway, vllm-worker (8.29 GiB rss, WORKER util 0.45), vllm-embed, vllm-rerank (lobes 0.77.0.dev544, COMPOSE_PROFILES=worker, LOBES_MESH_NAME=thor) plus 7 prod-* culture-nodes/postgres/minio containers; MAXN; R38.2.2; 122 GiB RAM, 59.6 GiB swapfile 7.3 GiB used; passwordless sudo OK",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "CLAUDE.md worker paragraph + deployments/jetson-agx-thor__thor-worker/deployment.lock.toml",
+      "finding": "Thor hosts worker via thor-worker shape (util 0.45, 262144, WORKER_MAX_NUM_SEQS=1); Spark proxies worker to it (docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt); lock captured 2026-09-11 = rollback reference",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "docs/colleague-stack.md ('adding a role is effectively irreversible') + lobes/roles.py",
+      "finding": "a new role costs a public /capabilities key, an alias, six per-role tables, every profile/shape and ~28 golden .env files; checkpoint swaps are catalog changes",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "lobes/catalog.py:70-130 + lobes/templates/fleet/docker-compose.yml:53,1370-1401 + builtin_shapes/thor-worker.toml + profiles/builtin/thor.toml",
+      "finding": "per-lane *_IMAGE override pattern exists for worker/hand/multimodal/associate, not primary; serve args are one shell-lexed string; thor.toml already carries VLLM_GDN_DECODE_KERNEL=triton as a required cortex env (sm_110 MTP precedent)",
+      "seeds": [
+        "c11"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

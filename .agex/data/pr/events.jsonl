@@ -202,3 +202,8 @@
 {"ts":"2026-09-13T08:37:41.066839+00:00","type":"pr_batch_replied","pr":261,"count":3,"resolved":3}
 {"ts":"2026-09-13T08:37:41.819765+00:00","type":"pr_webhook_posted","pr":261,"event":"pr_replied"}
 {"ts":"2026-09-13T08:52:12.707485+00:00","type":"pr_batch_replied","pr":261,"count":0,"resolved":0}
+{"ts":"2026-09-16T11:23:31.383904+00:00","type":"pr_opened","pr":270,"title":"innereye: host ComfyUI as the eleventh Colleague role (#268)"}
+{"ts":"2026-09-16T11:23:32.802979+00:00","type":"pr_review_triggered","pr":270,"command":"/agentic_review"}
+{"ts":"2026-09-16T11:23:33.578369+00:00","type":"pr_webhook_posted","pr":270,"event":"pr_opened"}
+{"ts":"2026-09-16T11:24:36.967038+00:00","type":"readiness_arrived","pr":270,"waited_secs":60}
+{"ts":"2026-09-16T11:24:41.403788+00:00","type":"pr_read","pr":270,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
