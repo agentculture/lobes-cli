@@ -4762,38 +4762,7 @@ class _Handler(BaseHTTPRequestHandler):
             # (c2/c26), so an unauthenticated GET reaching here would be served.
             self._deliver(self._render_response(self.path, "GET", b""))
         else:
-            # The GET-side upstream seam. Every branch above answers from a
-            # hand-built body and opens no socket; this is the one place a GET
-            # may open an upstream and hand the bytes back through the SAME
-            # delivery path POST uses (`_deliver` → `_relay_streaming`), so a
-            # binary body is re-chunked verbatim rather than parsed. It is a
-            # SEAM, not a route: the shipped default returns None and the 404
-            # below is reached exactly as before.
-            relayed = self._dispatch_get_upstream(route, mesh_snapshot=mesh_snapshot)
-            if relayed is not None:
-                self._deliver(relayed)
-            else:
-                self._send_json(404, _not_found_body(route))
-
-    def _dispatch_get_upstream(
-        self, route: str, *, mesh_snapshot: RoutingSnapshot | None = None
-    ) -> GatewayResponse | None:
-        """Build a relayable response for a GET ``route``, or None to 404.
-
-        The default implementation answers None for every route, which keeps
-        `do_GET` byte-identical to its pre-seam behaviour. A route family that
-        needs to stream arbitrary upstream bytes out of a GET overrides this
-        (call :func:`open_upstream` with ``method="GET"`` and return a
-        ``GatewayResponse`` carrying ``upstream=`` and ``streaming=True``).
-
-        The ``/v1/render`` family (t9) does NOT come through here: its
-        acceptance criterion asks for the family in the do_GET/do_POST if/elif
-        chains themselves, so it has its own named branch alongside
-        ``is_realtime_path`` — mirroring how ``is_audio_path`` sits in do_POST.
-        This seam stays as shipped, for a later route family that only needs to
-        stream upstream bytes.
-        """
-        return None
+            self._send_json(404, _not_found_body(route))
 
     # --- the /v1/render facade (issue #82, t9) -------------------------------
     #

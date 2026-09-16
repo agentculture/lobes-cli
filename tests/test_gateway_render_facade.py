@@ -461,7 +461,7 @@ def test_upload_is_relayed_for_input_images(gateway) -> None:
     assert "POST /upload/image" in _StubComfy.paths
 
 
-def test_the_caller_bearer_is_never_forwarded_to_comfyui(gateway) -> None:
+def test_the_caller_bearer_is_never_forwarded_to_comfyui(gateway, monkeypatch) -> None:
     """ComfyUI has no auth; forwarding the fleet bearer into it would leak the
     key into a process that neither needs nor checks it."""
     forwarded: list[str] = []
@@ -471,11 +471,10 @@ def test_the_caller_bearer_is_never_forwarded_to_comfyui(gateway) -> None:
         forwarded.extend(k.lower() for k, _v in headers)
         return real(backend, path, body, headers, **kw)
 
-    S.open_upstream = spy  # noqa: S3010 - restored below
-    try:
-        _submit(gateway)
-    finally:
-        S.open_upstream = real
+    # `monkeypatch` owns the restore: the module attribute is global state, and
+    # a hand-rolled try/finally only unwinds for the paths it wraps.
+    monkeypatch.setattr(S, "open_upstream", spy)
+    _submit(gateway)
     assert "authorization" not in forwarded
 
 

@@ -1,15 +1,21 @@
 """GET-side gateway plumbing (t8): a method-general ``open_upstream`` and a
 ``do_GET`` path that reaches ``_relay_streaming``.
 
-This file covers the PLUMBING only — no route or path family is added here
-(that is t9). Two things are proven:
+This file covers the PLUMBING only — the ``/v1/render`` route family itself is
+covered by ``tests/test_gateway_render_facade.py``. Two things are proven:
 
 * ``open_upstream`` takes a ``method`` and still defaults to ``POST``, so every
   existing POST caller is unchanged, and a ``GET`` call keeps the same
   connect-timeout-then-read-timeout socket treatment.
-* ``_relay_streaming`` is reachable from ``do_GET`` through the
-  ``_dispatch_get_upstream`` seam and relays arbitrary BINARY bytes
-  byte-for-byte.
+* ``_relay_streaming`` relays arbitrary BINARY bytes byte-for-byte out of a
+  GET upstream, through the same ``_deliver`` path ``do_POST`` uses.
+
+t8 originally reached the second of these through a ``_dispatch_get_upstream``
+seam on the handler. That seam shipped with zero in-tree users — t9's
+``/v1/render`` family has its own named ``do_GET`` branch by acceptance
+criterion — so it was deleted as speculative generality (Sonar S1172). The
+primitives it existed to exercise are production code now, and are exercised
+here directly instead.
 
 Scope honesty: the binary-fidelity assertion here is made against a local
 stdlib stub upstream, not a real ComfyUI. The compose-network half of the
@@ -166,27 +172,46 @@ def test_open_upstream_get_keeps_the_read_timeout(upstream) -> None:
 
 
 def test_open_upstream_get_refused_raises_upstream_error() -> None:
+    # Setup lives OUTSIDE the raises block so exactly one call inside it can
+    # throw — otherwise a Backend() that started raising would pass this test.
+    backend = Backend("primary", "http://127.0.0.1:1", "P")
+    kwargs = {"connect_timeout": 1, "read_timeout": 2, "method": "GET"}
     with pytest.raises(S.UpstreamError):
-        S.open_upstream(
-            Backend("primary", "http://127.0.0.1:1", "P"),
-            "/binary",
-            b"",
-            [],
-            connect_timeout=1,
-            read_timeout=2,
-            method="GET",
-        )
+        S.open_upstream(backend, "/binary", b"", [], **kwargs)
 
 
-# --- AC2: do_GET can reach _relay_streaming with arbitrary binary ---------
+# --- AC2: a GET relay carries arbitrary binary through _deliver ----------
 
 
-def _gateway_for(dispatch):
-    """A real gateway on an ephemeral port whose GET seam is `dispatch`."""
+def _relaying_gateway(backend: Backend):
+    """A real gateway on an ephemeral port that relays `/t8-probe` to `backend`.
+
+    The handler subclasses what `_make_handler` builds, so the relay runs
+    against the production `_deliver` / `_relay_streaming` implementation and
+    opens its GET upstream exactly the way `_render_artifact` does.
+    """
     table, cfg = _cfg()
     base = S._make_handler(table, cfg)
-    handler = type("_T8Handler", (base,), {"_dispatch_get_upstream": dispatch})
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+
+    class _Relay(base):  # type: ignore[valid-type, misc]
+        def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler API
+            if self.path != "/t8-probe":
+                return super().do_GET()
+            up = S.open_upstream(
+                backend,
+                "/binary",
+                b"",
+                list(self.headers.items()),
+                connect_timeout=self.server_config.connect_timeout,
+                read_timeout=self.server_config.read_timeout,
+                method="GET",
+            )
+            self._deliver(
+                S.GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
+            )
+            return None
+
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Relay)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     host, port = httpd.server_address
     return httpd, f"http://{host}:{port}"
@@ -199,23 +224,7 @@ def test_get_relay_is_byte_for_byte_identical(upstream) -> None:
     half of the criterion (the same render fetched directly from ComfyUI)
     is proven in the live acceptance run, t13 — not here.
     """
-    backend = Backend("innereye", upstream, "comfyui")
-
-    def dispatch(self, route, *, mesh_snapshot=None):
-        if route != "/t8-probe":
-            return None
-        up = S.open_upstream(
-            backend,
-            "/binary",
-            b"",
-            list(self.headers.items()),
-            connect_timeout=self.server_config.connect_timeout,
-            read_timeout=self.server_config.read_timeout,
-            method="GET",
-        )
-        return S.GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
-
-    httpd, gw = _gateway_for(dispatch)
+    httpd, gw = _relaying_gateway(Backend("innereye", upstream, "comfyui"))
     try:
         with urllib.request.urlopen(gw + "/t8-probe", timeout=30) as r:
             assert r.status == 200
@@ -232,9 +241,8 @@ def test_get_relay_is_byte_for_byte_identical(upstream) -> None:
     assert hashlib.sha256(through_gateway).hexdigest() == hashlib.sha256(_BLOB).hexdigest()
 
 
-def test_get_seam_default_is_inert() -> None:
-    """With nothing wired into the seam (the shipped default), an unknown GET
-    route 404s exactly as it did before t8."""
+def test_an_unknown_get_route_404s() -> None:
+    """`do_GET`'s final `else` is a plain 404 — no seam, no fall-through."""
     table, cfg = _cfg()
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), S._make_handler(table, cfg))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
