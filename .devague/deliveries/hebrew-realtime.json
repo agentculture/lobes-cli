@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T12:18:36Z",
+  "updated": "2026-09-18T13:31:36Z",
   "deviations": [
     {
       "id": "d1",
@@ -56,6 +56,26 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "After the current work is done, migrate the Hebrew text-preparation stage from phonikud to conikud (https://huggingface.co/conikud/conikud-onnx, MIT, conikud_int8.onnx 669 MB, pip install git+https://github.com/conikud/conikud-onnx, API G2P().phonemize(text) / .alternatives(text,k)) and test it on this box. It joins the TTS A/B as an arm first; it replaces phonikud only where the A/B shows it works",
+      "task_ref": "t9",
+      "reason": "Operator direction 2026-09-18 (/deviate): conikud replaces phonikud. Read before building: conikud is a G2P that outputs IPA WITH STRESS MARKS from unvocalized Hebrew (e.g. '\u05e7\u05e0\u05d9\u05ea\u05d9 \u05e1\u05e4\u05e8 \u05d7\u05d3\u05e9' -> 'kan\u02c8iti s\u02c8efe\u0281 \u03c7ad\u02c8a\u0283'); it does NOT output niqqud-vocalized Hebrew text the way phonikud's add_diacritics does. So it is a drop-in only for a PHONEME-input TTS (the phonikud-tts / StyleTTS2 / Piper family), not for a TEXT-input engine such as Chatterbox Multilingual, which would read IPA as Latin letters. The merged t9 hook (vocalize_hebrew with an injected str->str callable over Hebrew spans, PHONIKUD_MODEL_PATH, the 'phonikud' timing key) stays structurally valid \u2014 a conikud factory is one more injected callable \u2014 but whether it is USED depends on which TTS engine t3 selects. Published accuracy: 9.97% WER internal, 16.56% WER on MILIM-Bench; int8 is the CPU default (no aarch64 onnxruntime-gpu wheel anyway)",
+      "affects": [
+        "t3",
+        "t11",
+        "t16",
+        "c6",
+        "c12",
+        "h23",
+        "c19",
+        "h5"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 4
     }
   ],
   "evidence": [],
