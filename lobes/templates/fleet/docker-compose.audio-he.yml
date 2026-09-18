@@ -30,8 +30,32 @@
 # `GET /capabilities` can name the engine actually served for the `stt` role
 # (lobes/roles.py's `_declared_audio_engine`, merged task t13) instead of
 # advertising the Parakeet default while a Whisper server actually answers.
-# A Hebrew-capable TTS voice sidecar is a later task's addition to this same
-# overlay file.
+#
+# THIS TASK (t11) adds the Hebrew-capable TTS sidecar: the `chatterbox`
+# service's `build:` block is overridden to `Dockerfile.chatterbox-ml`
+# (Chatterbox MULTILINGUAL — approved deviation d5, operator 2026-09-18; see
+# that Dockerfile's header and lobes/realtime/chatterbox_multilingual_server.py's
+# module docstring for the full engine/diacritization/runaway-guard story)
+# instead of a full service redefinition — `container_name`/`volumes`/
+# `expose`/`CHATTERBOX_PORT`/`deploy`/`ipc` all stay inherited unchanged from
+# docker-compose.audio.yml (same service name, same internal port, so the
+# realtime bridge's TTS_URL=http://chatterbox:${CHATTERBOX_PORT:-9000} needs
+# no change); only `healthcheck.start_period` is raised (cold model load
+# measured ~120s, plus a mandatory warm-up synthesis before /ready reports
+# 200 — see that module's readiness_status()). It also passes
+# TTS_MODEL/TTS_RUNTIME/TTS_LANGUAGE through to the `gateway` service, the
+# same deviation-d3 precedent t10 set for STT_*, so `GET /capabilities` can
+# name the engine actually served for the `tts` role. TTS_MODEL keeps the
+# SAME value as the English default (`ResembleAI/chatterbox`) deliberately —
+# reading the installed package's `chatterbox.mtl_tts.REPO_ID` (2026-09-18)
+# shows the multilingual checkpoint files ship from the SAME HuggingFace
+# repo as the English ones; `TTS_RUNTIME=chatterbox-multilingual` is what
+# actually distinguishes the two in the advert. `realtime`'s Hebrew
+# vocalization knobs (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT) were already
+# wired by t8/t9; this task adds the `realtime` service's own HF-cache mount
+# so it can reach the SAME mounted phonikud model file the `chatterbox`
+# sidecar reads (both processes need it: the bridge's own vocalize-before-
+# chunking hook, and this sidecar's TTS_DIACRITIZE=auto fallback path).
 #
 # docker-compose.audio.yml and env.audio.example (the English overlay) stay
 # BYTE-IDENTICAL across this change — a Hebrew deployment is opt-in, layered
@@ -64,14 +88,78 @@ services:
       # switchable knob.
       - STT_RUNTIME=transformers
 
-  # --- gateway: advertise the Whisper engine actually served (deviation d3) -
+  # --- Hebrew TTS: Chatterbox MULTILINGUAL (approved deviation d5), not the
+  # English-only ChatterboxTTS. Only `build.dockerfile` and the TTS_*
+  # environment differ from docker-compose.audio.yml's `chatterbox` service —
+  # everything else (container_name, volumes, expose, deploy, ipc,
+  # CHATTERBOX_HOST/CHATTERBOX_PORT) is inherited unchanged via compose's
+  # deep merge of mapping keys; only `healthcheck.start_period` is raised
+  # (compose deep-merges the healthcheck mapping too, so `test`/`interval`/
+  # `timeout`/`retries` stay the English overlay's values — only this one
+  # key differs).
+  chatterbox:
+    build:
+      dockerfile: Dockerfile.chatterbox-ml
+    environment:
+      # TTS_LANGUAGE: the server-side synthesis language (criterion 2) —
+      # read by chatterbox_multilingual_server.py's MlSettings, passed as
+      # ChatterboxMultilingualTTS.generate's language_id. "he" for a Hebrew
+      # deployment; UNSET on the English overlay (docker-compose.audio.yml
+      # never declares this key), so an operator who builds
+      # Dockerfile.chatterbox-ml WITHOUT this overlay still gets Hebrew (the
+      # server's own in-code default), never silent English behaviour.
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-he}
+      # TTS_DIACRITIZE: "auto" (default) lets the sidecar diacritize
+      # undiacritized Hebrew input itself (phonikud) and bypasses
+      # Chatterbox's own internal Hebrew diacritizer so exactly one
+      # authority ever vocalizes a request; "off" disables both. See
+      # chatterbox_multilingual_server.py's module docstring for the full
+      # decision table.
+      - TTS_DIACRITIZE=${TTS_DIACRITIZE:-auto}
+      # TTS_MAX_RETRIES: retries after a runaway synthesis (measured live:
+      # the same 8-word Hebrew sentence once produced 24.5s of audio with
+      # ~35 invented words — docs/evidence/2026-09-hebrew-tts-ab-spark.txt)
+      # before the sidecar truncates instead. 2 retries = up to 3 total
+      # generate() calls per request.
+      - TTS_MAX_RETRIES=${TTS_MAX_RETRIES:-2}
+      # PHONIKUD_MODEL_PATH: SAME path/knob the `realtime` service reads
+      # below — this sidecar's own fallback diacritizer when
+      # TTS_DIACRITIZE=auto and the incoming text has no niqqud yet. Points
+      # at the same mounted HF-cache file on both containers.
+      - PHONIKUD_MODEL_PATH=${PHONIKUD_MODEL_PATH:-}
+    healthcheck:
+      # Cold multilingual model load ~120s (measured, docs/evidence/
+      # 2026-09-hebrew-tts-ab-spark.txt) PLUS a mandatory warm-up synthesis
+      # before /v1/health/ready reports 200 (criterion 4) — more generous
+      # than the English overlay's 120s start_period.
+      start_period: 300s
+
+  # --- gateway: advertise the Whisper AND Chatterbox-Multilingual engines
+  # actually served (deviation d3, extended from STT to TTS by this task) --
   gateway:
     environment:
       - STT_MODEL=${STT_MODEL:-ivrit-ai/whisper-large-v3-turbo}
       - STT_RUNTIME=${STT_RUNTIME:-transformers}
       - STT_LANGUAGE=${STT_LANGUAGE:-he}
+      # TTS_MODEL keeps the SAME repo id as the English default
+      # (ResembleAI/chatterbox) — the installed package's
+      # chatterbox.mtl_tts.REPO_ID really is that same HuggingFace repo
+      # (confirmed 2026-09-18); TTS_RUNTIME is what actually distinguishes
+      # this deployment's engine in the advert.
+      - TTS_MODEL=${TTS_MODEL:-ResembleAI/chatterbox}
+      - TTS_RUNTIME=${TTS_RUNTIME:-chatterbox-multilingual}
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-he}
 
   realtime:
+    # The realtime bridge's own vocalize-before-chunking hook
+    # (lobes/realtime/_vocalize.py, task t9) needs to read the SAME
+    # phonikud model file PHONIKUD_MODEL_PATH (below) points at — mount the
+    # same HF-cache directory the `chatterbox`/`stt` sidecars already mount
+    # (docker-compose.audio.yml), which docker-compose.audio.yml's own
+    # `realtime` service does NOT declare (the bridge previously needed no
+    # filesystem access at all).
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
     environment:
       # The session-default STT/generate language (lobes/realtime/_settings.py
       # Settings.language) — "he" selects the Hebrew default system prompt
