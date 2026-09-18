@@ -1,0 +1,51 @@
+hebrew-realtime — sentence streaming (d7) + BlueTTS sidecar (d8), live on the DGX Spark GB10
+Date: 2026-09-18. Branch spec/hebrew-realtime (wheel lobes_cli-0.80.1, local build).
+Stack: gateway 0.79.0 -> realtime bridge (GENERATE_STREAM=true) -> vllm-multimodal
+(nvidia/Gemma-4-26B-A4B-NVFP4, MTP) ; stt = ivrit-ai whisper turbo ; tts = model-gear-bluetts
+(lobes.realtime.bluetts_server, BlueTTS @0e38dbf, onnxruntime CPU, voice noa, 5 steps,
+44.1 kHz -> 24 kHz polyphase 80/147). Bridge phonikud hook OFF (PHONIKUD_MODEL_PATH empty).
+Input: a RECORDED utterance streamed by scripts/realtime-he-accept.py --script-mode
+(respeaker_ch1_s03.wav, "תראה לי אילו קבצים יש בתיקייה המסמכים") — no live microphone,
+so nothing here is evidence about AEC or barge-in.
+
+1. BlueTTS sidecar, POST /v1/audio/synthesize measured INSIDE the container (3 runs each)
+     42 chars  min 235 ms  med 301 ms  audio 3.20 s
+     57 chars  min 293 ms  med 305 ms  audio 3.97 s
+     24 chars  min 172 ms  med 175 ms  audio 1.60 s
+      3 chars  min  93 ms  med  94 ms  audio 0.35 s
+     32 chars (vocalized input, niqqud stripped server-side)  min 145 ms  audio 1.25 s
+   Six never-seen 35-38 char sentences, first call each: 211-274 ms (no cold-shape penalty).
+   UNDER a live turn (generate still streaming on the same CPU): 413 ms and 508 ms for the
+   first segment, 258-302 ms for the second.
+   Readiness: 503 until the warm-up synthesis (loads RenikudPlus G2P) — 1757 ms, once.
+
+   BUILD FAILURE FOUND AND FIXED: an unpinned resolve installed renikud-plus 0.5.0, which
+   requests notmax123/RenikudPlus/datastore.json -> 404 at warm-up (container never ready).
+   The image now installs the engine's dependencies from the engine's own uv.lock
+   (renikud-plus 0.3.0, the version every measurement used).
+
+2. Full turn with a tool call (list_directory), wire-log timestamps
+     speech_stopped -> transcript.completed            192 ms
+     transcript -> response.function_call_arguments    427 ms
+     (client answers the tool after it finishes streaming the wav: ~3.17 s, client-side)
+     tool result -> first response.audio.delta:
+        REPLY_FIRST_CLAUSE_MIN_CHARS=24 (default)     1153 ms, 1119 ms   (2 runs)
+            = ~620-690 ms until the first full sentence (34-37 chars) + 413-508 ms TTS
+        REPLY_FIRST_CLAUSE_MIN_CHARS=5                 624 ms,  607 ms   (2 runs)
+            segment 0 = "מצטער," (6 chars), then 27-31 chars, then the rest
+   Reference, same box earlier the same day, whole-reply path + Chatterbox Multilingual:
+   2.6 s to first audio for a one-sentence reply, 7.3 s for a longer one.
+   response.done timings of the default run: stt 196, generate 1407, tool_wait 3169,
+   tts 783, first_delta 4944 (first_delta spans the client's 3.17 s tool wait).
+
+3. CLIENT BUG FOUND BY THE OPERATOR'S EAR: the reply was heard cut mid-sentence
+   ("...You cou-"). The wire log shows the server delivered all 4.81 s of audio and no
+   response.interrupted; scripts/realtime-he-accept.py closed the player's stdin and
+   terminated it immediately on response.done, discarding what was still buffered (the
+   server delivers ahead of the playhead, more so with streaming). Fixed: _drain_playback
+   waits for the player to finish on EOF. Operator confirmed the re-run played to the end.
+   This probably explains some earlier "ended prematurely" reports at session end; it does
+   NOT explain the reSpeaker's server-logged self-interruptions.
+
+NOT measured here: a live microphone, a human barge-in, how the early "מצטער," piece
+SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM on.
