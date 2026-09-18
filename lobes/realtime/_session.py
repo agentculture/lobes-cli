@@ -81,6 +81,51 @@ server-side). Both are ephemeral by the same contract as everything else
 here: history lives only on the :class:`Session` object, nothing is ever
 written to disk, and :meth:`Session.teardown` drops it.
 
+Since the hebrew-realtime work (t4), the schema also pins the CONTRACT for
+client-declared tools, a per-session language, and per-stage timings — shapes
+and parsing only, no behaviour: the bridge, floor and turn modules wire them.
+Every name below is spelled exactly as OpenAI Realtime spells it, because the
+point of the tool wire is that a stock OpenAI Realtime client's tool loop
+works unmodified:
+
+- ``session.update`` (client) -> :func:`apply_session_update` /
+  :meth:`Session.update_config`, answered by ``session.updated``
+  (:class:`SessionUpdatedEvent`) which echoes ONLY the fields that took
+  effect (:data:`SUPPORTED_SESSION_UPDATE_FIELDS`) — a field this server does
+  not act on is visibly absent from the echo, never silently swallowed.
+- ``response.function_call_arguments.done`` (server) ->
+  :class:`ResponseFunctionCallArgumentsDoneEvent`: the model's tool call
+  handed to the client, whose ``arguments`` is a JSON **string**, as OpenAI's
+  is.
+- ``conversation.item.create`` with an item of type ``function_call_output``
+  (client) -> :func:`parse_function_call_output`: the client's tool RESULT,
+  a ``call_id``/``output`` pair.
+- ``response.done`` gains an optional, additive
+  :class:`StageTimings` mapping (``stt``/``generate``/``tool_wait``/
+  ``phonikud``/``tts``/``first_delta``, milliseconds) so the acceptance
+  latency table comes off the wire rather than out of a log scrape. An
+  unmeasured stage is ABSENT, never zeroed — a zero would read as "instant".
+
+Realtime tools are FLAT (``{"type": "function", "name", "description",
+"parameters"}``) where chat-completions' are NESTED (``{"type": "function",
+"function": {...}}``); :func:`realtime_tools_to_chat_completions` and
+:func:`realtime_tool_choice_to_chat_completions` are the pure translation
+between the two, so the generate-request builder never re-derives it.
+
+Two deliberate NON-additions: the error vocabulary stays the seven
+:class:`ErrorCode` members it already had — a rejected ``session.update`` is
+an ``invalid_session_config`` (the code already covers "a session config
+payload was rejected", whether it arrived at connect time or in an update)
+and a malformed ``function_call_output`` frame is an ``invalid_wire_event``
+with its reason in the message text, exactly as the three
+``_wire.WireErrorCode`` reasons are. One enumerable list of codes on this
+wire is a contract, not an accident.
+
+Defaults keep the wire byte-identical: an English, tool-free session's
+``session.created`` config dict and its ``response.done`` carry not one new
+key (:func:`event_to_dict` emits the additive keys only when they are set),
+so the ears-only contract reachy-mini-cli depends on is unchanged.
+
 Logging: every helper here logs through :func:`get_session_logger`, which
 stamps the session id into the message text itself (not just ``extra``) so
 grepping logs for one session id reconstructs its whole lifecycle even under
@@ -95,10 +140,16 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass, field
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
+from typing import NamedTuple
 
+from ._wire import (
+    CONVERSATION_ITEM_CREATE_EVENT_TYPE,
+    FUNCTION_CALL_OUTPUT_ITEM_TYPE,
+    SESSION_UPDATE_EVENT_TYPE,
+)
 from .protocol import (
     CLIENT_SAMPLE_RATE,
     STT_SAMPLE_RATE,
@@ -115,6 +166,33 @@ from .protocol import (
 log = logging.getLogger(__name__)
 
 _SUPPORTED_SAMPLE_RATES = (CLIENT_SAMPLE_RATE, STT_SAMPLE_RATE)  # 24000 (default), 16000
+
+# The STT language every session speaks unless a deployment default or a
+# per-session value says otherwise. "en" is what app.py has always sent, so a
+# box that never asks for another language keeps sending it byte-for-byte.
+DEFAULT_LANGUAGE = "en"
+
+# A short language code: a 2-3 letter primary subtag, optionally with
+# region/script subtags ("en", "he", "pt-BR"). Deliberately a SHAPE check, not
+# a registry lookup — this module has no business shipping an ISO table, and
+# whether a given code is one the STT sidecar loaded is that sidecar's answer.
+_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
+
+# The tool "type" OpenAI Realtime declares — the only one either side speaks.
+_FUNCTION_TOOL_TYPE = "function"
+
+# The string forms of ``tool_choice`` that pass through untranslated; the
+# object form (``{"type": "function", "name": ...}``) is translated instead.
+_TOOL_CHOICE_KEYWORDS = ("auto", "none", "required")
+
+# The ONLY ``session.update`` fields this server acts on. Anything else in the
+# payload is ignored AND visibly absent from the ``session.updated`` echo —
+# the silent-failure rule learned on PR #150/#152: a client must be able to
+# see that its field did nothing.
+SUPPORTED_SESSION_UPDATE_FIELDS = ("tools", "tool_choice", "language")
+
+# The per-stage timing keys ``response.done`` may carry, in pipeline order.
+STAGE_TIMING_KEYS = ("stt", "generate", "tool_wait", "phonikud", "tts", "first_delta")
 
 # ---------------------------------------------------------------------------
 # Logging / redaction helpers
@@ -176,6 +254,9 @@ class EventType(str, Enum):
     RESPONSE_AUDIO_DELTA = "response.audio.delta"
     RESPONSE_DONE = "response.done"
     RESPONSE_INTERRUPTED = "response.interrupted"
+    # --- session config updates + client-executed tools (hebrew-realtime) ---
+    SESSION_UPDATED = "session.updated"
+    RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE = "response.function_call_arguments.done"
 
 
 class ErrorCode(str, Enum):
@@ -229,6 +310,22 @@ class SessionConfig:
     ``system_prompt`` is ``None`` unless the client explicitly overrode it
     (or a caller-supplied settings-style default resolved one) — ``None``
     means :class:`Session` falls back to :data:`DEFAULT_SYSTEM_PROMPT`.
+
+    ``tools``/``tool_choice`` hold the client's declaration in OpenAI
+    Realtime's own FLAT shape, validated but otherwise verbatim — this
+    module never invents, executes or ships a tool, and
+    :func:`realtime_tools_to_chat_completions` is what translates them for a
+    generate call. ``tools is None`` means "not declared" (the ears-only
+    default); an empty tuple means the client declared none, which is a
+    different statement and stays distinguishable.
+
+    ``language`` is the short STT code the session speaks
+    (:data:`DEFAULT_LANGUAGE`, ``"en"``, unless a deployment default or a
+    ``session.update`` says otherwise).
+
+    Frozen, so a ``session.update`` produces a NEW config
+    (:func:`apply_session_update`) rather than mutating one another thread
+    may be reading.
     """
 
     input_audio_format: AudioFormat = AudioFormat.PCM16
@@ -237,6 +334,9 @@ class SessionConfig:
     turn_detection: TurnDetectionType = TurnDetectionType.SERVER_VAD
     aec_mode: AECMode = AECMode.NONE
     system_prompt: str | None = None
+    tools: tuple[Mapping[str, object], ...] | None = None
+    tool_choice: str | Mapping[str, object] | None = None
+    language: str = DEFAULT_LANGUAGE
 
 
 @dataclass(frozen=True)
@@ -246,6 +346,26 @@ class SessionCreatedEvent:
     timestamp_ms: int
     config: SessionConfig
     type: EventType = field(default=EventType.SESSION_CREATED, init=False)
+
+
+@dataclass(frozen=True)
+class SessionUpdatedEvent:
+    """The server's answer to a ``session.update``.
+
+    ``session`` is the echo of ONLY what took effect — a plain JSON-able dict
+    holding a subset of :data:`SUPPORTED_SESSION_UPDATE_FIELDS`, built by
+    :func:`apply_session_update`. A field the client sent that this server
+    does not act on is absent from it, which is the whole point: an
+    unsupported field must be visibly ignored, not silently swallowed. The
+    field is named ``session`` (not ``config``) because that is what OpenAI
+    Realtime's own ``session.updated`` calls it.
+    """
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    session: dict[str, object]
+    type: EventType = field(default=EventType.SESSION_UPDATED, init=False)
 
 
 @dataclass(frozen=True)
@@ -366,13 +486,78 @@ class ResponseAudioDeltaEvent:
 
 
 @dataclass(frozen=True)
+class ResponseFunctionCallArgumentsDoneEvent:
+    """The model asked for a tool; the call goes to the CLIENT, which owns
+    execution (nothing under ``lobes/`` runs a tool).
+
+    Field names are OpenAI Realtime's verbatim, including ``arguments`` being
+    a JSON **string** rather than a parsed object — this module hands the
+    model's own argument text through untouched rather than re-serializing
+    it, so a client that validates arguments against its schema sees exactly
+    what the model produced. ``call_id`` is the handle a later
+    ``function_call_output`` must quote back (see
+    :func:`parse_function_call_output`).
+    """
+
+    session_id: str
+    event_id: str
+    timestamp_ms: int
+    response_id: str | None
+    call_id: str
+    name: str
+    arguments: str
+    item_id: str | None = None
+    output_index: int = 0
+    type: EventType = field(default=EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE, init=False)
+
+
+@dataclass(frozen=True)
+class StageTimings:
+    """Per-stage milliseconds for one response, carried on ``response.done``.
+
+    Every stage is optional and an unmeasured one is ABSENT from
+    :meth:`as_dict`, never zeroed — a ``0`` would read as "instant", which is
+    the exact dishonesty this field exists to avoid. A turn with no tool call
+    reports no ``tool_wait``; an English deployment reports no ``phonikud``.
+
+    ``first_delta`` is the number this contract exists for: time to the first
+    audio chunk actually leaving the server, which the acceptance latency
+    table is built from (the alternative was scraping logs).
+    """
+
+    stt: int | None = None
+    generate: int | None = None
+    tool_wait: int | None = None
+    phonikud: int | None = None
+    tts: int | None = None
+    first_delta: int | None = None
+
+    def as_dict(self) -> dict[str, int]:
+        """The JSON-able mapping, in pipeline order, omitting absent stages."""
+        values = vars(self)
+        return {key: values[key] for key in STAGE_TIMING_KEYS if values[key] is not None}
+
+    def __bool__(self) -> bool:
+        """False when no stage was measured — so an all-absent timings object
+        serializes away entirely rather than as an empty mapping."""
+        return bool(self.as_dict())
+
+
+@dataclass(frozen=True)
 class ResponseDoneEvent:
-    """The reply was delivered in full; the floor returns to the caller."""
+    """The reply was delivered in full; the floor returns to the caller.
+
+    ``timings`` is additive and optional: ``None`` (or an all-absent
+    :class:`StageTimings`) serializes to a ``response.done`` byte-identical to
+    the pre-hebrew-realtime one, so a client that never asked for timings
+    never sees the key.
+    """
 
     session_id: str
     event_id: str
     timestamp_ms: int
     response_id: str
+    timings: StageTimings | None = None
     type: EventType = field(default=EventType.RESPONSE_DONE, init=False)
 
 
@@ -394,6 +579,7 @@ class ResponseInterruptedEvent:
 
 Event = (
     SessionCreatedEvent
+    | SessionUpdatedEvent
     | SessionClosedEvent
     | SpeechStartedEvent
     | SpeechStoppedEvent
@@ -404,7 +590,38 @@ Event = (
     | ResponseAudioDeltaEvent
     | ResponseDoneEvent
     | ResponseInterruptedEvent
+    | ResponseFunctionCallArgumentsDoneEvent
 )
+
+
+def _config_to_dict(config: SessionConfig) -> dict[str, object]:
+    """The ``config`` mapping a ``session.created`` event carries.
+
+    The six pre-hebrew-realtime keys are unconditional; the three additive
+    ones appear ONLY when set, so a tool-free English session's
+    ``session.created`` is byte-identical to the one clients see today. A
+    default-valued key that appeared anyway would be a wire change dressed up
+    as a no-op.
+    """
+    out: dict[str, object] = {
+        "input_audio_format": config.input_audio_format,
+        "input_sample_rate": config.input_sample_rate,
+        "channels": config.channels,
+        "turn_detection": config.turn_detection,
+        "aec_mode": config.aec_mode,
+        "system_prompt": config.system_prompt,
+    }
+    if config.tools is not None:
+        out["tools"] = [dict(tool) for tool in config.tools]
+    if config.tool_choice is not None:
+        out["tool_choice"] = (
+            dict(config.tool_choice)
+            if isinstance(config.tool_choice, Mapping)
+            else config.tool_choice
+        )
+    if config.language != DEFAULT_LANGUAGE:
+        out["language"] = config.language
+    return out
 
 
 def event_to_dict(event: Event) -> dict[str, object]:
@@ -413,18 +630,22 @@ def event_to_dict(event: Event) -> dict[str, object]:
     Enum fields (``type``, ``code``, and any inside a nested ``config``) are
     ``str``-subclassed, so :func:`json.dumps` serializes them by their
     ``.value`` without further help.
+
+    Two fields are conditional rather than always-emitted, and for the same
+    reason: an unset additive field must not change the wire. ``config``'s
+    additive keys are handled by :func:`_config_to_dict`, and an absent or
+    all-absent ``timings`` drops out of ``response.done`` entirely.
     """
     out: dict[str, object] = {}
     for key, value in vars(event).items():
         if key == "config" and isinstance(value, SessionConfig):
-            out[key] = {
-                "input_audio_format": value.input_audio_format,
-                "input_sample_rate": value.input_sample_rate,
-                "channels": value.channels,
-                "turn_detection": value.turn_detection,
-                "aec_mode": value.aec_mode,
-                "system_prompt": value.system_prompt,
-            }
+            out[key] = _config_to_dict(value)
+        elif key == "timings":
+            if isinstance(value, StageTimings):
+                if value:
+                    out[key] = value.as_dict()
+            elif value:
+                out[key] = dict(value)
         else:
             out[key] = value
     out["type"] = event.type
@@ -462,12 +683,97 @@ def _reject(message: str) -> None:
     raise SessionConfigError(ErrorCode.INVALID_SESSION_CONFIG, message)
 
 
+def parse_language(value: object) -> str:
+    """Validate a short language code, returning it verbatim.
+
+    A SHAPE check only (:data:`_LANGUAGE_RE`) — ``"he"``, ``"en"``,
+    ``"pt-BR"`` all pass. Whether the STT sidecar actually serves the code is
+    that sidecar's answer, not a table this module has any business shipping,
+    and inventing a fallback here would hide a typo behind English audio.
+    Raises :class:`SessionConfigError` (:attr:`ErrorCode.INVALID_SESSION_CONFIG`)
+    on anything else.
+    """
+    if not isinstance(value, str) or not _LANGUAGE_RE.match(value):
+        _reject(f"language must be a short code like 'en' or 'he', got {value!r}")
+    return value
+
+
+def parse_tools(value: object) -> tuple[dict[str, object], ...]:
+    """Validate a client's tool declaration in OpenAI Realtime's FLAT shape.
+
+    Accepts a list/tuple of ``{"type": "function", "name", "description",
+    "parameters"}`` mappings and returns them as a tuple of plain dicts —
+    validated, but otherwise the client's own content verbatim: this module
+    never authors, rewrites or executes a tool. ``type`` may be omitted (the
+    only tool kind either wire speaks is ``function``); ``name`` is required
+    and must be unique, because a duplicate name makes a returned ``call_id``
+    ambiguous about which tool was meant. An empty list is valid and means
+    "declared none" — a different statement from not declaring at all.
+
+    Raises :class:`SessionConfigError` (:attr:`ErrorCode.INVALID_SESSION_CONFIG`)
+    otherwise, naming the offending entry.
+    """
+    if not isinstance(value, (list, tuple)):
+        _reject(f"tools must be a list of tool declarations, got {value!r}")
+    tools: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(value):
+        if not isinstance(raw, Mapping):
+            _reject(f"tools[{index}] must be an object, got {raw!r}")
+        tool_type = raw.get("type", _FUNCTION_TOOL_TYPE)
+        if tool_type != _FUNCTION_TOOL_TYPE:
+            _reject(f"tools[{index}] has unsupported type {tool_type!r}; only 'function' is")
+        name = raw.get("name")
+        if not isinstance(name, str) or not name:
+            _reject(f"tools[{index}] requires a non-empty string 'name', got {name!r}")
+        if name in seen:
+            _reject(f"tools[{index}] repeats the tool name {name!r}")
+        seen.add(name)
+        description = raw.get("description")
+        if description is not None and not isinstance(description, str):
+            _reject(f"tools[{index}] 'description' must be a string, got {description!r}")
+        parameters = raw.get("parameters")
+        if parameters is not None and not isinstance(parameters, Mapping):
+            _reject(f"tools[{index}] 'parameters' must be a JSON Schema object, got {parameters!r}")
+        tools.append(dict(raw))
+    return tuple(tools)
+
+
+def parse_tool_choice(value: object) -> str | dict[str, object]:
+    """Validate a ``tool_choice``, returning it in Realtime's own shape.
+
+    Either one of :data:`_TOOL_CHOICE_KEYWORDS` (``"auto"``/``"none"``/
+    ``"required"``) or the FLAT forced-tool object ``{"type": "function",
+    "name": ...}``. Translation to chat-completions' nested form is
+    :func:`realtime_tool_choice_to_chat_completions`'s job, not this one's —
+    parsing keeps the client's vocabulary, so the ``session.updated`` echo
+    can quote it back unchanged.
+    """
+    if not isinstance(value, (str, Mapping)):
+        _reject(f"tool_choice must be a keyword or a function object, got {value!r}")
+    if isinstance(value, str):
+        if value not in _TOOL_CHOICE_KEYWORDS:
+            _reject(
+                f"unsupported tool_choice {value!r}; accepted keywords are "
+                f"{_TOOL_CHOICE_KEYWORDS}, or a "
+                "{'type': 'function', 'name': ...} object"
+            )
+        return value
+    if value.get("type") != _FUNCTION_TOOL_TYPE:
+        _reject(f"tool_choice object must have type 'function', got {value.get('type')!r}")
+    name = value.get("name")
+    if not isinstance(name, str) or not name:
+        _reject(f"tool_choice object requires a non-empty string 'name', got {name!r}")
+    return dict(value)
+
+
 def parse_session_config(
     payload: Mapping[str, object] | None = None,
     *,
     default_turn_detection: str = "server_vad",
     default_aec_mode: str = "none",
     default_system_prompt: str | None = None,
+    default_language: str = DEFAULT_LANGUAGE,
 ) -> SessionConfig:
     """Validate a client's ``session.update``-style config dict.
 
@@ -479,7 +785,16 @@ def parse_session_config(
     ``default_aec_mode``, which are themselves ``"server_vad"``/``"none"``),
     and ``system_prompt`` from *default_system_prompt* (a caller threads this
     from an operator-set env default; issue #151) — the client's own
-    ``system_prompt`` key, if present, always overrides it.
+    ``system_prompt`` key, if present, always overrides it. ``language``
+    follows the same two-level rule (*default_language*, itself
+    :data:`DEFAULT_LANGUAGE`, overridden by the payload's own key): a
+    per-deployment default AND a per-session override, and with neither set
+    the STT request still says ``"en"`` byte-for-byte.
+
+    ``tools``/``tool_choice`` are accepted here too (same validators as
+    :func:`apply_session_update`), but the practical path for them is
+    ``session.update``: this parser's payload is the connect-time query
+    string, where a JSON Schema does not fit.
 
     PCM16 mono little-endian at 24000 Hz or 16000 Hz is the only accepted
     wire format; AEC stays ``none`` unless the payload explicitly sets
@@ -531,6 +846,14 @@ def parse_session_config(
     if system_prompt is not None and not isinstance(system_prompt, str):
         _reject(f"system_prompt must be a string, got {system_prompt!r}")
 
+    language = parse_language(payload.get("language", default_language))
+
+    raw_tools = payload.get("tools")
+    tools = None if raw_tools is None else parse_tools(raw_tools)
+
+    raw_tool_choice = payload.get("tool_choice")
+    tool_choice = None if raw_tool_choice is None else parse_tool_choice(raw_tool_choice)
+
     return SessionConfig(
         input_audio_format=AudioFormat.PCM16,
         input_sample_rate=rate,
@@ -538,7 +861,189 @@ def parse_session_config(
         turn_detection=TurnDetectionType.SERVER_VAD,
         aec_mode=aec_mode,
         system_prompt=system_prompt,
+        tools=tools,
+        tool_choice=tool_choice,
+        language=language,
     )
+
+
+# ---------------------------------------------------------------------------
+# session.update -> session.updated, and the flat/nested tool translation.
+# ---------------------------------------------------------------------------
+
+
+class SessionUpdate(NamedTuple):
+    """The pure result of applying one ``session.update``.
+
+    ``config`` is a NEW :class:`SessionConfig` (the old one is frozen and
+    untouched); ``applied`` is the echo body for
+    :class:`SessionUpdatedEvent`, holding ONLY the fields that took effect.
+    """
+
+    config: SessionConfig
+    applied: dict[str, object]
+
+
+def apply_session_update(config: SessionConfig, payload: Mapping[str, object]) -> SessionUpdate:
+    """Apply a client ``session.update`` to *config* — pure, no session state.
+
+    *payload* is the whole client event, OpenAI-shaped:
+    ``{"type": "session.update", "session": {...}}``. The ``session`` object
+    is REQUIRED (a bare patch mapping is not accepted) because that is the
+    shape a stock OpenAI Realtime client sends, and quietly accepting a
+    second shape would make the contract two contracts.
+
+    Only :data:`SUPPORTED_SESSION_UPDATE_FIELDS` are read. Anything else —
+    ``voice``, ``modalities``, ``turn_detection`` retuning, a typo — is
+    ignored AND absent from :attr:`SessionUpdate.applied`, so the client can
+    SEE that it did nothing. A key present with a malformed value is a named
+    :class:`SessionConfigError` instead (:attr:`ErrorCode.INVALID_SESSION_CONFIG`
+    — the same code a bad connect-time config gets, since "a session config
+    payload was rejected" is exactly what happened); the caller turns it into
+    an ``error`` event and keeps the session open.
+    """
+    session_patch = payload.get("session") if isinstance(payload, Mapping) else None
+    if not isinstance(session_patch, Mapping):
+        _reject(f"{SESSION_UPDATE_EVENT_TYPE} requires a 'session' object, got {session_patch!r}")
+
+    updates: dict[str, object] = {}
+    applied: dict[str, object] = {}
+    if "tools" in session_patch:
+        tools = parse_tools(session_patch["tools"])
+        updates["tools"] = tools
+        applied["tools"] = [dict(tool) for tool in tools]
+    if "tool_choice" in session_patch:
+        tool_choice = parse_tool_choice(session_patch["tool_choice"])
+        updates["tool_choice"] = tool_choice
+        applied["tool_choice"] = (
+            dict(tool_choice) if isinstance(tool_choice, Mapping) else tool_choice
+        )
+    if "language" in session_patch:
+        language = parse_language(session_patch["language"])
+        updates["language"] = language
+        applied["language"] = language
+
+    return SessionUpdate(config=replace(config, **updates), applied=applied)
+
+
+def realtime_tools_to_chat_completions(
+    tools: Iterable[Mapping[str, object]] | None,
+) -> list[dict[str, object]]:
+    """Translate FLAT Realtime tools into NESTED chat-completions tools.
+
+    Realtime declares ``{"type": "function", "name", "description",
+    "parameters"}``; ``/v1/chat/completions`` wants ``{"type": "function",
+    "function": {"name", "description", "parameters"}}``. This is the ONE
+    place that difference is encoded, so the generate-request builder never
+    re-derives it (and the two can never disagree about, say, whether an
+    absent ``description`` becomes ``null``: it stays ABSENT).
+
+    ``None`` yields ``[]`` — an undeclared tool set and an empty one produce
+    the same generate request, since a request carrying ``tools: []`` is what
+    "no tools" means downstream either way.
+    """
+    translated: list[dict[str, object]] = []
+    for tool in tools or ():
+        function: dict[str, object] = {"name": tool["name"]}
+        for key in ("description", "parameters"):
+            if key in tool:
+                function[key] = tool[key]
+        translated.append({"type": _FUNCTION_TOOL_TYPE, "function": function})
+    return translated
+
+
+def realtime_tool_choice_to_chat_completions(
+    tool_choice: str | Mapping[str, object] | None,
+) -> str | dict[str, object] | None:
+    """Translate a ``tool_choice`` for the generate call; ``None`` stays ``None``.
+
+    The keywords (``"auto"``/``"none"``/``"required"``) are identical on both
+    wires and pass through untouched. The forced-tool OBJECT is not:
+    Realtime's ``{"type": "function", "name": "x"}`` nests into
+    chat-completions' ``{"type": "function", "function": {"name": "x"}}`` —
+    the same flat-vs-nested split as the tools themselves, and the reason
+    this is a function rather than a pass-through the caller inlines.
+    """
+    if tool_choice is None or isinstance(tool_choice, str):
+        return tool_choice
+    return {"type": _FUNCTION_TOOL_TYPE, "function": {"name": tool_choice["name"]}}
+
+
+# ---------------------------------------------------------------------------
+# The client's tool RESULT — conversation.item.create(function_call_output).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FunctionCallOutput:
+    """A tool result the client returned, already shape-validated.
+
+    ``call_id`` is the handle from the
+    :class:`ResponseFunctionCallArgumentsDoneEvent` this answers, and
+    ``output`` is the client's result text verbatim (a JSON string by
+    convention, but never parsed here — nothing under ``lobes/`` interprets a
+    tool's result). Whether this ``call_id`` is the ONE outstanding call of
+    the current response is the bridge's bookkeeping, not a shape question.
+    """
+
+    call_id: str
+    output: str
+
+
+class FunctionCallOutputError(ValueError):
+    """A ``conversation.item.create(function_call_output)`` frame was malformed.
+
+    Carries :attr:`ErrorCode.INVALID_WIRE_EVENT` — the code that already
+    means "a malformed client frame" — rather than a new enum member, with
+    the specific reason prefixed into the message text exactly as the three
+    :class:`lobes.realtime._wire.WireErrorCode` reasons are. One enumerable
+    list of error codes on this wire is a contract (see
+    :attr:`ErrorCode.INVALID_WIRE_EVENT`'s own docstring), so a new failure
+    mode earns a reason token, not a code.
+    """
+
+    code = ErrorCode.INVALID_WIRE_EVENT
+    reason = "invalid_function_call_output"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.reason}: {message}")
+
+
+def parse_function_call_output(payload: Mapping[str, object]) -> FunctionCallOutput:
+    """Pull ``call_id``/``output`` out of a client tool-result event.
+
+    *payload* is the whole client event, OpenAI-shaped:
+    ``{"type": "conversation.item.create", "item": {"type":
+    "function_call_output", "call_id": ..., "output": ...}}``. Both item
+    fields are required and must be strings; ``output`` may be empty (a tool
+    that produced nothing is not malformed), ``call_id`` may not (an
+    un-attributable result is).
+
+    Raises :class:`FunctionCallOutputError`, never a bare ``KeyError`` — the
+    caller turns it into a named ``error`` event via
+    :meth:`Session.fail_wire_event`, which changes no state, so an
+    adversarial or confused client cannot end a session with a bad frame.
+    """
+    if payload.get("type") != CONVERSATION_ITEM_CREATE_EVENT_TYPE:
+        raise FunctionCallOutputError(
+            f"expected a {CONVERSATION_ITEM_CREATE_EVENT_TYPE!r} event, "
+            f"got {payload.get('type')!r}"
+        )
+    item = payload.get("item")
+    if not isinstance(item, Mapping):
+        raise FunctionCallOutputError(f"'item' must be an object, got {item!r}")
+    if item.get("type") != FUNCTION_CALL_OUTPUT_ITEM_TYPE:
+        raise FunctionCallOutputError(
+            f"expected an item of type {FUNCTION_CALL_OUTPUT_ITEM_TYPE!r}, "
+            f"got {item.get('type')!r}"
+        )
+    call_id = item.get("call_id")
+    if not isinstance(call_id, str) or not call_id:
+        raise FunctionCallOutputError(f"requires a non-empty string 'call_id', got {call_id!r}")
+    output = item.get("output")
+    if not isinstance(output, str):
+        raise FunctionCallOutputError(f"requires a string 'output', got {output!r}")
+    return FunctionCallOutput(call_id=call_id, output=output)
 
 
 # ---------------------------------------------------------------------------
@@ -639,6 +1144,38 @@ class Session:
     def _require_not_closed(self) -> None:
         if self._closed:
             raise SessionClosedError(self.session_id)
+
+    def update_config(self, payload: Mapping[str, object]) -> SessionUpdatedEvent:
+        """Apply a client ``session.update`` and answer ``session.updated``.
+
+        Swaps in the new :class:`SessionConfig`
+        (:func:`apply_session_update` builds it; the old one is frozen and
+        never mutated) and echoes ONLY what took effect. A malformed payload
+        raises :class:`SessionConfigError` with the config unchanged — the
+        caller answers with ``exc.to_error_event(session.session_id)`` and the
+        session stays open and usable, because a bad update is not a turn
+        boundary and not a reason to hang up.
+
+        Logs which FIELDS took effect and how many tools were declared, never
+        their content: a tool's description and JSON Schema are the client's,
+        and this module's logging discipline does not make exceptions for
+        structured data.
+        """
+        self._require_not_closed()
+        update = apply_session_update(self.config, payload)
+        self.config = update.config
+        self.log.info(
+            "session updated fields=%s tools=%s language=%s",
+            sorted(update.applied),
+            len(self.config.tools) if self.config.tools is not None else None,
+            self.config.language,
+        )
+        return SessionUpdatedEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            session=update.applied,
+        )
 
     def begin_speech(self, *, at_ms: int | None = None) -> SpeechStartedEvent:
         """Record a VAD-reported speech boundary onset.
@@ -808,6 +1345,42 @@ class Session:
             text=text,
         )
 
+    def emit_function_call_arguments_done(
+        self,
+        *,
+        call_id: str,
+        name: str,
+        arguments: str,
+        item_id: str | None = None,
+        output_index: int = 0,
+    ) -> ResponseFunctionCallArgumentsDoneEvent:
+        """Hand the model's tool call to the client, which owns execution.
+
+        Shape only, exactly like :meth:`emit_audio_delta`: it changes NO
+        state. Whether the floor now waits on the client, how long, and what
+        happens when the wait expires belong to the floor/turn state machine
+        — this method's job is to mint the event. Never logs *arguments*
+        verbatim (only its length), matching the transcript/reply-text rule.
+        """
+        self._require_not_closed()
+        self.log.info(
+            "function call call_id=%s name=%s arg_chars=%d",
+            call_id,
+            name,
+            len(arguments),
+        )
+        return ResponseFunctionCallArgumentsDoneEvent(
+            session_id=self.session_id,
+            event_id=gen_event_id(),
+            timestamp_ms=timestamp_ms(),
+            response_id=self.current_response_id,
+            call_id=call_id,
+            name=name,
+            arguments=arguments,
+            item_id=item_id,
+            output_index=output_index,
+        )
+
     def emit_audio_delta(self, delta: str) -> ResponseAudioDeltaEvent:
         """One already wire-encoded (base64) chunk of the synthesized reply.
         Does not change :attr:`state` — a response may emit any number of
@@ -821,18 +1394,29 @@ class Session:
             delta=delta,
         )
 
-    def complete_response(self) -> ResponseDoneEvent:
-        """All audio was delivered; the floor returns to the caller."""
+    def complete_response(self, timings: StageTimings | None = None) -> ResponseDoneEvent:
+        """All audio was delivered; the floor returns to the caller.
+
+        *timings* is optional and additive: a caller that measured the stages
+        passes a :class:`StageTimings`, and one that did not passes nothing
+        and emits the same ``response.done`` as before. Measuring is the
+        caller's job — this method never invents a duration.
+        """
         self._require_not_closed()
         response_id = self.current_response_id
         self.current_response_id = None
         self.state = SessionState.IDLE
-        self.log.info("response done response_id=%s", response_id)
+        self.log.info(
+            "response done response_id=%s timings=%s",
+            response_id,
+            timings.as_dict() if timings else None,
+        )
         return ResponseDoneEvent(
             session_id=self.session_id,
             event_id=gen_event_id(),
             timestamp_ms=timestamp_ms(),
             response_id=response_id,
+            timings=timings,
         )
 
     def interrupt_response(self, reason: str = "barge_in") -> ResponseInterruptedEvent:
@@ -927,6 +1511,7 @@ __all__ = [
     "ErrorCode",
     "SessionConfig",
     "SessionCreatedEvent",
+    "SessionUpdatedEvent",
     "SessionClosedEvent",
     "SpeechStartedEvent",
     "SpeechStoppedEvent",
@@ -937,10 +1522,25 @@ __all__ = [
     "ResponseAudioDeltaEvent",
     "ResponseDoneEvent",
     "ResponseInterruptedEvent",
+    "ResponseFunctionCallArgumentsDoneEvent",
+    "StageTimings",
+    "STAGE_TIMING_KEYS",
     "Event",
     "event_to_dict",
     "SessionConfigError",
     "parse_session_config",
+    "DEFAULT_LANGUAGE",
+    "SUPPORTED_SESSION_UPDATE_FIELDS",
+    "parse_language",
+    "parse_tools",
+    "parse_tool_choice",
+    "SessionUpdate",
+    "apply_session_update",
+    "realtime_tools_to_chat_completions",
+    "realtime_tool_choice_to_chat_completions",
+    "FunctionCallOutput",
+    "FunctionCallOutputError",
+    "parse_function_call_output",
     "SessionState",
     "SessionClosedError",
     "Session",
