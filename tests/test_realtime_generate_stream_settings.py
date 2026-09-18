@@ -70,3 +70,12 @@ def test_speculation_threshold_is_read_from_the_environment():
 def test_a_typo_or_negative_leaves_speculation_off():
     assert build_settings({"VAD_EAGER_MS": "soon"}).vad_eager_ms == 0
     assert build_settings({"VAD_EAGER_MS": "-3"}).vad_eager_ms == 0
+
+
+def test_continuation_merge_is_off_by_default():
+    assert build_settings({}).continuation_window_ms == 0
+
+
+def test_continuation_window_is_read_from_the_environment():
+    assert build_settings({"CONTINUATION_WINDOW_MS": "1200"}).continuation_window_ms == 1200
+    assert build_settings({"CONTINUATION_WINDOW_MS": "-1"}).continuation_window_ms == 0

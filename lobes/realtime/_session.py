@@ -1481,6 +1481,20 @@ class Session:
         state — and is empty again after :meth:`teardown`."""
         return list(self._history)
 
+    def pop_history_if_last(self, role: str, content: str) -> bool:
+        """Remove the LAST history entry, only if it is exactly this one.
+
+        The continuation merge (approved deviation d9, layer B) takes back a
+        half-turn the machine committed too early. Exact-match-on-the-tail is
+        the whole safety rule: if anything was appended after it — an assistant
+        reply, a tool call, a tool result — the entry is no longer last, this
+        refuses, and history is left alone.
+        """
+        if self._history and self._history[-1] == {"role": role, "content": content}:
+            self._history.pop()
+            return True
+        return False
+
     def teardown(self, reason: str = "client_disconnect") -> SessionClosedEvent:
         """Release all session bookkeeping. Safe from ANY state — idle,
         mid-speech, mid-transcription, responding, speaking — and idempotent

@@ -481,6 +481,7 @@ def _build_bridge(  # pragma: no cover
             first_clause_min_chars=settings.reply_first_clause_min_chars,
         ),
         barge_in_window_ms=settings.barge_in_window_ms,
+        continuation_window_ms=settings.continuation_window_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
         generate_timeout_ms=int(_GENERATE_FORWARD_TIMEOUT * 1000),
         tool_wait_timeout_ms=settings.tool_wait_timeout_ms,
@@ -583,6 +584,11 @@ class _SessionTasks:  # pragma: no cover
         self.watchdog: asyncio.Task | None = None
         self.responses: set[asyncio.Task] = set()
         self.speculation: _Speculation | None = None
+        # Continuation merge (deviation d9, layer B): the last committed
+        # turn's audio, and — once the bridge has taken that commit back — the
+        # audio the NEXT commit (and any speculation on it) must be prefixed with.
+        self.last_commit_audio = b""
+        self.continuation_audio = b""
 
     def ensure_watchdog(self, bridge: ConversationBridge, sender: _Sender) -> None:
         """Start the deadline watchdog once, when the session first arms.
@@ -1289,12 +1295,23 @@ async def _emit_turn_events(  # pragma: no cover
         if isinstance(event, SpeechPaused):
             # NOT a boundary (deviation d9): nothing goes to the wire or the
             # bridge. The turn stays open; work starts on a snapshot of it.
-            _start_speculation(tasks, bridge, event.audio)
+            _start_speculation(tasks, bridge, tasks.continuation_audio + event.audio)
         elif isinstance(event, SpeechResumed):
             tasks.drop_speculation()
         elif isinstance(event, SpeechStarted):
             tasks.drop_speculation()
-            bridge.on_speech_started(at_ms=event.at_ms)
+            if bridge.on_speech_started(at_ms=event.at_ms):
+                # The bridge took the early commit back: this turn is the
+                # SAME utterance carrying on, so its audio starts with that
+                # commit's. The bridge decides; the route only carries bytes.
+                tasks.continuation_audio = tasks.last_commit_audio
+                log.info(
+                    "session_id=%s continuation: merging %d ms of the previous commit",
+                    bridge.session.session_id,
+                    len(tasks.continuation_audio) // (VAD_SAMPLE_RATE * BYTES_PER_SAMPLE // 1000),
+                )
+            else:
+                tasks.continuation_audio = b""
             await sender.flush()
         elif isinstance(event, SpeechStopped):
             if event.reason != "silence":
@@ -1307,7 +1324,9 @@ async def _emit_turn_events(  # pragma: no cover
             clock.start(FIRST_DELTA_STAGE)
             bridge.on_speech_stopped(at_ms=event.at_ms, reason=event.reason)
             await sender.flush()
-            await _transcribe_turn(bridge, sender, event.audio, clock, tasks)
+            audio = tasks.continuation_audio + event.audio
+            tasks.last_commit_audio, tasks.continuation_audio = audio, b""
+            await _transcribe_turn(bridge, sender, audio, clock, tasks)
 
 
 async def _transcribe_turn(  # pragma: no cover

@@ -623,6 +623,22 @@ class Floor:
         self._interrupt()
         return True
 
+    def on_continuation_onset(self) -> bool:
+        """The speaker RESUMED right after an early commit (deviation d9, layer B).
+
+        An interruption that deliberately ignores the barge-in guard window:
+        the guard exists because an onset that soon after a commit is probably
+        the tail of the user's own turn — which is exactly what a continuation
+        IS, so here it is the signal rather than the noise. The caller (the
+        bridge) owns the decision that this onset is a continuation; the floor
+        only refuses what cannot be taken back: a ``tool_wait`` (the call is
+        already in the client's hands) and a floor the machine does not hold.
+        """
+        if not self.machine_holds_floor or self._state is FloorState.TOOL_WAIT:
+            return False
+        self._interrupt()
+        return True
+
     def on_turn_committed(self) -> bool:
         """A turn was committed (the segmenter's ``SpeechStopped``).
 

@@ -534,6 +534,7 @@ class ConversationBridge:
         tts_timeout_ms: int = DEFAULT_TTS_TIMEOUT_MS,
         chunk_bytes: int = DEFAULT_DELTA_CHUNK_BYTES,
         clock: Callable[[], int] = timestamp_ms,
+        continuation_window_ms: int = 0,
     ) -> None:
         self.session = session
         self.floor = Floor(
@@ -557,6 +558,12 @@ class ConversationBridge:
             sample_rate=TTS_SAMPLE_RATE,
         )
         self._generate = generate
+        # Continuation merge (approved deviation d9, layer B). 0 = off.
+        self._clock = clock
+        self._continuation_window_ms = max(0, continuation_window_ms)
+        self._commit_at_ms: int | None = None  # the last SILENCE commit, floor clock
+        self._commit_text: str | None = None  # the user entry that commit appended
+        self._taking_back = False
 
         self._outbox: list[dict[str, object]] = []
         self.armed = False
@@ -778,7 +785,7 @@ class ConversationBridge:
 
     # -- inbound: turn boundaries ----------------------------------------
 
-    def on_speech_started(self, at_ms: int | None = None) -> None:
+    def on_speech_started(self, at_ms: int | None = None) -> bool:
         """A VAD speech onset: a barge-in first (when armed), a boundary always.
 
         The floor runs BEFORE the boundary event so the session's own state
@@ -790,9 +797,50 @@ class ConversationBridge:
 
         *at_ms* goes to the wire only — never into the floor's clock domain.
         """
+        continuation = False
         if self.armed:
-            self.floor.on_speech_started()
+            continuation = self._take_back_early_commit()
+            if not continuation:
+                self.floor.on_speech_started()
+        self._commit_at_ms = self._commit_text = None
         self._push(self.session.begin_speech(at_ms=at_ms))
+        return continuation
+
+    def _take_back_early_commit(self) -> bool:
+        """Whether this onset CONTINUES the turn the machine just committed.
+
+        Layer B of approved deviation d9: with a short confirming silence the
+        machine sometimes answers a speaker who was only pausing. An onset
+        within ``continuation_window_ms`` of such a commit is the speaker
+        carrying on, so the reply is stopped at once — inside the barge-in
+        guard window too — and the half-turn is REMOVED from history: no user
+        entry, no heard-prefix assistant entry. The route then re-transcribes
+        both halves as one turn, which becomes an ordinary turn.
+
+        Refused (so the onset is an ordinary barge-in, or nothing) when the
+        feature is off, the commit was not a silence commit, the window has
+        passed, the reply already finished, a tool call already went out, or
+        history moved on past the half-turn's user entry.
+        """
+        if not self._continuation_window_ms or self._commit_at_ms is None:
+            return False
+        if self._commit_text is None:
+            return False
+        if self._clock() - self._commit_at_ms > self._continuation_window_ms:
+            return False
+        if not self.floor.machine_holds_floor or self.awaiting_tool_result:
+            return False
+        history = self.session.get_history()
+        if not history or history[-1] != {"role": "user", "content": self._commit_text}:
+            return False
+        self._taking_back = True
+        try:
+            if not self.floor.on_continuation_onset():
+                return False
+        finally:
+            self._taking_back = False
+        self.session.pop_history_if_last("user", self._commit_text)
+        return True
 
     def on_speech_stopped(self, at_ms: int | None = None, reason: str | None = None) -> None:
         """A committed turn: an interruption if the machine held the floor,
@@ -807,6 +855,10 @@ class ConversationBridge:
         session would (see :meth:`on_transcript`).
         """
         self._turn_open = self.armed and self.floor.on_turn_committed()
+        # Only a SILENCE commit can have been premature (layer B); a max_turn
+        # or teardown commit is never taken back.
+        self._commit_at_ms = self._clock() if self._turn_open and reason == "silence" else None
+        self._commit_text = None
         self._push(self.session.end_speech(at_ms=at_ms, reason=reason))
 
     def on_transcript(self, text: str) -> None:
@@ -830,6 +882,7 @@ class ConversationBridge:
         self.floor.on_transcript(text, turn_id=turn_id)
         if self.floor.state is FloorState.RESPONDING:
             self.session.append_history("user", text)
+            self._commit_text = text
 
     def on_transcription_failed(self, message: str) -> None:
         """The committed turn's Parakeet forward failed — never a silent drop.
@@ -1246,6 +1299,8 @@ class ConversationBridge:
         landed during synthesis — before a single byte existed, let alone
         went out.
         """
+        if self._taking_back:
+            return  # a continuation: the whole exchange is being redone
         if event.delivered_bytes <= 0:
             return
         # The floor computes the prefix ACROSS segments (a proportional

@@ -106,6 +106,12 @@ class Settings:
     # (the default; English deployments are byte-identical). Inert unless it
     # is below vad_silence_ms and GENERATE_STREAM is on.
     vad_eager_ms: int
+    # Continuation merge (approved deviation d9, layer B): an onset within this
+    # many ms of a SILENCE commit is the speaker carrying on, not a barge-in —
+    # the reply stops, the half-turn leaves history, both halves are
+    # re-transcribed as one turn. 0 = OFF (default). What makes a short
+    # VAD_SILENCE_MS affordable.
+    continuation_window_ms: int
     vad_prefix_padding_ms: int
     vad_max_turn_ms: int
     default_turn_detection: str
@@ -222,6 +228,7 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
         vad_eager_ms=max(0, _as_int(env, "VAD_EAGER_MS", 0)),
+        continuation_window_ms=max(0, _as_int(env, "CONTINUATION_WINDOW_MS", 0)),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
         # VAD_MAX_TURN_MS: hard cap on one uninterrupted turn before the
         # segmenter force-commits it (lobes.realtime._segmenter's
