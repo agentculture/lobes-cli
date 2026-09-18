@@ -639,6 +639,35 @@ a machine that has stopped listening — while **user-initiated** mute/mic-off
 is allowed, because AEC is genuinely owned at the client edge (Reachy
 firmware, browser `echoCancellation`).
 
+**Hebrew realtime + tool calls over the session (hebrew-realtime, 2026-09-18).**
+An opt-in overlay layered ON the audio overlay — `lobes init --fleet --audio
+--audio-lang he` — swaps the sidecars for Hebrew (`ivrit-ai/whisper-large-v3-turbo`
+on transformers with an avg-logprob hallucination gate; Chatterbox
+**Multilingual** + phonikud niqqud) while the English files stay
+byte-identical; language is an overlay choice, not a shape or a variation.
+The session also gained a **tool-call round trip** — `session.update` tools →
+`response.function_call_arguments.done` →
+`conversation.item.create{function_call_output}` → `response.create`, with a
+`tool_wait` floor state — and **lobes never executes a tool**: the client owns
+them (contract: `docs/contracts/realtime-tool-calling.md`; `docs/contracts/`
+is where client-facing wire contracts live, the rest tracked in #278). Three
+latency features: sentence streaming (`GENERATE_STREAM`, **default on for every
+language**), hidden speculation (`VAD_EAGER_MS`, off — the pipeline runs on a
+provisional pause and is adopted only when the real generate request is
+byte-identical), and the continuation merge (`CONTINUATION_WINDOW_MS`, off — an
+early commit is taken back once per utterance when the speaker carries on, and
+a finished tool call is held `CONTINUATION_TOOL_HOLD_MS` because a sent call
+cannot be taken back). `stt`/`tts` adverts now carry the declared
+`model`/`runtime` and — only when declared — `language`; both advert
+serializers go through `lobes.roles.role_payload`, never a bare `asdict`.
+A CPU BlueTTS sidecar (`lobes.realtime.bluetts_server`, `Dockerfile.bluetts`)
+is built and is what the Spark speaks with, but is **wired into no compose
+file and names no weights repo**: its weights carry no declared licence.
+MEASURED live on the DGX Spark from a hand-carried deployment (first audio
+2.6 s → 1–113 ms after the commit; human barge-in honoured); the PACKAGED path
+is DECLARED/UNVALIDATED (#108), the continuation merge is proven on a recording
+only, and mixed Hebrew/English is weak (#277). See `docs/hebrew-realtime.md`.
+
 See `docs/realtime-pipeline.md`, `docs/parakeet-stt.md`,
 `docs/chatterbox-tts.md`, `docs/gateway-fleet.md` (the realtime lane), and
 `docs/openai-api.md` (the full
