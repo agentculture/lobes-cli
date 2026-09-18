@@ -112,6 +112,10 @@ class Settings:
     # re-transcribed as one turn. 0 = OFF (default). What makes a short
     # VAD_SILENCE_MS affordable.
     continuation_window_ms: int
+    # While a continuation is still possible, a finished TOOL CALL is held
+    # this long after the commit before it is sent (a tool call cannot be
+    # taken back; speech can, and is never held). Only with the merge on.
+    continuation_tool_hold_ms: int
     vad_prefix_padding_ms: int
     vad_max_turn_ms: int
     default_turn_detection: str
@@ -229,6 +233,7 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
         vad_eager_ms=max(0, _as_int(env, "VAD_EAGER_MS", 0)),
         continuation_window_ms=max(0, _as_int(env, "CONTINUATION_WINDOW_MS", 0)),
+        continuation_tool_hold_ms=max(0, _as_int(env, "CONTINUATION_TOOL_HOLD_MS", 500)),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
         # VAD_MAX_TURN_MS: hard cap on one uninterrupted turn before the
         # segmenter force-commits it (lobes.realtime._segmenter's

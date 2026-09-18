@@ -56,7 +56,7 @@ from ._session import Session, SessionConfigError, event_to_dict, parse_session_
 from ._settings import VOICE_LANE, settings
 from ._speculation import LineBuffer, SegmentAudioCache, can_adopt
 from ._timings import FIRST_DELTA_STAGE, StageClock
-from ._turn import StreamAccumulator, TurnRequestError
+from ._turn import StreamAccumulator, ToolCallResult, TurnRequestError
 from ._wire import DEFAULT_DELTA_CHUNK_BYTES, InboundKind, decide_inbound_message
 from .audio_facade import (
     SpeechRequestError,
@@ -482,6 +482,7 @@ def _build_bridge(  # pragma: no cover
         ),
         barge_in_window_ms=settings.barge_in_window_ms,
         continuation_window_ms=settings.continuation_window_ms,
+        continuation_tool_hold_ms=settings.continuation_tool_hold_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
         generate_timeout_ms=int(_GENERATE_FORWARD_TIMEOUT * 1000),
         tool_wait_timeout_ms=settings.tool_wait_timeout_ms,
@@ -830,7 +831,15 @@ async def _stream_generate(  # pragma: no cover
                     for item in accumulator.feed_line(line):
                         bridge.on_generate_delta(item.text, turn_id=turn_id)
                     await _drain_segments(bridge, queue)
-    bridge.on_generate_stream_end(accumulator.result(), turn_id=turn_id)
+    result = accumulator.result()
+    if isinstance(result, ToolCallResult):
+        # The one thing that cannot be taken back (deviation d9, layer B):
+        # hold it while the speaker may still be carrying on. An onset now
+        # cancels this task, and the call is never sent.
+        hold_ms = bridge.tool_call_hold_ms()
+        if hold_ms:
+            await asyncio.sleep(hold_ms / 1000)
+    bridge.on_generate_stream_end(result, turn_id=turn_id)
     await _drain_segments(bridge, queue)
     await sender.flush()
     return None

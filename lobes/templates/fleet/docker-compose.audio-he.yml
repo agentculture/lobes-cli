@@ -219,3 +219,7 @@ services:
       # re-transcribed as ONE turn. This is what makes a short VAD_SILENCE_MS
       # affordable. 0 = OFF (default).
       - CONTINUATION_WINDOW_MS=${CONTINUATION_WINDOW_MS:-0}
+      # CONTINUATION_TOOL_HOLD_MS: with the merge on, a finished TOOL CALL is
+      # held this long after the commit (a call the client already has cannot
+      # be taken back; speech can, and is never held).
+      - CONTINUATION_TOOL_HOLD_MS=${CONTINUATION_TOOL_HOLD_MS:-500}

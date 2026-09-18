@@ -535,6 +535,7 @@ class ConversationBridge:
         chunk_bytes: int = DEFAULT_DELTA_CHUNK_BYTES,
         clock: Callable[[], int] = timestamp_ms,
         continuation_window_ms: int = 0,
+        continuation_tool_hold_ms: int = 0,
     ) -> None:
         self.session = session
         self.floor = Floor(
@@ -561,6 +562,7 @@ class ConversationBridge:
         # Continuation merge (approved deviation d9, layer B). 0 = off.
         self._clock = clock
         self._continuation_window_ms = max(0, continuation_window_ms)
+        self._continuation_tool_hold_ms = max(0, continuation_tool_hold_ms)
         self._commit_at_ms: int | None = None  # the last SILENCE commit, floor clock
         self._commit_text: str | None = None  # the user entry that commit appended
         self._taking_back = False
@@ -805,6 +807,28 @@ class ConversationBridge:
         self._commit_at_ms = self._commit_text = None
         self._push(self.session.begin_speech(at_ms=at_ms))
         return continuation
+
+    def tool_call_hold_ms(self) -> int:
+        """How long the route must still HOLD a tool call before handing it over.
+
+        A spoken reply can be taken back (stop, forget, redo); a tool call the
+        client has received cannot — MEASURED live 2026-09-18: with a 500 ms
+        commit the model's tool call went out 180 ms after a mid-sentence
+        pause, the speaker resumed at 360 ms, and the turn could no longer be
+        merged. So while a continuation is still possible, the route sits on
+        a finished tool call until ``continuation_tool_hold_ms`` after the
+        commit; an onset in that time takes the turn back and the call is
+        never sent. Speech is never held. 0 whenever there is nothing to take
+        back: merge off, not a silence commit, or history already past the
+        half-turn (a tool turn's follow-up leg).
+        """
+        if not self._continuation_window_ms or self._commit_at_ms is None:
+            return 0
+        history = self.session.get_history()
+        if not history or history[-1] != {"role": "user", "content": self._commit_text}:
+            return 0
+        elapsed = self._clock() - self._commit_at_ms
+        return max(0, self._continuation_tool_hold_ms - elapsed)
 
     def _take_back_early_commit(self) -> bool:
         """Whether this onset CONTINUES the turn the machine just committed.

@@ -178,3 +178,62 @@ def test_session_history_pop_only_removes_an_exact_last_entry():
     assert session.pop_history_if_last("assistant", "ב") is True
     assert session.get_history() == [{"role": "user", "content": "א"}]
     assert session.pop_history_if_last("user", "x") is False
+
+
+# --- a tool call is the one thing that cannot be taken back: hold it ----------
+
+
+def make_holding_bridge(hold_ms: int = 500):
+    clock = FakeClock()
+    session, _ = S.Session.create(S.parse_session_config({}))
+    bridge = ConversationBridge(
+        session,
+        cancel_generate=lambda: None,
+        cancel_tts=lambda: None,
+        generate=GenerateConfig(base_url="http://gw:8000", stream=True),
+        clock=clock,
+        chunk_bytes=CHUNK,
+        continuation_window_ms=WINDOW,
+        continuation_tool_hold_ms=hold_ms,
+    )
+    bridge.arm()
+    return bridge, clock
+
+
+def test_a_tool_call_is_held_until_the_speaker_has_had_time_to_resume():
+    bridge, clock = make_holding_bridge(500)
+    commit(bridge, clock)
+    assert bridge.tool_call_hold_ms() == 500
+    clock.advance(180)
+    assert bridge.tool_call_hold_ms() == 320
+    clock.advance(400)
+    assert bridge.tool_call_hold_ms() == 0
+
+
+def test_nothing_is_held_when_the_merge_is_off_or_the_commit_was_not_silence():
+    bridge, clock, _ = make_bridge(continuation_window_ms=0)
+    commit(bridge, clock)
+    assert bridge.tool_call_hold_ms() == 0
+    bridge, clock = make_holding_bridge(500)
+    commit(bridge, clock, reason="max_turn")
+    assert bridge.tool_call_hold_ms() == 0
+
+
+def test_the_follow_up_leg_of_a_tool_turn_is_never_held():
+    from lobes.realtime._turn import ToolCallResult
+
+    bridge, clock = make_holding_bridge(500)
+    turn_id = commit(bridge, clock)
+    bridge.on_generate_stream_end(
+        ToolCallResult(call_id="c1", name="f", arguments="{}", tool_call_count=1), turn_id=turn_id
+    )
+    assert bridge.tool_call_hold_ms() == 0  # history moved on: nothing to take back
+
+
+def test_a_held_tool_turn_can_still_be_taken_back():
+    bridge, clock = make_holding_bridge(500)
+    commit(bridge, clock)
+    clock.advance(360)  # the model already produced its tool call; the route is holding it
+    assert bridge.on_speech_started() is True
+    assert bridge.session.get_history() == []
+    assert not bridge.awaiting_tool_result
