@@ -75,3 +75,17 @@ SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM o
      37 chars: steps 5 218/226   steps 3 176/221   steps 2 170/181
    Step count buys ~20-25 %; the fixed pipeline (G2P, encoder, vocoder) dominates.
    Audio quality at 2-3 steps NOT auditioned.
+
+6. HIDDEN SPECULATION (d9 layer A), VAD_EAGER_MS=250, VAD_SILENCE_MS=1000, same recorded
+   utterance, scripted (no live microphone), 2 runs:
+                                         before (s.2)     speculation on
+     speech_stopped -> transcript           192 ms            0 ms   (transcript reused)
+     speech_stopped -> tool call            619 ms        31 / 30 ms
+   Bridge log: "speculation ready in 566 / 573 / 574 ms" (STT + whole streamed generate,
+   measured from the provisional pause), "speculation ADOPTED" x2. THREE speculations for
+   TWO turns: one started at a mid-utterance pause in the recording and was discarded on
+   resumed speech — no event, no history entry (the wire logs show nothing between
+   speech_started and speech_stopped).
+   What this does NOT change: the 1000 ms the VAD waits before confirming the turn. Perceived
+   latency is now ~= VAD_SILENCE_MS; going below it is layer B (earlier commit +
+   continuation merge), not built.
