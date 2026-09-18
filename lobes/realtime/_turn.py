@@ -180,6 +180,11 @@ def build_turn_payload(
     module docstring's "Model resolution" section for why, and what that
     means for the caller (the gateway default-routes).
 
+    Declared tools also carry ``"parallel_tool_calls": false`` — the session
+    tracks ONE outstanding call at a time, so asking for one is the honest
+    request. The key rides with ``"tools"`` and only with it: a payload that
+    declares no tools stays byte-identical to one built before this existed.
+
     ``tools`` is the SAME FLAT Realtime shape
     :class:`~lobes.realtime._session.SessionConfig.tools` holds
     (``{"type": "function", "name", "description", "parameters"}``) — this
@@ -213,6 +218,10 @@ def build_turn_payload(
     payload["chat_template_kwargs"] = {"enable_thinking": False}
     if tools:
         payload["tools"] = realtime_tools_to_chat_completions(tools)
+        # One call per model step is the session's bookkeeping contract (one
+        # OutstandingToolCall at a time), so the request says so rather than
+        # letting the backend ask for three and having two silently dropped.
+        payload["parallel_tool_calls"] = False
         if tool_choice is not None:
             payload["tool_choice"] = realtime_tool_choice_to_chat_completions(tool_choice)
     if stream:
@@ -364,14 +373,16 @@ class ToolCallResult:
     client's tool result). A reply's bridge tracks one outstanding call at a
     time, so only the first is surfaced this way; ``tool_call_count`` is the
     number of tool calls the reply actually carried (``1`` for the common
-    case), so a caller that wants to log/react to "the model asked for N
-    things at once" still can without this module surfacing more than one.
+    case) and ``dropped_names`` names the calls beyond the first, so a caller
+    can log "the model asked for N things at once, and these were dropped"
+    without this module surfacing more than one.
     """
 
     call_id: str
     name: str
     arguments: str
     tool_call_count: int = 1
+    dropped_names: tuple[str, ...] = ()
 
 
 def assistant_tool_call_message(result: ToolCallResult) -> dict:
@@ -538,8 +549,31 @@ def _extract_tool_call(tool_calls: object) -> ToolCallResult:
             "generate response tool_calls[0].function.arguments is not a string"
         )
     return ToolCallResult(
-        call_id=call_id, name=name, arguments=arguments, tool_call_count=len(tool_calls)
+        call_id=call_id,
+        name=name,
+        arguments=arguments,
+        tool_call_count=len(tool_calls),
+        dropped_names=_dropped_call_names(tool_calls[1:]),
     )
+
+
+_UNNAMED_CALL = "<unnamed>"
+
+
+def _dropped_call_names(calls: Sequence[object]) -> tuple[str, ...]:
+    """The ``function.name`` of each call this module will not surface.
+
+    Only ever used for a log line, so a defect in a call that is being
+    dropped anyway is named ``<unnamed>`` rather than raised: refusing the
+    whole reply because the THIRD call the bridge cannot run is malformed
+    would be worse than answering the first one.
+    """
+    names: list[str] = []
+    for call in calls:
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        names.append(name if isinstance(name, str) and name else _UNNAMED_CALL)
+    return tuple(names)
 
 
 # --- the streamed response: the same result, arriving in pieces --------------
@@ -680,6 +714,13 @@ class StreamAccumulator:
         what ties them together (and what keeps two parallel calls apart), so
         a fragment with no index is attributed to call 0 — the only call a
         single-call reply has.
+
+        An ABSENT ``arguments`` is normal (the first fragment usually carries
+        only id + name, and a no-argument tool never sends one at all); a
+        PRESENT but non-string one is malformed and raises
+        :class:`TurnResponseError`, exactly as
+        :func:`_extract_tool_call` does for the non-streamed reply. Ignoring
+        it would hand the client's tool whatever happened to accumulate.
         """
         if not isinstance(fragment, dict):
             return
@@ -695,15 +736,20 @@ class StreamAccumulator:
         name = function.get("name")
         if isinstance(name, str) and name:
             call["name"] = name
+        if "arguments" not in function:
+            return
         arguments = function.get("arguments")
-        if isinstance(arguments, str):
-            call["arguments"] += arguments
+        if not isinstance(arguments, str):
+            raise TurnResponseError(
+                "generate stream tool call 'function.arguments' is not a string"
+            )
+        call["arguments"] += arguments
 
     def _tool_call_result(self) -> ToolCallResult:
         """The FIRST call by index, validated exactly like the non-streamed one."""
         if not self._calls:
             raise TurnResponseError("generate stream announced a tool call it never described")
-        index = min(self._calls)
+        index, *dropped = sorted(self._calls)
         call = self._calls[index]
         if not call["id"]:
             raise TurnResponseError("generate stream tool call missing 'id'")
@@ -714,4 +760,5 @@ class StreamAccumulator:
             name=call["name"],
             arguments=call["arguments"],
             tool_call_count=len(self._calls),
+            dropped_names=tuple(self._calls[i]["name"] or _UNNAMED_CALL for i in dropped),
         )

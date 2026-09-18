@@ -129,15 +129,16 @@ class SegmentAudioCache:
         slot = self._slots.get(text)
         if slot is None:
             return None
-        try:
-            pcm = await asyncio.shield(slot)
-        except asyncio.CancelledError:
-            if slot.cancelled():
-                return None
-            raise  # OUR caller was cancelled (barge-in/teardown), not the slot
-        except Exception:  # noqa: BLE001 - a speculative failure is only a miss
-            return None
-        return pcm or None
+        # `asyncio.wait` never re-raises the slot's OWN outcome — a cancelled
+        # or failed speculative synthesis merely leaves it done — so the
+        # result is inspected rather than caught. It does still propagate OUR
+        # caller's cancellation (barge-in/teardown), which is the one
+        # CancelledError that must never be swallowed, and it leaves the slot
+        # itself pending for whoever else is waiting on it.
+        await asyncio.wait({slot})
+        if slot.cancelled() or slot.exception() is not None:
+            return None  # a speculative failure is only a miss
+        return slot.result() or None
 
     def cancel_pending(self) -> None:
         for slot in self._slots.values():

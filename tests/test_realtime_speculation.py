@@ -59,7 +59,8 @@ def test_speculating_leaves_no_trace_and_predicts_the_real_request_exactly():
     turn_id = bridge.take_pending_response()
     real = bridge.build_generate_request(turn_id)
     assert can_adopt(speculative, real)
-    assert speculative.body == real.body and speculative.url == real.url
+    assert speculative.body == real.body
+    assert speculative.url == real.url
 
 
 def test_a_different_final_transcript_is_not_adoptable():
@@ -120,8 +121,9 @@ def test_a_failed_producer_surfaces_in_the_reader():
         async for _ in buf:
             pass
 
+    coro = scenario()
     with pytest.raises(RuntimeError, match="backend gone"):
-        asyncio.run(scenario())
+        asyncio.run(coro)
 
 
 # --- the audio cache -----------------------------------------------------------
@@ -153,3 +155,20 @@ def test_a_failed_or_cancelled_speculative_synth_is_a_miss_not_an_error():
         return await cache.get("א."), await cache.get("ב."), await cache.get("ג.")
 
     assert asyncio.run(scenario()) == (None, None, None)
+
+
+def test_cancelling_the_waiter_raises_in_it_and_leaves_the_slot_pending():
+    # The one CancelledError this cache must never swallow: OUR caller's.
+    # A barge-in cancels the real synth worker, and that cancellation has to
+    # reach it — while the slot itself stays in flight for anyone else.
+    async def scenario() -> None:
+        cache = SegmentAudioCache()
+        slot = cache.reserve("שלום.")
+        waiter = asyncio.create_task(cache.get("שלום."))
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert not slot.done()
+
+    asyncio.run(scenario())

@@ -79,7 +79,8 @@ def test_a_resumed_speaker_stops_the_reply_inside_the_guard_window_and_leaves_no
     clock.advance(300)  # well inside BARGE_IN_WINDOW_MS (750)
     assert bridge.on_speech_started() is True
     assert "response.interrupted" in types_of(bridge)
-    assert cancels["generate"] == 1 and cancels["tts"] == 1
+    assert cancels["generate"] == 1
+    assert cancels["tts"] == 1
     # the aborted half-turn is gone: no user entry, no heard-prefix assistant entry
     assert bridge.session.get_history() == []
     assert bridge.floor.state is F.FloorState.LISTENING

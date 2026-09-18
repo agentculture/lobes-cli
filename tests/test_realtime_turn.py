@@ -664,8 +664,9 @@ def _role_unverified_body(hosted_by: str) -> bytes:
 
 
 def test_a_503_role_unverified_carries_hosted_by_as_a_field() -> None:
+    body = _role_unverified_body("http://spark:8000")
     with pytest.raises(TurnResponseError) as exc_info:
-        parse_turn_response(503, _role_unverified_body("http://spark:8000"))
+        parse_turn_response(503, body)
     # Deliberately NOT a RoleInfeasibleError: "not yet" is a transient
     # failure, "never" is the one that earns its own type.
     assert not isinstance(exc_info.value, RoleInfeasibleError)
