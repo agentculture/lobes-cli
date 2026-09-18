@@ -1,6 +1,9 @@
 ACCEPTANCE — the Spark's multimodal/senses lane (nvidia/Gemma-4-26B-A4B-NVFP4)
 at its native 262144-token window.
-Box: DGX Spark GB10 (spark-f8a9). Date: 2026-09-19. Operator-approved.
+Box: DGX Spark GB10 (spark-f8a9). Operator-approved.
+Run window: 2026-09-19 00:06-00:30 IDT (Asia/Jerusalem, +0300)
+          = 2026-09-18 21:06-21:30 UTC. The box's clock is local. vLLM log
+          lines below are UTC (e.g. the KV-pool line at 09-18 21:10:12).
 
 WHY
   MULTIMODAL_MAX_MODEL_LEN=32768 dates from the machine-as-brain duo: senses
@@ -22,14 +25,19 @@ CHANGE (deployment only, ~/.lobes, backed up first as .env.bak-*-multimodal-2621
 
 BOOT (first attempt, no refusal)
   GPU KV cache size: 979,268 tokens
-  Maximum concurrency for 262,144 tokens per request: 3.74x
+  "Maximum concurrency for 262,144 tokens per request: 3.74x" (vLLM's own
+    log wording). This is a KV-pool CAPACITY CEILING, 979,268 / 262,144, i.e.
+    how many full-window requests' KV fits at once. It is NOT measured
+    throughput or measured concurrency. Never multiply a single-stream token
+    rate by it; no concurrent load was run here.
   init engine (profile, create kv cache, warmup model) took 92.88 s
   restarts=0, health=healthy
   For comparison, the same util at 32768 booted 2026-09-18 with 515,376 tokens
-  (15.73x). The pool GREW at the larger window rather than shrinking. Most of
+  (a 15.73x ceiling). The pool GREW at the larger window rather than shrinking. Most of
   Gemma 4's layers are sliding-window (1024), so their per-request KV does not
   scale with max_model_len. The hand arithmetic before the boot predicted
-  ~1.97x from the old pool; the measured 3.74x is the number to quote.
+  ~1.97x from the old pool. The 3.74x ceiling vLLM computed from the
+  measured pool is the number to quote, as a capacity ceiling.
 
 PROBES
   advert (GET /capabilities via the public tunnel hostname, keyed):

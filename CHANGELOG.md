@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Evidence `docs/evidence/2026-09-19-accept-multimodal-gemma26b-native-context-spark.txt`: the Spark's multimodal/senses lane (`nvidia/Gemma-4-26B-A4B-NVFP4`) runs at its native 262144 window (was 32768, a leftover from cortex co-residence; cortex moved to the Thor in d1). It booted first try at util 0.28 with a KV pool of 979,268 tokens (3.74x). A 207,831-token needle passed, but cold prefill took 443.7 s, which is slow enough to hit the gateway and Cloudflare-edge timeouts near the full window.
+- Evidence `docs/evidence/2026-09-19-accept-multimodal-gemma26b-native-context-spark.txt`: the Spark's multimodal/senses lane (`nvidia/Gemma-4-26B-A4B-NVFP4`) runs at its native 262144 window (was 32768, a leftover from cortex co-residence; cortex moved to the Thor in d1). It booted first try at util 0.28 with a KV pool of 979,268 tokens (a 3.74x capacity ceiling at the full window, not measured concurrency). A 207,831-token needle passed, but cold prefill took 443.7 s, which is slow enough to hit the gateway and Cloudflare-edge timeouts near the full window.
 
 ### Changed
 
