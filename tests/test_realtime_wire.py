@@ -701,4 +701,5 @@ def test_the_new_control_events_stay_ignored_by_the_codec(event: dict) -> None:
 
     assert decision.kind is InboundKind.IGNORED
     assert decision.payload == event
-    assert decision.audio is None and decision.error is None
+    assert decision.audio is None
+    assert decision.error is None

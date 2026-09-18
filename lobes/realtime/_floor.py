@@ -861,7 +861,11 @@ class Floor:
         self._send(chunk)
         segment.offset += len(chunk)
         self._chunks_sent += 1
-        if not segment.drained:
+        # The offset just moved, so this asks the freshly-written field
+        # directly rather than re-reading `segment.drained` (whose `audio is
+        # not None` half line 858 already settled) — same answer, and it
+        # reads as the consequence of the line above it.
+        if segment.offset < segment.total:
             return True
         self._current += 1
         self._complete_if_drained()

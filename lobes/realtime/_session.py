@@ -715,28 +715,35 @@ def parse_tools(value: object) -> tuple[dict[str, object], ...]:
     """
     if not isinstance(value, (list, tuple)):
         _reject(f"tools must be a list of tool declarations, got {value!r}")
-    tools: list[dict[str, object]] = []
     seen: set[str] = set()
-    for index, raw in enumerate(value):
-        if not isinstance(raw, Mapping):
-            _reject(f"tools[{index}] must be an object, got {raw!r}")
-        tool_type = raw.get("type", _FUNCTION_TOOL_TYPE)
-        if tool_type != _FUNCTION_TOOL_TYPE:
-            _reject(f"tools[{index}] has unsupported type {tool_type!r}; only 'function' is")
-        name = raw.get("name")
-        if not isinstance(name, str) or not name:
-            _reject(f"tools[{index}] requires a non-empty string 'name', got {name!r}")
-        if name in seen:
-            _reject(f"tools[{index}] repeats the tool name {name!r}")
-        seen.add(name)
-        description = raw.get("description")
-        if description is not None and not isinstance(description, str):
-            _reject(f"tools[{index}] 'description' must be a string, got {description!r}")
-        parameters = raw.get("parameters")
-        if parameters is not None and not isinstance(parameters, Mapping):
-            _reject(f"tools[{index}] 'parameters' must be a JSON Schema object, got {parameters!r}")
-        tools.append(dict(raw))
-    return tuple(tools)
+    return tuple(_validate_tool(index, raw, seen) for index, raw in enumerate(value))
+
+
+def _validate_tool(index: int, raw: object, seen: set[str]) -> dict[str, object]:
+    """One entry of :func:`parse_tools`, validated and copied.
+
+    *seen* is the running set of names already declared, added to here — a
+    duplicate makes a returned ``call_id`` ambiguous about which tool was
+    meant, so it is rejected rather than deduplicated.
+    """
+    if not isinstance(raw, Mapping):
+        _reject(f"tools[{index}] must be an object, got {raw!r}")
+    tool_type = raw.get("type", _FUNCTION_TOOL_TYPE)
+    if tool_type != _FUNCTION_TOOL_TYPE:
+        _reject(f"tools[{index}] has unsupported type {tool_type!r}; only 'function' is")
+    name = raw.get("name")
+    if not isinstance(name, str) or not name:
+        _reject(f"tools[{index}] requires a non-empty string 'name', got {name!r}")
+    if name in seen:
+        _reject(f"tools[{index}] repeats the tool name {name!r}")
+    seen.add(name)
+    description = raw.get("description")
+    if description is not None and not isinstance(description, str):
+        _reject(f"tools[{index}] 'description' must be a string, got {description!r}")
+    parameters = raw.get("parameters")
+    if parameters is not None and not isinstance(parameters, Mapping):
+        _reject(f"tools[{index}] 'parameters' must be a JSON Schema object, got {parameters!r}")
+    return dict(raw)
 
 
 def parse_tool_choice(value: object) -> str | dict[str, object]:

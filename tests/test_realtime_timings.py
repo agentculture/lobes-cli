@@ -440,7 +440,8 @@ def test_the_driver_returns_on_a_tool_call_before_it_synthesizes() -> None:
         and isinstance(node.func, ast.Name)
         and node.func.id == "synthesize"
     ]
-    assert guards and synthesis
+    assert guards
+    assert synthesis
     assert min(guards) < min(synthesis)
 
 

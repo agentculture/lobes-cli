@@ -50,7 +50,8 @@ def test_a_pause_fires_once_at_the_eager_threshold_then_the_commit_follows():
     events = run("SS" + "." * 10, vad_silence_ms=SILENCE_10, eager_silence_ms=EAGER_3)
     assert kinds(events) == ["SpeechStarted", "SpeechPaused", "SpeechStopped"]
     paused, stopped = events[1], events[2]
-    assert isinstance(paused, SpeechPaused) and isinstance(stopped, SpeechStopped)
+    assert isinstance(paused, SpeechPaused)
+    assert isinstance(stopped, SpeechStopped)
     assert len(paused.audio) == 5 * CHUNK_BYTES  # 2 speech + 3 silent chunks
     # the commit is the SAME turn plus trailing silence — what makes adoption safe
     assert stopped.audio.startswith(paused.audio)

@@ -1086,11 +1086,16 @@ class ConversationBridge:
             call_id=result.call_id, name=result.name, turn_id=self.floor.turn_id
         )
         if result.tool_call_count > 1:
-            # One outstanding call at a time is the bookkeeping contract, so
-            # the rest are dropped — loudly, because a client that sees one
-            # call answered out of three has no way to know that happened.
-            self.session.log.info(
-                "tool call surfaced 1 of %d requested calls", result.tool_call_count
+            # One outstanding call at a time is the bookkeeping contract, and
+            # the request already asked the backend for one
+            # (`parallel_tool_calls: false`). A backend that answered with
+            # several anyway has had the rest dropped — a WARNING, not an
+            # info, because a client that sees one call answered out of three
+            # has no other way to learn that happened.
+            self.session.log.warning(
+                "tool call surfaced 1 of %d requested calls; dropped %s",
+                result.tool_call_count,
+                ", ".join(result.dropped_names) or "the rest",
             )
         return True
 

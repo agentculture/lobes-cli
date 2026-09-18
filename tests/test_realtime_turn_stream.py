@@ -222,3 +222,63 @@ def test_result_matches_parse_turn_response_for_the_same_reply() -> None:
         json.dumps({"choices": [{"message": {"content": "  השעה ארבע  "}}]}).encode(),
     )
     assert acc.result() == non_streamed == "השעה ארבע"
+
+
+def test_an_empty_arguments_string_is_legal_in_both_paths() -> None:
+    # The non-streamed parser accepts `""` (it is a string), so the stream's
+    # empty accumulator must too — same reply, same result.
+    acc = T.StreamAccumulator()
+    feed_all(acc, [tool_chunk(id="call_1", name="now", arguments="")])
+    non_streamed = T.parse_turn_response(
+        200,
+        json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {"name": "now", "arguments": ""},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ).encode(),
+    )
+    assert acc.result() == non_streamed
+
+
+def test_a_non_string_arguments_fragment_is_a_malformed_response() -> None:
+    # The non-streamed parser raises on a non-string `arguments`; ignoring it
+    # here would hand the client tool whatever happened to accumulate.
+    acc = T.StreamAccumulator()
+    line = tool_chunk(id="call_1", name="now", arguments={"tz": "UTC"})
+    with pytest.raises(T.TurnResponseError):
+        acc.feed_line(line)
+
+
+def test_a_non_string_arguments_fragment_after_good_ones_still_raises() -> None:
+    acc = T.StreamAccumulator()
+    acc.feed_line(tool_chunk(id="call_1", name="now"))
+    acc.feed_line(tool_chunk(arguments='{"tz":'))
+    line = tool_chunk(arguments=17)
+    with pytest.raises(T.TurnResponseError):
+        acc.feed_line(line)
+
+
+def test_parallel_stream_calls_name_the_dropped_ones() -> None:
+    acc = T.StreamAccumulator()
+    feed_all(
+        acc,
+        [
+            tool_chunk(0, id="call_a", name="first"),
+            tool_chunk(1, id="call_b", name="second"),
+        ],
+    )
+    result = acc.result()
+    assert isinstance(result, T.ToolCallResult)
+    assert result.dropped_names == ("second",)

@@ -169,7 +169,8 @@ def test_an_empty_streamed_reply_is_the_named_generate_failure() -> None:
 
     payloads = bridge.drain()
     errors = [p for p in payloads if p["type"] == S.EventType.ERROR.value]
-    assert errors and errors[0]["code"] == S.ErrorCode.GENERATE_FAILED.value
+    assert errors
+    assert errors[0]["code"] == S.ErrorCode.GENERATE_FAILED.value
 
 
 def test_deltas_for_a_stale_turn_are_ignored() -> None:
@@ -256,7 +257,8 @@ def test_a_barge_in_mid_stream_records_only_the_heard_segments() -> None:
 
     first = bridge.take_pending_segment()
     second = bridge.take_pending_segment()
-    assert first is not None and second is not None
+    assert first is not None
+    assert second is not None
     bridge.on_tts_audio(pcm(CHUNK), turn_id=turn_id, segment_index=0)
     bridge.on_tts_audio(pcm(CHUNK * 4), turn_id=turn_id, segment_index=1)
     assert bridge.deliver_next(turn_id=turn_id) is True  # all of segment 0
@@ -265,9 +267,11 @@ def test_a_barge_in_mid_stream_records_only_the_heard_segments() -> None:
     clock.advance(F.DEFAULT_BARGE_IN_WINDOW_MS)
     bridge.on_speech_started()
 
-    assert cancels["generate"] == 1 and cancels["tts"] == 1
+    assert cancels["generate"] == 1
+    assert cancels["tts"] == 1
     spoken = [m for m in bridge.session.get_history() if m.get("role") == "assistant"]
-    assert spoken and spoken[-1]["content"].startswith("משפט ראשון ארוך מספיק.")
+    assert spoken
+    assert spoken[-1]["content"].startswith("משפט ראשון ארוך מספיק.")
     assert "משפט שני ארוך מספיק." not in spoken[-1]["content"]
     assert S.EventType.RESPONSE_INTERRUPTED.value in types_of(bridge)
 

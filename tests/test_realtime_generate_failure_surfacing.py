@@ -200,8 +200,9 @@ def test_parse_turn_response_role_infeasible_exception_carries_hosted_by_and_sta
     # string) and it is what carries hosted_by — status is implicit in the
     # exception TYPE for this one shape (RoleInfeasibleError only ever means
     # 404), unlike the 429/503 gaps below where status has nowhere to go.
+    body = _role_infeasible_body(hosted_by="http://thor:8000")
     with pytest.raises(T.RoleInfeasibleError) as excinfo:
-        T.parse_turn_response(404, _role_infeasible_body(hosted_by="http://thor:8000"))
+        T.parse_turn_response(404, body)
     assert excinfo.value.hosted_by == "http://thor:8000"
 
 
@@ -286,8 +287,9 @@ def test_503_role_unverified_exception_has_a_structured_hosted_by():
     # is a field rather than something to grep out of English. It stays the
     # generic type on purpose — role_unverified means "not yet", which a
     # caller handles like any other transient failure.
+    body = _role_unverified_body(hosted_by="http://spark:8000")
     with pytest.raises(T.TurnResponseError) as excinfo:
-        T.parse_turn_response(503, _role_unverified_body(hosted_by="http://spark:8000"))
+        T.parse_turn_response(503, body)
     assert not isinstance(excinfo.value, T.RoleInfeasibleError)
     assert hasattr(excinfo.value, "hosted_by")
     assert excinfo.value.hosted_by == "http://spark:8000"
