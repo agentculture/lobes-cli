@@ -566,6 +566,7 @@ class ConversationBridge:
         self._commit_at_ms: int | None = None  # the last SILENCE commit, floor clock
         self._commit_text: str | None = None  # the user entry that commit appended
         self._taking_back = False
+        self._continuing = False  # the open turn IS a take-back's second half
 
         self._outbox: list[dict[str, object]] = []
         self.armed = False
@@ -804,6 +805,7 @@ class ConversationBridge:
             continuation = self._take_back_early_commit()
             if not continuation:
                 self.floor.on_speech_started()
+        self._continuing = continuation
         self._commit_at_ms = self._commit_text = None
         self._push(self.session.begin_speech(at_ms=at_ms))
         return continuation
@@ -881,7 +883,12 @@ class ConversationBridge:
         self._turn_open = self.armed and self.floor.on_turn_committed()
         # Only a SILENCE commit can have been premature (layer B); a max_turn
         # or teardown commit is never taken back.
-        self._commit_at_ms = self._clock() if self._turn_open and reason == "silence" else None
+        # ONE take-back per utterance: a merged turn's commit is final. Found in
+        # a real browser (2026-09-18) — an echo right after each commit took the
+        # same sentence back again and again, and it was answered three times.
+        retakeable = self._turn_open and reason == "silence" and not self._continuing
+        self._commit_at_ms = self._clock() if retakeable else None
+        self._continuing = False
         self._commit_text = None
         self._push(self.session.end_speech(at_ms=at_ms, reason=reason))
 

@@ -248,7 +248,13 @@ export function createRealtimeConnection(
         emit({ kind: "malformed", raw: data, detail: "expected a JSON object" });
         return;
       }
-      emit({ kind: "event", event: parsed as Record<string, unknown>, raw: data });
+      const event = parsed as Record<string, unknown>;
+      if (event.type === "session.created" && state === "open") {
+        // Observed in a real browser (2026-09-18): the status kept reading
+        // "waiting for session.created" for the whole session.
+        setState("open", `session ${String(event.session_id ?? "")} ready`.replace("  ", " "));
+      }
+      emit({ kind: "event", event, raw: data });
       return;
     }
     // Binary is not part of the #151 wire in either direction (audio-out

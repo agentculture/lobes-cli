@@ -237,3 +237,45 @@ def test_a_held_tool_turn_can_still_be_taken_back():
     assert bridge.on_speech_started() is True
     assert bridge.session.get_history() == []
     assert not bridge.awaiting_tool_result
+
+
+# --- found in a real browser, 2026-09-18: an echo right after each commit took the
+# --- same turn back again and again ('same sentence' answered three times) ----------
+
+
+def test_a_merged_turn_cannot_be_taken_back_a_second_time():
+    bridge, clock, cancels = make_bridge()
+    commit(bridge, clock, text="יש להם רק אחד")
+    clock.advance(300)
+    assert bridge.on_speech_started() is True  # the one allowed take-back
+    clock.advance(800)
+    bridge.on_speech_stopped(reason="silence")
+    bridge.on_transcript("יש להם רק אחד ושתיים")
+    assert bridge.take_pending_response() is not None
+    clock.advance(300)  # an echo blip right after the merged commit
+    assert bridge.on_speech_started() is False
+    # inside the guard window and not a continuation: ignored, the reply lives
+    assert bridge.session.get_history() == [{"role": "user", "content": "יש להם רק אחד ושתיים"}]
+    assert cancels["generate"] == 1
+    assert bridge.tool_call_hold_ms() == 0  # nothing left to take back, so nothing to hold for
+
+
+def test_the_turn_after_a_merged_one_can_be_taken_back_again():
+    bridge, clock, _ = make_bridge()
+    commit(bridge, clock, text="א")
+    clock.advance(300)
+    assert bridge.on_speech_started() is True
+    clock.advance(800)
+    bridge.on_speech_stopped(reason="silence")
+    bridge.on_transcript("א ב")
+    turn_id = bridge.take_pending_response()
+    bridge.begin_generate_stream(turn_id)
+    bridge.on_generate_stream_end("טוב.", turn_id=turn_id)
+    while (segment := bridge.take_pending_segment()) is not None:
+        bridge.on_tts_audio(bytes(CHUNK), turn_id=turn_id, segment_index=segment[1])
+    while bridge.deliver_next(turn_id=turn_id):
+        pass
+    clock.advance(5000)
+    commit(bridge, clock, text="שאלה חדשה")  # a fresh utterance
+    clock.advance(300)
+    assert bridge.on_speech_started() is True

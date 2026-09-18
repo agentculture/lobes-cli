@@ -272,3 +272,17 @@ describe("probeGateway", () => {
     expect(probe.detail).toContain("npm run dev");
   });
 });
+
+describe("the status line after session.created", () => {
+  it("stops saying it is waiting once the session exists", () => {
+    const { connection, sockets, notices } = harness();
+    connection.connect();
+    sockets[0].open();
+    sockets[0].message(JSON.stringify({ type: "session.created", session_id: "sess_abc" }));
+    const details = notices.filter((n) => n.kind === "state").map((n) => n.detail);
+    expect(details.at(-1)).toBe("session sess_abc ready");
+    expect(connection.state).toBe("open");
+    // the event itself still reaches subscribers, after the state notice or before — but once
+    expect(notices.filter((n) => n.kind === "event")).toHaveLength(1);
+  });
+});

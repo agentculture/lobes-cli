@@ -216,7 +216,8 @@ describe("mountConnectionPanel", () => {
     query<HTMLButtonElement>(root, "data-connection-connect").click();
     sockets[0]!.open();
     sockets[0]!.onmessage?.({ data: '{"type":"session.created"}' });
-    expect(heard.map((notice) => notice.kind)).toEqual(["connecting", "open"].map(() => "state").concat("event"));
+    // connecting, open, then "ready" when session.created lands — and the event itself
+    expect(heard.map((notice) => notice.kind)).toEqual(["connecting", "open", "ready"].map(() => "state").concat("event"));
   });
 
   it("publishes the connection both ways so load order cannot matter", () => {
