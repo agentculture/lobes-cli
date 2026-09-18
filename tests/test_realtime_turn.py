@@ -643,3 +643,37 @@ def test_default_system_prompt_is_the_session_default_system_prompt() -> None:
     from lobes.realtime._session import DEFAULT_SYSTEM_PROMPT as SESSION_DEFAULT_SYSTEM_PROMPT
 
     assert DEFAULT_SYSTEM_PROMPT is SESSION_DEFAULT_SYSTEM_PROMPT
+
+
+# --- a non-404 error body's peer hint (hebrew-realtime t7) ------------------
+
+
+def _role_unverified_body(hosted_by: str) -> bytes:
+    # Mirrors lobes/gateway/server.py's _role_unverified_body: the mesh
+    # boot-window "not yet", which names the pending member.
+    return json.dumps(
+        {
+            "error": {
+                "message": f"announced by the mesh member at `{hosted_by}`, unverified",
+                "type": "role_unverified",
+                "code": "role_unverified",
+                "hosted_by": hosted_by,
+            }
+        }
+    ).encode("utf-8")
+
+
+def test_a_503_role_unverified_carries_hosted_by_as_a_field() -> None:
+    with pytest.raises(TurnResponseError) as exc_info:
+        parse_turn_response(503, _role_unverified_body("http://spark:8000"))
+    # Deliberately NOT a RoleInfeasibleError: "not yet" is a transient
+    # failure, "never" is the one that earns its own type.
+    assert not isinstance(exc_info.value, RoleInfeasibleError)
+    assert exc_info.value.hosted_by == "http://spark:8000"
+    assert exc_info.value.status_code == 503
+
+
+def test_an_ordinary_failure_body_carries_no_peer_hint() -> None:
+    with pytest.raises(TurnResponseError) as exc_info:
+        parse_turn_response(500, b'{"error": {"message": "boom"}}')
+    assert exc_info.value.hosted_by is None
