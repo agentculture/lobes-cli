@@ -16,7 +16,6 @@ the loopback tests below.
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import threading
 import urllib.request
@@ -27,6 +26,7 @@ import pytest
 
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
+from lobes.roles import role_payload  # noqa: E402,I001 - the shared advert serializer (d3)
 from lobes.roles import ROLES, build_role_registry
 
 _PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
@@ -76,7 +76,7 @@ def test_capabilities_payload_matches_cli_shape() -> None:
     assert set(payload) == set(ROLES)
     registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
     for role in ROLES:
-        expected = dataclasses.asdict(registry[role])
+        expected = role_payload(registry[role])
         expected["ready"] = registry[role].loaded
         assert payload[role] == expected
 

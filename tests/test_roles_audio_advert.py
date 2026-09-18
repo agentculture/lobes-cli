@@ -28,7 +28,7 @@ from __future__ import annotations
 import dataclasses
 
 from lobes.gateway._config import build_config
-from lobes.roles import RoleInfo, build_role_registry
+from lobes.roles import RoleInfo, build_role_registry, role_payload
 
 _PRIMARY_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
 
@@ -70,8 +70,8 @@ def test_nothing_declared_advert_full_field_snapshot_matches_main() -> None:
     from the pre-change code so a future edit cannot silently widen or
     narrow the field set or reorder keys."""
     registry = _registry(dict(_FULL_ENV))
-    stt_payload = dataclasses.asdict(registry["stt"])
-    tts_payload = dataclasses.asdict(registry["tts"])
+    stt_payload = role_payload(registry["stt"])
+    tts_payload = role_payload(registry["tts"])
     assert list(stt_payload.keys()) == [
         "role",
         "model",
@@ -170,14 +170,15 @@ def test_declared_override_survives_infeasible_lane() -> None:
 
 
 # ---------------------------------------------------------------------------
-# language stays deliberately unimplemented — see the module docstring.
+# language: the guard that stood here ("RoleInfo carries no language field
+# until both asdict call sites are fixed") was REDEEMED by approved deviation
+# d3 — both call sites now go through lobes.roles.role_payload, which omits the
+# key when unset. The behaviour is pinned in tests/test_roles_audio_language.py.
 # ---------------------------------------------------------------------------
 
 
-def test_role_info_carries_no_language_field() -> None:
-    """Guard: RoleInfo must not gain a bare ``language`` field until the two
-    downstream ``dataclasses.asdict`` call sites (outside this task's
-    ownership) are updated to omit it when unset — see the comment above
-    ``_STT_MODEL_ENV`` in lobes/roles.py."""
+def test_the_language_field_exists_only_with_the_omitting_serializer() -> None:
+
     field_names = {f.name for f in dataclasses.fields(RoleInfo)}
-    assert "language" not in field_names
+    assert "language" in field_names
+    assert "language" not in role_payload(_registry(dict(_FULL_ENV))["stt"])

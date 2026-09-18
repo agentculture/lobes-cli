@@ -110,6 +110,7 @@ from lobes.roles import (
     RoleInfo,
     annotate_peer_referrals,
     annotate_replicas,
+    role_payload,
     role_registry_from_env,
 )
 
@@ -156,7 +157,10 @@ _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 # rig). Nothing that answers with every core field, keyed by all ten role
 # names, is a stray uvicorn. `_render_table` already `.get`s both keys with
 # safe defaults, so an older payload renders without fabricating either.
-_ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible"})
+# ``language`` (approved deviation d3) is additive in a stronger sense: it is
+# ABSENT by design whenever an audio lane declares none — i.e. on every
+# non-audio role and every English deployment, at ANY gateway version.
+_ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible", "language"})
 
 # What a body must carry to be trusted as a real gateway response.
 _ROLE_INFO_REQUIRED_FIELDS = _ROLE_INFO_FIELDS - _ADDITIVE_ROLE_FIELDS
@@ -257,7 +261,7 @@ def _role_payload(info: RoleInfo) -> dict[str, object]:
     (tuples become arrays), so the rest (role/runtime/path/quant/mtp/
     forbidden_responsibilities/loaded) rides along too.
     """
-    return dataclasses.asdict(info)
+    return role_payload(info)
 
 
 def _capabilities_view(args: argparse.Namespace) -> tuple[dict[str, dict], str]:
