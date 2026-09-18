@@ -103,3 +103,21 @@ SUMMARY TABLE (same 7 prompts, temp 0.2, thinking off, single stream)
   google bf16 (no draft)         22.83 GiB  ~7.5 tok/s  'בירת צרפת היא פריז.'    none seen
   google QAT w4a16-ct + MTP       9.07 GiB  ~30-37      'בירת צרפת היא פריז.'    2 script-mix glitches in H6
   Tool call + tool-result turn: correct on all three.
+
+LIVE LANE SWITCHED to google/gemma-4-12B-it-qat-w4a16-ct (2026-09-18; .env.bak-*-pre-qat12b)
+  lane healthy after ~240 s, 0 restarts; through the gateway model=multimodal -> 'בירת צרפת היא פריז.'
+
+ARM (b), deviation d2 — nvidia/Gemma-4-26B-A4B-NVFP4 (MoE, ~4B active) + MTP draft google/gemma-4-26B-A4B-it-assistant (n=1)
+  Scratch container beside the live lane, SAME image/parsers, util 0.28, max_model_len 32768. Booted first try
+  (healthy ~270 s). Model loading took 18.94 GiB; KV 535,046 tokens. Removed afterwards.
+  warmup   1.08 s  12 tok  11.1 tok/s   'שלום! איך אני יכול לעזור לך היום?'
+  H1       1.58 s  61 tok  38.5 tok/s   'מחשב נייד הוא קומפקטי וכולל מסך ומקלדת מובנים לניידות, בעוד מחשב שולחני מורכב מיחידות נפרדות ומתאים יותר לעבודה קבועה ועוצמתית.'
+  H2       1.95 s  62 tok  31.8 tok/s   'מומלץ לטייל בשוק הכרמל או לנצל את הבוקר בטיול רגוע לאורך הטיילת מול הים. תוכלו גם ליהנות מקפה טוב באחת מבתי הקפה הציפיות בשכונת פיתחו.'
+  H3 tool  0.47 s  18 tok  38.5 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 1.28 s 57 tok  44.4 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       0.31 s  11 tok  35.0 tok/s   'בירת צרפת היא פריז.'
+  H6 long  8.33 s 300 tok  36.0 tok/s   (Jerusalem paragraph; no script mixing; odd words seen: 'רוביות', 'הציפיות בשכונת פיתחו')
+  SpecDecoding metrics (whole run): mean acceptance length 1.58, per-position acceptance 0.585.
+  RESULT: as fast as or faster than the 12B (32-44 tok/s vs 30-37), correct tool call and tool-result turn,
+  visibly fewer Hebrew defects than either 4-bit 12B. Costs ~10 GiB more weights. n=1 per prompt — a
+  comparison, not a benchmark; the fluency verdict is the operator's. The 31B arm was NOT run.
