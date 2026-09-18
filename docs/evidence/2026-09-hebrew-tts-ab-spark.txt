@@ -1,0 +1,42 @@
+hebrew-realtime — Hebrew TTS, first measured arms (plan task t3, re-ordered by deviation d5)     2026-09-18
+Box: DGX Spark GB10. Engine: chatterbox-tts 0.1.7 ChatterboxMultilingualTTS (language_id="he"), inside the
+EXISTING lobes-chatterbox:latest image (it already ships mtl_tts; 'he' is one of its 23 languages). MIT.
+Scoring: the synthesized WAV is transcribed DIRECTLY by the Hebrew STT sidecar (ivrit-ai whisper turbo,
+confidence gate off) and compared with the intended text — an objective intelligibility round trip.
+
+Sentences  he1 'שלום, אני העוזר הקולי שלך. במה אפשר לעזור?'
+           he2 'בתיקיית המסמכים יש שלושה קבצים, והאחרון עודכן אתמול בערב.'
+           he3 'מה ההבדל בין מחשב נייד למחשב שולחני?'
+
+ARM plain Hebrew (image as shipped; log: "dicta_onnx not available - Hebrew text processing skipped")
+  he1 [7/8]  'שלום, אי הוא זר, קל ישאל, במה שר לזר?'
+  he2 [10/9] 'פיקית המסמך המייה שלוש הקבצים, והחורון עוד כאן תמול ברב.'
+  he3 [5/7]  'מה הבדל בין מחבניק למחבשולחני?'
+  round-trip WER 92%.  Operator, listening on the reSpeaker speaker: "hebrew sounds weird".
+  Over the air (reSpeaker speaker -> Reachy mic) two of three came back empty.
+
+ARM phonikud niqqud (phonikud-onnx 1.0 int8, CPU) -> Chatterbox, Chatterbox's own diacritizer disabled
+  vocalize 30 / 37 / 44 ms per sentence on this box's CPU  (the latency frame claim c19 said was unmeasured)
+  phonikud's invented stress/shva marks (U+05AB, U+05BD, '|') were stripped: standard niqqud only.
+  he1 [0/8]  'שלום, אני העוזר הקולי שלך, במה אפשר לעזור?'
+  he2 [1/9]  'בתיקיית המסמכים יש 3 קבצים, והאחרון עודכן אתמול בערב.'   (the miss is number FORMATTING)
+  he3 [0/7]  'מה ההבדל בין מחשב נייד למחשב שולחני?'
+  round-trip WER 4%.   synth 1.72 / 5.86 / 1.72 s for 2.92 / 11.56 / 2.84 s of audio.
+
+ARM Dicta niqqud (dicta-onnx, Chatterbox's OWN built-in Hebrew path once the package is installed)
+  Niqqud text IDENTICAL to phonikud's on all three sentences.
+  he2 [0/9], he3 [0/7] perfect; he1 RAN AWAY: 24.5 s of audio for an 8-word sentence, the first clause right and
+  then ~35 invented words. Same input text as the phonikud arm's he1, so this is Chatterbox SAMPLING INSTABILITY,
+  not a diacritizer difference. (The phonikud arm's he2 also ran long: 11.6 s for 9 words, words correct.)
+
+WHAT THIS SETTLES
+  * Chatterbox Multilingual is unusable for Hebrew WITHOUT niqqud and good WITH it (92% -> 4% on n=3).
+    The merged t9 hook (vocalize Hebrew spans before TTS) is therefore load-bearing, not decoration.
+  * Either diacritizer works; phonikud is already wired (t9), costs ~35 ms, and is CC BY 4.0.
+  * A RUNAWAY GUARD is required: reject/retry a synthesis whose duration is implausibly long for its text
+    (tts_client already has a too-SHORT check, _is_truncated; the too-LONG side is missing).
+  * Speed: RTF ~0.6 when stable (1.7 s to synthesize a 2.9 s sentence) — first audio waits for the whole
+    sentence. Peak 3.16 GiB.
+NOT YET MEASURED: the operator's verdict on the niqqud arm (played 2026-09-18, awaiting it); any phoneme-input
+engine; conikud (d4); a mixed Hebrew+Latin sentence (h29); over-the-air round trip with the niqqud arm.
+n = 3 sentences per arm, one sample each, stochastic engine: direction, not a benchmark.

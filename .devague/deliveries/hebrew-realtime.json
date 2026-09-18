@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T13:31:36Z",
+  "updated": "2026-09-18T14:02:38Z",
   "deviations": [
     {
       "id": "d1",
@@ -76,6 +76,22 @@
       "status": "approved",
       "classification": "needs-follow-up",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "The working loop comes before the TTS A/B: t11 builds a Chatterbox MULTILINGUAL (language_id=he) sidecar first as the stand-in Hebrew voice, the stack is brought up live on the Spark, and the TTS comparison then happens INSIDE the loop \u2014 engines swapped behind the same /v1/audio/synthesize contract and scored by an objective round trip (device A speaks a known sentence -> device B's microphone -> Whisper -> WER) plus the operator's ear. The two USB audio sets (reSpeaker XVF3800, Reachy Mini) are also run as two sessions talking to each other to soak turn-taking and barge-in. The conikud arm (d4) joins once a phoneme-input engine is wired",
+      "task_ref": "t11",
+      "reason": "Operator decision 2026-09-18 ('working loop is great ... have the 2 respeaker sets talk to each other'). d4 already narrowed the A/B to one question (text-input Chatterbox vs conikud -> phoneme-input engine), a live loop makes every later comparison easier to judge, and lobes-chatterbox:latest already ships chatterbox-tts 0.1.7 with ChatterboxMultilingualTTS and 'he' among its 23 languages \u2014 no new engine is needed for a stand-in",
+      "affects": [
+        "t3",
+        "t17",
+        "t16",
+        "h29"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],
