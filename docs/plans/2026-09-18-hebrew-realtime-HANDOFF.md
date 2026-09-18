@@ -93,8 +93,8 @@ cd ~/git/lobes-cli && LOBES_API_KEY="$GATEWAY_API_KEY" python3 -u scripts/realti
 5. Operator tests the web harness in the browser (`site/README.md` will carry the steps).
 6. t15, d3 advert field, t16 (incl. catalog entry for the 26B; issue **#276** tracks testing it on the Orin), version bump, then t17 acceptance transcript on real hardware → `/validate-delivery` → `/summarize-delivery` → PR via the `cicd` skill (push needs `dangerouslyDisableSandbox`).
 
-## Open questions for the operator
+## Operator answers (2026-09-18, end of day)
 
-- BlueTTS weights licence: contact the author before shipping it in templates?
-- How is the reSpeaker's speaker wired (its AEC never converges)?
-- In the Reachy session, ~80 s of silence after turn 2: did you try to barge in and it ignored you, or did you stop?
+- **BlueTTS weights licence:** the operator will ask the author himself. Do NOT contact the author or draft an issue. Until a licence is declared, BlueTTS may run on this box but its weights repo must not be referenced by a shipped template as a default.
+- **reSpeaker wiring:** USB to the Spark, speaker plugged DIRECTLY into the reSpeaker's own 3.5 mm output — i.e. the correct wiring for its echo canceller (the chip's reference is what it plays over USB). So `converged: false` is NOT a wiring mistake. Still unexplained; next things to read with `~/git/microphone-cli`: firmware version, the reference/far-end gain and any `TEST_AEC_DISABLE_CONTROL`-style parameter, and whether the 3.5 mm output level (`'PCM',1`) is too low for the filter to see an echo at all. The operator asked whether "a screen" (monitor speakers) would work: NO for echo cancellation — audio played through HDMI never passes through the reSpeaker, so its canceller has no reference for it and the echo would be worse, not better. **Fallback the operator accepted: use the Reachy Mini.**
+- **Reachy session silence:** the operator simply stopped talking. So a HUMAN BARGE-IN IS STILL UNTESTED on any device.
