@@ -196,7 +196,7 @@ class WavFormatError(ValueError):
 _PW_PREFIX_RE = re.compile(r"^(alsa_input\.|alsa_output\.|bluez_input\.|bluez_output\.)")
 _PW_SUFFIX_RE = re.compile(
     r"\.(multichannel-input|multichannel-output|analog-stereo|analog-mono"
-    r"|iec958-stereo|pro-input-0|pro-output-0)$"
+    r"|iec958-stereo|pro-input-0|pro-output-0)(\.\d+)?$"
 )
 
 
@@ -218,6 +218,21 @@ def normalize_pipewire_device_name(name: str) -> str:
     stripped = _PW_PREFIX_RE.sub("", name)
     stripped = _PW_SUFFIX_RE.sub("", stripped)
     return stripped.strip().lower()
+
+
+def select_channel(interleaved: bytes, channels: int, channel: int) -> bytes:
+    """One channel out of interleaved PCM16. Measured on the reSpeaker XVF3800
+    (docs/evidence/2026-09-hebrew-realtime-audio-hardware-spark.txt and the STT
+    spike): channel 1 carries less echo residual and scored the lowest WER, and a
+    mono DOWNMIX mixes the worse channel back in — so take one, never average."""
+    if channels <= 1:
+        return interleaved
+    frame = 2 * channels
+    usable = len(interleaved) - (len(interleaved) % frame)
+    out = bytearray()
+    for i in range(0, usable, frame):
+        out += interleaved[i + 2 * channel : i + 2 * channel + 2]
+    return bytes(out)
 
 
 def device_identity(backend: str, value: str) -> str:
@@ -627,6 +642,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="ALSA card override for playback only (default: same as --card)",
     )
+    parser.add_argument(
+        "--capture-channel",
+        choices=("mix", "0", "1"),
+        default="mix",
+        help="take ONE channel of a stereo microphone instead of a mono downmix "
+        "(reSpeaker XVF3800: 1 measured cleanest)",
+    )
+    parser.add_argument(
+        "--converse",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="free-form mode: converse for this long, answering any tool call, "
+        "instead of the one scripted tool round trip",
+    )
     parser.add_argument("--source", default=None, help="pipewire capture source name")
     parser.add_argument("--sink", default=None, help="pipewire playback sink name")
     parser.add_argument(
@@ -820,6 +850,70 @@ def _wait_until(
         time.sleep(0.05)
 
 
+def _converse(args, client, send, event_log, reader, idx, tool_root, mic_failure) -> int:
+    """Free-form session: narrate every turn, answer any tool call, report
+    interruptions and named errors, and end with the latency table."""
+    end = time.monotonic() + args.converse
+    turns = calls = interrupts = errors = 0
+    done_events: list[dict] = []
+    while time.monotonic() < end:
+        if mic_failure:
+            print(f"FAIL [mic]: mic stopped producing audio — {mic_failure[0]}")
+            return EXIT_MIC_EOF
+        event, idx = _wait_until(
+            event_log,
+            reader,
+            idx,
+            (
+                "input_audio_buffer.speech_started",
+                "conversation.item.input_audio_transcription.completed",
+                "response.function_call_arguments.done",
+                "response.text.done",
+                "response.interrupted",
+                "response.done",
+            ),
+            min(end, time.monotonic() + 1.0),
+        )
+        if event is None:
+            if reader.closed.is_set():
+                print("FAIL [session]: the server closed the session")
+                return EXIT_SESSION_ERROR
+            continue
+        kind = event.get("type")
+        stamp = time.strftime("%H:%M:%S")
+        if kind == "input_audio_buffer.speech_started":
+            print(f"{stamp} ... speech detected")
+        elif kind == "conversation.item.input_audio_transcription.completed":
+            turns += 1
+            print(f"{stamp} HEARD   {event.get('text')!r}")
+        elif kind == "response.function_call_arguments.done":
+            calls += 1
+            try:
+                call_args = parse_function_call_arguments(event.get("arguments") or "{}")
+            except ToolArgumentError as exc:
+                call_args, output = {}, json.dumps({"error": str(exc)})
+            else:
+                output = run_list_directory(tool_root, call_args.get("path"))
+            print(f"{stamp} TOOL    {event.get('name')}({call_args}) -> {output[:160]}")
+            send(client, build_function_call_output_event(event.get("call_id"), output))
+            send(client, build_response_create_event())
+        elif kind == "response.text.done":
+            print(f"{stamp} SAID    {event.get('text')!r}")
+        elif kind == "response.interrupted":
+            interrupts += 1
+            print(f"{stamp} INTERRUPTED (barge-in) stage={event.get('stage')!r}")
+        elif kind == "response.done":
+            done_events.append(event)
+            print(f"{stamp} done    timings={event.get('timings')}")
+        elif kind == "error":
+            errors += 1
+            print(f"{stamp} ERROR   {event.get('code')}: {event.get('message')}")
+    print()
+    print(f"SUMMARY: turns={turns} tool_calls={calls} interruptions={interrupts} errors={errors}")
+    print(build_latency_table(done_events))
+    return EXIT_OK
+
+
 def _run_subprocess_or_die(argv: list[str], *, stdin=None):
     """Start a capture/playback subprocess with piped stderr. Raises
     :class:`RuntimeError` immediately if it could not even be started
@@ -888,6 +982,8 @@ def main(argv: list[str] | None = None) -> int:
     deadline = time.monotonic() + args.timeout
     idx = 0
     mic_proc: subprocess.Popen | None = None
+    mic_stop = threading.Event()
+    mic_failure_ref: list[str] = []
     playback_proc: subprocess.Popen | None = None
     exit_code = EXIT_OK
 
@@ -957,11 +1053,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"PASS [audio-stream]: streamed {len(stream)} bytes from {wav_path}")
         else:
             try:
-                mic_proc = _run_subprocess_or_die(build_capture_argv(args.backend, mic_device))
+                cap_channels = 1 if args.capture_channel == "mix" else 2
+                mic_proc = _run_subprocess_or_die(
+                    build_capture_argv(args.backend, mic_device, channels=cap_channels)
+                )
             except RuntimeError as exc:
                 print(f"FAIL [mic-start]: {exc}")
                 return EXIT_AUDIO_BACKEND_FAILED
-            chunk_bytes = rs.bytes_per_chunk_for_rate(args.input_sample_rate)
+            chunk_bytes = rs.bytes_per_chunk_for_rate(args.input_sample_rate) * cap_channels
+
+            def pick(raw: bytes) -> bytes:
+                if cap_channels == 1:
+                    return raw
+                return select_channel(raw, cap_channels, int(args.capture_channel))
+
             first = mic_proc.stdout.read(chunk_bytes) if mic_proc.stdout else b""
             if not first:
                 err = (
@@ -974,21 +1079,39 @@ def main(argv: list[str] | None = None) -> int:
                     f"{err or 'device unavailable'}"
                 )
                 return EXIT_AUDIO_BACKEND_FAILED
-            send(client, rs.build_append_event(first))
-            mic_deadline = time.monotonic() + args.timeout
-            while time.monotonic() < mic_deadline:
-                raw = mic_proc.stdout.read(chunk_bytes) if mic_proc.stdout else b""
-                if not raw:
-                    err = (
-                        mic_proc.stderr.read().decode(errors="replace").strip()
-                        if mic_proc.stderr
-                        else ""
-                    )
-                    print(f"FAIL [mic]: mic stopped producing audio — {err or 'EOF'}")
-                    return EXIT_MIC_EOF
-                send(client, rs.build_append_event(raw))
-                if len(event_log.snapshot()) - idx > 0:
-                    break  # a server event arrived; stop feeding and process it
+            send(client, rs.build_append_event(pick(first)))
+
+            # The microphone streams for the WHOLE session on its own thread. Found
+            # 2026-09-18: the previous loop stopped feeding the moment any server
+            # event arrived, so the server never heard the turn end and a human could
+            # never barge in. Every failure path here speaks (mic_failure) — the
+            # main thread reports it instead of idling to a timeout.
+            mic_failure = mic_failure_ref
+
+            def feed_microphone() -> None:
+                while not reader.closed.is_set() and not mic_stop.is_set():
+                    raw = mic_proc.stdout.read(chunk_bytes) if mic_proc.stdout else b""
+                    if not raw:
+                        err = (
+                            mic_proc.stderr.read().decode(errors="replace").strip()
+                            if mic_proc.stderr
+                            else ""
+                        )
+                        if not mic_stop.is_set():
+                            mic_failure.append(err or "EOF")
+                        return
+                    try:
+                        send(client, rs.build_append_event(pick(raw)))
+                    except OSError as exc:
+                        if not mic_stop.is_set():
+                            mic_failure.append(f"socket write failed: {exc}")
+                        return
+
+            threading.Thread(target=feed_microphone, name="mic-feeder", daemon=True).start()
+            print("LISTENING: speak now (the microphone streams until the session ends)")
+
+        if args.converse > 0:
+            return _converse(args, client, send, event_log, reader, idx, tool_root, mic_failure_ref)
 
         event, idx = _wait_until(
             event_log, reader, idx, ("input_audio_buffer.speech_started",), deadline
@@ -1066,6 +1189,7 @@ def main(argv: list[str] | None = None) -> int:
         print(build_latency_table(response_done_events))
         return exit_code
     finally:
+        mic_stop.set()
         client.send_close()
         reader.join(timeout=3.0)
         client.close()

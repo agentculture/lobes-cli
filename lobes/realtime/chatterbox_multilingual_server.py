@@ -193,8 +193,14 @@ def strip_phonikud_invented_marks(text: str) -> str:
 #       long", not garbage (words were correct), so these defaults do not
 #       flag it; a genuinely runaway clip (the Dicta arm's 24.5s on shorter
 #       text) is still caught with a wide margin.
-_DEFAULT_MAX_SECONDS_PER_BASE_CHAR = 0.20
-_DEFAULT_MAX_DURATION_SLACK_S = 3.0
+# RETUNED 2026-09-18 after a LIVE miss on the DGX Spark: a 51-character reply
+# ("... Evidense ...", a Latin word inside Hebrew) came out as 11.72 s of audio and
+# the first constants (0.20 s/char + 3.0 s = 13.2 s) let it through. Normal live
+# replies that session: 36 chars -> 3.04 s, 44 chars -> 2.92 s (~0.07-0.08 s/char).
+# 0.12 s/char + 2.0 s is ~1.5x the slowest normal rate plus slack: 51 chars -> 8.1 s
+# (catches 11.72 s), 44 chars -> 7.3 s, and the earlier 24.5 s case stays caught.
+_DEFAULT_MAX_SECONDS_PER_BASE_CHAR = 0.12
+_DEFAULT_MAX_DURATION_SLACK_S = 2.0
 
 # Truncation search defaults — see find_truncation_sample().
 _DEFAULT_TRUNCATE_WINDOW_MS = 20.0

@@ -116,12 +116,23 @@ class TestRunawayGuardMeasuredCases:
     def test_a_3_4s_clip_on_he1_sized_text_is_not_runaway(self) -> None:
         assert m.is_runaway(_HE1, 3.4) is False
 
-    def test_he2_11_56s_clip_is_not_flagged(self) -> None:
-        """he2's phonikud-arm clip (11.56s for 9 correct words) is noted in
-        the evidence file as having "ran long" but was NOT garbage — the
-        chosen constants keep it under threshold (no spurious retry) while
-        still catching the much larger 24.5s garbage case above."""
-        assert m.is_runaway(_HE2, 11.56) is False
+    def test_he2_11_56s_clip_is_now_retried(self) -> None:
+        """REVERSED 2026-09-18 by a live miss. he2's 11.56 s clip had correct
+        words, so the first constants deliberately let it pass — and the same
+        looseness then let a real 11.72 s runaway through in a live session.
+        A 9-word sentence that takes 11.6 s is too slow to speak anyway, and a
+        retry is cheap, so the tightened constants flag it."""
+        assert m.is_runaway(_HE2, 11.56) is True
+
+    def test_the_live_miss_is_caught(self) -> None:
+        """51 base chars -> 11.72 s, live on the DGX Spark: a Latin word inside a
+        Hebrew reply derailed the engine and the old 13.2 s ceiling let it out."""
+        live = "לא מצאתי תיקייה בשם Evidense. אולי התכוונת לשם אחר?"
+        assert m.is_runaway(live, 11.72) is True
+
+    def test_the_live_normal_replies_pass(self) -> None:
+        assert m.is_runaway("כן, אני שומע אותך מצוין. איך אני יכול לעזור?", 2.92) is False
+        assert m.is_runaway("הכל טוב, איך אני יכול לעזור לך היום?", 3.04) is False
 
     def test_threshold_grows_with_text_length(self) -> None:
         short = m.max_plausible_duration_s("שלום")

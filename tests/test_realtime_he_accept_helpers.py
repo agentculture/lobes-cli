@@ -610,3 +610,18 @@ def test_exit_codes_are_all_distinct() -> None:
         rha.EXIT_WAV_FORMAT,
     ]
     assert len(codes) == len(set(codes))
+
+
+def test_pipewire_identity_ignores_a_numeric_profile_suffix() -> None:
+    """Found live 2026-09-18: this box names the reSpeaker source '...analog-stereo.3'."""
+    src = "alsa_input.usb-Seeed_Studio_reSpeaker_XVF3800_4-Mic_Array_1149-00.analog-stereo.3"
+    snk = "alsa_output.usb-Seeed_Studio_reSpeaker_XVF3800_4-Mic_Array_1149-00.analog-stereo"
+    assert rha.normalize_pipewire_device_name(src) == rha.normalize_pipewire_device_name(snk)
+
+
+def test_select_channel_takes_one_channel_and_never_averages() -> None:
+    stereo = struct.pack("<8h", 1, 100, 2, 200, 3, 300, 4, 400)
+    assert struct.unpack("<4h", rha.select_channel(stereo, 2, 0)) == (1, 2, 3, 4)
+    assert struct.unpack("<4h", rha.select_channel(stereo, 2, 1)) == (100, 200, 300, 400)
+    assert rha.select_channel(stereo, 1, 0) == stereo
+    assert len(rha.select_channel(stereo + b"\x01", 2, 1)) == 8  # a ragged tail is dropped
