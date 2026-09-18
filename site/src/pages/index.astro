@@ -22,6 +22,7 @@ import SignalMesh from "../components/SignalMesh.astro";
 import ConnectionPanel from "../components/ConnectionPanel.astro";
 import MicIsland from "../components/MicIsland.astro";
 import EventStream from "../components/EventStream.astro";
+import ConversationView from "../components/ConversationView.astro";
 ---
 
 <Layout
@@ -88,6 +89,27 @@ import EventStream from "../components/EventStream.astro";
       </p>
       <div class="mount card" id="mic-mount" data-mount="mic">
         <MicIsland />
+      </div>
+    </div>
+  </section>
+
+  <!--
+    ============================================================
+    Conversation — hebrew-realtime. A chat-shaped view (heard / said /
+    tool calls + results / interrupted) plus a latency table fed by
+    response.done.timings, built on top of the same window CustomEvent
+    seam the raw event log below uses.
+    ============================================================
+  -->
+  <section class="section" id="conversation" aria-labelledby="conversation-heading" data-reveal>
+    <div class="container">
+      <h2 id="conversation-heading">Conversation</h2>
+      <p class="muted">
+        What was heard, what was said, and any tool calls — in Hebrew or
+        English, right-to-left or left-to-right, automatically.
+      </p>
+      <div class="mount card" id="conversation-mount" data-mount="conversation">
+        <ConversationView />
       </div>
     </div>
   </section>

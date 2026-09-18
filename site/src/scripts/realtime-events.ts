@@ -63,6 +63,8 @@ export const EVENT_TYPES = [
   "response.audio.delta",
   "response.done",
   "response.interrupted",
+  "session.updated",
+  "response.function_call_arguments.done",
 ] as const;
 
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -116,6 +118,7 @@ export type ErrorCode = (typeof ERROR_CODES)[number];
 export type IconId =
   | "session-open"
   | "session-close"
+  | "session-update"
   | "boundary-start"
   | "boundary-stop"
   | "transcript"
@@ -124,6 +127,7 @@ export type IconId =
   | "response-audio"
   | "response-done"
   | "response-interrupted"
+  | "tool-call"
   | "error-config"
   | "error-vad"
   | "error-wire"
@@ -192,6 +196,12 @@ export const EVENT_KIND_META: Record<EventType, EventKindMeta> = {
     label: "response.interrupted",
     icon: "response-interrupted",
     family: "interrupted",
+  },
+  "session.updated": { label: "session.updated", icon: "session-update", family: "lifecycle" },
+  "response.function_call_arguments.done": {
+    label: "tool call",
+    icon: "tool-call",
+    family: "response",
   },
 };
 
@@ -307,3 +317,14 @@ export const CLIENT_EVENT_KIND_META: Record<ClientEventType, EventKindMeta> = {
 export function isKnownErrorCode(code: string): code is ErrorCode {
   return (ERROR_CODES as readonly string[]).includes(code);
 }
+
+/**
+ * The per-stage timing keys `response.done.timings` may carry, in pipeline
+ * order — mirrors `STAGE_TIMING_KEYS` in `lobes/realtime/_session.py`. An
+ * absent stage is omitted by the server (never zeroed), and this UI tolerates
+ * an unknown extra key (a streaming change may add e.g. `first_sentence` /
+ * `first_audio_ready`) rather than dropping the whole mapping.
+ */
+export const STAGE_TIMING_KEYS = ["stt", "generate", "tool_wait", "phonikud", "tts", "first_delta"] as const;
+
+export type StageTimingKey = (typeof STAGE_TIMING_KEYS)[number];

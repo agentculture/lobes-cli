@@ -176,6 +176,17 @@ files and `astro preview` serves them *without* it. A built site opened any
 other way cannot reach the gateway at all — which is the intended failure mode
 for a local-only tool, not a gap.
 
+**The connect query string (`input_sample_rate`, `aec_mode`, `language`, …)
+rides through unchanged.** `buildProxyConfig` sets no `rewrite`,
+`pathRewrite`, or `ignorePath` option, so `http-proxy` forwards the
+incoming request's full `url` — path *and* query string — to the gateway
+verbatim; nothing here parses or copies the query string by hand, and there
+is nothing to keep in sync when a new connect param (like `language`, added
+for hebrew-realtime) shows up. `test/gateway-proxy.test.ts` asserts those
+three options stay unset for exactly this reason. This was verified by
+reading the code path, not by a live browser round trip in this sandbox —
+see "What I could not verify" below.
+
 ## Mounting the connection panel
 
 `src/pages/index.astro` reserves `#connection-mount` /
@@ -246,6 +257,9 @@ factory, so it is driven directly in tests.
 | Proxy endpoint | Path (default `/v1/realtime`) resolved against this page's origin — which is what keeps it same-origin and therefore proxied. An absolute `ws://` override is accepted for a proxy on another port. |
 | Input sample rate | `24000` (default) or `16000` (skips the server-side resample). Sent as `input_sample_rate`. |
 | Server AEC | `none` (default) or `aec`. Leave it at `none`: the browser cancels echo itself via `getUserMedia`. |
+| Language | Free text, defaulting to `he` (Hebrew) — **this harness's own default**, not the server's `"en"`. Sent as the connect URL's `language` param. Any short code is accepted here (`parse_language` server-side is a shape check, not a registry); a datalist offers `he`/`en` as a convenience. |
+| Conversation (talks back) | Off by default (ears-only). On: sends `response.create` right after connecting, so every committed turn gets a spoken reply. |
+| Declare demo tools | Off by default. On: declares this harness's four demo tools via `session.update` the moment `session.created` arrives, and only arms (`response.create`) once `session.updated` echoes the declaration back — see "Tools", below. Requires Conversation to be on too. |
 | Connect / Disconnect | Opens and closes the one session. The config controls lock while it is live — the bridge fixes the config from the connect URL, so a control that appeared to change it mid-session would be lying. |
 | Check gateway | The preflight, below. |
 
@@ -275,6 +289,140 @@ Both go through the proxy for a second reason: the gateway sends no
 `Access-Control-Allow-*` headers, so browser HTTP to it is cross-origin-blocked
 regardless of authentication.
 
+## Hebrew — language, RTL, tools, and latency
+
+The fleet's realtime stack now speaks Hebrew end to end (ivrit.ai Whisper
+STT, Gemma 4 26B, Chatterbox Multilingual Hebrew TTS, Silero VAD, tool
+calling with OpenAI Realtime event names — see `docs/specs/2026-09-18-
+hebrew-realtime.md` and `scripts/realtime-he-accept.py`, the reference
+client this harness's tool flow mirrors). This site follows:
+
+### Language
+
+The connection panel's **Language** field defaults to `he` and is sent as
+the connect URL's `language` query param (`parse_session_config`'s
+`language` key, `lobes/realtime/_session.py`). It is free text, not a
+closed picker — a datalist offers `he`/`en` for convenience, but any short
+code the server accepts (`parse_language` is a SHAPE check: "a 2-3 letter
+primary subtag, optionally with a region/script subtag" — `he`, `en`,
+`pt-BR`, …) can be typed. Leave it blank to omit the param entirely and
+take the server's own default (`"en"`).
+
+### RTL rendering
+
+Every text node holding a transcript or a reply — in the raw event log's
+per-row detail line, and in the chat-style Conversation view below — carries
+`dir="auto"`. The browser's Unicode Bidi Algorithm then picks left-to-right
+or right-to-left **per element**, from that element's own first strong
+character: a Hebrew turn renders RTL, an English one is untouched, and a
+mixed Hebrew+Latin turn (a Hebrew sentence naming an English tool argument,
+say) does not break the surrounding page layout, because the direction
+choice is scoped to that one text node, never the whole page.
+
+The Conversation view additionally declares a font stack
+(`--font-rtl-safe` in `ConversationView.astro`) that actually has Hebrew
+glyphs: the page's own display/body fonts (Fraunces, Albert Sans) are
+self-hosted **Latin-only** subsets (see `Layout.astro`'s `woff2` imports),
+so a Hebrew character in either has no glyph there — the browser already
+falls through per character to whatever comes next in the CSS font stack.
+`--font-rtl-safe` makes that "next" explicit and Hebrew-first
+(`"Noto Sans Hebrew", "Arial Hebrew", "Segoe UI", Tahoma, Arial, …`) rather
+than relying on an accidentally-adequate system fallback.
+
+### Conversation view
+
+`src/components/ConversationView.astro` (built by
+`src/scripts/conversation-view.ts`) renders a chat-style transcript beside
+the raw event log: what was **heard** (a transcript), what was **said** (a
+reply), a **tool** row (the tool name, its arguments, and — once this
+browser sends the answer — its result), and an **interrupted** marker on a
+barge-in. It listens on the exact same `window` `"lobes:realtime-event"`
+seam `EventStream.astro` already uses, plus one extra: `connection-
+panel.ts` dispatches `window` `"lobes:tool-result"`
+(`TOOL_RESULT_EVENT`) the moment it sends a tool's `function_call_output`,
+because the server never echoes a client's own tool answer back on the
+wire — that is the one thing the Conversation view cannot learn purely by
+watching inbound events.
+
+### Tools
+
+The **Declare demo tools** checkbox on the connection panel offers four
+small, pure, in-browser tools (`src/scripts/demo-tools.ts`, no network):
+
+| Tool | What it does |
+| --- | --- |
+| `get_current_time` | Returns the current local ISO timestamp and the weekday name in Hebrew. |
+| `roll_dice` | Rolls one die (`sides`, default 6, 2-1000). |
+| `remember_note` | Remembers a short text note for the rest of the session (in-memory, cleared on reconnect). |
+| `list_notes` | Lists every note remembered so far this session. |
+
+**How arming works, step by step** (mirrors `scripts/realtime-he-accept.py`'s
+reference shape, and keeps exactly ONE arming path —
+`connection-panel.ts`'s `maybeArm`, the single place this file ever sends
+`response.create` to start a session):
+
+1. Press Connect with both **Conversation** and **Declare demo tools**
+   checked.
+2. The socket opens. Arming does **not** fire yet — `maybeArm()` sees tools
+   are declared but not yet ready, and waits.
+3. `session.created` arrives. The panel sends `session.update` with the four
+   tools (OpenAI Realtime FLAT shape: `{type: "function", name,
+   description, parameters}`) and `tool_choice: "auto"`.
+4. `session.updated` echoes the declaration back. The panel calls
+   `maybeArm()` again — this time it sends `response.create`, the ONE
+   arming send for this session.
+5. On a committed turn, the model may call a tool:
+   `response.function_call_arguments.done` arrives with a `call_id`, a
+   `name`, and `arguments` (a JSON **string**). The panel parses it (never
+   throwing — malformed JSON becomes a `{"error": "..."}` output string,
+   exactly like a real tool reporting its own failure), runs the tool, and
+   answers with `conversation.item.create` carrying a
+   `function_call_output` item, then a **second**, independent
+   `response.create` to continue the SAME response (not a new arming — the
+   session is already armed). The Conversation view's tool row fills in the
+   result once this send goes out.
+
+With **Declare demo tools** off, arming is unchanged from its original
+shape: `response.create` fires the moment the socket reaches `open`.
+
+Malformed tool-call arguments, an unknown call id, and every other tool
+failure mode never throw — see `demo-tools.ts`'s `executeDemoTool` and its
+test suite. Server-side, a tool call that never gets an answer (a barge-in
+before the browser could respond) leaves that call **closed**
+(`lobes/realtime/_conversation.py`'s `TOOL_OUTPUT_CALL_CLOSED`); a late
+answer to it is refused as a named `invalid_wire_event` with
+`call_closed` in the message — the event log renders that error like any
+other named error, and the Conversation view's tool row is left showing
+"no answer seen" (see `event-fixtures.ts`'s interrupted-tool-turn
+fixture for a worked example of the shape).
+
+### Latency table
+
+The Conversation view's latency table is fed **only** by
+`response.done`'s optional `timings` mapping (`stt`/`generate`/
+`tool_wait`/`phonikud`/`tts`/`first_delta`, all milliseconds) — an
+unmeasured stage is shown as `—`, never invented as `0`. Rows are newest
+first; the `first_delta` column is highlighted, and a running median of
+`first_delta` across the session is shown above the table. A
+`response.done` with no `timings` at all adds no row. An unknown extra
+timing key (a future streaming change might add `first_sentence` /
+`first_audio_ready`) is tolerated and carried through rather than dropped.
+
+### What a healthy Hebrew tool turn looks like
+
+- **Conversation view:** a "You" row with Hebrew text rendering
+  right-to-left, a "tool · get_current_time" row showing its JSON
+  arguments and (moments later) its JSON result, then a "lobes" row with
+  the spoken reply — also RTL.
+- **Latency table:** a new row at the top with `stt`, `generate`,
+  `tool_wait`, `phonikud` and `tts` all populated (Hebrew replies exercise
+  the niqqud-restoration `phonikud` stage that an English deployment never
+  reports) and a `first_delta` figure.
+- **Event log:** `session.updated` right after `session.created` (echoing
+  the four tool names), then the usual boundary/transcription/response
+  sequence with one `response.function_call_arguments.done` row in the
+  middle.
+
 ## Scripts
 
 | Command | What it does |
@@ -298,6 +446,36 @@ regardless of authentication.
 | Works under `npm run dev`, dead under `npm run preview` | Expected. The proxy is dev-only; there is no gateway route from a built site. |
 | Page served over HTTPS, socket refuses | Mixed content: a `wss:` page needs the gateway over TLS or forwarded to localhost. |
 
+## What could not be verified in this environment
+
+This work was done in a sandbox with no browser and no reachable fleet
+gateway. Everything above the fixture/unit-test level — a live Hebrew
+session with real STT/generate/TTS, a real `phonikud` stage, a real tool
+round trip against the deployed Gemma 4 26B, real RTL rendering in an
+actual browser, the `ssh -L` forward, and the query-string passthrough
+through a REAL Vite dev server proxying to a REAL gateway — is unverified
+here and needs a live pass by the operator following the steps above.
+`npm test` / `npm run check` / `npm run build` (below) are what this
+environment could run.
+
+## Known limitation: echo-cancelled microphone required for barge-in
+
+Barge-in — speaking over a reply to interrupt it — depends on the server
+never hearing its own synthesized voice as if it were the operator
+speaking. This site never mutes the microphone to fake that (see
+`no-mic-mute.test.ts` and `mic-capture.ts`'s own module doc); instead it
+relies entirely on the **browser's own echo cancellation**:
+`mic-capture.ts`'s `MIC_AUDIO_CONSTRAINTS` requests
+`echoCancellation: true` on the `getUserMedia` track. That constraint is
+what makes an always-open mic and a barge-in-capable session possible at
+all in a browser tab with no server-side AEC — but it is a **request**, not
+a guarantee: some devices, drivers, or browsers honour it poorly or not at
+all, especially over a laptop's built-in speakers at high volume, or a
+Bluetooth headset with its own (sometimes conflicting) echo path. A wired
+headset, or a device with real hardware AEC, gives the most reliable
+result. If barge-in does not seem to interrupt cleanly, suspect the
+device's echo cancellation before suspecting the server.
+
 ## Layout
 
 ```text
@@ -307,8 +485,11 @@ site/
 ├── proxy/gateway-proxy.mjs       # credential injection, header stripping (pure, tested)
 ├── src/
 │   ├── components/ConnectionPanel.astro   # the panel's markup + scoped styles
+│   ├── components/ConversationView.astro  # chat-style transcript + latency table
 │   ├── scripts/realtime-connection.ts     # the socket + state machine (DOM-free)
-│   ├── scripts/connection-panel.ts        # the DOM binding + the island seams
+│   ├── scripts/connection-panel.ts        # the DOM binding + tools/language/arming
+│   ├── scripts/conversation-view.ts       # the transcript/latency rendering model
+│   ├── scripts/demo-tools.ts              # the four demo tools (pure, no network)
 │   ├── pages/dev-connection.astro         # standalone harness for the panel
 │   └── styles/global.css                  # the ported design system
 └── test/                          # offline fixture tests (vitest + jsdom)

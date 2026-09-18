@@ -1,0 +1,250 @@
+---
+// The chat-style conversation view + latency table — hebrew-realtime.
+//
+// Alongside the raw /v1/realtime event log (EventStream.astro), this is
+// what an operator actually watches during a live Hebrew session: what was
+// HEARD, what was SAID, what TOOL ran (with its arguments and the result
+// this browser sent back), an INTERRUPTED marker on a barge-in, and a
+// latency table built ONLY from response.done's optional `timings` mapping.
+//
+// Fed the same way EventStream.astro is — no new wiring required anywhere
+// else on the page:
+//
+//   window.dispatchEvent(new CustomEvent("lobes:realtime-event", {
+//     detail: parsedServerJson,
+//   }));
+//
+// which `src/pages/index.astro`'s existing bridge script already dispatches
+// for every event, whether or not this component happens to be mounted.
+// The one extra seam this view needs is the OUTBOUND half of a tool round
+// trip (the result this browser itself computed and sent) — connection-
+// panel.ts dispatches that on `window` as `lobes:tool-result`
+// (`connection-panel.ts`'s `TOOL_RESULT_EVENT`), because the server never
+// echoes a client's own tool answer back on the wire.
+//
+// RTL: every text node holding transcript/reply/tool-argument/tool-result
+// text carries `dir="auto"` (see conversation-view.ts), so a Hebrew turn
+// renders right-to-left and an English one is untouched, with no language
+// flag threaded in from outside.
+---
+
+<div class="conversation-view" data-conversation-view-root>
+  <div class="cv-head">
+    <span class="cv-title">Conversation</span>
+    <button type="button" class="cv-clear" data-conversation-clear>Clear</button>
+  </div>
+  <ol class="cv-list" data-conversation-list aria-live="polite" aria-label="conversation transcript"></ol>
+  <p class="cv-empty muted" data-conversation-empty>
+    Nothing heard or said yet — this fills in as the session runs.
+  </p>
+
+  <div class="cv-latency">
+    <div class="cv-latency-head">
+      <span class="cv-title">Latency (response.done.timings)</span>
+    </div>
+    <p class="cv-latency-median muted" data-latency-median>
+      no response.done with a first_delta timing yet
+    </p>
+    <div class="cv-latency-table-wrap">
+      <table class="cv-latency-table">
+        <thead>
+          <tr>
+            <th scope="col">response</th>
+            <th scope="col">stt</th>
+            <th scope="col">generate</th>
+            <th scope="col">tool_wait</th>
+            <th scope="col">phonikud</th>
+            <th scope="col">tts</th>
+            <th scope="col">first_delta</th>
+          </tr>
+        </thead>
+        <tbody data-latency-body></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+  .conversation-view {
+    display: grid;
+    gap: 1rem;
+    width: 100%;
+    text-align: left;
+    /* A font stack with real Hebrew glyph coverage. The page's own
+       --font-body/--font-display are self-hosted Latin-only subsets (see
+       Layout.astro's woff2 imports) — a Hebrew character in either simply
+       has no glyph there, so the browser already falls through per
+       character to whatever comes next in the stack. This is that "next"
+       made explicit and Hebrew-first, rather than relying on an
+       accidentally-adequate system-ui tail. */
+    --font-rtl-safe:
+      "Noto Sans Hebrew", "Arial Hebrew", "Segoe UI", Tahoma, Arial, var(--font-body), sans-serif;
+  }
+
+  .cv-head,
+  .cv-latency-head {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+  }
+
+  .cv-title {
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .cv-clear {
+    margin-left: auto;
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+    border-radius: 999px;
+    padding: 0.25rem 0.7rem;
+    font: inherit;
+    font-size: 0.78rem;
+    cursor: pointer;
+  }
+
+  .cv-clear:hover {
+    color: var(--ink);
+    border-color: var(--ink-soft);
+  }
+
+  .cv-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.5rem;
+    max-height: 24rem;
+    overflow-y: auto;
+  }
+
+  .cv-empty {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+
+  :global(.cv-turn) {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.3rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--line);
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+
+  :global(.cv-speaker) {
+    font-weight: 640;
+    font-size: 0.76rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  :global(.cv-text) {
+    grid-column: 2;
+    font-family: var(--font-rtl-safe);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  :global(.cv-tool-args),
+  :global(.cv-tool-result) {
+    grid-column: 2;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
+  }
+
+  /* Heard (the operator's own speech) reads left-inset, said (lobes'
+     reply) reads with an accent border — a structural distinction that
+     survives a monochrome render, not colour alone (WCAG 1.4.1). */
+  :global(.cv-heard) {
+    border-left: 3px solid var(--line);
+  }
+
+  :global(.cv-said) {
+    border-left: 3px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+
+  :global(.cv-tool) {
+    border-style: dashed;
+  }
+
+  :global(.cv-interrupted) {
+    border-color: color-mix(in srgb, orange 60%, var(--line));
+  }
+
+  :global(.cv-interrupted .cv-speaker) {
+    color: color-mix(in srgb, orange 70%, var(--ink));
+  }
+
+  :global(.cv-error) {
+    border-style: double;
+    border-width: 3px;
+  }
+
+  .cv-latency {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .cv-latency-median {
+    margin: 0;
+    font-size: 0.82rem;
+  }
+
+  .cv-latency-table-wrap {
+    overflow-x: auto;
+  }
+
+  .cv-latency-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+
+  .cv-latency-table th,
+  .cv-latency-table td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    text-align: start;
+    white-space: nowrap;
+  }
+
+  :global(.cv-latency-highlight) {
+    font-weight: 700;
+    color: var(--accent-strong);
+  }
+</style>
+
+<script>
+  import { mountConversationView } from "../scripts/conversation-view";
+  import { TOOL_RESULT_EVENT } from "../scripts/connection-panel";
+
+  const MOUNTED = new WeakSet<Element>();
+
+  document.querySelectorAll<HTMLElement>("[data-conversation-view-root]").forEach((root) => {
+    if (MOUNTED.has(root)) return;
+    MOUNTED.add(root);
+
+    const view = mountConversationView(root);
+
+    window.addEventListener("lobes:realtime-event", (e) => {
+      view.pushEvent((e as CustomEvent).detail);
+    });
+
+    window.addEventListener(TOOL_RESULT_EVENT, (e) => {
+      const detail = (e as CustomEvent<{ callId: string; output: string }>).detail;
+      if (detail) view.recordToolResult(detail.callId, detail.output);
+    });
+
+    root.querySelector("[data-conversation-clear]")?.addEventListener("click", () => view.clear());
+  });
+</script>
