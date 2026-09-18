@@ -131,7 +131,8 @@ def test_the_awaiting_tool_result_guard_precedes_every_synthesize_call() -> None
         for n in ast.walk(node)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "synthesize"
     ]
-    assert guards and synths
+    assert guards
+    assert synths
     assert min(guards) < min(synths), (
         "the tool-turn guard must come BEFORE the synthesis, or a tool call's "
         "abandoned text prefix gets spoken"

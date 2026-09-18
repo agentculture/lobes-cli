@@ -695,42 +695,69 @@ class _Speculation:  # pragma: no cover
             self.lines.close(error=asyncio.CancelledError())
 
 
+async def _speculative_transcribe(  # pragma: no cover
+    spec: _Speculation, audio: bytes, language: str | None
+) -> bool:
+    """Transcribe the snapshot out of sight. ``False`` means its STT failed.
+
+    ``transcript_ready`` is set in a ``finally`` whatever happens, so an
+    adopter waiting on it is never left hanging by a failed — or cancelled —
+    forward.
+    """
+    try:
+        spec.transcript = await _forward_turn_to_stt(audio, language)
+    except _STTForwardError:
+        return False
+    finally:
+        spec.transcript_ready.set()
+    return True
+
+
+async def _speculative_stream(  # pragma: no cover
+    spec: _Speculation, request, segments: asyncio.Queue
+) -> None:
+    """Buffer the hidden generate stream, chunking sentences onto *segments*.
+
+    Every line is both buffered (for the adopter to replay) and chunked into
+    sentences for the pre-synthesizer. A non-200 becomes
+    :class:`_SpeculativeStatus`, which the caller closes the line buffer with,
+    so the adopter surfaces it through the ordinary failure path.
+    """
+    chunker = SentenceChunker(eager_first_min_chars=settings.reply_first_clause_min_chars)
+    accumulator = StreamAccumulator()
+    async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
+        async with client.stream(
+            "POST", request.url, headers=request.headers, json=request.body
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                raise _SpeculativeStatus(response.status_code, body, dict(response.headers))
+            async for line in response.aiter_lines():
+                spec.lines.put(line)
+                for item in accumulator.feed_line(line):
+                    for sentence in chunker.feed(item.text):
+                        await segments.put(sentence)
+    if not accumulator.saw_tool_call:
+        for sentence in chunker.flush():
+            await segments.put(sentence)
+    await segments.put(None)
+
+
 async def _speculate(  # pragma: no cover
     spec: _Speculation, bridge: ConversationBridge, audio: bytes
 ) -> None:
     """STT -> streamed generate -> synthesis, all out of sight."""
     language = bridge.session.config.language
     try:
-        try:
-            spec.transcript = await _forward_turn_to_stt(audio, language)
-        except _STTForwardError:
+        if not await _speculative_transcribe(spec, audio, language):
             return  # the real commit will transcribe (and name any failure) itself
-        finally:
-            spec.transcript_ready.set()
         request = bridge.build_speculative_request(spec.transcript or "")
         if request is None:
             return
         spec.request = request
         segments: asyncio.Queue = asyncio.Queue()
         spec.synth_task = asyncio.create_task(_speculative_synth(spec, segments, language))
-        chunker = SentenceChunker(eager_first_min_chars=settings.reply_first_clause_min_chars)
-        accumulator = StreamAccumulator()
-        async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
-            async with client.stream(
-                "POST", request.url, headers=request.headers, json=request.body
-            ) as response:
-                if response.status_code != 200:
-                    body = await response.aread()
-                    raise _SpeculativeStatus(response.status_code, body, dict(response.headers))
-                async for line in response.aiter_lines():
-                    spec.lines.put(line)
-                    for item in accumulator.feed_line(line):
-                        for sentence in chunker.feed(item.text):
-                            await segments.put(sentence)
-        if not accumulator.saw_tool_call:
-            for sentence in chunker.flush():
-                await segments.put(sentence)
-        await segments.put(None)
+        await _speculative_stream(spec, request, segments)
         spec.lines.close()
         log.info(
             "session_id=%s speculation ready in %d ms",
@@ -739,7 +766,8 @@ async def _speculate(  # pragma: no cover
         )
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - surfaces in the adopter, or nowhere
+    # Surfaces in the adopter, or nowhere.
+    except Exception as exc:  # noqa: BLE001
         if not spec.lines.closed:
             spec.lines.close(error=exc)
 
@@ -785,6 +813,44 @@ def _start_speculation(  # pragma: no cover
     tasks.speculation = spec
 
 
+async def _replay_speculation(  # pragma: no cover
+    speculation: _Speculation,
+    accumulator: StreamAccumulator,
+    bridge: ConversationBridge,
+    turn_id: int,
+    queue: asyncio.Queue,
+) -> tuple[int, bytes, dict[str, str]] | None:
+    """Replay the hidden stream's buffered lines, then follow it live.
+
+    The same request was already sent at the provisional pause, so the adopter
+    reads its buffer instead of opening a second connection. A
+    :class:`_SpeculativeStatus` the buffer was closed with is returned as the
+    ordinary ``(status, body, headers)`` failure triple, so a speculated
+    non-200 surfaces byte-identically to a live one.
+    """
+    try:
+        async for line in speculation.lines:
+            for item in accumulator.feed_line(line):
+                bridge.on_generate_delta(item.text, turn_id=turn_id)
+            await _drain_segments(bridge, queue)
+    except _SpeculativeStatus as exc:
+        return exc.failure
+    return None
+
+
+async def _hold_tool_call(bridge: ConversationBridge, result) -> None:  # pragma: no cover
+    """Hold a completed TOOL CALL while the speaker may still be carrying on.
+
+    The one thing that cannot be taken back (deviation d9, layer B). An onset
+    during the hold cancels this task, and the call is never sent.
+    """
+    if not isinstance(result, ToolCallResult):
+        return
+    hold_ms = bridge.tool_call_hold_ms()
+    if hold_ms:
+        await asyncio.sleep(hold_ms / 1000)
+
+
 async def _stream_generate(  # pragma: no cover
     request,
     bridge: ConversationBridge,
@@ -812,13 +878,9 @@ async def _stream_generate(  # pragma: no cover
     if speculation is not None:
         # ADOPTED (deviation d9): the same request was already sent at the
         # provisional pause. Replay what it has buffered, then follow it live.
-        try:
-            async for line in speculation.lines:
-                for item in accumulator.feed_line(line):
-                    bridge.on_generate_delta(item.text, turn_id=turn_id)
-                await _drain_segments(bridge, queue)
-        except _SpeculativeStatus as exc:
-            return exc.failure
+        failure = await _replay_speculation(speculation, accumulator, bridge, turn_id, queue)
+        if failure is not None:
+            return failure
     else:
         async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
             async with client.stream(
@@ -832,13 +894,7 @@ async def _stream_generate(  # pragma: no cover
                         bridge.on_generate_delta(item.text, turn_id=turn_id)
                     await _drain_segments(bridge, queue)
     result = accumulator.result()
-    if isinstance(result, ToolCallResult):
-        # The one thing that cannot be taken back (deviation d9, layer B):
-        # hold it while the speaker may still be carrying on. An onset now
-        # cancels this task, and the call is never sent.
-        hold_ms = bridge.tool_call_hold_ms()
-        if hold_ms:
-            await asyncio.sleep(hold_ms / 1000)
+    await _hold_tool_call(bridge, result)
     bridge.on_generate_stream_end(result, turn_id=turn_id)
     await _drain_segments(bridge, queue)
     await sender.flush()
@@ -1367,6 +1423,52 @@ async def _transcribe_turn(  # pragma: no cover
     await sender.flush()
 
 
+def _tool_wait_ended(
+    was_awaiting_tool: bool, bridge: ConversationBridge
+) -> bool:  # pragma: no cover
+    """Did the control event just ACCEPT the outstanding tool result?
+
+    A REFUSED result leaves the call outstanding, so the wait ends here — not
+    at the ``response.create`` that releases the follow-up generate.
+    """
+    return was_awaiting_tool and not bridge.awaiting_tool_result
+
+
+async def _feed_audio(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    cancels: _ResponseCancels,
+    segmenter: Segmenter,
+    pending: bytearray,
+    input_rate: int,
+    tasks: _SessionTasks,
+    clock: StageClock,
+) -> bool:
+    """Segment whatever whole samples *pending* holds. ``False`` ends the session.
+
+    The only way out of a session from here is a VAD failure: ``_segmenter.py``
+    deliberately lets a raising VAD callable propagate (see its module
+    docstring), and translating that into the named ``vad_unavailable`` session
+    error is this route's job.
+    """
+    aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
+    if not aligned:
+        return True
+    pcm16k = await _to_pcm16k(aligned, input_rate)
+    try:
+        # torch inference, one call per 32 ms chunk — off the loop for the
+        # same reason as the resample above.
+        events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
+    except Exception as exc:
+        bridge.fail_vad(f"{type(exc).__name__}: {exc}")
+        await sender.flush()
+        return False
+    await _emit_turn_events(bridge, sender, events, clock, tasks)
+    _start_pending_response(bridge, sender, cancels, tasks, clock)
+    await sender.flush()
+    return True
+
+
 async def _pump_session(  # pragma: no cover
     websocket: WebSocket,
     bridge: ConversationBridge,
@@ -1399,15 +1501,13 @@ async def _pump_session(  # pragma: no cover
         decision = decide_inbound_message(message)
         if decision.kind is InboundKind.IGNORED:
             was_awaiting_tool = bridge.awaiting_tool_result
-            if bridge.on_control_event(decision.payload):
-                tasks.ensure_watchdog(bridge, sender)
-                if was_awaiting_tool and not bridge.awaiting_tool_result:
-                    # The tool result was ACCEPTED (a refused one leaves the
-                    # call outstanding), so the wait ends here — not at the
-                    # `response.create` that releases the follow-up generate.
-                    clock.stop("tool_wait")
-                await sender.flush()
-                _start_pending_response(bridge, sender, cancels, tasks, clock)
+            if not bridge.on_control_event(decision.payload):
+                continue
+            tasks.ensure_watchdog(bridge, sender)
+            if _tool_wait_ended(was_awaiting_tool, bridge):
+                clock.stop("tool_wait")
+            await sender.flush()
+            _start_pending_response(bridge, sender, cancels, tasks, clock)
             continue
         if decision.kind is InboundKind.ERROR:
             bridge.on_wire_error(decision.error)
@@ -1416,25 +1516,10 @@ async def _pump_session(  # pragma: no cover
         audio = decision.audio
 
         pending.extend(audio)
-        aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
-        if not aligned:
-            continue
-        pcm16k = await _to_pcm16k(aligned, input_rate)
-
-        try:
-            # torch inference, one call per 32 ms chunk — off the loop for the
-            # same reason as the resample above.
-            events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
-        except Exception as exc:
-            # _segmenter.py deliberately lets a raising VAD callable
-            # propagate (see its module docstring) — translating that into
-            # the named session error is this route's job.
-            bridge.fail_vad(f"{type(exc).__name__}: {exc}")
-            await sender.flush()
-            return
-        await _emit_turn_events(bridge, sender, events, clock, tasks)
-        _start_pending_response(bridge, sender, cancels, tasks, clock)
-        await sender.flush()
+        if not await _feed_audio(
+            bridge, sender, cancels, segmenter, pending, input_rate, tasks, clock
+        ):
+            return  # VAD is down; the named error is already sent
 
 
 def main() -> None:  # pragma: no cover - process entrypoint
