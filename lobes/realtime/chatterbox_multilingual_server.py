@@ -331,6 +331,17 @@ def _normalize_diacritize(value: str | None) -> str:
     return "off" if (value or "").strip().lower() == "off" else "auto"
 
 
+# Sampling temperature. Chatterbox's own default is 0.8. MEASURED on the DGX
+# Spark 2026-09-18 (docs/evidence/2026-09-hebrew-tts-ab-spark.txt), 8 samples
+# per setting, phonikud niqqud in, round trip through the Hebrew STT sidecar:
+#   0.8 -> 14.7% WER, a 9-word sentence lasting 4.7 .. 12.6 s (the run-ons)
+#   0.5 -> 19.1% WER, 4.8 .. 6.2 s
+#   0.3 ->  8.8% WER, 4.3 .. 8.6 s
+# n is small and 0.5-vs-0.8 is inside the noise; 0.3's edge showed on both
+# intelligibility and duration stability, so it is the default. It is a knob.
+DEFAULT_TEMPERATURE = 0.3
+
+
 @dataclass(frozen=True)
 class MlSettings:
     """Where this sidecar listens and how it decides Hebrew vocalization."""
@@ -340,6 +351,7 @@ class MlSettings:
     language: str  # TTS_LANGUAGE — default "he" (criterion 2's server setting)
     diacritize: str  # TTS_DIACRITIZE — "auto" | "off"
     max_retries: int  # TTS_MAX_RETRIES — retries after a runaway synthesis
+    temperature: float  # TTS_TEMPERATURE — sampling temperature (measured default)
     phonikud_model_path: str  # PHONIKUD_MODEL_PATH — shared with the bridge (t9)
     max_seconds_per_base_char: float
     max_duration_slack_s: float
@@ -356,6 +368,7 @@ def build_ml_settings(env: Mapping[str, str] | None = None) -> MlSettings:
         language=env.get("TTS_LANGUAGE") or "he",
         diacritize=_normalize_diacritize(env.get("TTS_DIACRITIZE")),
         max_retries=max(0, _as_int(env, "TTS_MAX_RETRIES", 2)),
+        temperature=min(2.0, max(0.05, _as_float(env, "TTS_TEMPERATURE", DEFAULT_TEMPERATURE))),
         phonikud_model_path=env.get("PHONIKUD_MODEL_PATH") or "",
         max_seconds_per_base_char=max(
             0.01,
@@ -513,7 +526,11 @@ def _prepare_text_for_synthesis(text: str) -> str:  # pragma: no cover
 
 
 def _generate_once(mdl, text: str, voice: str) -> bytes:  # pragma: no cover
-    kwargs: dict = {"exaggeration": 0.5, "cfg_weight": 0.5}
+    kwargs: dict = {
+        "exaggeration": 0.5,
+        "cfg_weight": 0.5,
+        "temperature": _ml_settings.temperature,
+    }
     if voice.lower().endswith(".wav"):
         kwargs["audio_prompt_path"] = voice
     wav_tensor = mdl.generate(text, language_id=_ml_settings.language, **kwargs)

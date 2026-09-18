@@ -122,6 +122,9 @@ services:
       # before the sidecar truncates instead. 2 retries = up to 3 total
       # generate() calls per request.
       - TTS_MAX_RETRIES=${TTS_MAX_RETRIES:-2}
+      # TTS_TEMPERATURE: sampling temperature; 0.3 measured clearest and most
+      # duration-stable for Hebrew on this engine (Chatterbox's own default is 0.8).
+      - TTS_TEMPERATURE=${TTS_TEMPERATURE:-0.3}
       # PHONIKUD_MODEL_PATH: SAME path/knob the `realtime` service reads
       # below — this sidecar's own fallback diacritizer when
       # TTS_DIACRITIZE=auto and the incoming text has no niqqud yet. Points

@@ -355,3 +355,13 @@ class TestImportIsolation:
         # the property explicitly for a reader of this test file.
         assert callable(m.float_tensor_to_pcm16)
         assert callable(m.has_niqqud)
+
+
+def test_temperature_defaults_to_the_measured_value_and_is_clamped() -> None:
+    import lobes.realtime.chatterbox_multilingual_server as ml
+
+    assert ml.build_ml_settings({}).temperature == ml.DEFAULT_TEMPERATURE == 0.3
+    assert ml.build_ml_settings({"TTS_TEMPERATURE": "0.8"}).temperature == 0.8
+    assert ml.build_ml_settings({"TTS_TEMPERATURE": "0"}).temperature == 0.05
+    assert ml.build_ml_settings({"TTS_TEMPERATURE": "99"}).temperature == 2.0
+    assert ml.build_ml_settings({"TTS_TEMPERATURE": "warm"}).temperature == 0.3
