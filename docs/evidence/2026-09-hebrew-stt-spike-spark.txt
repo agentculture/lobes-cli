@@ -89,3 +89,16 @@ RE-RECORD of sentence 11 (operator confirmed the sentence was read as written), 
       reaches STT, so a silent clip should not arrive — but that is a mitigation, not a guarantee, and it is
       the phantom-command hazard frame claim c31 exists for: the client MUST see the transcript before acting.
     * one transcript carried an invisible bidi control (U+202B). Fixed: the sidecar strips bidi controls.
+
+CONFIDENCE GATE against plain-text hallucination (added after the 'תודה רבה' finding), 2026-09-18
+  Measured with transformers on the operator's clips (avg log-probability of generated TEXT tokens):
+    non-speech  'תודה רבה' -0.60 (reSpeaker), -0.58 (Reachy) ; '(צחוק)' -0.61 ; '(הורות)' -1.50
+    real speech, 12 utterances: -0.00 .. -0.12   (worst = the one with a bystander talking)
+    a clip first labelled non-speech scored -0.08 'עכשיו על השולחן' — judged REAL quiet speech, and kept
+  <|nospeech|> probability read 0.000 on ALL 16 clips: this fine-tune does not use it; it cannot gate anything.
+  Shipped: STT_MIN_AVG_LOGPROB (default -0.35, `off` disables; a typo falls back to the default, never to off).
+  LIVE PROOF on the rebuilt sidecar image, through POST /v1/audio/transcriptions:
+    4 non-speech clips  -> ['', '', '', '']                       (log: dropping ... -0.60 / -0.58 'תודה רבה')
+    22 speech clips (two mics, s02-s11, the s11 retake, the quiet 'עכשיו על השולחן') -> 22 / 22 kept
+  n = 26 clips, one speaker, one room: the threshold is a knob to retune, not a constant of nature.
+  Silero stays the session VAD (operator decision; see 2026-09-hebrew-realtime-vad-ab-spark.txt).

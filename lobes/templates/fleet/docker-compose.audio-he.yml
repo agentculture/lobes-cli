@@ -54,6 +54,11 @@ services:
       # listen_server_whisper.py's resolve_language() when the per-request
       # `language` form field is absent. "he" for a Hebrew deployment.
       - STT_LANGUAGE=${STT_LANGUAGE:-he}
+      # STT_MIN_AVG_LOGPROB: drop a transcript whose mean token log-probability
+      # is below this (Whisper's plain-text hallucinations on non-speech, e.g.
+      # 'תודה רבה'). Measured 2026-09-18: speech >= -0.12, hallucinations <= -0.58.
+      # `off` disables the gate.
+      - STT_MIN_AVG_LOGPROB=${STT_MIN_AVG_LOGPROB:--0.35}
       # STT_RUNTIME: informational — names the serving stack for
       # GET /capabilities; the container fixed on transformers, not a
       # switchable knob.

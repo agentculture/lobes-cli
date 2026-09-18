@@ -303,3 +303,36 @@ class TestStripBidiControls:
         assert mod.strip_bidi_controls(controls) == ""
         plain = "\u05e9\u05dc\u05d5\u05dd hello 123 (\u05e6\u05d7\u05d5\u05e7)"
         assert mod.strip_bidi_controls(plain) == plain
+
+
+class TestConfidenceGate:
+    """Thresholds measured on the DGX Spark 2026-09-18: speech >= -0.12,
+    hallucinations <= -0.58 (see the module comment)."""
+
+    def test_default_sits_between_the_measured_groups(self, lsw) -> None:
+        assert -0.58 < lsw.DEFAULT_MIN_AVG_LOGPROB < -0.12
+
+    @pytest.mark.parametrize("measured", [-0.00, -0.01, -0.04, -0.06, -0.08, -0.12])
+    def test_every_measured_real_utterance_is_kept(self, lsw, measured) -> None:
+        assert not lsw.is_low_confidence(measured, lsw.DEFAULT_MIN_AVG_LOGPROB)
+
+    @pytest.mark.parametrize("measured", [-0.58, -0.60, -0.61, -1.50])
+    def test_every_measured_hallucination_is_dropped(self, lsw, measured) -> None:
+        assert lsw.is_low_confidence(measured, lsw.DEFAULT_MIN_AVG_LOGPROB)
+
+    def test_a_disabled_gate_or_unknown_confidence_never_drops(self, lsw) -> None:
+        assert not lsw.is_low_confidence(-9.0, None)
+        assert not lsw.is_low_confidence(None, -0.35)
+
+    def test_average_logprob(self, lsw) -> None:
+        assert lsw.average_logprob([]) is None
+        assert lsw.average_logprob([-0.2, -0.4]) == pytest.approx(-0.3)
+
+    @pytest.mark.parametrize("raw", ["off", "OFF", "none", "disabled", "", "  "])
+    def test_the_gate_can_be_switched_off_explicitly(self, lsw, raw) -> None:
+        assert lsw.parse_min_avg_logprob(raw) is None
+
+    def test_a_typo_never_silently_disables_the_gate(self, lsw) -> None:
+        assert lsw.parse_min_avg_logprob("-0,35") == lsw.DEFAULT_MIN_AVG_LOGPROB
+        assert lsw.parse_min_avg_logprob(None) == lsw.DEFAULT_MIN_AVG_LOGPROB
+        assert lsw.parse_min_avg_logprob("-0.5") == -0.5

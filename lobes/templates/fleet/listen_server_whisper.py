@@ -113,6 +113,52 @@ _BIDI_CONTROLS = dict.fromkeys(
 )
 
 
+# Confidence gate against Whisper's plain-text hallucinations on non-speech.
+# MEASURED on the DGX Spark 2026-09-18 with the operator's recordings
+# (docs/evidence/2026-09-hebrew-stt-spike-spark.txt): every real utterance
+# scored an average token log-probability between -0.00 and -0.12, every
+# hallucination -0.58 or lower (the famous plain-text 'תודה רבה' at -0.60 and
+# -0.58; bracketed tags at -0.61 and -1.50). This checkpoint's <|nospeech|>
+# probability read 0.000 on EVERY clip, so it is useless as a gate here. The
+# default sits midway; n = 16 clips, one speaker — it is a knob, not a law.
+DEFAULT_MIN_AVG_LOGPROB = -0.35
+
+
+def parse_min_avg_logprob(raw: str | None) -> float | None:
+    """``STT_MIN_AVG_LOGPROB``: a float threshold; ``off`` / ``none`` / empty
+    string disables the gate; anything unparseable falls back to the default
+    (a typo must not silently disable a safety gate)."""
+    if raw is None:
+        return DEFAULT_MIN_AVG_LOGPROB
+    value = raw.strip().lower()
+    if value in ("", "off", "none", "disabled"):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return DEFAULT_MIN_AVG_LOGPROB
+
+
+def average_logprob(token_logprobs: list[float]) -> float | None:
+    """Mean log-probability of the generated TEXT tokens; ``None`` when there
+    were none (an empty transcript has no confidence to judge)."""
+    if not token_logprobs:
+        return None
+    return sum(token_logprobs) / len(token_logprobs)
+
+
+def is_low_confidence(avg_logprob: float | None, threshold: float | None) -> bool:
+    """True when the transcript should be dropped as a likely hallucination.
+    A disabled gate (``threshold is None``) or an unknown confidence never
+    drops anything."""
+    if threshold is None or avg_logprob is None:
+        return False
+    return avg_logprob < threshold
+
+
+MIN_AVG_LOGPROB = parse_min_avg_logprob(os.environ.get("STT_MIN_AVG_LOGPROB"))
+
+
 def strip_bidi_controls(text: str) -> str:
     """Remove invisible bidi control characters; every visible character,
     Hebrew or not, is left exactly as it was."""
@@ -373,16 +419,35 @@ if _FASTAPI_AVAILABLE:
         inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
         input_features = inputs.input_features.to("cuda", dtype=torch.float16)
         with torch.no_grad():
-            generated_ids = model.generate(
+            out = model.generate(
                 input_features,
                 language=lang,
                 task="transcribe",
                 max_new_tokens=128,
+                return_dict_in_generate=True,
+                output_scores=True,
             )
-        text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        n_new = len(out.scores)
+        new_ids = out.sequences[0][-n_new:] if n_new else out.sequences[0][:0]
+        eot = processor.tokenizer.convert_tokens_to_ids("<|endoftext|>")
+        token_logprobs = [
+            torch.log_softmax(step[0].float(), dim=-1)[tok].item()
+            for step, tok in zip(out.scores, new_ids)
+            if tok.item() < eot  # text tokens only — specials sit at/after <|endoftext|>
+        ]
+        text = processor.batch_decode(out.sequences, skip_special_tokens=True)[0]
         # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
         # listen_server.py's callers never see one, so strip before filtering.
         text = filter_non_speech_only(strip_bidi_controls(text).strip())
+        confidence = average_logprob(token_logprobs)
+        if text and is_low_confidence(confidence, MIN_AVG_LOGPROB):
+            logger.info(
+                "dropping low-confidence transcript (avg_logprob %.2f < %.2f): %r",
+                confidence,
+                MIN_AVG_LOGPROB,
+                text,
+            )
+            text = ""
 
         return build_success_response(text)
 
