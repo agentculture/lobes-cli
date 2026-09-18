@@ -10,13 +10,16 @@ values, mirroring the house style of :mod:`tests.test_realtime_turn` /
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 
 import pytest
 
 from lobes.realtime._vocalize import (
     DEFAULT_TIMEOUT_S,
+    LazySingleton,
     build_phonikud_diacritizer,
     vocalize_hebrew,
 )
@@ -144,6 +147,26 @@ class TestVocalizeHebrewFailureModes:
     def test_default_timeout_is_a_positive_number(self) -> None:
         assert DEFAULT_TIMEOUT_S > 0
 
+    def test_timeout_returns_promptly_not_after_the_slow_call_finishes(self) -> None:
+        """Regression for the Qodo finding: ``_run_with_timeout`` used to run
+        ``future.result(timeout=...)`` INSIDE a ``with ThreadPoolExecutor(...)``
+        block, so leaving the block on timeout called ``shutdown(wait=True)``
+        and blocked until the overdue worker thread finished — a 2s
+        diacritizer with a 0.1s timeout made the whole call take ~2s instead
+        of returning at the deadline. It must now return in well under 1s.
+        """
+
+        def slow(t: str) -> str:
+            time.sleep(2.0)
+            return _add_niqqud(t)
+
+        start = time.monotonic()
+        result = vocalize_hebrew("שלום עולם", slow, timeout=0.1)
+        elapsed = time.monotonic() - start
+
+        assert result == "שלום עולם"
+        assert elapsed < 1.0, f"took {elapsed:.3f}s — timeout is blocking on shutdown(wait=True)"
+
 
 class TestBuildPhonikudDiacritizerIsLazy:
     def test_import_of_this_module_does_not_require_phonikud_onnx(self) -> None:
@@ -159,3 +182,89 @@ class TestBuildPhonikudDiacritizerIsLazy:
         # looks like a real diacritizer.
         with pytest.raises(ImportError):
             build_phonikud_diacritizer("/nonexistent/phonikud-1.0.int8.onnx")
+
+
+class TestLazySingleton:
+    """Offline coverage for the Qodo finding in ``tts_client.py``:
+    ``_get_hebrew_diacritizer()`` used to build the (slow) phonikud model
+    SYNCHRONOUSLY on the event loop, so the first Hebrew reply froze every
+    concurrent session. The fix wraps the build in a :class:`LazySingleton`
+    and calls ``get()`` via ``asyncio.to_thread`` — this class is the
+    stdlib-only piece that guarantees (1) the builder runs at most once
+    under concurrency and (2) ``get()`` is safe to run off the event loop
+    without the caller reimplementing locking. ``tts_client.py`` itself
+    cannot be imported in this offline env (it imports ``httpx`` at module
+    top), so this is where that guarantee is actually exercised.
+    """
+
+    def test_builder_runs_once_under_concurrent_threads(self) -> None:
+        call_count = 0
+        count_lock = threading.Lock()
+
+        def builder() -> str:
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            time.sleep(0.05)
+            return "built"
+
+        singleton: LazySingleton[str] = LazySingleton(builder)
+        results: list[str | None] = [None] * 8
+
+        def worker(i: int) -> None:
+            results[i] = singleton.get()
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert call_count == 1
+        assert results == ["built"] * 8
+
+    def test_get_returns_the_builders_value_including_none(self) -> None:
+        calls = []
+
+        def builder() -> None:
+            calls.append(1)
+            return None
+
+        singleton: LazySingleton[None] = LazySingleton(builder)
+        assert singleton.get() is None
+        assert singleton.get() is None
+        assert calls == [1]  # cached even though the value is None
+
+    def test_get_via_asyncio_to_thread_does_not_block_the_event_loop(self) -> None:
+        """Mirrors how ``tts_client.synthesize`` uses this class: a slow
+        first build, run via ``asyncio.to_thread``, must not stall a
+        concurrent coroutine on the same loop.
+        """
+
+        def slow_builder() -> str:
+            time.sleep(0.3)
+            return "built"
+
+        singleton: LazySingleton[str] = LazySingleton(slow_builder)
+
+        async def main() -> tuple[str | None, list[float]]:
+            ticks: list[float] = []
+
+            async def heartbeat() -> None:
+                for _ in range(6):
+                    await asyncio.sleep(0.05)
+                    ticks.append(time.monotonic())
+
+            build_task = asyncio.create_task(asyncio.to_thread(singleton.get))
+            hb_task = asyncio.create_task(heartbeat())
+            result = await build_task
+            await hb_task
+            return result, ticks
+
+        result, ticks = asyncio.run(main())
+
+        assert result == "built"
+        # 6 ticks at ~50ms apart (~300ms) completed WHILE the 300ms build ran
+        # in its own thread — if get() blocked the loop, the heartbeat could
+        # not have made progress until after the build finished.
+        assert len(ticks) == 6

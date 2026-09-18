@@ -50,11 +50,15 @@ from __future__ import annotations
 import concurrent.futures
 import logging
 import os
+import threading
 from collections.abc import Callable
+from typing import Generic, TypeVar
 
 log = logging.getLogger(__name__)
 
 Diacritizer = Callable[[str], str]
+
+_T = TypeVar("_T")
 
 # Generous default for a CPU int8 ONNX diacritizer on one sentence; the
 # hebrew-realtime spec notes phonikud's per-sentence latency on this box is
@@ -76,6 +80,40 @@ _GERESH = "׳"
 _GERSHAYIM = "״"
 
 
+class LazySingleton(Generic[_T]):
+    """Thread-safe, build-at-most-once-per-process lazy value.
+
+    ``get()`` calls the *builder* passed to ``__init__`` at most once, even
+    under concurrent callers — guarded by an internal ``threading.Lock`` —
+    and caches whatever it returns (``None`` included) for every later call.
+
+    Extracted stdlib-only so it is testable offline: ``tts_client.py``'s
+    ``_get_hebrew_diacritizer()`` wraps its (slow, lazily-imports
+    ``phonikud_onnx``) build in one of these, and calls ``get()`` via
+    ``asyncio.to_thread`` so the build never runs on the event loop (Qodo
+    finding — a synchronous lazy build on the loop froze every concurrent
+    session on the first Hebrew reply). Because ``tts_client.py`` imports
+    ``httpx`` at module top and the offline test env has no ``httpx``, this
+    class — not ``tts_client`` itself — is what the offline suite exercises
+    for that concurrency guarantee.
+    """
+
+    def __init__(self, builder: Callable[[], _T]) -> None:
+        self._builder = builder
+        self._lock = threading.Lock()
+        self._built = False
+        self._value: _T | None = None
+
+    def get(self) -> _T | None:
+        if self._built:
+            return self._value
+        with self._lock:
+            if not self._built:
+                self._value = self._builder()
+                self._built = True
+        return self._value
+
+
 def _is_hebrew_letter(ch: str) -> bool:
     return _HEBREW_LETTER_LO <= ord(ch) <= _HEBREW_LETTER_HI
 
@@ -95,6 +133,33 @@ def _is_hebrew_related(ch: str) -> bool:
     )
 
 
+def _scan_hebrew_span(text: str, start: int, n: int) -> tuple[int, bool]:
+    """Return ``(end, has_letter)`` for the maximal Hebrew-related run
+    starting at *start* — the end index just past the run, and whether it
+    contains at least one actual Hebrew letter (vs. only marks/geresh/
+    whitespace). Extracted from :func:`_segment_hebrew_spans` to keep that
+    function's cognitive complexity inside the gate (Sonar S3776).
+    """
+    j = start
+    has_letter = False
+    while j < n and _is_hebrew_related(text[j]):
+        if _is_hebrew_letter(text[j]):
+            has_letter = True
+        j += 1
+    return j, has_letter
+
+
+def _scan_non_hebrew_span(text: str, start: int, n: int) -> int:
+    """Return the end index (exclusive) of the maximal non-Hebrew-related
+    run starting at *start*. Sibling of :func:`_scan_hebrew_span`, same
+    extraction rationale.
+    """
+    j = start
+    while j < n and not _is_hebrew_related(text[j]):
+        j += 1
+    return j
+
+
 def _segment_hebrew_spans(text: str) -> list[tuple[bool, str]]:
     """Split *text* into ``(is_hebrew, span)`` pieces that concatenate back
     to *text* exactly. See the module docstring's "Span extraction" section
@@ -104,22 +169,13 @@ def _segment_hebrew_spans(text: str) -> list[tuple[bool, str]]:
     i = 0
     n = len(text)
     while i < n:
-        ch = text[i]
-        if _is_hebrew_related(ch):
-            j = i
-            has_letter = False
-            while j < n and _is_hebrew_related(text[j]):
-                if _is_hebrew_letter(text[j]):
-                    has_letter = True
-                j += 1
+        if _is_hebrew_related(text[i]):
+            j, has_letter = _scan_hebrew_span(text, i, n)
             spans.append((has_letter, text[i:j]))
-            i = j
         else:
-            j = i
-            while j < n and not _is_hebrew_related(text[j]):
-                j += 1
+            j = _scan_non_hebrew_span(text, i, n)
             spans.append((False, text[i:j]))
-            i = j
+        i = j
     return spans
 
 
@@ -139,10 +195,21 @@ def _run_with_timeout(diacritizer: Diacritizer, span: str, timeout: float) -> st
     :class:`concurrent.futures.TimeoutError` if it did not finish in time —
     :func:`vocalize_hebrew` is the single place both are caught and turned
     into "return the input text and log a warning naming the cause".
+
+    Deliberately NOT a ``with ThreadPoolExecutor(...)`` block: leaving that
+    block joins the pool (``shutdown(wait=True)``), which on a timeout would
+    block until the overdue worker thread finishes anyway — defeating the
+    timeout entirely (Qodo finding). On timeout (or any other exception) this
+    shuts the pool down with ``wait=False, cancel_futures=True`` instead and
+    returns/raises immediately; the overdue worker thread is abandoned to run
+    to completion on its own and its result is discarded.
     """
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
         future = pool.submit(diacritizer, span)
         return future.result(timeout=timeout)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def vocalize_hebrew(
@@ -183,7 +250,8 @@ def vocalize_hebrew(
                 "[vocalize] diacritizer timed out after %.2fs — using un-vocalized text", timeout
             )
             return text
-        except Exception as exc:  # noqa: BLE001 - any diacritizer failure degrades, never raises
+        # Any diacritizer failure degrades to un-vocalized text, never raises.
+        except Exception as exc:  # noqa: BLE001
             log.warning(
                 "[vocalize] diacritizer failed (%s: %s) — using un-vocalized text",
                 type(exc).__name__,
@@ -211,7 +279,8 @@ def build_phonikud_diacritizer(model_path: str) -> Diacritizer:
     a deployment/packaging bug (a caller in an environment without the
     dependency), not something this module should mask.
     """
-    from phonikud_onnx import Phonikud  # noqa: PLC0415 - intentionally lazy, see docstring
+    # Intentionally lazy import — see the docstring above.
+    from phonikud_onnx import Phonikud  # noqa: PLC0415
 
     model = Phonikud(model_path)
 
