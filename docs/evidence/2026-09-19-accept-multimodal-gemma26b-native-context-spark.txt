@@ -1,0 +1,76 @@
+ACCEPTANCE — the Spark's multimodal/senses lane (nvidia/Gemma-4-26B-A4B-NVFP4)
+at its native 262144-token window.
+Box: DGX Spark GB10 (spark-f8a9). Operator-approved.
+Run window: 2026-09-19 00:06-00:30 IDT (Asia/Jerusalem, +0300)
+          = 2026-09-18 21:06-21:30 UTC. The box's clock is local. vLLM log
+          lines below are UTC (e.g. the KV-pool line at 09-18 21:10:12).
+
+WHY
+  MULTIMODAL_MAX_MODEL_LEN=32768 dates from the machine-as-brain duo: senses
+  was trimmed from 128K to 32K so a co-resident 27B cortex could serve its
+  full 128K. Deviation d1 (2026-08-20) moved cortex to the Thor, and on
+  2026-09-18 (hebrew-realtime d2) the lane was promoted from the 12B to the
+  26B-A4B. The 32K came along unchanged, even though no cortex was sharing
+  the budget any more. vllm-multimodal is the only vLLM engine running on
+  the Spark.
+  Native window: the checkpoint's own config.json (read inside the container)
+  has text_config.max_position_embeddings=262144, sliding_window=1024.
+
+CHANGE (deployment only, ~/.lobes, backed up first as .env.bak-*-multimodal-262144)
+  MULTIMODAL_MAX_MODEL_LEN: 32768 -> 262144
+  MULTIMODAL_GPU_MEM_UTIL : 0.28 (unchanged)
+  Recreated ONLY vllm-multimodal + gateway (the gateway's senses advert reads
+  the same key), --no-deps, through the full compose chain
+  (docker-compose.yml + audio.yml + shape.yml + override.yml).
+
+BOOT (first attempt, no refusal)
+  GPU KV cache size: 979,268 tokens
+  "Maximum concurrency for 262,144 tokens per request: 3.74x" (vLLM's own
+    log wording). This is a KV-pool CAPACITY CEILING, 979,268 / 262,144, i.e.
+    how many full-window requests' KV fits at once. It is NOT measured
+    throughput or measured concurrency. Never multiply a single-stream token
+    rate by it; no concurrent load was run here.
+  init engine (profile, create kv cache, warmup model) took 92.88 s
+  restarts=0, health=healthy
+  For comparison, the same util at 32768 booted 2026-09-18 with 515,376 tokens
+  (a 15.73x ceiling). The pool GREW at the larger window rather than shrinking. Most of
+  Gemma 4's layers are sliding-window (1024), so their per-request KV does not
+  scale with max_model_len. The hand arithmetic before the boot predicted
+  ~1.97x from the old pool. The 3.74x ceiling vLLM computed from the
+  measured pool is the number to quote, as a capacity ceiling.
+
+PROBES
+  advert (GET /capabilities via the public tunnel hostname, keyed):
+    senses: model=nvidia/Gemma-4-26B-A4B-NVFP4 context=262144 ready=True
+  known answer (model=multimodal, thinking off): "17*23" -> '391'   PASS
+  limit enforced: a prompt of >= 262115 tokens + 30 output tokens -> HTTP 400
+    "maximum context length is 262144 tokens"   (the engine enforces the NEW limit)
+  needle retrieval, local gateway (127.0.0.1:8001), temperature 0, thinking off,
+  one code sentence in the middle of synthetic filler:
+    prompt_tokens=19,831    wall=6.4 s     answer='MAGENTA-7431-OTTER'  PASS
+    prompt_tokens=207,831   wall=443.7 s   answer='MAGENTA-7431-OTTER'  PASS
+      (6.3x the old 32768 ceiling; COLD prefill, ~470 prompt tok/s)
+  realtime unaffected: GET /v1/realtime WebSocket upgrade through the public
+    tunnel hostname (keyed) -> 101
+
+NAMED COSTS / OPEN
+  - Long prompts are SLOW to prefill: 207,831 tokens took 443.7 s cold.
+    GATEWAY_READ_TIMEOUT=600 on the Spark, so a prompt near the full 262144
+    window may exceed the gateway's read timeout. Through the Cloudflare
+    tunnel, any request whose first byte takes longer than ~100 s gets a 524
+    from the Cloudflare edge unless it streams. A full-window request is only
+    practical locally or with streaming. Not measured: a streamed full-window
+    request.
+  - The voice loop is unaffected in practice: each spoken reply is still
+    capped at max_tokens=160 (lobes/realtime/_turn.py DEFAULT_MAX_TOKENS), and
+    turn prompts are short. Only long sessions' history and API callers gain.
+  - Not measured: concurrent long requests, decode speed at depth, a quality
+    comparison vs 32K.
+  - The packaged spark profile keeps 32768. It is correct for the
+    machine-as-brain duo it describes, where cortex IS co-resident. This
+    change applies only to the live Spark, which runs no cortex. The
+    26B-A4B is not a catalog entry.
+
+ROLLBACK
+  Restore MULTIMODAL_MAX_MODEL_LEN=32768 from the .env backup, then recreate
+  vllm-multimodal + gateway with --no-deps through the same compose chain.

@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.81.2] - 2026-09-19
+
+### Added
+
+- Evidence `docs/evidence/2026-09-19-accept-multimodal-gemma26b-native-context-spark.txt`: the Spark's multimodal/senses lane (`nvidia/Gemma-4-26B-A4B-NVFP4`) runs at its native 262144 window (was 32768, a leftover from cortex co-residence; cortex moved to the Thor in d1). It booted first try at util 0.28 with a KV pool of 979,268 tokens (a 3.74x capacity ceiling at the full window, not measured concurrency). A 207,831-token needle passed, but cold prefill took 443.7 s, which is slow enough to hit the gateway and Cloudflare-edge timeouts near the full window.
+
+### Changed
+
+- docs/hebrew-realtime.md: the generate row notes the 262144 window. Deployment-only change; the packaged spark profile keeps 32768 for the machine-as-brain duo.
+
 ## [0.81.1] - 2026-09-18
 
 ### Added
