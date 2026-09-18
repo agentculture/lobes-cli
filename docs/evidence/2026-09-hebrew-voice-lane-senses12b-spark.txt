@@ -46,3 +46,25 @@ WHAT THIS SHOWS
     wrong word choice). Whether this is the model or the NVFP4A16 export is unknown — google/gemma-4-12B-it
     (bf16) is in the HF cache and would separate the two.
   The fluency verdict is the operator's (lapse l2: the agent does not grade Hebrew).
+
+OPERATOR VERDICT (2026-09-18, on the NVFP4A16 outputs above): "the discrepancies are not major and not
+blockers for us."
+
+ARM (a) — is it the model or the export?  google/gemma-4-12B-it bf16, SAME image, SAME prompts
+  Scratch container (docker run, --memory 60g, HF_HUB_OFFLINE=1), util 0.30, max_model_len 8192, NO MTP,
+  beside the live lane; removed afterwards. Model loading took 22.83 GiB; KV 100,151 tokens.
+  warmup   2.75 s  13 tok   4.7 tok/s   'שלום רב איך אני יכול לעזור לך היום.'
+  H1       6.47 s  48 tok   7.4 tok/s   'מחשב נייד הוא נייד ונוח לנשיאה בעוד מחשב שולחני הוא קבוע אך לרוב חזק ובעל יכולות שדרוג גבוהות יותר.'
+  H2       7.64 s  58 tok   7.6 tok/s   'כדאי לטייל ברחוב דיזנגוף או בנמל תל אביב ולשתות קפה בבית קפה מקומי. אפשר גם ליהנות מסיבוב בשוק הפשפשים או באזור המדרחוב.'
+  H3 tool  3.09 s  22 tok   7.1 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 7.64 s 57 tok   7.5 tok/s   'בתיקייה יש את הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       1.59 s  11 tok   6.9 tok/s   'בירת צרפת היא פריז.'
+  H6 long 37.99 s 291 tok   7.7 tok/s   (paragraph on Jerusalem — no malformed words of the kind seen above)
+
+  RESULT: the orthographic damage is the coolthor NVFP4A16 EXPORT, not Gemma 4 12B. bf16 answers H5
+  correctly and produces none of the non-words. But bf16 decodes at ~7.5 tok/s (bandwidth-bound, 22.8 GiB
+  read per token, no draft) vs ~33 tok/s for the 4-bit export with MTP — a 60-token reply takes ~8 s,
+  too slow for voice. Same prompts, n=1 per prompt per arm, temp 0.2: a comparison, not a benchmark.
+  Tool calling is equally clean on both arms.
+  Open: a quality-preserving 4-bit 12B (e.g. the QAT export unsloth/gemma-4-12B-it-qat-w4a16 the Orin
+  served, #176) is the obvious third arm; the 26B-A4B (deviation d2) is next.
