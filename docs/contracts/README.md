@@ -29,6 +29,8 @@ built; that lives in the rest of `docs/`.
 
 ## Not written yet
 
+Tracked in issue #278.
+
 These surfaces exist and are described elsewhere, but have no contract in this
 form. The pointer is where the current description lives.
 
