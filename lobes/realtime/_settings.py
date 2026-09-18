@@ -160,7 +160,7 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_model=env.get("OPENAI_MODEL") or "",
         language=env.get("REALTIME_LANGUAGE") or _SESSION_DEFAULT_LANGUAGE,
         tool_wait_timeout_ms=max(
-            _MIN_TOOL_WAIT_TIMEOUT_MS, _as_int(env, "TOOL_WAIT_TIMEOUT_MS", 60_000)
+            _MIN_TOOL_WAIT_TIMEOUT_MS, _as_int(env, "TOOL_WAIT_TIMEOUT_MS", 120_000)
         ),
         # Empty/unset → the mirrored code-level fallback, same "or default"
         # idiom as every other string field above (an operator who blanks the

@@ -28,7 +28,7 @@ def test_defaults_point_at_the_fleet_compose_network() -> None:
     assert s.vad_max_turn_ms == 30_000
     assert s.default_system_prompt == DEFAULT_SYSTEM_PROMPT
     assert s.language == DEFAULT_LANGUAGE == "en"
-    assert s.tool_wait_timeout_ms == 60_000
+    assert s.tool_wait_timeout_ms == 120_000
 
 
 def test_overrides_and_trailing_slash_stripped() -> None:
@@ -189,7 +189,7 @@ def test_language_blank_env_falls_back_to_default() -> None:
 
 
 def test_tool_wait_timeout_ms_default_and_override() -> None:
-    assert build_settings({}).tool_wait_timeout_ms == 60_000
+    assert build_settings({}).tool_wait_timeout_ms == 120_000
     assert build_settings({"TOOL_WAIT_TIMEOUT_MS": "15000"}).tool_wait_timeout_ms == 15000
 
 
@@ -198,7 +198,7 @@ def test_tool_wait_timeout_ms_is_clamped_to_a_sane_floor() -> None:
     # force-fail every tool call instantly.
     for bad in ("0", "-1", "-60000"):
         assert build_settings({"TOOL_WAIT_TIMEOUT_MS": bad}).tool_wait_timeout_ms == 1_000
-    assert build_settings({"TOOL_WAIT_TIMEOUT_MS": "not-a-number"}).tool_wait_timeout_ms == 60_000
+    assert build_settings({"TOOL_WAIT_TIMEOUT_MS": "not-a-number"}).tool_wait_timeout_ms == 120_000
 
 
 # --- Hebrew default system prompt (hebrew-realtime t8) ----------------------
