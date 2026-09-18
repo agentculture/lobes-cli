@@ -52,7 +52,7 @@ from ._tts_text import (  # noqa: F401 - re-exported for backward compatibility
     _split_for_tts,
     trailing_pause_ms,
 )
-from ._vocalize import Diacritizer, build_phonikud_diacritizer, vocalize_hebrew
+from ._vocalize import Diacritizer, LazySingleton, build_phonikud_diacritizer, vocalize_hebrew
 from .protocol import TTS_SAMPLE_RATE, resolve_voice
 
 log = logging.getLogger(__name__)
@@ -63,25 +63,29 @@ _req_counter = 0  # monotonic request ID for log correlation
 # points this at its phonikud ONNX checkpoint (docs/specs/2026-09-18-hebrew-realtime.md).
 _PHONIKUD_MODEL_PATH_ENV = "PHONIKUD_MODEL_PATH"
 
+
 # Lazily built, cached at most once per process — building it imports
 # phonikud_onnx (see lobes.realtime._vocalize.build_phonikud_diacritizer),
 # which only exists inside the realtime container's [hebrew] extra.
-_hebrew_diacritizer: Diacritizer | None = None
-_hebrew_diacritizer_attempted = False
-
-
-def _get_hebrew_diacritizer() -> Diacritizer | None:
-    """Return the process-wide Hebrew diacritizer, building it on first use.
+#
+# Wrapped in a LazySingleton (Qodo finding: "first Hebrew reply freezes all
+# sessions") rather than a bare module-global + flag: the old pattern set
+# its "attempted" flag BEFORE the (slow) build ran, so a concurrent caller
+# could observe "already attempted" and get back `None` mid-build instead of
+# waiting for the real result — and the build itself used to run
+# synchronously on the event loop, blocking every other session.
+# `_get_hebrew_diacritizer()` is safe to call via `asyncio.to_thread` (see
+# `_maybe_vocalize_hebrew` below): the lock inside LazySingleton makes
+# concurrent callers block on the SAME build rather than each seeing a torn
+# intermediate state, and running it off the loop means other coroutines
+# keep making progress while it does.
+def _build_hebrew_diacritizer() -> Diacritizer | None:
+    """The one-shot builder passed to :data:`_hebrew_diacritizer_singleton`.
 
     Returns ``None`` (and logs why, once) when ``PHONIKUD_MODEL_PATH`` is
     unset or the model fails to load — callers then skip vocalization and
     speak un-vocalized Hebrew rather than fail the whole TTS request.
     """
-    global _hebrew_diacritizer, _hebrew_diacritizer_attempted
-    if _hebrew_diacritizer_attempted:
-        return _hebrew_diacritizer
-
-    _hebrew_diacritizer_attempted = True
     model_path = os.environ.get(_PHONIKUD_MODEL_PATH_ENV)
     if not model_path:
         log.warning(
@@ -90,15 +94,29 @@ def _get_hebrew_diacritizer() -> Diacritizer | None:
         )
         return None
     try:
-        _hebrew_diacritizer = build_phonikud_diacritizer(model_path)
-    except Exception:  # noqa: BLE001 - degrade to un-vocalized text, never crash TTS
+        return build_phonikud_diacritizer(model_path)
+    # Degrade to un-vocalized text, never crash TTS.
+    except Exception:  # noqa: BLE001
         log.exception(
             "[TTS] failed to build phonikud diacritizer from %s=%s — skipping Hebrew vocalization",
             _PHONIKUD_MODEL_PATH_ENV,
             model_path,
         )
-        _hebrew_diacritizer = None
-    return _hebrew_diacritizer
+        return None
+
+
+_hebrew_diacritizer_singleton: LazySingleton[Diacritizer] = LazySingleton(_build_hebrew_diacritizer)
+
+
+def _get_hebrew_diacritizer() -> Diacritizer | None:
+    """Return the process-wide Hebrew diacritizer, building it on first use.
+
+    Thread-safe and build-at-most-once via :class:`LazySingleton`. Callers
+    that must not block the event loop call this through
+    ``asyncio.to_thread`` (see :func:`_maybe_vocalize_hebrew`) rather than
+    directly.
+    """
+    return _hebrew_diacritizer_singleton.get()
 
 
 # Module-level clients — ONE PER LANE (issue #151 t7), reused across requests
@@ -382,6 +400,44 @@ async def _synthesize_single(
         return b""  # should not reach here
 
 
+async def _maybe_vocalize_hebrew(
+    clean: str,
+    language: str,
+    timings_out: dict | None,
+) -> str:
+    """Run Hebrew vocalization on *clean* when *language* is ``"he"``,
+    entirely off the event loop, returning *clean* unchanged otherwise.
+
+    Extracted out of :func:`synthesize` to keep that function's cognitive
+    complexity inside the gate (Sonar S3776); behavior and log lines are
+    unchanged. Both steps run via ``asyncio.to_thread``:
+
+    - ``_get_hebrew_diacritizer()`` (Qodo finding): it lazily BUILDS the
+      phonikud ONNX model on first use, which is slow — calling it directly
+      on the event loop froze every other concurrent session for the
+      duration of that first build. ``LazySingleton`` (see
+      ``lobes.realtime._vocalize``) keeps the build itself safe under
+      concurrent callers.
+    - :func:`lobes.realtime._vocalize.vocalize_hebrew` — unchanged from
+      before this task, already run off the loop with its own timeout.
+
+    When the diacritizer is unavailable (env unset, or it failed to load),
+    this degrades to returning *clean* un-vocalized, exactly as before.
+    """
+    if language != "he":
+        return clean
+
+    diacritizer = await asyncio.to_thread(_get_hebrew_diacritizer)
+    if diacritizer is None:
+        return clean
+
+    started = time.monotonic()
+    vocalized = await asyncio.to_thread(vocalize_hebrew, clean, diacritizer)
+    if timings_out is not None:
+        timings_out["phonikud"] = int((time.monotonic() - started) * 1000)
+    return vocalized
+
+
 async def synthesize(
     text: str,
     voice: str | None = None,
@@ -442,17 +498,7 @@ async def synthesize(
         log.debug("[TTS] skipping empty text after cleanup (original: %s)", text[:40])
         return b""
 
-    if language == "he":
-        diacritizer = _get_hebrew_diacritizer()
-        if diacritizer is not None:
-            # vocalize_hebrew is a blocking call (it runs the diacritizer in
-            # its own worker thread with a deadline) — run the whole thing
-            # off the event loop so a slow phonikud call never stalls other
-            # concurrent TTS/session work.
-            started = time.monotonic()
-            clean = await asyncio.to_thread(vocalize_hebrew, clean, diacritizer)
-            if timings_out is not None:
-                timings_out["phonikud"] = int((time.monotonic() - started) * 1000)
+    clean = await _maybe_vocalize_hebrew(clean, language, timings_out)
 
     # Split into chunks that fit within the conservative Chatterbox ceiling
     chunks = _split_for_tts(clean)

@@ -137,14 +137,16 @@ def test_floats_to_pcm16_of_nothing_is_empty():
 
 def test_not_ready_until_the_model_is_loaded():
     code, body = srv.readiness_status(model_loaded=False, warmup_ok=False)
-    assert code == 503 and body["status"] == "loading"
+    assert code == 503
+    assert body["status"] == "loading"
 
 
 def test_not_ready_until_the_g2p_warm_up_synthesis_has_run():
     """RenikudPlus fetches/loads on FIRST use (measured: seconds) — a sidecar
     that reports ready before that makes the first spoken turn pay for it."""
     code, body = srv.readiness_status(model_loaded=True, warmup_ok=False)
-    assert code == 503 and body["status"] == "warming"
+    assert code == 503
+    assert body["status"] == "warming"
 
 
 def test_ready_after_warm_up():

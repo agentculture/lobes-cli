@@ -465,7 +465,8 @@ def _get_diacritizer() -> Diacritizer | None:  # pragma: no cover
         return None
     try:
         _diacritizer = build_phonikud_diacritizer(_ml_settings.phonikud_model_path)
-    except Exception:  # noqa: BLE001 - degrade to un-vocalized text, never crash startup
+    # Degrade to un-vocalized text, never crash startup.
+    except Exception:  # noqa: BLE001
         log.exception(
             "[Chatterbox-ML] failed to build phonikud diacritizer from %s — "
             "un-vocalized Hebrew text will be synthesized as-is",
