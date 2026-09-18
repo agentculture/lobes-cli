@@ -1,0 +1,56 @@
+# lobes FLEET — Hebrew realtime overlay (hebrew-realtime plan, issue #151 t8).
+#
+# A THIRD docker-compose layer, on top of the base fleet AND the audio
+# overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.audio.yml \
+#     -f docker-compose.audio-he.yml up -d --build
+#
+# Compose merges a later file's `environment:` list onto the earlier ones BY
+# KEY — this file's `realtime:` block is therefore ADDITIVE/OVERRIDING, never
+# a full service redefinition: every key docker-compose.audio.yml already
+# declares for `realtime` (STT_URL, TTS_URL, OPENAI_BASE_URL, VAD_*, ...)
+# still applies unchanged unless repeated here.
+#
+# THIS TASK (t8) wires only the `realtime` service's env — the language, the
+# tool-wait deadline, the voice-lane model default, and the two Hebrew
+# vocalization/debug knobs `tts_client.py`/`_vocalize.py` already read
+# directly from `os.environ` (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT). Later
+# tasks in this plan add the Hebrew stt/tts SIDECAR SERVICES themselves
+# (Ivrit-AI STT, a Hebrew-capable TTS voice) to this same overlay file, in
+# dependency order — this file does not declare or override the `stt` /
+# `chatterbox` services.
+#
+# docker-compose.audio.yml and env.audio.example (the English overlay) stay
+# BYTE-IDENTICAL across this change — a Hebrew deployment is opt-in, layered
+# on top, never a mutation of the English default.
+services:
+  realtime:
+    environment:
+      # The session-default STT/generate language (lobes/realtime/_settings.py
+      # Settings.language) — "he" selects the Hebrew default system prompt
+      # (DEFAULT_SYSTEM_PROMPT_HE) whenever DEFAULT_SYSTEM_PROMPT itself is
+      # left unset below.
+      - REALTIME_LANGUAGE=${REALTIME_LANGUAGE:-he}
+      # Tool-call round-trip deadline (ms) — read by _settings.py, consumed by
+      # a later task's floor wiring. 120000 (2 minutes) is more generous than
+      # the English deployment's in-code default (60000) because a tool call
+      # in this plan may itself cross a Hebrew STT/TTS hop.
+      - TOOL_WAIT_TIMEOUT_MS=${TOOL_WAIT_TIMEOUT_MS:-120000}
+      # Approved deviation d1 (hebrew-realtime plan, 2026-09-18): the Hebrew
+      # voice lane is Gemma 4 `senses` (alias `multimodal`), hosted LOCALLY —
+      # NOT `associate`, which the verbatim plan text names. `multimodal` is
+      # also the bridge's own hardcoded voice-lane default
+      # (lobes/realtime/_conversation.py's DEFAULT_VOICE_MODEL), so this line
+      # makes that choice explicit for the Hebrew deployment rather than
+      # relying on the empty-string fallback the English overlay uses.
+      - OPENAI_MODEL=${OPENAI_MODEL:-multimodal}
+      # Hebrew vocalization hook (already-merged tts_client.py/_vocalize.py,
+      # hebrew-realtime t9) — read directly via os.environ, not through
+      # _settings.py, so they are wired here rather than as Settings fields.
+      # PHONIKUD_MODEL_PATH: path to the phonikud diacritizer model; empty
+      # disables vocalization (TTS speaks undiacritized Hebrew text).
+      - PHONIKUD_MODEL_PATH=${PHONIKUD_MODEL_PATH:-}
+      # TTS_DEBUG_TEXT: truthy (1/true/yes) logs the vocalized text sent to
+      # TTS, for debugging Hebrew vocalization/gershayim handling; empty/off
+      # in normal operation.
+      - TTS_DEBUG_TEXT=${TTS_DEBUG_TEXT:-}

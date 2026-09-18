@@ -50,6 +50,19 @@ _TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates" / "flee
 _AUDIO_COMPOSE = _TEMPLATES / "docker-compose.audio.yml"
 _AUDIO_ENV_EXAMPLE = _TEMPLATES / "env.audio.example"
 
+# The Hebrew overlay (hebrew-realtime plan t8) — a THIRD compose layer on top
+# of the two above (docker-compose.yml -> docker-compose.audio.yml ->
+# docker-compose.audio-he.yml). A settings field this task adds
+# (REALTIME_LANGUAGE, TOOL_WAIT_TIMEOUT_MS) is wired through THIS file
+# instead of docker-compose.audio.yml/env.audio.example, which criterion 2
+# requires to stay byte-identical to the English-only deployment. Rule 1
+# below is therefore "reaches the container via EITHER overlay", and rule 2
+# is "documented in the SAME overlay family that wires it" — a key wired
+# only in the Hebrew overlay must be documented in env.audio-he.example, not
+# forced into the English env.audio.example.
+_AUDIO_HE_COMPOSE = _TEMPLATES / "docker-compose.audio-he.yml"
+_AUDIO_HE_ENV_EXAMPLE = _TEMPLATES / "env.audio-he.example"
+
 
 def _env_keys_read_by_build_settings() -> set[str]:
     """Every literal env-var key name ``build_settings()`` reads, via AST.
@@ -86,9 +99,14 @@ def _env_keys_read_by_build_settings() -> set[str]:
     return keys
 
 
-def _realtime_env_map() -> dict[str, str]:
-    """The ``realtime`` service's ``environment:`` list as ``{KEY: raw-value}``."""
-    compose = yaml.safe_load(_AUDIO_COMPOSE.read_text(encoding="utf-8"))
+def _realtime_env_map(compose_path: Path = _AUDIO_COMPOSE) -> dict[str, str]:
+    """The ``realtime`` service's ``environment:`` list as ``{KEY: raw-value}``.
+
+    *compose_path* defaults to the English overlay
+    (``docker-compose.audio.yml``); pass ``_AUDIO_HE_COMPOSE`` for the
+    Hebrew one.
+    """
+    compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     env: list[str] = compose["services"]["realtime"]["environment"]
     out: dict[str, str] = {}
     for entry in env:
@@ -98,10 +116,14 @@ def _realtime_env_map() -> dict[str, str]:
     return out
 
 
-def _env_example_defaults() -> dict[str, str]:
-    """``KEY=VALUE`` lines from ``env.audio.example``, keyed by env var."""
+def _env_example_defaults(example_path: Path = _AUDIO_ENV_EXAMPLE) -> dict[str, str]:
+    """``KEY=VALUE`` lines from an env example file, keyed by env var.
+
+    *example_path* defaults to the English overlay (``env.audio.example``);
+    pass ``_AUDIO_HE_ENV_EXAMPLE`` for the Hebrew one.
+    """
     out: dict[str, str] = {}
-    for line in _AUDIO_ENV_EXAMPLE.read_text(encoding="utf-8").splitlines():
+    for line in example_path.read_text(encoding="utf-8").splitlines():
         stripped = line.split("#", 1)[0].strip()
         if not stripped or "=" not in stripped:
             continue
@@ -120,56 +142,99 @@ def _is_self_referencing(key: str, value: str) -> bool:
 
 class TestEveryReadKeyReachesTheContainer:
     """Rule 1: every key ``build_settings`` reads must appear as SOME entry
-    in the ``realtime`` service's ``environment:`` block — the #149 s4 bug
-    class (a key read but never passed silently pins to the code default)."""
+    in the ``realtime`` service's ``environment:`` block of EITHER overlay
+    (English ``docker-compose.audio.yml`` or Hebrew
+    ``docker-compose.audio-he.yml``, layered together on a Hebrew
+    deployment) — the #149 s4 bug class (a key read but never passed
+    silently pins to the code default), generalized to the two-overlay
+    world the hebrew-realtime plan adds. A key covered only by the Hebrew
+    overlay (e.g. ``REALTIME_LANGUAGE``, ``TOOL_WAIT_TIMEOUT_MS``) is exactly
+    as covered as one wired only by the English overlay — neither file is
+    required to carry every key on its own."""
 
     def test_no_settings_key_is_unwired(self) -> None:
         read_keys = _env_keys_read_by_build_settings()
-        compose_keys = set(_realtime_env_map())
+        compose_keys = set(_realtime_env_map(_AUDIO_COMPOSE)) | set(
+            _realtime_env_map(_AUDIO_HE_COMPOSE)
+        )
         missing = sorted(read_keys - compose_keys)
         assert not missing, (
-            f"lobes/realtime/_settings.py reads {missing} but "
-            "docker-compose.audio.yml's realtime service never passes them — "
-            "a dead knob, permanently pinned to its in-code default "
-            "(the #149 s4 lesson)"
+            f"lobes/realtime/_settings.py reads {missing} but neither "
+            "docker-compose.audio.yml's nor docker-compose.audio-he.yml's "
+            "realtime service passes them — a dead knob, permanently pinned "
+            "to its in-code default (the #149 s4 lesson)"
         )
 
 
 class TestEveryOperatorTunableKeyIsDocumented:
-    """Rule 2: every key compose exposes as operator-overridable
-    (``${KEY:-default}``) must also appear in ``env.audio.example`` with a
-    matching default — the doctor-heal source of truth."""
+    """Rule 2: every key an overlay's compose exposes as operator-overridable
+    (``${KEY:-default}``) must also appear in THAT SAME overlay's env
+    example with a matching default — the doctor-heal source of truth, now
+    checked per overlay family (English compose <-> English example, Hebrew
+    compose <-> Hebrew example) rather than only the English pair, so a key
+    the Hebrew overlay introduces cannot silently skip documentation there."""
 
-    def test_no_tunable_key_is_undocumented(self) -> None:
-        read_keys = _env_keys_read_by_build_settings()
-        compose = _realtime_env_map()
+    @staticmethod
+    def _assert_tunable_keys_documented(
+        read_keys: set[str], compose_path: Path, example_path: Path
+    ) -> None:
+        compose = _realtime_env_map(compose_path)
         tunable = {k for k in read_keys if k in compose and _is_self_referencing(k, compose[k])}
-        example_keys = set(_env_example_defaults())
+        example_keys = set(_env_example_defaults(example_path))
         missing = sorted(tunable - example_keys)
         assert not missing, (
-            f"{missing} are operator-tunable in docker-compose.audio.yml "
-            "(${KEY:-default}) but env.audio.example does not document "
-            "them — doctor --fix has no default to heal them with"
+            f"{missing} are operator-tunable in {compose_path.name} "
+            "(${KEY:-default}) but "
+            f"{example_path.name} does not document them — doctor --fix has "
+            "no default to heal them with"
         )
 
-    def test_documented_defaults_match_compose_defaults(self) -> None:
+    @staticmethod
+    def _assert_documented_defaults_match(
+        read_keys: set[str], compose_path: Path, example_path: Path
+    ) -> None:
         """A drift here means the deployed default and the doctor-heal /
         documented default disagree — exactly the class of silent bug this
         task exists to close."""
-        read_keys = _env_keys_read_by_build_settings()
-        compose = _realtime_env_map()
-        example = _env_example_defaults()
+        compose = _realtime_env_map(compose_path)
+        example = _env_example_defaults(example_path)
         for key in sorted(read_keys):
             value = compose.get(key, "")
             if not _is_self_referencing(key, value):
                 continue
             match = re.fullmatch(rf"\$\{{{re.escape(key)}:-([^}}]*)\}}", value)
             compose_default = match.group(1) if match else ""
-            assert key in example, f"{key} missing from env.audio.example"
+            assert key in example, f"{key} missing from {example_path.name}"
             assert example[key] == compose_default, (
-                f"{key} default drifted: docker-compose.audio.yml has "
-                f"{compose_default!r}, env.audio.example has {example[key]!r}"
+                f"{key} default drifted: {compose_path.name} has "
+                f"{compose_default!r}, {example_path.name} has {example[key]!r}"
             )
+
+    def test_no_tunable_key_is_undocumented(self) -> None:
+        """The original, English-only assertion — UNCHANGED (same call shape
+        as before this task: default paths, same failure message)."""
+        read_keys = _env_keys_read_by_build_settings()
+        self._assert_tunable_keys_documented(read_keys, _AUDIO_COMPOSE, _AUDIO_ENV_EXAMPLE)
+
+    def test_documented_defaults_match_compose_defaults(self) -> None:
+        """The original, English-only assertion — UNCHANGED (same call shape
+        as before this task: default paths, same failure message)."""
+        read_keys = _env_keys_read_by_build_settings()
+        self._assert_documented_defaults_match(read_keys, _AUDIO_COMPOSE, _AUDIO_ENV_EXAMPLE)
+
+    def test_no_tunable_key_is_undocumented_hebrew(self) -> None:
+        """NEW (hebrew-realtime t8): the same rule, checked against the
+        Hebrew overlay pair, so a key the Hebrew overlay introduces
+        (REALTIME_LANGUAGE, TOOL_WAIT_TIMEOUT_MS, OPENAI_MODEL) cannot
+        silently skip documentation in env.audio-he.example."""
+        read_keys = _env_keys_read_by_build_settings()
+        self._assert_tunable_keys_documented(read_keys, _AUDIO_HE_COMPOSE, _AUDIO_HE_ENV_EXAMPLE)
+
+    def test_documented_defaults_match_compose_defaults_hebrew(self) -> None:
+        """NEW (hebrew-realtime t8): the same drift check, checked against
+        the Hebrew overlay pair."""
+        read_keys = _env_keys_read_by_build_settings()
+        self._assert_documented_defaults_match(read_keys, _AUDIO_HE_COMPOSE, _AUDIO_HE_ENV_EXAMPLE)
 
 
 class TestTheFourNewOrPreviouslyDeadKeys:
@@ -210,3 +275,72 @@ class TestTheFourNewOrPreviouslyDeadKeys:
         # when the env value is empty — never a blank prompt in practice.
         assert s.default_system_prompt == _settings._SESSION_DEFAULT_SYSTEM_PROMPT
         assert s.default_system_prompt != ""
+
+
+class TestTheHebrewOverlayWiresItsThreeNewKeys:
+    """NEW (hebrew-realtime t8): spot-checks naming the exact keys the Hebrew
+    overlay wires, mirroring ``TestTheFourNewOrPreviouslyDeadKeys`` above but
+    against ``docker-compose.audio-he.yml`` / ``env.audio-he.example``.
+
+    ``REALTIME_LANGUAGE`` and ``TOOL_WAIT_TIMEOUT_MS`` are settings fields
+    this task adds; ``OPENAI_MODEL`` already existed but the Hebrew overlay
+    OVERRIDES its default to ``multimodal`` (approved deviation d1 — the
+    Hebrew voice lane is Gemma 4 `senses`/`multimodal`, not `associate`).
+    """
+
+    _EXPECTED = {
+        "REALTIME_LANGUAGE": "he",
+        "TOOL_WAIT_TIMEOUT_MS": "120000",
+        "OPENAI_MODEL": "multimodal",
+    }
+
+    # Read directly via os.environ by tts_client.py / _vocalize.py, not
+    # through _settings.build_settings — so the general AST-derived rules
+    # above never see them, but the task instructions still require them
+    # wired through this overlay's realtime service and documented.
+    _EXPECTED_UNTRACKED_BY_SETTINGS = {
+        "PHONIKUD_MODEL_PATH": "",
+        "TTS_DEBUG_TEXT": "",
+    }
+
+    def test_present_in_compose_and_example_with_expected_default(self) -> None:
+        compose = _realtime_env_map(_AUDIO_HE_COMPOSE)
+        example = _env_example_defaults(_AUDIO_HE_ENV_EXAMPLE)
+        for key, default in {**self._EXPECTED, **self._EXPECTED_UNTRACKED_BY_SETTINGS}.items():
+            assert key in compose, f"{key} missing from docker-compose.audio-he.yml"
+            assert compose[key] == f"${{{key}:-{default}}}", (
+                f"{key} in compose is {compose[key]!r}, expected the "
+                f"operator-overridable ${{{key}:-{default}}} form"
+            )
+            assert key in example, f"{key} missing from env.audio-he.example"
+            assert (
+                example[key] == default
+            ), f"{key} in env.audio-he.example is {example[key]!r}, expected {default!r}"
+
+    def test_language_and_tool_wait_timeout_match_settings_defaults(self) -> None:
+        s = _settings.build_settings({"REALTIME_LANGUAGE": "he", "TOOL_WAIT_TIMEOUT_MS": "120000"})
+        assert s.language == "he"
+        assert s.tool_wait_timeout_ms == 120_000
+        # An unset DEFAULT_SYSTEM_PROMPT + REALTIME_LANGUAGE=he selects the
+        # Hebrew default, matching this overlay's deployed behaviour.
+        assert s.default_system_prompt == _settings.DEFAULT_SYSTEM_PROMPT_HE
+
+    def test_english_overlay_files_are_untouched_by_this_task(self) -> None:
+        """Criterion 2: docker-compose.audio.yml and env.audio.example stay
+        byte-identical to the pre-Hebrew-overlay contract. A Hebrew
+        deployment LAYERS docker-compose.audio-he.yml on top rather than
+        editing the English files, so REALTIME_LANGUAGE/TOOL_WAIT_TIMEOUT_MS
+        must NOT appear in the English overlay's own environment block."""
+        english_compose_keys = set(_realtime_env_map(_AUDIO_COMPOSE))
+        for key in ("REALTIME_LANGUAGE", "TOOL_WAIT_TIMEOUT_MS"):
+            assert key not in english_compose_keys, (
+                f"{key} leaked into docker-compose.audio.yml — the English "
+                "overlay must stay byte-identical; wire Hebrew-only keys "
+                "through docker-compose.audio-he.yml instead"
+            )
+        english_example_keys = set(_env_example_defaults(_AUDIO_ENV_EXAMPLE))
+        for key in ("REALTIME_LANGUAGE", "TOOL_WAIT_TIMEOUT_MS"):
+            assert key not in english_example_keys, (
+                f"{key} leaked into env.audio.example — document it in "
+                "env.audio-he.example instead"
+            )
