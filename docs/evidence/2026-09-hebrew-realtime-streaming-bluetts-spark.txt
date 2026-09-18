@@ -49,3 +49,29 @@ so nothing here is evidence about AEC or barge-in.
 
 NOT measured here: a live microphone, a human barge-in, how the early "מצטער," piece
 SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM on.
+
+4. LIVE session, a human on the reSpeaker XVF3800 (capture channel 1, its own 3.5 mm speaker),
+   120 s, streaming + BlueTTS, REPLY_FIRST_CLAUSE_MIN_CHARS=5, VAD_SILENCE_MS=1000.
+   ROOT CAUSE of the day's reSpeaker trouble found first: the card's pipewire profile had
+   switched to output:iec958-stereo (digital) and the sink sat at 34 % (-28 dB), so almost
+   nothing reached the speaker ("I could barely hear"). Set to
+   output:analog-stereo+input:analog-stereo at 100 %. After that the chip's echo canceller
+   reads `converged: true` (microphone-cli) — it read `false` all day. Whether playback was
+   equally quiet during the earlier self-interruption runs was NOT checked at the time.
+     3 turns; speech_stopped -> first audio: 858, 1020, 671 ms (response.done first_delta 863 / - / 673)
+     turn 1 and 3 played to the end: ZERO self-interruptions (earlier run: 6 in 7 turns)
+     turn 2: the operator barged in on purpose 806 ms into the reply -> response.interrupted
+       (truncated: true), next turn heard 'אין, סליחה, רגע.' and answered
+       'אין בעיה, אני מחכה. קח את הזמן.'  — the FIRST human barge-in recorded on this stack.
+     Operator: "Works perfectly and also I practiced barge-in".
+   Transcripts were accurate, incl. mixed Hebrew/English ('speech to text, text to speech');
+   one STT slip: 'שונה' for 'שומע' in turn 1 (the model answered it literally).
+   Only the first 22 s carry events; the remaining ~98 s are silent in the log (no error) —
+   n=3 turns, one barge-in. Small sample.
+
+5. BlueTTS levers, inside the container (4 runs each, min / median ms):
+      6 chars: steps 5 108/118   steps 3  81/85    steps 2  86/95
+     19 chars: steps 5 150/154   steps 3 123/146   steps 2 107/110
+     37 chars: steps 5 218/226   steps 3 176/221   steps 2 170/181
+   Step count buys ~20-25 %; the fixed pipeline (G2P, encoder, vocoder) dominates.
+   Audio quality at 2-3 steps NOT auditioned.

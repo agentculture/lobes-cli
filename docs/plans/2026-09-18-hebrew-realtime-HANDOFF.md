@@ -108,3 +108,18 @@ cd ~/git/lobes-cli && LOBES_API_KEY="$GATEWAY_API_KEY" python3 -u scripts/realti
 - Left out by the agent because `_session.py` was frozen for it: `response.text.delta` events and the `first_sentence` / `first_audio_ready` timing keys (`STAGE_TIMING_KEYS` is pinned to six by a test). Under streaming, `response.text.done` can arrive AFTER the first audio deltas. `docs/realtime-pipeline.md` not updated (fold into t16).
 - Lapse **l3** filed (proposed): the agent never saw `_sentences.py`'s tests fail before implementing.
 - Next steps list: item 1 is DONE; start at item 2 (BlueTTS sidecar).
+
+## Update 2 — BlueTTS + streaming LIVE, reSpeaker fixed (2026-09-18, evening)
+
+Evidence: `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt`. Suite **5929 passed, 15 skipped**.
+
+- **BlueTTS sidecar built and deployed** (`lobes/realtime/bluetts_server.py`, `Dockerfile.bluetts`, extra `bluetts`). Live as a NEW service `bluetts` (`model-gear-bluetts`, image `lobes-bluetts:local`, `Dockerfile.bluetts.local`) in `~/.lobes/docker-compose.override.yml`; weights copied to `~/.cache/bluetts/onnx_models` (durable; the scratchpad copy can go). The bridge points at it via `TTS_URL=${REALTIME_TTS_URL:-http://bluetts:9000}` and its phonikud hook is off (`PHONIKUD_MODEL_PATH=${REALTIME_PHONIKUD_MODEL_PATH:-}`). **Rollback to Chatterbox-ML:** set `REALTIME_TTS_URL=http://chatterbox:9000` and `REALTIME_PHONIKUD_MODEL_PATH` to the `PHONIKUD_MODEL_PATH` value, recreate `realtime`. `chatterbox` is still running (GPU memory not yet reclaimed). Backups: `*.bak-20260918-*-bluetts`.
+- No shipped template names the BlueTTS weights; no `audio-he` overlay wiring for BlueTTS exists yet (licence pending — operator is asking the author). The Dockerfile must install from the engine's own `uv.lock` (renikud-plus 0.5.0 breaks the G2P).
+- **Streaming deployed.** New knob `REPLY_FIRST_CLAUSE_MIN_CHARS` (default 24; **5 on this box**): first audio after a tool result 1.1 s → ~0.6 s. Live on the reSpeaker: 671–1020 ms after end of speech (plus the 1000 ms VAD wait).
+- **reSpeaker FIXED — trap 7 is resolved:** its pipewire card profile was on the DIGITAL output at 34 % volume. `pactl set-card-profile <card> output:analog-stereo+input:analog-stereo` + sink volume 100 % → AEC `converged: true`, zero self-interruptions in 3 turns. If it misbehaves again, check the profile first (it can flip when the device re-enumerates; the source/sink numeric suffixes change too).
+- **Human barge-in: WORKS** (first recorded, reSpeaker, 806 ms into a reply). n=1.
+- Accept client fix: playback is drained before terminate (replies were cut at session end).
+- Trap 12: never `pkill -f realtime-he-accept.py` from a shell whose own command line contains that string.
+- BlueTTS speed: steps 5→2 buys only ~20–25 %; TensorRT (`blue_trt`) is the real lever, unbuilt. Operator asked whether sub-100 ms TTS would help: marginal for first audio, useful for the seam after the short first clause.
+- **Open questions to the operator:** does the short first piece + pause sound natural? try `BLUETTS_STEPS=3`?
+- **Next:** d9 speculative turn-taking (the 1000 ms VAD wait is now the largest single cost), then stop `chatterbox`, then t15/d3/t16/t17.
