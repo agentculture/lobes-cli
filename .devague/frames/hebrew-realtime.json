@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-18T11:16:20Z",
-  "updated": "2026-09-18T15:26:31Z",
+  "updated": "2026-09-18T16:11:00Z",
   "claims": [
     {
       "id": "c1",
@@ -962,6 +962,18 @@
       "refs": [
         "d7",
         "lobes/realtime/_sentences.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "control-absent",
+      "what": "d9 layer B tool-hold: the four new tests and the implementation were written in one step, so those tests were never observed failing",
+      "skipped_check": "run the new tests red before implementing",
+      "refs": [
+        "d9",
+        "tests/test_realtime_continuation.py"
       ],
       "origin": "llm",
       "status": "proposed"

@@ -123,3 +123,16 @@ Evidence: `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt`. S
 - BlueTTS speed: steps 5→2 buys only ~20–25 %; TensorRT (`blue_trt`) is the real lever, unbuilt. Operator asked whether sub-100 ms TTS would help: marginal for first audio, useful for the seam after the short first clause.
 - **Open questions to the operator:** does the short first piece + pause sound natural? try `BLUETTS_STEPS=3`?
 - **Next:** d9 speculative turn-taking (the 1000 ms VAD wait is now the largest single cost), then stop `chatterbox`, then t15/d3/t16/t17.
+
+## Update 3 — d9 speculative turn-taking BUILT and live (2026-09-18, night)
+
+Suite **5967 passed, 15 skipped**. Evidence sections 6–8 of `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt`.
+
+- **Layer A, hidden speculation** (`_speculation.py`, `Segmenter(eager_silence_ms=)` → `SpeechPaused`/`SpeechResumed`, `ConversationBridge.build_speculative_request`, `VAD_EAGER_MS`, default 0). Adopted only when the real request is byte-identical (`can_adopt`). LIVE with a human on the reSpeaker: first audio **1–113 ms after the commit** (was 671–1020), 3 barge-ins honoured, 0 errors.
+- **Layer B, continuation merge** (`CONTINUATION_WINDOW_MS`, `CONTINUATION_TOOL_HOLD_MS`, both default off/inert; `Floor.on_continuation_onset`, `Session.pop_history_if_last`, `ConversationBridge.tool_call_hold_ms`, `on_speech_started` now returns whether it was a continuation). Proven on a RECORDING only. **Not yet tried live.**
+- **This box now runs:** `VAD_SILENCE_MS=500` (.env), `VAD_EAGER_MS=160`, `CONTINUATION_WINDOW_MS=1200`, `REPLY_FIRST_CLAUSE_MIN_CHARS=5` (override defaults). Safe fallback if live feels wrong: `VAD_SILENCE_MS=1000`, `CONTINUATION_WINDOW_MS=0`, `VAD_EAGER_MS=250` (the configuration the operator confirmed "works perfectly").
+- **Honest latency floor:** perceived delay ≈ max(VAD_SILENCE_MS, VAD_EAGER_MS + ~600 ms pipeline [STT ~170 + first clause ~300 + TTS ~120]). At the settings above that is ~760 ms from end of speech. Going lower needs a faster pipeline (TTS streaming/TensorRT, smaller first clause), not a shorter silence.
+- **Open problem exposed by the short commit:** a noise onset with a BLANK transcript still counts as a barge-in and kills the reply / closes an outstanding tool call. Pre-existing; design question for the operator.
+- Wire: a merged turn produces two `transcription.completed` items (half, then whole); nothing marks the supersession. The web harness will show both.
+- PocketTTS: operator says a Hebrew build exists (private HF Space `thewh1teeagle/pockettts`, 401 from here; no public Hebrew checkpoint found). A/B against BlueTTS when the operator can share it.
+- Lapses filed (proposed): l3, l4. **Next:** live-test layer B with the operator, decide the blank-onset question, stop `chatterbox`, then t15/d3/t16/t17.

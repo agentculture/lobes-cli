@@ -109,3 +109,33 @@ SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM o
        model dutifully said 'נושא ארוך.') /
      'לא, לא, זה משפט ממש ממש ארוך.' / 'כן, אני רוצה לחסום אותך באמצע ...'
    Perceived latency is now the VAD's own 1000 ms confirmation wait and nothing else.
+
+8. CONTINUATION MERGE (d9 layer B), scripted. Box settings: VAD_SILENCE_MS=500,
+   VAD_EAGER_MS=160, CONTINUATION_WINDOW_MS=1200, CONTINUATION_TOOL_HOLD_MS=500.
+   Input: the same utterance with 750 ms of digital silence inserted at a quiet point
+   (paused.wav) — "תראה לי אילו קבצים יש בתיקייה | המסמכים".
+
+   8a. FIRST ATTEMPT (no tool hold) — FAILED, and why:
+        5.00 commit 'תראה לי אילו קבצים יש בתיקייה'
+        5.18 response.function_call_arguments.done  (180 ms after the commit, args path '.')
+        5.36 speech resumes -> merge REFUSED (a tool call the client already has cannot be
+             taken back) -> second turn 'המסמכים' alone -> a second tool call -> the turn split.
+       Fix: a finished tool call is HELD until CONTINUATION_TOOL_HOLD_MS after the commit
+       while a take-back is still possible; speech is never held.
+
+   8b. WITH the hold:
+        4.55 commit 'תראה לי אילו קבצים יש בתיקייה'   (speculation ADOPTED)
+        4.90 speech resumes, 350 ms after the commit — INSIDE the 750 ms barge-in guard —
+             response.interrupted; history rewound; bridge log:
+             "continuation: merging 3552 ms of the previous commit"
+        6.17 commit, transcript 'תראה לי אילו קבצים יש בתיקייה המסמכים'  (ONE turn, adopted)
+        6.67 tool call list_directory {'path': 'מסמכים'}   (held 500 ms; correct argument)
+   STILL WRONG in that run, pre-existing and NOT fixed: a noise blip at 7.21 (blank
+   transcript, dropped by the STT confidence gate) counted as an ordinary barge-in and
+   closed the outstanding tool call ("call_closed" when the client answered at 12.23).
+   With a 1000 ms silence that blip was absorbed into the turn's tail; a short commit
+   exposes it. An onset whose transcript turns out blank should arguably not cost the
+   user their reply — open design question, not addressed.
+   The client still sees TWO transcription.completed items (the half, then the merged
+   text) — no wire field marks the second as superseding the first.
+   NOT yet tried with a live voice.
