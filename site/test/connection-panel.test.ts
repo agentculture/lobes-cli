@@ -45,10 +45,15 @@ function panelFixture(): HTMLElement {
       <option value="none">none</option>
       <option value="aec">aec</option>
     </select>
+    <input type="text" value="he" data-connection-language />
     <label>
       <input type="checkbox" data-connection-conversation />
     </label>
     <span data-conversation-state data-armed="false" data-live="false"></span>
+    <label>
+      <input type="checkbox" data-connection-tools />
+    </label>
+    <span data-tools-state></span>
     <button data-connection-connect disabled>Connect</button>
     <button data-connection-disconnect disabled>Disconnect</button>
     <button data-connection-check disabled>Check gateway</button>
@@ -364,5 +369,145 @@ describe("mountConnectionPanel — conversation arming (issue #151 t19)", () => 
     query<HTMLButtonElement>(root, "data-connection-connect").click();
     sockets[1]!.open();
     expect(sockets[1]!.sent).toEqual(['{"type":"response.create"}']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Language — hebrew-realtime.
+// ---------------------------------------------------------------------------
+describe("mountConnectionPanel — language", () => {
+  it("defaults to he and sends it as a connect query param", () => {
+    const { root, sockets } = mounted();
+    expect(query<HTMLInputElement>(root, "data-connection-language").value).toBe("he");
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    expect(sockets[0]!.url).toContain("language=he");
+  });
+
+  it("sends a free-text language code the operator typed", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-language").value = "pt-BR";
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    expect(sockets[0]!.url).toContain("language=pt-BR");
+  });
+
+  it("locks the language field while a session is live", () => {
+    const { root, sockets } = mounted();
+    const language = query<HTMLInputElement>(root, "data-connection-language");
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    expect(language.disabled).toBe(true);
+    sockets[0]!.shut(1000);
+    expect(language.disabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tools declaration — hebrew-realtime. ONE arming path: with tools on,
+// response.create waits for session.updated; with tools off, arming is
+// unchanged from the t19 at-open behaviour proven above.
+// ---------------------------------------------------------------------------
+describe("mountConnectionPanel — demo tools (hebrew-realtime)", () => {
+  it("ships unchecked, with a neutral tools-state message", () => {
+    const { root } = mounted();
+    expect(query<HTMLInputElement>(root, "data-connection-tools").checked).toBe(false);
+    expect(query<HTMLElement>(root, "data-tools-state").textContent).toMatch(/no tools declared/i);
+  });
+
+  it("off: behaves exactly like t19 — response.create sent at open, nothing else", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    expect(sockets[0]!.sent).toEqual(['{"type":"response.create"}']);
+  });
+
+  it("on: sends session.update after session.created, then waits for session.updated before arming", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLInputElement>(root, "data-connection-tools").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    // Nothing sent yet — waiting on session.created.
+    expect(sockets[0]!.sent).toEqual([]);
+
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.created" }) });
+    expect(sockets[0]!.sent).toHaveLength(1);
+    const sentUpdate = JSON.parse(sockets[0]!.sent[0] as string);
+    expect(sentUpdate.type).toBe("session.update");
+    expect(sentUpdate.session.tool_choice).toBe("auto");
+    expect(sentUpdate.session.tools.map((t: { name: string }) => t.name)).toContain(
+      "get_current_time",
+    );
+    // Not armed yet — still waiting on session.updated.
+    expect(sockets[0]!.sent).toHaveLength(1);
+
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.updated", session: {} }) });
+    expect(sockets[0]!.sent).toHaveLength(2);
+    expect(sockets[0]!.sent[1]).toBe('{"type":"response.create"}');
+    expect(query<HTMLElement>(root, "data-tools-state").textContent).toMatch(/declared/i);
+  });
+
+  it("runs a called tool and answers with function_call_output then response.create", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLInputElement>(root, "data-connection-tools").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.created" }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.updated", session: {} }) });
+    const before = sockets[0]!.sent.length; // session.update + response.create already sent
+
+    sockets[0]!.onmessage?.({
+      data: JSON.stringify({
+        type: "response.function_call_arguments.done",
+        call_id: "call_1",
+        name: "roll_dice",
+        arguments: '{"sides": 6}',
+      }),
+    });
+
+    const sentAfter = sockets[0]!.sent.slice(before);
+    expect(sentAfter).toHaveLength(2);
+    const output = JSON.parse(sentAfter[0] as string);
+    expect(output.type).toBe("conversation.item.create");
+    expect(output.item.type).toBe("function_call_output");
+    expect(output.item.call_id).toBe("call_1");
+    expect(JSON.parse(output.item.output)).toHaveProperty("result");
+    expect(sentAfter[1]).toBe('{"type":"response.create"}');
+  });
+
+  it("a malformed tool-call arguments string never throws and still answers", () => {
+    const { root, sockets } = mounted();
+    query<HTMLInputElement>(root, "data-connection-conversation").checked = true;
+    query<HTMLInputElement>(root, "data-connection-tools").checked = true;
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    sockets[0]!.open();
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.created" }) });
+    sockets[0]!.onmessage?.({ data: JSON.stringify({ type: "session.updated", session: {} }) });
+    const before = sockets[0]!.sent.length;
+
+    expect(() =>
+      sockets[0]!.onmessage?.({
+        data: JSON.stringify({
+          type: "response.function_call_arguments.done",
+          call_id: "call_2",
+          name: "roll_dice",
+          arguments: "{not json",
+        }),
+      }),
+    ).not.toThrow();
+
+    const sentAfter = sockets[0]!.sent.slice(before);
+    const output = JSON.parse(sentAfter[0] as string);
+    expect(JSON.parse(output.item.output)).toHaveProperty("error");
+  });
+
+  it("locks the tools checkbox while a session is live", () => {
+    const { root, sockets } = mounted();
+    const tools = query<HTMLInputElement>(root, "data-connection-tools");
+    query<HTMLButtonElement>(root, "data-connection-connect").click();
+    expect(tools.disabled).toBe(true);
+    sockets[0]!.shut(1006, false);
+    expect(tools.disabled).toBe(false);
   });
 });

@@ -24,7 +24,13 @@
 // is re-dispatched on `document` as a `lobes:realtime` CustomEvent whose
 // `detail` is the ConnectionNotice. See site/README.md, "Mounting the
 // connection panel".
-import { AEC_MODES, DEFAULT_ENDPOINT, SAMPLE_RATES } from "../scripts/realtime-connection.ts";
+import {
+  AEC_MODES,
+  DEFAULT_ENDPOINT,
+  DEFAULT_LANGUAGE,
+  LANGUAGE_PRESETS,
+  SAMPLE_RATES,
+} from "../scripts/realtime-connection.ts";
 ---
 
 <div class="connection-panel" data-connection-panel>
@@ -77,6 +83,36 @@ import { AEC_MODES, DEFAULT_ENDPOINT, SAMPLE_RATES } from "../scripts/realtime-c
     </p>
 
     <!--
+      hebrew-realtime — the language connect-time query param
+      (`parse_session_config`'s `language` key). Free text: `parse_language`
+      is a shape check ("a short code like 'en' or 'he'"), not a registry
+      lookup, so any short code is accepted here and left for the server to
+      judge. Defaults to Hebrew (this harness's own default, not the
+      server's "en") — see DEFAULT_LANGUAGE in realtime-connection.ts.
+    -->
+    <p class="field">
+      <label for="connection-language">Language</label>
+      <input
+        id="connection-language"
+        type="text"
+        list="connection-language-presets"
+        spellcheck="false"
+        autocomplete="off"
+        value={DEFAULT_LANGUAGE}
+        data-connection-language
+      />
+      <datalist id="connection-language-presets">
+        {LANGUAGE_PRESETS.map((code) => <option value={code} />)}
+      </datalist>
+      <span class="hint">
+        Sent as the connect URL's <code>language</code> param. Free text — any
+        short code (<code>he</code>, <code>en</code>, <code>pt-BR</code>, …)
+        is accepted here; whether the STT sidecar actually serves it is the
+        server's own answer.
+      </span>
+    </p>
+
+    <!--
       Issue #151 t19 — the conversation-arming toggle. OFF is the shipped
       default (unchecked, no `checked` attribute) so a no-JS or not-yet-
       mounted visit renders the ears-only contract, not a silent opt-in.
@@ -109,6 +145,31 @@ import { AEC_MODES, DEFAULT_ENDPOINT, SAMPLE_RATES } from "../scripts/realtime-c
         connecting, so every committed turn on this session gets a spoken
         reply back over the same socket. Applies at connect time — locked
         while a session is open, so flip it before pressing Connect.
+      </span>
+    </p>
+
+    <!--
+      hebrew-realtime — declaring the harness's demo tools. Also connect-
+      time-only, same as the conversation checkbox above. When on, this
+      panel sends `session.update` (declaring the demo tools + tool_choice:
+      auto) the moment `session.created` arrives, waits for `session.updated`,
+      and ONLY THEN sends `response.create` — a single arming path shared
+      with the conversation checkbox above (see connection-panel.ts's
+      `maybeArm`), rather than a second, competing trigger.
+    -->
+    <p class="field field-wide field-conversation">
+      <label class="checkbox-field" for="connection-tools">
+        <input id="connection-tools" type="checkbox" data-connection-tools />
+        <span>Declare demo tools</span>
+      </label>
+      <span class="conversation-state" data-tools-state role="status" aria-live="polite">
+        No tools declared — a plain ears-or-talks session.
+      </span>
+      <span class="hint">
+        Offers <code>get_current_time</code>, <code>roll_dice</code>,
+        <code>remember_note</code> and <code>list_notes</code> — small,
+        pure, in-browser tools with no network access. Requires
+        Conversation to be on too; a tool with nobody to answer it is inert.
       </span>
     </p>
   </div>

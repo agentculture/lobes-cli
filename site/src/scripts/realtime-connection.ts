@@ -33,6 +33,24 @@ export const AEC_MODES = ["none", "aec"] as const;
 export type AecMode = (typeof AEC_MODES)[number];
 
 /**
+ * Preset language codes the panel offers a picker for — hebrew-realtime.
+ * `language` itself is free text (`parse_language` on the server is a SHAPE
+ * check, not a registry lookup: any short code like `"en"`/`"he"`/`"pt-BR"`
+ * passes), so this list is a convenience, not a whitelist enforced here.
+ */
+export const LANGUAGE_PRESETS = ["he", "en"] as const;
+
+/**
+ * This harness's own default — deliberately NOT the server's
+ * `DEFAULT_LANGUAGE` ("en", `lobes/realtime/_session.py`). The site exists
+ * for the hebrew-realtime stack, so a connect with no language chosen
+ * dials Hebrew; a caller that wants the server's own default passes `""`,
+ * which `resolveSessionUrl` (below) then omits entirely from the query
+ * string.
+ */
+export const DEFAULT_LANGUAGE = "he";
+
+/**
  * The default endpoint is a PATH, not an origin — it resolves against
  * whatever origin served the page, which is what keeps the request
  * same-origin and therefore proxied. An absolute `ws://…` override is
@@ -52,11 +70,15 @@ export type ConnectionState = "disconnected" | "connecting" | "open" | "closing"
 export interface SessionSettings {
   inputSampleRate: SampleRate;
   aecMode: AecMode;
+  /** A short language code (`"he"`, `"en"`, …), or `""` to omit the query
+   * param entirely and take the server's own default. */
+  language: string;
 }
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   inputSampleRate: 24000,
   aecMode: "none",
+  language: DEFAULT_LANGUAGE,
 };
 
 /**
@@ -150,6 +172,12 @@ export function resolveSessionUrl(
   // the wire, never assumed from what we typed.
   url.searchParams.set("input_sample_rate", String(settings.inputSampleRate));
   url.searchParams.set("aec_mode", settings.aecMode);
+  // language is a connect-time query param too (`parse_session_config`'s
+  // `language` key) — omitted entirely when blank, so "take the server's
+  // own default" is expressible without inventing a magic string.
+  if (settings.language.trim() !== "") {
+    url.searchParams.set("language", settings.language.trim());
+  }
   return url.toString();
 }
 

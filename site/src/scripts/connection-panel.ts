@@ -13,6 +13,8 @@
 import {
   AEC_MODES,
   DEFAULT_ENDPOINT,
+  DEFAULT_LANGUAGE,
+  LANGUAGE_PRESETS,
   SAMPLE_RATES,
   createRealtimeConnection,
   probeGateway,
@@ -25,6 +27,8 @@ import type {
   RealtimeConnection,
   SampleRate,
 } from "./realtime-connection.ts";
+import { DEMO_TOOLS, createNotesStore, executeDemoTool } from "./demo-tools.ts";
+import type { NotesStore } from "./demo-tools.ts";
 
 /**
  * Every notice this panel hears is re-dispatched on `document` under this
@@ -63,6 +67,27 @@ export const REALTIME_GLOBAL_KEY = "lobesRealtime";
  */
 const RESPONSE_CREATE_EVENT_TYPE = "response.create";
 
+/**
+ * The two extra client-sent event types this panel now speaks, mirroring
+ * `lobes/realtime/_session.py`'s `SESSION_UPDATE_EVENT_TYPE` /
+ * `CONVERSATION_ITEM_CREATE_EVENT_TYPE` / `FUNCTION_CALL_OUTPUT_ITEM_TYPE`
+ * (hebrew-realtime). This module has no Python import path into `lobes/`,
+ * so the literal strings are re-declared here — exactly the trade
+ * `realtime-events.ts`'s own header comment already documents for the
+ * server-origin event vocabulary.
+ */
+const SESSION_UPDATE_EVENT_TYPE = "session.update";
+const CONVERSATION_ITEM_CREATE_EVENT_TYPE = "conversation.item.create";
+const FUNCTION_CALL_OUTPUT_ITEM_TYPE = "function_call_output";
+
+/**
+ * Dispatched on `window` with `detail: {callId, output}` the moment this
+ * panel sends a demo tool's `function_call_output` — the OUTBOUND half of a
+ * tool round trip, which `conversation-view.ts` cannot observe by watching
+ * inbound server events alone. See `ConversationView.astro`'s mount script.
+ */
+export const TOOL_RESULT_EVENT = "lobes:tool-result";
+
 interface StatePresentation {
   label: string;
   /** Shape, not colour: the state must survive a monochrome screen. */
@@ -95,7 +120,9 @@ export const PANEL_HOOKS = [
   "data-connection-endpoint",
   "data-connection-rate",
   "data-connection-aec",
+  "data-connection-language",
   "data-connection-conversation",
+  "data-connection-tools",
   "data-connection-connect",
   "data-connection-disconnect",
   "data-connection-check",
@@ -106,6 +133,7 @@ export const PANEL_HOOKS = [
   "data-connection-url",
   "data-connection-check-result",
   "data-conversation-state",
+  "data-tools-state",
 ] as const;
 
 export interface MountConnectionPanelOptions {
@@ -146,10 +174,12 @@ export function mountConnectionPanel(
   const endpointInput = requireElement<HTMLInputElement>(root, "[data-connection-endpoint]");
   const rateSelect = requireElement<HTMLSelectElement>(root, "[data-connection-rate]");
   const aecSelect = requireElement<HTMLSelectElement>(root, "[data-connection-aec]");
+  const languageInput = requireElement<HTMLInputElement>(root, "[data-connection-language]");
   const conversationCheckbox = requireElement<HTMLInputElement>(
     root,
     "[data-connection-conversation]",
   );
+  const toolsCheckbox = requireElement<HTMLInputElement>(root, "[data-connection-tools]");
   const connectButton = requireElement<HTMLButtonElement>(root, "[data-connection-connect]");
   const disconnectButton = requireElement<HTMLButtonElement>(root, "[data-connection-disconnect]");
   const checkButton = requireElement<HTMLButtonElement>(root, "[data-connection-check]");
@@ -160,6 +190,7 @@ export function mountConnectionPanel(
   const urlOut = requireElement<HTMLElement>(root, "[data-connection-url]");
   const checkOut = requireElement<HTMLElement>(root, "[data-connection-check-result]");
   const conversationStateOut = requireElement<HTMLElement>(root, "[data-conversation-state]");
+  const toolsStateOut = requireElement<HTMLElement>(root, "[data-tools-state]");
 
   const connection = options.connection ?? createRealtimeConnection();
   const broadcastTarget =
@@ -226,23 +257,108 @@ export function mountConnectionPanel(
     endpointInput.disabled = busy;
     rateSelect.disabled = busy;
     aecSelect.disabled = busy;
+    languageInput.disabled = busy;
     // Locked while live: arming is a connect-time decision (see the module
     // doc above), and a control that visibly does nothing while disabled is
     // the honest way to say so — matching how the other three session-config
     // fields already lock for the same reason.
     conversationCheckbox.disabled = busy;
+    toolsCheckbox.disabled = busy;
+  }
+
+  // -- tools declaration (hebrew-realtime) ---------------------------------
+  //
+  // A SECOND connect-time intent, read once at Connect exactly like
+  // `armIntent` above, and a fresh `NotesStore` per session so remembered
+  // notes never leak across a reconnect. `toolsReady` becomes true once the
+  // server's `session.updated` echoes the declaration back — see
+  // `scripts/realtime-he-accept.py`'s own reference shape: session.created
+  // -> session.update(tools) -> session.updated -> THEN response.create.
+  //
+  // This keeps exactly ONE arming path (`maybeArm`, below), the single place
+  // in this module that ever sends `response.create`: with tools declared,
+  // arming waits for `toolsReady`; without them, it fires at "open" exactly
+  // as before issue #151 t19 shipped it. A second, independent send —
+  // `response.create` after a tool result — is not "arming" a session, it is
+  // continuing an already-armed one (the reference script does the same),
+  // so it is not routed through `maybeArm`.
+  let toolsIntent = false;
+  let toolsUpdateSent = false;
+  let toolsReady = false;
+  let notesStore: NotesStore = createNotesStore();
+
+  function renderToolsState(): void {
+    if (!toolsIntent) {
+      toolsStateOut.textContent = "No tools declared — a plain ears-or-talks session.";
+      return;
+    }
+    const names = DEMO_TOOLS.map((tool) => tool.name).join(", ");
+    toolsStateOut.textContent = toolsReady
+      ? `Declared — the server echoed tool_choice=auto for: ${names}`
+      : `Will declare via session.update right after session.created: ${names}`;
+  }
+
+  function maybeArm(): void {
+    if (!armIntent || sessionArmed || connection.state !== "open") return;
+    if (toolsIntent && !toolsReady) return; // wait for the session.update round trip
+    sessionArmed = true;
+    connection.sendEvent({ type: RESPONSE_CREATE_EVENT_TYPE });
+    renderConversationState(connection.state);
+  }
+
+  /** Run one demo tool call and answer it — the client half of the tool
+   * round trip (`conversation.item.create(function_call_output)`, then
+   * `response.create` to continue the SAME response; see
+   * `lobes/realtime/_conversation.py`'s module doc, "A tool turn is the
+   * ordinary turn with one extra leg"). */
+  function handleToolCall(event: Record<string, unknown>): void {
+    const callId = event["call_id"];
+    const name = event["name"];
+    if (typeof callId !== "string" || typeof name !== "string") return;
+    const rawArguments = typeof event["arguments"] === "string" ? (event["arguments"] as string) : "";
+    const output = executeDemoTool(name, rawArguments, notesStore);
+    connection.sendEvent({
+      type: CONVERSATION_ITEM_CREATE_EVENT_TYPE,
+      item: { type: FUNCTION_CALL_OUTPUT_ITEM_TYPE, call_id: callId, output },
+    });
+    connection.sendEvent({ type: RESPONSE_CREATE_EVENT_TYPE });
+    // The outbound half of the round trip the conversation view cannot see
+    // arrive over the wire (it only sees the inbound call). Zero-import seam
+    // on `window`, mirroring `mic-island.ts`'s `emitMuteEvent` — a no-op if
+    // nothing is listening, and guarded so this file stays importable outside
+    // a browser (the Astro build, a test with no jsdom `window`).
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(TOOL_RESULT_EVENT, { detail: { callId, output } }));
+    }
   }
 
   const unsubscribe = connection.subscribe((notice) => {
     if (notice.kind === "state") {
       renderState(notice.state, notice.detail, notice.url);
-      if (notice.state === "open" && armIntent && !sessionArmed) {
-        sessionArmed = true;
-        connection.sendEvent({ type: RESPONSE_CREATE_EVENT_TYPE });
+      if (notice.state === "open") {
+        maybeArm();
       } else if (notice.state === "disconnected" || notice.state === "failed") {
         sessionArmed = false;
+        toolsUpdateSent = false;
+        toolsReady = false;
+        renderToolsState();
       }
       renderConversationState(notice.state);
+    } else if (notice.kind === "event") {
+      const type = notice.event["type"];
+      if (type === "session.created" && toolsIntent && !toolsUpdateSent) {
+        toolsUpdateSent = true;
+        connection.sendEvent({
+          type: SESSION_UPDATE_EVENT_TYPE,
+          session: { tools: DEMO_TOOLS, tool_choice: "auto" },
+        });
+      } else if (type === "session.updated" && toolsIntent && !toolsReady) {
+        toolsReady = true;
+        renderToolsState();
+        maybeArm();
+      } else if (type === "response.function_call_arguments.done") {
+        handleToolCall(notice.event);
+      }
     }
     broadcast(notice);
   });
@@ -252,8 +368,14 @@ export function mountConnectionPanel(
     connection.updateSettings({
       inputSampleRate: Number(rateSelect.value) as SampleRate,
       aecMode: aecSelect.value as AecMode,
+      language: languageInput.value,
     });
     armIntent = conversationCheckbox.checked;
+    toolsIntent = toolsCheckbox.checked;
+    toolsUpdateSent = false;
+    toolsReady = false;
+    notesStore = createNotesStore();
+    renderToolsState();
     connection.connect();
   }
 
@@ -286,10 +408,21 @@ export function mountConnectionPanel(
     renderConversationState(connection.state);
   }
 
+  function onToolsToggle(): void {
+    // Only meaningful before Connect: `toolsIntent` itself is read fresh in
+    // `onConnect`, so flipping this while idle just previews what the next
+    // connect will do (mirrors `onConversationToggle`'s idle-only preview).
+    if (connection.state === "disconnected" || connection.state === "failed") {
+      toolsIntent = toolsCheckbox.checked;
+      renderToolsState();
+    }
+  }
+
   connectButton.addEventListener("click", onConnect);
   disconnectButton.addEventListener("click", onDisconnect);
   checkButton.addEventListener("click", () => void onCheck());
   conversationCheckbox.addEventListener("change", onConversationToggle);
+  toolsCheckbox.addEventListener("change", onToolsToggle);
 
   // The markup ships the buttons disabled so a JS-less visit cannot pretend
   // to work; taking over is what enables them. `renderState` below owns
@@ -299,6 +432,13 @@ export function mountConnectionPanel(
   if (endpointInput.value.trim() === "") {
     endpointInput.value = DEFAULT_ENDPOINT;
   }
+  // Default to Hebrew — this harness's own default (see
+  // `realtime-connection.ts`'s `DEFAULT_LANGUAGE`), never the server's own
+  // "en" default. Free text: an operator can type any short code
+  // (`parse_language` is a shape check, not a registry).
+  if (languageInput.value.trim() === "") {
+    languageInput.value = DEFAULT_LANGUAGE;
+  }
   // The checkbox itself ships unchecked in the markup (no `checked`
   // attribute) — nothing here changes that. Only the always-visible text
   // state needs an explicit first render, to match whatever the browser
@@ -306,6 +446,7 @@ export function mountConnectionPanel(
   // with JS disabled-then-enabled mid-session).
   renderState(connection.state, "not connected yet", connection.url);
   renderConversationState(connection.state);
+  renderToolsState();
 
   if (globalTarget !== null) {
     globalTarget[REALTIME_GLOBAL_KEY] = connection;
@@ -321,6 +462,7 @@ export function mountConnectionPanel(
       connectButton.removeEventListener("click", onConnect);
       disconnectButton.removeEventListener("click", onDisconnect);
       conversationCheckbox.removeEventListener("change", onConversationToggle);
+      toolsCheckbox.removeEventListener("change", onToolsToggle);
       if (globalTarget !== null && globalTarget[REALTIME_GLOBAL_KEY] === connection) {
         delete globalTarget[REALTIME_GLOBAL_KEY];
       }
@@ -328,8 +470,9 @@ export function mountConnectionPanel(
   };
 }
 
-/** The option values the panel's two selects offer, for the .astro markup. */
+/** The option values the panel's selects/datalist offer, for the .astro markup. */
 export const PANEL_CHOICES = {
   sampleRates: SAMPLE_RATES,
   aecModes: AEC_MODES,
+  languagePresets: LANGUAGE_PRESETS,
 } as const;

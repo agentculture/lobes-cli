@@ -409,6 +409,108 @@ describe("mountEventStream — robustness", () => {
   });
 });
 
+describe("mountEventStream — hebrew-realtime: tools, session.update, timings", () => {
+  it("renders session.updated distinctly from session.created", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    view.pushEvent({ type: "session.created", timestamp_ms: 1_000_000, config: {} });
+    const entry = view.pushEvent({
+      type: "session.updated",
+      timestamp_ms: 1_000_050,
+      session: { tools: [{ type: "function", name: "get_current_time" }], tool_choice: "auto" },
+    })!;
+    expect(entry.eventType).toBe("session.updated");
+    expect(entry.detailText).toContain("get_current_time");
+    const row = root.querySelector<HTMLElement>('[data-event-type="session.updated"]')!;
+    expect(row.dataset.icon).not.toBe(
+      root.querySelector<HTMLElement>('[data-event-type="session.created"]')!.dataset.icon
+    );
+  });
+
+  it("renders a tool call with its name, call_id and arguments", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    const entry = view.pushEvent({
+      type: "response.function_call_arguments.done",
+      timestamp_ms: 1_000_000,
+      response_id: "resp_1",
+      call_id: "call_1",
+      name: "roll_dice",
+      arguments: '{"sides": 20}',
+    })!;
+    expect(entry.label).toContain("roll_dice");
+    expect(entry.detailText).toContain("call_1");
+    expect(entry.detailText).toContain("sides");
+  });
+
+  it("response.done renders only the timings stages present, never a zero for an absent one", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    const entry = view.pushEvent({
+      type: "response.done",
+      timestamp_ms: 1_000_000,
+      response_id: "resp_1",
+      timings: { stt: 100, generate: 200, first_delta: 450 },
+    })!;
+    expect(entry.detailText).toContain("stt=100ms");
+    expect(entry.detailText).toContain("generate=200ms");
+    expect(entry.detailText).toContain("first_delta=450ms");
+    expect(entry.detailText).not.toContain("tool_wait");
+    expect(entry.detailText).not.toContain("phonikud");
+  });
+
+  it("a response.done with no timings renders no timings text at all", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    const entry = view.pushEvent({
+      type: "response.done",
+      timestamp_ms: 1_000_000,
+      response_id: "resp_1",
+    })!;
+    expect(entry.detailText).not.toContain("timings");
+  });
+
+  it("tolerates an unknown extra timings key rather than dropping it", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    const entry = view.pushEvent({
+      type: "response.done",
+      timestamp_ms: 1_000_000,
+      response_id: "resp_1",
+      timings: { first_sentence: 300 },
+    })!;
+    expect(entry.detailText).toContain("first_sentence=300ms");
+  });
+
+  it("every row's detail text carries dir=auto, so a Hebrew row renders RTL", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    view.pushEvent({
+      type: "conversation.item.input_audio_transcription.completed",
+      timestamp_ms: 1_000_000,
+      item_id: "item_1",
+      text: "מה השעה עכשיו?",
+    });
+    const detail = root.querySelector<HTMLElement>(".es-detail")!;
+    expect(detail.getAttribute("dir")).toBe("auto");
+    expect(detail.textContent).toContain("מה השעה עכשיו");
+  });
+
+  it("renders a genuinely unknown future event type generically, never throwing or dropping it", () => {
+    const root = createRoot();
+    const view = mountEventStream(root);
+    const entry = view.pushEvent({
+      type: "response.text.delta",
+      timestamp_ms: 1_000_000,
+      delta: "hi",
+    });
+    expect(entry).not.toBeNull();
+    expect(entry!.label).toContain("response.text.delta");
+    const row = root.querySelector<HTMLElement>('[data-event-type="response.text.delta"]');
+    expect(row).not.toBeNull();
+  });
+});
+
 describe("event-fixtures.ts — replay drives the same controller cleanly", () => {
   it("replays the full story without throwing, ending on session.closed", async () => {
     const root = createRoot();

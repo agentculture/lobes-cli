@@ -40,6 +40,19 @@ const SHAPES: Record<IconId, ShapeBuilder> = {
   "session-close": (svg) => {
     svg.append(el("circle", { cx: "8", cy: "8", r: "5", ...STROKE }));
   },
+  // A small gear-like silhouette (a circle with four radiating ticks) —
+  // standing for "the session's config was patched", distinct from the
+  // plain filled/hollow dots session-open/close use and from the checkmark
+  // response-done uses.
+  "session-update": (svg) => {
+    svg.append(
+      el("circle", { cx: "8", cy: "8", r: "3.2", ...STROKE }),
+      el("line", { x1: "8", y1: "1.6", x2: "8", y2: "3.4", ...STROKE_ROUND }),
+      el("line", { x1: "8", y1: "12.6", x2: "8", y2: "14.4", ...STROKE_ROUND }),
+      el("line", { x1: "1.6", y1: "8", x2: "3.4", y2: "8", ...STROKE_ROUND }),
+      el("line", { x1: "12.6", y1: "8", x2: "14.4", y2: "8", ...STROKE_ROUND })
+    );
+  },
   "boundary-start": (svg) => {
     svg.append(el("path", { d: "M3 11 L8 4 L13 11", ...STROKE_ROUND }));
   },
@@ -75,6 +88,16 @@ const SHAPES: Record<IconId, ShapeBuilder> = {
   },
   "response-interrupted": (svg) => {
     svg.append(el("path", { d: "M9 3 L4 9 L7.5 9 L6 13 L12 6.5 L8.5 6.5 Z", fill: "currentColor" }));
+  },
+  // A wrench silhouette — "the model called a tool", a genuinely different
+  // shape from every response-* icon above (none of which are tool-shaped).
+  "tool-call": (svg) => {
+    svg.append(
+      el("path", {
+        d: "M11.2 2.8 A3 3 0 0 0 8.4 7.1 L3 12.5 A1.4 1.4 0 0 0 5 14.5 L10.4 9.1 A3 3 0 0 0 14.7 6.3",
+        ...STROKE_ROUND,
+      })
+    );
   },
   "error-config": (svg) => {
     svg.append(
