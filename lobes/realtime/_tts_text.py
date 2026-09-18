@@ -102,8 +102,13 @@ def _clean_for_tts(text: str) -> str:
     # Curly single quotes / apostrophes → ASCII apostrophe (preserves contractions)
     text = text.replace("‘", "'")
     text = text.replace("’", "'")
-    # Strip double-quotes (TTS doesn't need to voice them). Real Hebrew
-    # gershayim (U+05F4) is a distinct code point and is never matched here.
+    # An ASCII double-quote BETWEEN two Hebrew letters is an acronym mark typed
+    # on a keyboard with no gershayim key (צה"ל) — promote it to real gershayim
+    # (U+05F4) so the strip below cannot fuse the acronym into a different word.
+    # English text has no Hebrew-letter neighbours, so it is never touched.
+    text = re.sub(r'(?<=[\u05d0-\u05ea])"(?=[\u05d0-\u05ea])', "\u05f4", text)
+    # Strip the remaining double-quotes (TTS doesn't need to voice them). Real
+    # Hebrew gershayim (U+05F4) is a distinct code point and is never matched.
     text = re.sub(r'["“”]', "", text)
     # Remove markdown list markers at line start:  - item  /  1. item
     text = re.sub(r"(?m)^\s*-\s+", " ", text)

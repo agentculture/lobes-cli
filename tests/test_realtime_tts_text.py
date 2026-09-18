@@ -82,11 +82,13 @@ class TestCleanForTtsHebrew:
         assert "״" in cleaned
         assert cleaned == GERSHAYIM_WORD
 
-    def test_ascii_quotes_still_stripped_around_hebrew(self) -> None:
-        # Pre-existing, unchanged behaviour: an ASCII double-quote (as
-        # opposed to real gershayim) is still stripped, exactly like it is
-        # for English text.
-        assert _clean_for_tts('צה"ל') == "צהל"
+    def test_ascii_quote_inside_hebrew_acronym_becomes_gershayim(self) -> None:
+        # Typed on a keyboard with no gershayim key: stripping the quote would
+        # fuse the acronym into a different word, so it is promoted instead.
+        assert _clean_for_tts('צה"ל') == "צה\u05f4ל"
+
+    def test_ascii_quotes_around_a_hebrew_phrase_are_still_stripped(self) -> None:
+        assert _clean_for_tts('הוא אמר "שלום" ויצא') == "הוא אמר שלום ויצא"
 
     def test_mixed_script_sentence_preserves_latin_digit_spans(self) -> None:
         cleaned = _clean_for_tts(MIXED_SENTENCE)
