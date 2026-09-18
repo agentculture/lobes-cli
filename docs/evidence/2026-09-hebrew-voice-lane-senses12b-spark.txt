@@ -121,3 +121,17 @@ ARM (b), deviation d2 — nvidia/Gemma-4-26B-A4B-NVFP4 (MoE, ~4B active) + MTP d
   RESULT: as fast as or faster than the 12B (32-44 tok/s vs 30-37), correct tool call and tool-result turn,
   visibly fewer Hebrew defects than either 4-bit 12B. Costs ~10 GiB more weights. n=1 per prompt — a
   comparison, not a benchmark; the fluency verdict is the operator's. The 31B arm was NOT run.
+
+LIVE LANE PROMOTED to nvidia/Gemma-4-26B-A4B-NVFP4 (operator-approved 2026-09-18; .env.bak-*-pre-gemma26b)
+  .env: MULTIMODAL_MODEL/SERVED_NAME, MULTIMODAL_QUANTIZATION=modelopt, MULTIMODAL_GPU_MEM_UTIL=0.28,
+        MULTIMODAL_SPECULATIVE_CONFIG -> mtp draft google/gemma-4-26B-A4B-it-assistant (n=1).
+  lobes-compose.sh --apply up -d --no-deps vllm-multimodal : healthy after ~310 s, 0 restarts.
+  Model loading took 18.94 GiB ; GPU KV cache 515,376 tokens = 15.73x at 32,768.
+  Through the gateway (model=multimodal):
+    'שלום' -> 'שלום! איך אני יכול לעזור לך היום?'
+    'מה בירת צרפת?' -> 'בירת צרפת היא פריז.'                      0.28 s, 11 tok
+    'אילו קבצים יש בתיקייה /home/spark ?' + 1 tool -> list_directory {"path": "/home/spark"}   0.42 s, 18 tok
+  free -g after: used 58 / 121, available 62.
+  ADVERT GAP: GET /capabilities reports senses quant 'compressed-tensors' while the lane serves
+  modelopt NVFP4 — the quant field is not read from the deployment's declaration.
+  The 31B arm is dropped by operator decision ("No need for 31B").
