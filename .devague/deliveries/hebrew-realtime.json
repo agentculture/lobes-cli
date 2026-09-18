@@ -1,0 +1,47 @@
+{
+  "plan_slug": "hebrew-realtime",
+  "schema_version": 2,
+  "created": "2026-09-18T12:03:53Z",
+  "updated": "2026-09-18T12:09:49Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "The Hebrew voice lane is Gemma 4 senses (12B, model=multimodal) hosted LOCALLY on the Spark, replacing associate on the Orin from the start; 26B-A4B MoE and 31B stay later candidates. t8's Hebrew default becomes OPENAI_MODEL=multimodal (the bridge's existing default), t17 runs acceptance against senses, and the live proof brings the senses lane up on the Spark after ComfyUI is dropped. Nothing crosses the box during a voice turn any more",
+      "task_ref": "t8",
+      "reason": "Operator decision 2026-09-18: associate's model card omits Hebrew and its Hebrew was only agent-judged on n=5 probes (lapse l2); Gemma 4 is a supported multilingual lane, the Spark is empty once ComfyUI is dropped and its profile already tunes senses at util 0.14, and hosting locally removes the per-turn Spark->Orin hop (measured 1.6-2.0 s). Known cost: Gemma tool calling is validated on the 31B only \u2014 the 12B's gemma4 parser pair is UNVALIDATED (#108), so t17's tool round-trip is its first real test",
+      "affects": [
+        "t17",
+        "t1",
+        "t3",
+        "c1",
+        "c3",
+        "h3",
+        "c8",
+        "c15",
+        "h26"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "The live proof measures the voice lane in order: Gemma 4 12B senses first (the d1 lane), then larger Gemma 4 checkpoints on the Spark \u2014 the 26B-A4B MoE first, the 31B after \u2014 each on decode tok/s, a Hebrew tool-call probe and the operator's verdict on its Hebrew; the lane moves up only if a larger model wins",
+      "task_ref": "t3",
+      "reason": "Operator decision 2026-09-18: start with the 12B because it is already tuned for this box, then measure higher. The 26B-A4B has no catalog entry and no vetted NVFP4 export here, so it is a new-checkpoint bring-up inside the live proof, not a knob flip",
+      "affects": [
+        "t1",
+        "t17",
+        "c8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
