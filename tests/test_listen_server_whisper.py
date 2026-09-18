@@ -183,8 +183,9 @@ class TestDecodeWavPcm16:
             wf.setsampwidth(1)  # 8-bit
             wf.setframerate(16000)
             wf.writeframes(bytes([0, 1, 2, 3]))
+        raw = buf.getvalue()
         with pytest.raises(ValueError, match="16-bit"):
-            lsw.decode_wav_pcm16(buf.getvalue())
+            lsw.decode_wav_pcm16(raw)
 
 
 class TestFirstChannel:
@@ -234,6 +235,73 @@ class TestValidateClipDuration:
 
     def test_zero_sample_rate_is_refused(self, lsw) -> None:
         assert lsw.validate_clip_duration(100, 0) is not None
+
+
+# --------------------------------------------------------------------------
+# Qodo finding: a cheap byte cap BEFORE decoding, so an oversized multipart
+# upload cannot exhaust a speech worker by being fully decoded into Python
+# objects before the (post-decode) duration limit ever runs.
+# --------------------------------------------------------------------------
+
+
+class TestCheckUploadSize:
+    def test_under_limit_is_ok(self, lsw) -> None:
+        assert lsw.check_upload_size(1000, 2000) is None
+
+    def test_exactly_at_limit_is_ok(self, lsw) -> None:
+        assert lsw.check_upload_size(2000, 2000) is None
+
+    def test_over_limit_is_refused(self, lsw) -> None:
+        msg = lsw.check_upload_size(2001, 2000)
+        assert msg is not None
+        assert "2001" in msg and "2000" in msg
+
+    def test_default_cap_comfortably_covers_the_realtime_bridge_turn_audio(self, lsw) -> None:
+        # The realtime bridge's own turn audio: max 30s at 16kHz mono PCM16,
+        # ~1MB — this must never be rejected by the default cap.
+        bridge_turn_bytes = 30 * 16000 * 2
+        assert lsw.check_upload_size(bridge_turn_bytes, lsw.DEFAULT_MAX_UPLOAD_BYTES) is None
+
+    def test_default_cap_is_generous_but_bounded(self, lsw) -> None:
+        # ~5.8MB is 30s of 48kHz stereo PCM16 (the module comment's own
+        # figure) — comfortably under the 16 MiB default.
+        assert lsw.DEFAULT_MAX_UPLOAD_BYTES >= 6 * 1024 * 1024
+
+
+class TestParseMaxUploadBytes:
+    def test_unset_is_the_default(self, lsw) -> None:
+        assert lsw.parse_max_upload_bytes(None) == lsw.DEFAULT_MAX_UPLOAD_BYTES
+
+    def test_empty_string_is_the_default(self, lsw) -> None:
+        assert lsw.parse_max_upload_bytes("  ") == lsw.DEFAULT_MAX_UPLOAD_BYTES
+
+    def test_valid_override_is_honoured(self, lsw) -> None:
+        assert lsw.parse_max_upload_bytes("1048576") == 1048576
+
+    def test_a_typo_never_silently_disables_the_cap(self, lsw) -> None:
+        assert lsw.parse_max_upload_bytes("not-a-number") == lsw.DEFAULT_MAX_UPLOAD_BYTES
+
+    def test_non_positive_falls_back_to_the_default(self, lsw) -> None:
+        assert lsw.parse_max_upload_bytes("0") == lsw.DEFAULT_MAX_UPLOAD_BYTES
+        assert lsw.parse_max_upload_bytes("-5") == lsw.DEFAULT_MAX_UPLOAD_BYTES
+
+
+class TestPeekWavDurationSeconds:
+    def test_matches_the_full_decode_for_a_valid_header(self, lsw) -> None:
+        raw = _make_wav_bytes([0] * 16000, sample_rate=16000, channels=1)
+        assert lsw.peek_wav_duration_seconds(raw) == pytest.approx(1.0)
+
+    def test_does_not_require_reading_any_audio_frames(self, lsw) -> None:
+        # A 31s clip header — large enough that a full decode would be the
+        # thing this check exists to avoid doing first.
+        raw = _make_wav_bytes([0] * (16000 * 31), sample_rate=16000, channels=1)
+        assert lsw.peek_wav_duration_seconds(raw) == pytest.approx(31.0)
+
+    def test_malformed_bytes_return_none(self, lsw) -> None:
+        assert lsw.peek_wav_duration_seconds(b"not a wav file") is None
+
+    def test_empty_bytes_return_none(self, lsw) -> None:
+        assert lsw.peek_wav_duration_seconds(b"") is None
 
 
 # --------------------------------------------------------------------------

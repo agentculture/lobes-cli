@@ -589,10 +589,82 @@ def append_audio_he_env(target: os.PathLike | str) -> Path:
     return _append_env_template(target, AUDIO_HE_ENV_TEMPLATE)
 
 
+def _split_env_blocks(text: str) -> list[list[str]]:
+    """Split a template body into blank-line-separated line groups.
+
+    Each group is a "block": a run of consecutive non-blank lines — typically
+    a comment paragraph documenting one (or a few) ``KEY=VALUE`` lines that
+    immediately follow it. Blank lines are the separators and are dropped;
+    they are re-inserted by the caller when re-joining kept blocks.
+    """
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if line.strip():
+            current.append(line)
+        elif current:
+            blocks.append(current)
+            current = []
+    if current:
+        blocks.append(current)
+    return blocks
+
+
+def _dedup_env_append(existing_keys: set[str], template_text: str) -> str:
+    """Filter a packaged env template down to the keys ABSENT from ``existing_keys``.
+
+    Re-running an env append (``append_audio_env`` / ``append_audio_he_env``,
+    or any future ``_append_env_template`` caller) must never re-append a key
+    the ``.env`` already has an active line for — under docker compose
+    ``env_file`` semantics the LAST occurrence of a duplicate key wins, so a
+    blind re-append silently reverts an operator-edited value back to the
+    template default. A keyless comment block (a section header with no
+    ``KEY=`` line of its own) is kept only when the key block it documents
+    survives; a block whose every key is already present is dropped
+    entirely, comments included, so no orphaned comment block is left behind.
+    If every key in the template is already present, the result is empty —
+    append nothing at all, not even a header.
+    """
+    output: list[list[str]] = []
+    pending_keyless: list[list[str]] = []
+    for block in _split_env_blocks(template_text):
+        keys_in_block = [key for key in (_env_line_key(line) for line in block) if key]
+        if not keys_in_block:
+            pending_keyless.append(block)
+            continue
+        absent = [key for key in keys_in_block if key not in existing_keys]
+        if not absent:
+            pending_keyless = []
+            continue
+        output.extend(pending_keyless)
+        pending_keyless = []
+        kept_lines = [
+            line
+            for line in block
+            if _env_line_key(line) is None or _env_line_key(line) not in existing_keys
+        ]
+        output.append(kept_lines)
+    if not output:
+        return ""
+    return "\n\n".join("\n".join(block) for block in output) + "\n"
+
+
 def _append_env_template(target: os.PathLike | str, template: str) -> Path:
-    """Append a packaged ``env.*.example`` to the deployment's ``.env``."""
+    """Append a packaged ``env.*.example`` to the deployment's ``.env``.
+
+    De-duplicated (issue: Qodo re-init review, 2026-09-18): a key the ``.env``
+    already sets is never re-appended — see :func:`_dedup_env_append`. When no
+    template key is already present (the common first-run case), the packaged
+    template is appended byte-for-byte, unchanged from before — this keeps
+    every first-scaffold golden identical.
+    """
     env_path = Path(target).expanduser() / ENV_FILE
     content = _read_template(files("lobes.templates"), template)
+    existing = env_keys(env_path.read_text(encoding="utf-8")) if env_path.exists() else set()
+    if existing & env_keys(content):
+        content = _dedup_env_append(existing, content)
+        if not content:
+            return env_path
     with env_path.open("a", encoding="utf-8") as fh:
         fh.write(content if content.startswith("\n") else "\n" + content)
     return env_path

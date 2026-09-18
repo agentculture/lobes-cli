@@ -1185,6 +1185,17 @@ def _override_note(target: Path, shape: Shape | None, profile) -> str:
     return note
 
 
+def _env_audio_note(audio: bool, audio_lang: str) -> str:
+    """The report line for the audio env append: empty when ``--audio`` was
+    not passed, else the language suffix only for a non-default language
+    (S3358: a plain if/elif/else in place of a nested conditional expression)."""
+    if not audio:
+        return ""
+    if audio_lang == AUDIO_LANG_DEFAULT:
+        return f"\n  {_compose.ENV_FILE} (+ audio keys)"
+    return f"\n  {_compose.ENV_FILE} (+ audio keys, {audio_lang})"
+
+
 def _emit_apply(
     target: Path,
     fleet: bool,
@@ -1247,13 +1258,7 @@ def _emit_apply(
     emit_result(
         f">> scaffolded {target}:\n"
         + "\n".join(f"  {p.name}" for p in written)
-        + (
-            f"\n  {_compose.ENV_FILE} (+ audio keys"
-            + ("" if audio_lang == AUDIO_LANG_DEFAULT else f", {audio_lang}")
-            + ")"
-            if audio
-            else ""
-        )
+        + _env_audio_note(audio, audio_lang)
         + override_note
         + profile_note
         + f"\n>> next: {next_step}",

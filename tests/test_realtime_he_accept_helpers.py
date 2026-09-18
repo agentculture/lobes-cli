@@ -673,4 +673,5 @@ def test_drain_lets_the_player_finish_buffered_audio_before_any_terminate():
 def test_drain_terminates_a_player_that_never_exits():
     player = _FakePlayer(exits_after_waits=None)
     rha._drain_playback(player, timeout=0.01)
-    assert player.closed and player.terminated
+    assert player.closed
+    assert player.terminated

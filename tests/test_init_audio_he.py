@@ -104,6 +104,34 @@ def test_audio_lang_he_apply_never_rewrites_an_existing_env_line(tmp_path) -> No
     assert hebrew.startswith(english)
 
 
+def test_audio_lang_he_reapply_does_not_duplicate_or_clobber_an_edited_key(tmp_path) -> None:
+    """Qodo finding: a re-run of `init --fleet --audio --audio-lang he --apply`
+    used to APPEND the whole Hebrew template again with no de-duplication, so
+    after an operator set PHONIKUD_MODEL_PATH, a re-run appended a second,
+    blank PHONIKUD_MODEL_PATH= line — and since docker compose `env_file`
+    semantics make the LAST occurrence win, the operator's value was silently
+    lost. This must survive a re-run with exactly one occurrence, holding the
+    operator's edited value."""
+    target = tmp_path / "he"
+    assert main(["init", "--fleet", "--audio", "--audio-lang", "he", str(target), "--apply"]) == 0
+    env_path = target / _compose.ENV_FILE
+    original = env_path.read_text(encoding="utf-8")
+    assert "PHONIKUD_MODEL_PATH=" in original
+    edited = original.replace(
+        "PHONIKUD_MODEL_PATH=\n", "PHONIKUD_MODEL_PATH=/opt/models/phonikud\n"
+    )
+    assert edited != original
+    env_path.write_text(edited, encoding="utf-8")
+
+    assert main(["init", "--fleet", "--audio", "--audio-lang", "he", str(target), "--apply"]) == 0
+
+    reapplied = env_path.read_text(encoding="utf-8")
+    lines = reapplied.splitlines()
+    phonikud_lines = [ln for ln in lines if ln.startswith("PHONIKUD_MODEL_PATH=")]
+    assert len(phonikud_lines) == 1, phonikud_lines
+    assert phonikud_lines[0] == "PHONIKUD_MODEL_PATH=/opt/models/phonikud"
+
+
 def test_every_hebrew_compose_referenced_dockerfile_is_scaffolded(tmp_path) -> None:
     """Same guardrail as tests/test_init.py's English version: a `dockerfile:`
     the Hebrew overlay references MUST itself be scaffolded."""
