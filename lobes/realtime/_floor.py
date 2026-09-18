@@ -43,6 +43,17 @@ Floor states
 ``listening``. The user holds the floor in ``listening``; the machine holds it
 in the other three (:data:`MACHINE_HELD_STATES`), and ``closed`` is teardown.
 
+``responding`` has one detour: a generate reply that is a tool call moves to
+``tool_wait`` instead of ``speaking`` (:meth:`Floor.on_tool_call`) — a fourth
+machine-held state, added for issue #151 t6. The client runs the tool and
+sends a result (:meth:`Floor.on_tool_result`), which returns the floor to
+``responding`` and re-arms the generate deadline for the bridge's second
+generate call. ``tool_wait`` arms its own deadline
+(:data:`DEFAULT_TOOL_WAIT_TIMEOUT_MS`, a constructor argument — never
+hardcoded policy) rather than the TTS one, and is interrupted by a barge-in
+exactly like every other machine-held state, emitting
+:class:`ResponseInterrupted` with ``stage=Stage.TOOL``.
+
 ``speaking`` covers TWO sub-stages, because the Chatterbox sidecar has no
 streaming route — :func:`~lobes.realtime.tts_client.synthesize` is full-read,
 so the bridge holds the *complete* reply PCM before the first byte can go out:
@@ -176,6 +187,15 @@ DEFAULT_TRANSCRIBE_TIMEOUT_MS = 60_000
 DEFAULT_GENERATE_TIMEOUT_MS = 60_000
 DEFAULT_TTS_TIMEOUT_MS = 60_000
 
+# A tool call round-trips through the client (issue #151 t6): the bridge sends
+# the call out, the client runs the tool and sends a result back, and only
+# then does a second generate call start. That is a genuinely longer wait than
+# the other three stages — none of which involve a client round-trip — so it
+# gets its own, larger default rather than reusing DEFAULT_GENERATE_TIMEOUT_MS.
+# This is plan risk r5: a constructor argument, never hardcoded policy — the
+# env knob (TOOL_WAIT_TIMEOUT_MS) is read by _settings.py, not by this module.
+DEFAULT_TOOL_WAIT_TIMEOUT_MS = 120_000
+
 # NOTE (issue #151 t6): this module used to define its own
 # DEFAULT_CHUNK_MS/DEFAULT_CHUNK_BYTES (40ms / 1920 bytes). It no longer does.
 # The wire codec ships the delta size (_wire.DEFAULT_DELTA_CHUNK_BYTES, 100ms /
@@ -193,6 +213,7 @@ class FloorState(str, Enum):
     LISTENING = "listening"  # the user's floor
     TRANSCRIBING = "transcribing"  # the turn is committed; STT is in flight
     RESPONDING = "responding"  # the generate call is in flight
+    TOOL_WAIT = "tool_wait"  # the client is running a tool; a result is due
     SPEAKING = "speaking"  # TTS is in flight, then audio is being delivered
     CLOSED = "closed"
 
@@ -202,6 +223,7 @@ class Stage(str, Enum):
 
     TRANSCRIBE = "transcribe"
     GENERATE = "generate"
+    TOOL = "tool"
     TTS = "tts"
 
 
@@ -214,6 +236,7 @@ class FailureReason(str, Enum):
 
     TRANSCRIBE_TIMEOUT = "transcribe_timeout"
     GENERATE_TIMEOUT = "generate_timeout"
+    TOOL_WAIT_TIMEOUT = "tool_wait_timeout"
     TTS_TIMEOUT = "tts_timeout"
     TRANSCRIBE_FAILED = "transcribe_failed"
     GENERATE_FAILED = "generate_failed"
@@ -221,18 +244,25 @@ class FailureReason(str, Enum):
 
 
 MACHINE_HELD_STATES = frozenset(
-    {FloorState.TRANSCRIBING, FloorState.RESPONDING, FloorState.SPEAKING}
+    {
+        FloorState.TRANSCRIBING,
+        FloorState.RESPONDING,
+        FloorState.TOOL_WAIT,
+        FloorState.SPEAKING,
+    }
 )
 
 _STAGE_OF_STATE = {
     FloorState.TRANSCRIBING: Stage.TRANSCRIBE,
     FloorState.RESPONDING: Stage.GENERATE,
+    FloorState.TOOL_WAIT: Stage.TOOL,
     FloorState.SPEAKING: Stage.TTS,
 }
 
 _TIMEOUT_REASON = {
     Stage.TRANSCRIBE: FailureReason.TRANSCRIBE_TIMEOUT,
     Stage.GENERATE: FailureReason.GENERATE_TIMEOUT,
+    Stage.TOOL: FailureReason.TOOL_WAIT_TIMEOUT,
     Stage.TTS: FailureReason.TTS_TIMEOUT,
 }
 
@@ -241,6 +271,7 @@ _STAGE_OF_REASON = {
     FailureReason.TRANSCRIBE_FAILED: Stage.TRANSCRIBE,
     FailureReason.GENERATE_TIMEOUT: Stage.GENERATE,
     FailureReason.GENERATE_FAILED: Stage.GENERATE,
+    FailureReason.TOOL_WAIT_TIMEOUT: Stage.TOOL,
     FailureReason.TTS_TIMEOUT: Stage.TTS,
     FailureReason.TTS_FAILED: Stage.TTS,
 }
@@ -266,6 +297,25 @@ class ReplyText:
     at_ms: int
     turn_id: int
     text: str
+
+
+@dataclass(frozen=True)
+class ToolCallRequested:
+    """The generate call returned a tool call instead of a spoken reply.
+
+    Arms the TOOL deadline, never the TTS one — the reply is not yet spoken,
+    and may never be spoken at all if the tool result leads to another tool
+    call. ``call_id``/``name``/``arguments`` are opaque to this module (it
+    never parses ``arguments``); it carries them only so the route can wire
+    them onto :class:`~lobes.realtime._session.ResponseFunctionCallArgumentsDoneEvent`
+    without this module importing ``_session``.
+    """
+
+    at_ms: int
+    turn_id: int
+    call_id: str
+    name: str
+    arguments: str
 
 
 @dataclass(frozen=True)
@@ -312,7 +362,14 @@ class ResponseFailed:
     message: str
 
 
-FloorEvent = ResponseStarted | ReplyText | ResponseDone | ResponseInterrupted | ResponseFailed
+FloorEvent = (
+    ResponseStarted
+    | ReplyText
+    | ToolCallRequested
+    | ResponseDone
+    | ResponseInterrupted
+    | ResponseFailed
+)
 
 EmitEvent = Callable[[FloorEvent], None]
 SendAudioChunk = Callable[[bytes], None]
@@ -362,11 +419,12 @@ class Floor:
 
     Inputs (the state machine's whole alphabet):
     :meth:`on_speech_started`, :meth:`on_turn_committed`, :meth:`on_transcript`,
-    :meth:`on_reply_text`, :meth:`on_audio_ready`, :meth:`deliver_next`,
-    :meth:`tick`, :meth:`fail_stage`, :meth:`close`. Every one is total —
-    defined from every state, returning ``False`` where it does not apply and
-    never raising, because several of them are driven by a watchdog that can
-    race a teardown.
+    :meth:`on_reply_text`, :meth:`on_tool_call`, :meth:`on_tool_result`,
+    :meth:`on_audio_ready`, :meth:`deliver_next`, :meth:`tick`,
+    :meth:`fail_stage`, :meth:`close`. Every one is total — defined from
+    every state, returning ``False`` where it does not apply and never
+    raising, because several of them are driven by a watchdog that can race a
+    teardown.
     """
 
     def __init__(
@@ -381,6 +439,7 @@ class Floor:
         barge_in_window_ms: int = DEFAULT_BARGE_IN_WINDOW_MS,
         transcribe_timeout_ms: int = DEFAULT_TRANSCRIBE_TIMEOUT_MS,
         generate_timeout_ms: int = DEFAULT_GENERATE_TIMEOUT_MS,
+        tool_wait_timeout_ms: int = DEFAULT_TOOL_WAIT_TIMEOUT_MS,
         tts_timeout_ms: int = DEFAULT_TTS_TIMEOUT_MS,
         sample_rate: int = TTS_SAMPLE_RATE,
     ) -> None:
@@ -394,6 +453,7 @@ class Floor:
         self._timeouts = {
             Stage.TRANSCRIBE: transcribe_timeout_ms,
             Stage.GENERATE: generate_timeout_ms,
+            Stage.TOOL: tool_wait_timeout_ms,
             Stage.TTS: tts_timeout_ms,
         }
         # A chunk that split a PCM16 sample would desync playback from the
@@ -529,6 +589,48 @@ class Floor:
         self._state = FloorState.SPEAKING
         self._arm(Stage.TTS)
         self._emit(ReplyText(at_ms=self._clock(), turn_id=self._turn_id, text=text))
+        return True
+
+    def on_tool_call(
+        self, *, call_id: str, name: str, arguments: str, turn_id: int | None = None
+    ) -> bool:
+        """The generate call returned a tool call rather than a spoken reply.
+
+        Moves ``responding`` to ``tool_wait`` and arms the TOOL deadline —
+        never the TTS one, since nothing is being synthesized yet and may
+        never be, if the tool result leads to another tool call.
+        """
+        if not self._accepts(FloorState.RESPONDING, turn_id):
+            return False
+        self._disarm()
+        self._state = FloorState.TOOL_WAIT
+        self._arm(Stage.TOOL)
+        self._emit(
+            ToolCallRequested(
+                at_ms=self._clock(),
+                turn_id=self._turn_id,
+                call_id=call_id,
+                name=name,
+                arguments=arguments,
+            )
+        )
+        return True
+
+    def on_tool_result(self, *, turn_id: int | None = None) -> bool:
+        """The client's tool result arrived; the bridge will re-generate.
+
+        Returns the floor to ``responding`` and RE-ARMS the generate
+        deadline — the bridge issues a second generate request with the tool
+        result folded into history. Accepted only from ``tool_wait``; a
+        result arriving in any other state is refused (``False``) without
+        changing state, the same idiom every other completion input uses for
+        a stale or out-of-order arrival.
+        """
+        if not self._accepts(FloorState.TOOL_WAIT, turn_id):
+            return False
+        self._disarm()
+        self._state = FloorState.RESPONDING
+        self._arm(Stage.GENERATE)
         return True
 
     def on_audio_ready(self, pcm: bytes, *, turn_id: int | None = None) -> bool:
@@ -711,6 +813,7 @@ __all__ = [
     "DEFAULT_BARGE_IN_WINDOW_MS",
     "DEFAULT_TRANSCRIBE_TIMEOUT_MS",
     "DEFAULT_GENERATE_TIMEOUT_MS",
+    "DEFAULT_TOOL_WAIT_TIMEOUT_MS",
     "DEFAULT_TTS_TIMEOUT_MS",
     "MACHINE_HELD_STATES",
     "FloorState",
@@ -718,6 +821,7 @@ __all__ = [
     "FailureReason",
     "ResponseStarted",
     "ReplyText",
+    "ToolCallRequested",
     "ResponseDone",
     "ResponseInterrupted",
     "ResponseFailed",

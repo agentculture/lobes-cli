@@ -167,6 +167,7 @@ FAILURE_ERROR_CODES: dict[FailureReason, ErrorCode] = {
     FailureReason.TTS_FAILED: ErrorCode.TTS_FAILED,
     FailureReason.TRANSCRIBE_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
     FailureReason.GENERATE_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
+    FailureReason.TOOL_WAIT_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
     FailureReason.TTS_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
 }
 
