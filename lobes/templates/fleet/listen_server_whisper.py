@@ -233,6 +233,15 @@ def linear_resample(samples: Sequence[float], src_rate: int, dst_rate: int) -> l
     return out
 
 
+def _clip_too_long_message(duration: float, max_seconds: float) -> str:
+    """Shared wording for a refused clip, whichever check found it too long
+    (the post-decode sample-count check, or the pre-decode WAV-header peek)."""
+    return (
+        f"clip too long: {duration:.1f}s exceeds the {max_seconds:.0f}s "
+        "Whisper window (refused, not chunked — see MAX_CLIP_SECONDS)"
+    )
+
+
 def validate_clip_duration(
     num_samples: int, sample_rate: int, max_seconds: float = MAX_CLIP_SECONDS
 ) -> Optional[str]:
@@ -243,11 +252,68 @@ def validate_clip_duration(
         return "invalid sample rate"
     duration = num_samples / sample_rate
     if duration > max_seconds:
+        return _clip_too_long_message(duration, max_seconds)
+    return None
+
+
+# Cheap upload-size cap, checked BEFORE any decoding (Qodo finding: reading
+# the whole multipart body and decoding every frame into Python objects
+# before the 30s duration limit is applied lets an oversized upload exhaust a
+# speech worker). 30s of 48kHz stereo PCM16 is ~5.8MB, so 16 MiB is generous
+# headroom above any legitimate clip while still bounding memory; the
+# realtime bridge's own turn audio (max 30s at 16kHz mono, ~1MB) is well
+# under it either way.
+DEFAULT_MAX_UPLOAD_BYTES = 16 * 1024 * 1024
+
+
+def parse_max_upload_bytes(raw: str | None) -> int:
+    """``STT_MAX_UPLOAD_BYTES``: a positive integer byte cap; empty/unset or
+    an unparseable/non-positive value falls back to the default (a typo must
+    not silently disable the cap)."""
+    if raw is None:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    value = raw.strip()
+    if not value:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_MAX_UPLOAD_BYTES
+    return parsed if parsed > 0 else DEFAULT_MAX_UPLOAD_BYTES
+
+
+def check_upload_size(num_bytes: int, max_bytes: int) -> Optional[str]:
+    """Return an error message iff *num_bytes* exceeds *max_bytes*, else
+    ``None``. Cheap: a plain integer comparison, called before any WAV
+    parsing or frame decoding."""
+    if num_bytes > max_bytes:
         return (
-            f"clip too long: {duration:.1f}s exceeds the {max_seconds:.0f}s "
-            "Whisper window (refused, not chunked — see MAX_CLIP_SECONDS)"
+            f"upload too large: {num_bytes} bytes exceeds the {max_bytes} byte "
+            "cap (STT_MAX_UPLOAD_BYTES)"
         )
     return None
+
+
+MAX_UPLOAD_BYTES = parse_max_upload_bytes(os.environ.get("STT_MAX_UPLOAD_BYTES"))
+
+
+def peek_wav_duration_seconds(raw_bytes: bytes) -> Optional[float]:
+    """Clip duration (seconds) read from the WAV HEADER alone — ``wave``'s
+    ``getnframes()``/``getframerate()`` are header reads, not a frame decode
+    (:func:`decode_wav_pcm16` does the actual ``readframes()``). Lets the
+    duration limit reject a pathological header (a huge declared frame count)
+    before any frame is read into Python objects. Returns ``None`` when the
+    header can't be parsed — the caller falls through to the full decode,
+    which raises its own, more specific error."""
+    try:
+        with wave.open(io.BytesIO(raw_bytes), "rb") as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+    except (wave.Error, EOFError):
+        return None
+    if rate <= 0:
+        return None
+    return frames / rate
 
 
 def build_success_response(text: str) -> dict:
@@ -384,6 +450,21 @@ if _FASTAPI_AVAILABLE:
         realtime bridge's own output shape). See the module docstring for the
         channel/resample/duration-limit contract."""
         content = await file.read()
+
+        size_error = check_upload_size(len(content), MAX_UPLOAD_BYTES)
+        if size_error is not None:
+            return JSONResponse(
+                status_code=413, content=build_error_body(size_error, "upload_too_large")
+            )
+
+        header_duration = peek_wav_duration_seconds(content)
+        if header_duration is not None and header_duration > MAX_CLIP_SECONDS:
+            return JSONResponse(
+                status_code=413,
+                content=build_error_body(
+                    _clip_too_long_message(header_duration, MAX_CLIP_SECONDS), "clip_too_long"
+                ),
+            )
 
         try:
             samples, sample_rate, channels = decode_wav_pcm16(content)

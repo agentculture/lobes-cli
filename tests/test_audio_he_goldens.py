@@ -43,4 +43,7 @@ def test_audio_he_golden_carries_the_hebrew_selection() -> None:
 
 def test_audio_he_golden_is_pure() -> None:
     """Rendering is a pure function of the template — no host state."""
-    assert audio_he_defaults_text() == audio_he_defaults_text()
+    first = audio_he_defaults_text()
+    second = audio_he_defaults_text()
+    assert first == second
+    assert first == _GOLDEN.read_text(encoding="utf-8")
