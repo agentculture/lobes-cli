@@ -365,7 +365,9 @@ if _FASTAPI_AVAILABLE:
                 max_new_tokens=128,
             )
         text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-        text = filter_non_speech_only(text)
+        # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
+        # listen_server.py's callers never see one, so strip before filtering.
+        text = filter_non_speech_only(text.strip())
 
         return build_success_response(text)
 

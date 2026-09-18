@@ -65,3 +65,13 @@ DECISION (resolves plan risk r1): the Hebrew STT sidecar uses TRANSFORMERS, not 
   non-speech, must be reproduced in the sidecar: a transcript that is only a bracketed tag, e.g. '(צחוק)',
   is returned as empty text. That matters more than accuracy here — with tools declared, a phantom
   transcript is a phantom command (frame claim c31).
+
+SIDECAR PROOF (plan task t10) — lobes/templates/fleet/Dockerfile.whisper-stt + listen_server_whisper.py, 2026-09-18
+  docker build (scratch tag, NOT the deployment): 46 s on the base Dockerfile.parakeet already uses.
+  GET /v1/health/ready ~15 s after start:
+    {"status":"ready","model_loaded":true,"cuda_ok":true,"model":"ivrit-ai/whisper-large-v3-turbo"}
+  POST /v1/audio/transcriptions, the 12 reSpeaker-ch1 clips: response keys ['text'], ~0.17 s each (median 0.170 s
+  incl. HTTP), same words as the spike on s01-s11; s12 (the non-silent "silence") -> text '' — the bracketed-tag
+  filter working on real audio. No `language` field -> Hebrew (STT_LANGUAGE default). A 161 s clip -> HTTP 413
+  clip_too_long. One defect found and fixed after this run: transcripts carried Whisper's leading space.
+  NOT yet proven: the service inside the deployment's compose chain, and the bridge calling it.

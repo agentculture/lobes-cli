@@ -7,15 +7,17 @@
 # WHY THIS BASE IMAGE
 # ---------------------------------------------------------------------------
 # scitrera/dgx-spark-vllm:0.16.0-t4 is the EXACT base Dockerfile.parakeet
-# already uses, and it is also the exact image the t2 spike measured the
-# Whisper runtime inside (docs/evidence/2026-09-hebrew-stt-spike-spark.txt):
-# transformers 5.12.1 / torch 2.11.0+cu130, 1.56 GiB peak CUDA, ~0.14s per
-# 9.35s clip, on THIS box's silicon. Reusing it means this recipe starts
-# from a base already proven on the target hardware, rather than adding a
-# second, unvalidated CUDA base to the audio overlay (which is exactly the
-# tradeoff Dockerfile.chatterbox's own header comment weighs, the other
-# direction, when Perth's ABI forced it off the NGC pytorch base). No fresh
-# base-image risk is worth taking here when a validated one already exists.
+# already uses, so the audio overlay gains no second CUDA base (the tradeoff
+# Dockerfile.chatterbox's header weighs the other way, when Perth's ABI
+# forced it off the NGC pytorch base).
+#
+# Provenance, stated precisely: the t2 RUNTIME spike (transformers vs vLLM,
+# docs/evidence/2026-09-hebrew-stt-spike-spark.txt) ran inside the fleet's
+# vLLM image, NOT this base. THIS recipe was proven separately on the DGX
+# Spark GB10, 2026-09-18: built in 46 s, /v1/health/ready answered ready with
+# the model id ~15 s after start, and the operator's recorded Hebrew clips
+# transcribed through POST /v1/audio/transcriptions in ~0.17 s each with the
+# same text as the spike.
 # ---------------------------------------------------------------------------
 FROM scitrera/dgx-spark-vllm:0.16.0-t4
 
