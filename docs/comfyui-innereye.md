@@ -393,6 +393,39 @@ distinction worth stating because ComfyUI's own `/` and `/system_stats`
 answer 200 earlier, during the loading window, and would falsely advertise
 `ready: true` if used instead.
 
+## Rebuilding the image on a live box
+
+The image needs a **C compiler at runtime**, not only at build time. Triton
+builds a small C launcher the first time it runs a kernel, so an image
+without one fails every render at the first sampler step with
+`RuntimeError: Failed to find C compiler` (measured on the Spark,
+2026-09-18). `Dockerfile.comfyui` installs `build-essential` for that, plus
+`python3.12-dev` for `Python.h`. `tests/test_comfyui_dockerfile.py` pins
+both.
+
+A template fix like that one reaches a running box only when the changed
+`Dockerfile.comfyui` is copied into the deployment and `comfyui` is rebuilt
+**there**. Never run `docker compose` in `lobes/templates/fleet/`; it starts a
+second project that takes the container name and lands on a network the
+gateway can't see. The procedure, and the 2026-09-18 incident that prompted
+it, are in [`operating-a-deployment.md`](operating-a-deployment.md). In short:
+
+```bash
+cp ~/.lobes/Dockerfile.comfyui ~/.lobes/Dockerfile.comfyui.bak-$(date +%Y%m%d-%H%M%S)
+cp lobes/templates/fleet/Dockerfile.comfyui ~/.lobes/
+S=.claude/skills/lobes-deploy/scripts/lobes-compose.sh
+$S --apply build comfyui && $S --apply up -d --no-deps comfyui
+docker exec model-gear-gateway getent hosts comfyui   # the gateway must resolve it
+```
+
+Then prove it with one small `POST /v1/render` through the gateway.
+
+The Spark itself runs with `INNEREYE_UI_PORT=0.0.0.0:8188` since 2026-09-18.
+Network-wide access to the UI is an operator requirement there, and the
+missing login is an accepted cost. Its hand-kept
+`docker-compose.override.yml` reads the knob directly, so a change to it
+needs only a `.env` edit and a recreate of `comfyui`, with no re-render.
+
 ## Rollback
 
 The compose service is not the only way to run this tenant. **With the

@@ -251,4 +251,7 @@ docs/steward/
 
 # Qwen Code scratch state (review worktrees, fetched PR context).
 # Written into the repo root by `qwen review`; never part of the tree.
-.qwen/
+# Exception: .qwen/skills/ holds committed links to .claude/skills/<name>, so
+# Qwen Code (which reads .qwen/skills, not .claude/skills) finds the same skills.
+.qwen/*
+!.qwen/skills/
