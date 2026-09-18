@@ -1,0 +1,374 @@
+{
+  "slug": "public-lobes-and-hebrew-site",
+  "title": "public-lobes-and-hebrew-site",
+  "schema_version": 6,
+  "status": "drafting",
+  "created": "2026-09-18T19:23:51Z",
+  "updated": "2026-09-18T20:39:00Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Spark's public gateway moves to a new operator-held hostname, its /capabilities advert tells the truth about the Hebrew audio lanes, and the Hebrew realtime web harness is reachable from anywhere behind SSO for the operator alone \u2014 with no hostname or email in any committed file",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "The public gateway hostname moves to the new name on the SAME token-run tunnel: cultureflare remote-login setup --no-access --service localhost:8001 --tunnel-name <existing tunnel> on the new name. Setup REPLACES the tunnel's whole ingress list (one hostname per tunnel; replace-not-merge), so the old name stops routing at that moment, not at teardown. Teardown --keep-tunnel then only deletes the old DNS record, since it never edits ingress. The gateway's own GATEWAY_API_KEY bearer gate stays the only auth. Acceptable here only because the operator chose an immediate teardown; a zero-downtime cutover would need a second tunnel and a second connector",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The public gateway hostname moves to the new name by reusing the existing token-run tunnel: cultureflare remote-login setup (--no-access, service localhost:8001) on the new name, then teardown of the old name's DNS/ingress with --keep-tunnel \u2014 the gateway's own GATEWAY_API_KEY bearer gate stays the only auth, as today",
+          "kind": "requirement",
+          "reason": "Qodo on PR #280: c2 omitted --tunnel-name and wrongly implied teardown removes ingress; corrected to the executed sequence (verified against cultureflare _tunnel.ensure_tunnel_config + teardown)"
+        }
+      ]
+    },
+    {
+      "id": "c3",
+      "kind": "boundary",
+      "text": "No hostname and no email address enters any committed file in lobes-cli (code, docs, evidence, CHANGELOG, devague frames/plans) \u2014 per-machine values live only in untracked config: the systemd unit, ~/.config/cloudflared, the deployment's gitignored .cf-tunnel.env, site/.env, and Cloudflare's own control plane",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "The Spark's systemd unit and token-file name stop naming the old hostname (local, untracked edit). The new hostname must answer 401 unauthenticated / 200 authenticated / 101 on /v1/realtime before the old DNS record is deleted. The old name's ROUTING already ends at the ingress replace (see c2)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The Spark's systemd unit Description and token-file name stop naming the old hostname (local, untracked edit); the old hostname's DNS record is torn down only after the new one answers 401 unauthenticated / 200 authenticated, including a 101 on /v1/realtime",
+          "kind": "requirement",
+          "reason": "Qodo on PR #280: the old route is cut at setup, not at DNS teardown"
+        }
+      ]
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "Consumers of the old hostname outside lobes-cli are docs/test fixtures only: culture-nodes cites it in two docs + one devague frame as dated evidence, cultureflare uses it as an example --hostname in three test files; no live config on the Spark or the Orin points at it",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "non_goal",
+      "text": "Editing culture-nodes or cultureflare to rename their historical/example references is not part of this \u2014 they are dated evidence and fixtures, and changing them would be a PR on those repos",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "The Spark's gateway is re-imaged to lobes-cli 0.81.0 (already on PyPI, main's version) via lobes doctor --repin-version --apply then lobes up gateway --build --apply \u2014 gateway only, --no-deps, no other lane recreated",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "The live gateway passes STT_LANGUAGE and TTS_LANGUAGE through (deployment override edit, backed up first), so /capabilities carries language he on stt and tts",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The tts advert names the engine that actually speaks \u2014 BlueTTS on CPU, which the realtime bridge reaches via TTS_URL=http://bluetts:9000 \u2014 not Chatterbox; set via TTS_MODEL/TTS_RUNTIME in the untracked deployment",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Which model string should the tts advert declare for BlueTTS, given its weights carry no declared licence and CLAUDE.md says the sidecar names no weights repo in any shipped file \u2014 the upstream weights id, a neutral local label, or leave Chatterbox until the licence settles?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Operator (2026-09-18): BlueTTS is MIT-licensed. The advert names the upstream weights id notmax123/BlueTTS2.5-onnx with a bluetts runtime. The HF model card itself still declares no licence field."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "The capabilities fix is a live-deployment change only \u2014 no template, catalog or roles.py code change is needed, because PR #279's role_payload already reads STT_/TTS_LANGUAGE and TTS_MODEL/TTS_RUNTIME; whether the packaged template should also pass the language keys through is a separate question",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The Hebrew realtime harness (site/) is served on a second operator-held hostname through a cultureflare remote-login setup with --allow restricted to the single operator email (the same Tunnel+DNS+Access pattern already live for the irc-lens chat hostname); unauthenticated visitors hit the Cloudflare Access login, never the page",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "The site keeps its credential-injecting proxy server-side: the browser never receives GATEWAY_API_KEY; the page dials same-origin /v1/realtime and the dev-server proxy (gateway-proxy.mjs) adds the bearer to the upstream gateway at 127.0.0.1:8001",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Serving the harness under the public hostname must pass Vite's host check: astro dev today binds 127.0.0.1:4321 with no server.allowedHosts, and Vite 8.1.5 rejects any non-loopback Host header on plain HTTP \u2014 the allowed host must come from untracked config (e.g. site/.env), not a hardcoded hostname in astro.config.mjs",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Publishing the harness amends the recorded #151 local-only decision, so site/README.md and astro.config.mjs comments that assert it is never deployed are rewritten to describe the SSO-gated operator deployment \u2014 without naming the hostname or email",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "Does serving astro dev through an SSO-gated tunnel stay inside the #151 boundary (no adapter, no CI deploy, no site: URL \u2014 still dev-server only), or break it and need #151 reopened/superseded?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Operator (2026-09-18): the site stays local \u2014 astro dev on the Spark, dev-server proxy, no adapter/CI deploy \u2014 and Cloudflare + SSO is what makes it reachable globally. Inside #151's boundary; docs are amended to say so, not reopened."
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "No deploy workflow, adapter, or Cloudflare Pages target is added \u2014 CI keeps building site/ only (tests.yml site-build job); the harness keeps running as a process on the Spark behind the tunnel",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "HTTPS through Cloudflare makes the page a secure context, so getUserMedia works from any device \u2014 the reason ssh -L existed goes away; Hebrew needs no site-side config (Language defaults to he, dir=auto transcripts, RTL-safe font)",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Whether the Thor consumes the old public hostname is unverified \u2014 ssh thor@thor timed out from this session; Orin checked clean",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Whether the loaded CLOUDFLARE_API_TOKEN holds Edit scope (Tunnel / Access Apps & Policies / Zone DNS) is not readable \u2014 it surfaces only as a 403 on the first remote-login --apply",
+      "kind": "unknown_blocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "cloudflared tunnel units + cultureflare remote-login",
+      "finding": "Both tunnels on the Spark are remotely managed (token files in ~/.config/cloudflared, no local config.yml, no cert.pem); cultureflare 0.11.0 remote-login show resolves the gateway tunnel's ingress to localhost:8001 with no Access app, and the new hostname is unprovisioned today; the target zone is one the loaded CLOUDFLARE_API_TOKEN can read (zones list)",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes-cli committed tree + .gitignore + scan_deployment_secrets.py",
+      "finding": "No committed file names the current public hostname; the tunnel verb resolves --hostname -> CULTURE_VLLM_PUBLIC_HOSTNAME -> gitignored .cf-tunnel.env; the positional *.env gitignore rule covers it; scan_deployment_secrets.py checks secret key names only, never hostnames or emails; .devague/ IS tracked, so frame text must stay hostname-free",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "~/.config/systemd/user/cloudflared-vllm.service",
+      "finding": "Untracked unit; Description= and TUNNEL_TOKEN_FILE path both embed the old hostname; the probe matrix (401/200/101) measured today over the old name is the acceptance bar for the new one",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "sibling repos + home config + Orin",
+      "finding": "grep over /home/spark/git found the old name only in culture-nodes docs/frame and cultureflare tests (all tracked, all illustrative/historical); ~/.bashrc, ~/.claude, ~/.qwen, ~/.codex have none; the Orin's ~/.lobes ~/.config ~/git have none",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "culture-nodes + cultureflare references",
+      "finding": "References are a dated finding in a spec/frame and example CLI args in tests \u2014 not runtime dependents",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "live ~/.lobes .env + Dockerfile.gateway + lobes-deploy skill",
+      "finding": "MODEL_GEAR_VERSION=0.79.0 is baked as a build-arg into Dockerfile.gateway; 0.81.0 is on PyPI; the lobes-deploy skill's procedure is back up, edit the deployment not the templates, recreate one service with --no-deps, verify through the gateway",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "~/.lobes/docker-compose.override.yml gateway env block",
+      "finding": "The override passes STT_MODEL/STT_RUNTIME/TTS_MODEL/TTS_RUNTIME to the gateway but not STT_LANGUAGE/TTS_LANGUAGE; docker inspect confirms neither is in the container env although .env sets both to he \u2014 so a re-image alone would still omit language",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/roles.py _declared_audio_engine + live TTS wiring",
+      "finding": "roles.py reads TTS_MODEL/TTS_RUNTIME from env with Chatterbox defaults; the deployment declares ResembleAI/chatterbox + chatterbox-multilingual while the realtime bridge speaks through the bluetts sidecar \u2014 advert and routing are separate code paths and currently disagree",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "PR #279 (merged) role_payload",
+      "finding": "role_payload is the one serializer for lobes capabilities and GET /capabilities; language is omitted when unset, never null; and on origin/main the packaged fleet/docker-compose.audio-he.yml already passes STT_LANGUAGE/TTS_LANGUAGE to the gateway service (lines 146, 154) \u2014 the gap is only in the Spark's hand-carried override, so no template change is needed",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "cultureflare remote-login --allow + the live chat hostname",
+      "finding": "remote-login setup --hostname H --service URL --allow EMAIL provisions Tunnel+DNS+Access app+allow policy in one --apply; the account's chat hostname already runs exactly this (1 allow rule + service token); Access apps are keyed by hostname",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "site/proxy/gateway-proxy.mjs + site/.env",
+      "finding": "Proxy reads LOBES_GATEWAY_URL/LOBES_GATEWAY_API_KEY from site/.env (gitignored), strips inbound cookie/authorization and sets Bearer on HTTP and WS upgrade; the Spark's site/.env already points at 127.0.0.1:8001 with a key present; the page's default endpoint is the relative /v1/realtime",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "site/astro.config.mjs + vite 8.1.5 hostValidationMiddleware",
+      "finding": "astro.config.mjs sets no server.allowedHosts; vite's hostValidationMiddleware (node.js:26013) blocks non-loopback Host on HTTP servers, including WS upgrades; the running process is astro dev --port 4321 --host 127.0.0.1",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "site/README.md:1-13,174-177 + astro.config.mjs:27-46",
+      "finding": "Four passages state the site is LOCAL-ONLY by decision (#151 scope boundary), never deployed, dev-server-only proxy by construction; publishing through a tunnel falsifies those as written",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": ".github/workflows/tests.yml site-build",
+      "finding": "The only CI touching site/ is a build-only job (npm ci + npm run build); no workflow deploys or uploads it",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "site/src/scripts/realtime-connection.ts + mic-island.ts",
+      "finding": "DEFAULT_LANGUAGE is he; mic capture needs a secure context which today only localhost satisfies; mic-island's localhost wording is diagnostic copy, not a gate",
+      "seeds": [
+        "c16"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

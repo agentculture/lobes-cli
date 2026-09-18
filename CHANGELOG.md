@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.81.1] - 2026-09-18
+
+### Added
+
+- site: `LOBES_SITE_ALLOWED_HOSTS` (git-ignored `site/.env`, comma-separated) — extra Host headers the local `astro dev` server answers, so an operator can front it with a tunnel gated by Cloudflare Access SSO. Unset keeps Vite's loopback-only default; the parser never yields Vite's allow-any `true`. The repo names no hostname and no email.
+
+### Changed
+
+- site README / astro.config.mjs: the harness is described as RUN LOCALLY rather than local-only. An SSO-gated tunnel in front of the same local dev server is documented as an operator option inside #151's no-deploy boundary (still no adapter, no `site:` URL, no deploy workflow), with a warning that the Access gate is the only thing in front of the key-injecting proxy.
+
 ## [0.81.0] - 2026-09-18
 
 ### Added

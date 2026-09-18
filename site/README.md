@@ -1,16 +1,19 @@
 # lobes realtime test harness
 
-A local-only Astro site for driving the fleet's `GET /v1/realtime` WebSocket
+An Astro site, run locally, for driving the fleet's `GET /v1/realtime` WebSocket
 session from a browser: mic in, live event stream, audio out. It exists so the
 realtime surface can be *experienced* — VAD boundaries, transcripts,
 interruptions scrolling past in real time — instead of inferred from terminal
 prints.
 
-**It is never deployed.** There is no adapter, no `site:` URL, and no workflow
-under `.github/workflows` that publishes it — and none should be added. The
-only CI job that touches this directory builds it, so a broken site fails a PR;
-nothing ships it anywhere. Issue #151 records that as a scope boundary, not an
-oversight.
+**It is never deployed — it runs locally.** There is no adapter, no `site:`
+URL, and no workflow under `.github/workflows` that publishes it — and none
+should be added. The only CI job that touches this directory builds it, so a
+broken site fails a PR; nothing ships it anywhere. Issue #151 records that as a
+scope boundary, not an oversight. An operator *may* make the local `npm run
+dev` reachable from anywhere by fronting it with a tunnel and an SSO gate — see
+[Reaching it from anywhere](#the-alternative-a-tunnel-behind-sso). That is the
+same local process, not a deployment.
 
 ## Read this first: the microphone will silently not exist
 
@@ -27,7 +30,7 @@ is simply `undefined`, and a page that does not check for that looks completely
 fine and hears nothing forever. Every symptom points at VAD, at the model, at
 the network — at anything but the URL bar.
 
-There are exactly two ways out, and the first is the one to use.
+There are three ways out. Use the first one unless you need another.
 
 ### The flow: `ssh -L` (primary)
 
@@ -84,6 +87,32 @@ Two things then have to hold, and both bite quietly:
   `*.pem` out of the tree yourself.
 
 `ssh -L` avoids both. Prefer it.
+
+### The alternative: a tunnel behind SSO
+
+To use the harness from any device without forwarding ports (a phone, say),
+leave `npm run dev` running on the box and front it with a Cloudflare Tunnel
+whose hostname is gated by **Cloudflare Access** for the operator's identity
+alone. The page is then served over HTTPS, so it is a secure context and the
+microphone works. Its WebSocket dials `wss:` on the same origin, so the
+credential-injecting proxy (below) still holds the key, and the browser never
+receives it.
+
+Two settings, both in untracked places:
+
+- In `.env`, set `LOBES_SITE_ALLOWED_HOSTS` to the tunnel's public hostname.
+  Vite rejects any `Host` header outside its loopback default with "Blocked
+  request", and a tunnel request carries the public name.
+- Set up the tunnel's route, DNS record and Access app+policy in Cloudflare,
+  never in this repo. This repo names no deployment's hostname and no
+  operator's email.
+
+**The Access gate is the only thing standing between the internet and the
+gateway.** Setting a gateway key doesn't change that for tunnel users,
+because this proxy adds the key to every request that reaches it. Anyone
+past Access is the operator as far as the gateway can tell, whether or not
+`GATEWAY_API_KEY` is set. Never front the dev server with a tunnel that has
+no Access app on it.
 
 ## How the browser reaches a header-authenticated gateway
 
@@ -174,7 +203,7 @@ change.
 The proxy is **dev-server only**, by construction. `astro build` emits static
 files and `astro preview` serves them *without* it. A built site opened any
 other way cannot reach the gateway at all — which is the intended failure mode
-for a local-only tool, not a gap.
+for a locally run tool, not a gap.
 
 **The connect query string (`input_sample_rate`, `aec_mode`, `language`, …)
 rides through unchanged.** `buildProxyConfig` sets no `rewrite`,
