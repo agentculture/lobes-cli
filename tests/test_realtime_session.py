@@ -972,3 +972,509 @@ def test_the_error_code_enum_is_the_whole_wire_vocabulary() -> None:
         "tts_failed",
         "response_timeout",
     }
+
+
+# ---------------------------------------------------------------------------
+# hebrew-realtime t4 — the tool / language / stage-timing CONTRACT.
+#
+# Shapes, parsing and serialisation only: no behaviour is wired here (the
+# bridge, floor and turn tasks do that). What these tests pin is the contract
+# every one of those tasks builds against, plus the one property the whole
+# additive design rests on — an English, tool-free session's wire is
+# byte-identical to the one clients see today.
+#
+# Covers the t4 acceptance criteria from the hebrew-realtime plan:
+#
+# 1. SessionConfig.tools/tool_choice/language, the session.updated and
+#    response.function_call_arguments.done event types, the
+#    conversation.item.create(function_call_output) inbound shape, and an
+#    optional timings mapping on response.done — every name OpenAI's own
+# 2. a pure flat->nested tool translation, covered for a stock OpenAI
+#    payload; session.updated echoes only what took effect, and a malformed
+#    session.update is a named error that does not close the session
+# 3. defaults leave every pre-existing serialised event untouched
+# ---------------------------------------------------------------------------
+
+
+# --- criterion 1: the names are OpenAI Realtime's, verbatim ----------------
+
+
+def test_tool_event_types_are_openai_realtime_names_verbatim() -> None:
+    assert S.EventType.SESSION_UPDATED.value == "session.updated"
+    assert (
+        S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE.value
+        == "response.function_call_arguments.done"
+    )
+
+
+def test_inbound_client_event_names_are_openai_realtime_names_verbatim() -> None:
+    # The client half of the same wire, owned by _wire.py (the name registry)
+    # and imported here rather than re-spelled, so the two cannot drift.
+    from lobes.realtime import _wire as W
+
+    assert W.SESSION_UPDATE_EVENT_TYPE == "session.update"
+    assert W.CONVERSATION_ITEM_CREATE_EVENT_TYPE == "conversation.item.create"
+    assert W.FUNCTION_CALL_OUTPUT_ITEM_TYPE == "function_call_output"
+
+
+def test_session_config_gains_tools_tool_choice_and_language() -> None:
+    config = S.parse_session_config({})
+
+    # Undeclared, not empty: "no tools declared" and "declared none" are
+    # different statements and both have to be representable.
+    assert config.tools is None
+    assert config.tool_choice is None
+    assert config.language == S.DEFAULT_LANGUAGE == "en"
+
+
+def test_language_is_a_per_deployment_default_and_a_per_session_override() -> None:
+    assert S.parse_session_config({}, default_language="he").language == "he"
+    assert S.parse_session_config({"language": "he"}, default_language="en").language == "he"
+
+
+@pytest.mark.parametrize("code", ["en", "he", "pt-BR", "yue"])
+def test_language_accepts_short_codes(code: str) -> None:
+    assert S.parse_language(code) == code
+
+
+@pytest.mark.parametrize("bad", ["", "e", "english-language-name", 42, None, "he_IL"])
+def test_malformed_language_is_a_named_error(bad: object) -> None:
+    with pytest.raises(S.SessionConfigError) as exc_info:
+        S.parse_language(bad)
+    assert exc_info.value.code is S.ErrorCode.INVALID_SESSION_CONFIG
+
+
+# --- criterion 1: the function_call_output inbound shape -------------------
+
+_STOCK_FUNCTION_CALL_OUTPUT = {
+    "type": "conversation.item.create",
+    "item": {
+        "type": "function_call_output",
+        "call_id": "call_9y2s",
+        "output": '{"files": 3}',
+    },
+}
+
+
+def test_parse_function_call_output_reads_a_stock_openai_item() -> None:
+    parsed = S.parse_function_call_output(_STOCK_FUNCTION_CALL_OUTPUT)
+
+    assert parsed == S.FunctionCallOutput(call_id="call_9y2s", output='{"files": 3}')
+    # The result text is never parsed or interpreted here — nothing under
+    # lobes/ reads what a tool returned.
+    assert isinstance(parsed.output, str)
+
+
+def test_parse_function_call_output_accepts_an_empty_output() -> None:
+    payload = {
+        "type": "conversation.item.create",
+        "item": {"type": "function_call_output", "call_id": "call_1", "output": ""},
+    }
+    assert S.parse_function_call_output(payload).output == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "response.create"},
+        {"type": "conversation.item.create"},
+        {"type": "conversation.item.create", "item": "not-an-object"},
+        {"type": "conversation.item.create", "item": {"type": "message"}},
+        {
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "output": "x"},
+        },
+        {
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": "", "output": "x"},
+        },
+        {
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": "call_1"},
+        },
+        {
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": "call_1", "output": 3},
+        },
+    ],
+)
+def test_malformed_function_call_output_raises_a_named_error(payload: dict) -> None:
+    with pytest.raises(S.FunctionCallOutputError) as exc_info:
+        S.parse_function_call_output(payload)
+    # No new ErrorCode member: a malformed client frame is already
+    # invalid_wire_event, with the specific reason in the message text.
+    assert exc_info.value.code is S.ErrorCode.INVALID_WIRE_EVENT
+    assert "invalid_function_call_output" in str(exc_info.value)
+
+
+def test_a_malformed_function_call_output_never_closes_the_session() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_speech()
+
+    try:
+        S.parse_function_call_output({"type": "conversation.item.create"})
+    except S.FunctionCallOutputError as exc:
+        event = session.fail_wire_event(str(exc))
+
+    assert event.code is S.ErrorCode.INVALID_WIRE_EVENT
+    assert session.state is S.SessionState.SPEECH  # unchanged
+    assert session.has_open_item is True
+
+
+# --- criterion 1: the outbound tool call -----------------------------------
+
+
+def test_function_call_event_carries_openai_fields_and_changes_no_state() -> None:
+    import json
+
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    created = session.begin_response()
+
+    event = session.emit_function_call_arguments_done(
+        call_id="call_9y2s",
+        name="list_directory",
+        arguments='{"path": "/home/spark"}',
+        item_id="item_7",
+    )
+
+    assert event.type is S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE
+    assert event.response_id == created.response_id
+    assert (event.call_id, event.name) == ("call_9y2s", "list_directory")
+    # arguments is a JSON STRING, as OpenAI's is — handed through untouched.
+    assert event.arguments == '{"path": "/home/spark"}'
+    # Shape only: minting the call does not move the floor. The tool-wait
+    # state belongs to the floor machine, not to the schema.
+    assert session.state is S.SessionState.RESPONDING
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.function_call_arguments.done"
+    assert payload["call_id"] == "call_9y2s"
+    assert payload["output_index"] == 0
+
+
+def test_function_call_arguments_are_not_logged_verbatim(caplog) -> None:
+    config = S.parse_session_config({})
+    secret_sounding_args = '{"token": "hunter2-actually-tool-arguments"}'
+    with caplog.at_level(logging.DEBUG, logger="lobes.realtime._session"):
+        session, _ = S.Session.create(config)
+        session.begin_response()
+        session.emit_function_call_arguments_done(
+            call_id="call_1", name="run", arguments=secret_sounding_args
+        )
+
+    assert secret_sounding_args not in caplog.text
+
+
+# --- criterion 2: the flat -> nested tool translation ----------------------
+
+# A stock OpenAI Realtime session.update, copied in the shape a client sends
+# it: tools are FLAT (name/description/parameters at the top level).
+_STOCK_SESSION_UPDATE = {
+    "type": "session.update",
+    "session": {
+        "tools": [
+            {
+                "type": "function",
+                "name": "list_directory",
+                "description": "List the files in a directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+            {"type": "function", "name": "get_time"},
+        ],
+        "tool_choice": "auto",
+    },
+}
+
+
+def test_realtime_tools_translate_to_nested_chat_completions_tools() -> None:
+    tools = S.parse_tools(_STOCK_SESSION_UPDATE["session"]["tools"])
+
+    translated = S.realtime_tools_to_chat_completions(tools)
+
+    assert translated == [
+        {
+            "type": "function",
+            "function": {
+                "name": "list_directory",
+                "description": "List the files in a directory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+        # An absent description/parameters stays ABSENT rather than becoming
+        # null — a null description is not the same request.
+        {"type": "function", "function": {"name": "get_time"}},
+    ]
+
+
+def test_tool_translation_of_no_tools_is_an_empty_list() -> None:
+    assert S.realtime_tools_to_chat_completions(None) == []
+    assert S.realtime_tools_to_chat_completions(()) == []
+
+
+def test_tool_choice_keywords_pass_through_and_the_object_form_nests() -> None:
+    assert S.realtime_tool_choice_to_chat_completions(None) is None
+    for keyword in ("auto", "none", "required"):
+        assert S.realtime_tool_choice_to_chat_completions(keyword) == keyword
+
+    forced = S.parse_tool_choice({"type": "function", "name": "list_directory"})
+    assert S.realtime_tool_choice_to_chat_completions(forced) == {
+        "type": "function",
+        "function": {"name": "list_directory"},
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_tools",
+    [
+        "list_directory",
+        [{"name": "x", "type": "code_interpreter"}],
+        [{"description": "no name"}],
+        [{"name": ""}],
+        [{"name": "dup"}, {"name": "dup"}],
+        [{"name": "x", "description": 3}],
+        [{"name": "x", "parameters": "an object, please"}],
+        ["not-an-object"],
+    ],
+)
+def test_malformed_tools_are_a_named_error(bad_tools: object) -> None:
+    with pytest.raises(S.SessionConfigError) as exc_info:
+        S.parse_tools(bad_tools)
+    assert exc_info.value.code is S.ErrorCode.INVALID_SESSION_CONFIG
+
+
+@pytest.mark.parametrize(
+    "bad_choice",
+    ["always", 7, {"type": "function"}, {"name": "x"}, {"type": "function", "name": ""}],
+)
+def test_malformed_tool_choice_is_a_named_error(bad_choice: object) -> None:
+    with pytest.raises(S.SessionConfigError) as exc_info:
+        S.parse_tool_choice(bad_choice)
+    assert exc_info.value.code is S.ErrorCode.INVALID_SESSION_CONFIG
+
+
+# --- criterion 2: session.update round-trips; the echo is only what took ---
+# --- effect; a malformed update is named and non-fatal --------------------
+
+
+def test_stock_openai_session_update_round_trips_through_the_session() -> None:
+    import json
+
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    event = session.update_config(_STOCK_SESSION_UPDATE)
+
+    assert event.type is S.EventType.SESSION_UPDATED
+    assert [tool["name"] for tool in session.config.tools] == ["list_directory", "get_time"]
+    assert session.config.tool_choice == "auto"
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "session.updated"
+    # OpenAI calls the echo body "session", and it is what took effect.
+    assert payload["session"]["tool_choice"] == "auto"
+    assert payload["session"]["tools"] == _STOCK_SESSION_UPDATE["session"]["tools"]
+
+
+def test_session_updated_echoes_only_fields_that_took_effect() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+
+    event = session.update_config(
+        {
+            "type": "session.update",
+            "session": {
+                "language": "he",
+                # Fields this server does not act on: they must be VISIBLY
+                # absent from the echo, never silently swallowed.
+                "voice": "alloy",
+                "modalities": ["audio", "text"],
+                "turn_detection": {"type": "server_vad", "threshold": 0.9},
+            },
+        }
+    )
+
+    assert event.session == {"language": "he"}
+    assert set(event.session) <= set(S.SUPPORTED_SESSION_UPDATE_FIELDS)
+    assert session.config.language == "he"
+    # The unsupported fields changed nothing either.
+    assert session.config.turn_detection is P.TurnDetectionType.SERVER_VAD
+
+
+def test_session_update_leaves_untouched_config_fields_alone() -> None:
+    config = S.parse_session_config({"input_sample_rate": 16000, "system_prompt": "Be brief."})
+    session, _ = S.Session.create(config)
+
+    session.update_config({"type": "session.update", "session": {"language": "he"}})
+
+    assert session.config.input_sample_rate == 16000
+    assert session.config.system_prompt == "Be brief."
+    assert session.config.tools is None
+
+
+def test_apply_session_update_is_pure_and_does_not_mutate_the_old_config() -> None:
+    config = S.parse_session_config({})
+
+    update = S.apply_session_update(config, _STOCK_SESSION_UPDATE)
+
+    assert update.config is not config
+    assert config.tools is None  # the frozen original, untouched
+    assert update.applied["tool_choice"] == "auto"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"type": "session.update"},
+        {"type": "session.update", "session": "tools please"},
+        {"type": "session.update", "session": {"tools": "list_directory"}},
+        {"type": "session.update", "session": {"language": "Hebrew, please"}},
+        {"type": "session.update", "session": {"tool_choice": "always"}},
+    ],
+)
+def test_malformed_session_update_is_named_and_does_not_close_the_session(
+    payload: dict,
+) -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    before = session.config
+
+    with pytest.raises(S.SessionConfigError) as exc_info:
+        session.update_config(payload)
+
+    assert exc_info.value.code is S.ErrorCode.INVALID_SESSION_CONFIG
+    # Named error event, session untouched and still usable.
+    error_event = exc_info.value.to_error_event(session.session_id)
+    assert error_event.type is S.EventType.ERROR
+    assert session.config == before
+    assert session.state is S.SessionState.IDLE
+    assert session.begin_speech().type is S.EventType.SPEECH_STARTED
+
+
+def test_update_config_after_teardown_is_refused() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.teardown()
+
+    with pytest.raises(S.SessionClosedError):
+        session.update_config(_STOCK_SESSION_UPDATE)
+
+
+def test_tool_schemas_are_not_logged_verbatim(caplog) -> None:
+    config = S.parse_session_config({})
+    with caplog.at_level(logging.DEBUG, logger="lobes.realtime._session"):
+        session, _ = S.Session.create(config)
+        session.update_config(_STOCK_SESSION_UPDATE)
+
+    assert "List the files in a directory." not in caplog.text
+
+
+# --- criterion 1: stage timings on response.done ---------------------------
+
+
+def test_stage_timings_omit_absent_stages_rather_than_zeroing_them() -> None:
+    timings = S.StageTimings(stt=420, generate=1590, first_delta=2310)
+
+    assert timings.as_dict() == {"stt": 420, "generate": 1590, "first_delta": 2310}
+    # A stage that did not happen is ABSENT: a 0 would read as "instant".
+    assert "tool_wait" not in timings.as_dict()
+    assert "phonikud" not in timings.as_dict()
+
+
+def test_stage_timing_keys_are_the_documented_pipeline_order() -> None:
+    assert S.STAGE_TIMING_KEYS == (
+        "stt",
+        "generate",
+        "tool_wait",
+        "phonikud",
+        "tts",
+        "first_delta",
+    )
+    # as_dict emits them in that order, so a latency table reads top to bottom.
+    full = S.StageTimings(stt=1, generate=2, tool_wait=3, phonikud=4, tts=5, first_delta=6)
+    assert list(full.as_dict()) == list(S.STAGE_TIMING_KEYS)
+
+
+def test_response_done_carries_the_timings_mapping_onto_the_wire() -> None:
+    import json
+
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+    session.complete_response_text("שלום")
+
+    event = session.complete_response(
+        S.StageTimings(
+            stt=420, generate=1590, tool_wait=2100, phonikud=45, tts=800, first_delta=2310
+        )
+    )
+
+    payload = json.loads(json.dumps(S.event_to_dict(event)))
+    assert payload["type"] == "response.done"
+    assert payload["timings"]["tool_wait"] == 2100
+    assert payload["timings"]["first_delta"] == 2310
+
+
+# --- criterion 3: defaults leave every existing serialised event alone -----
+
+
+def test_session_created_config_is_byte_identical_for_an_english_toolless_session() -> None:
+    config = S.parse_session_config({})
+    _, created = S.Session.create(config)
+
+    assert set(S.event_to_dict(created)["config"]) == {
+        "input_audio_format",
+        "input_sample_rate",
+        "channels",
+        "turn_detection",
+        "aec_mode",
+        "system_prompt",
+    }
+
+
+def test_session_created_config_carries_the_additive_keys_only_once_set() -> None:
+    config = S.parse_session_config(
+        {"language": "he", "tools": [{"type": "function", "name": "get_time"}]}
+    )
+    _, created = S.Session.create(config)
+
+    serialized = S.event_to_dict(created)["config"]
+    assert serialized["language"] == "he"
+    assert serialized["tools"] == [{"type": "function", "name": "get_time"}]
+    # tool_choice was never declared, so it is still absent.
+    assert "tool_choice" not in serialized
+
+
+def test_response_done_without_timings_is_byte_identical_to_the_pre_change_event() -> None:
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+
+    assert set(S.event_to_dict(session.complete_response())) == {
+        "session_id",
+        "event_id",
+        "timestamp_ms",
+        "response_id",
+        "type",
+    }
+
+
+def test_an_all_absent_timings_object_serializes_away_entirely() -> None:
+    # A caller that measured nothing must not put an empty mapping on the
+    # wire — that reads as "measured, and there was nothing to report".
+    config = S.parse_session_config({})
+    session, _ = S.Session.create(config)
+    session.begin_response()
+
+    event = session.complete_response(S.StageTimings())
+
+    assert "timings" not in S.event_to_dict(event)

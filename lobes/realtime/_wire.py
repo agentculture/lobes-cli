@@ -49,6 +49,19 @@ Two directions, two entry points
   such events, so a caller can start sending frame 1 before frame N is even
   produced.
 
+Non-audio client events (hebrew-realtime t4)
+-----------------------------------------------
+The session-tools contract adds two more CLIENT event names —
+:data:`SESSION_UPDATE_EVENT_TYPE` and :data:`CONVERSATION_ITEM_CREATE_EVENT_TYPE`
+carrying a :data:`FUNCTION_CALL_OUTPUT_ITEM_TYPE` item — and two pure
+predicates over an already-decoded payload (:func:`is_session_update`,
+:func:`is_function_call_output`). The names live here because this module is
+the wire's name registry; their MEANING lives in
+:mod:`lobes.realtime._session`. :func:`decide_inbound_message` is deliberately
+unchanged: both still classify as :attr:`InboundKind.IGNORED` with the payload
+handed back, because "well-formed, not audio" is the only thing a codec can
+honestly say about them.
+
 Errors never escape — :class:`WireFormatError`
 -------------------------------------------------
 Every malformed-input path here raises :class:`WireFormatError`, a
@@ -119,6 +132,27 @@ from .protocol import BYTES_PER_SAMPLE, TTS_SAMPLE_RATE, gen_event_id
 
 APPEND_EVENT_TYPE = "input_audio_buffer.append"
 AUDIO_DELTA_EVENT_TYPE = "response.audio.delta"
+
+# --- The non-audio client (inbound) event names, hebrew-realtime t4 --------
+#
+# The session-tools contract needs two more CLIENT event names beside
+# ``input_audio_buffer.append``: ``session.update`` (the tools/tool_choice/
+# language declaration) and ``conversation.item.create`` carrying an item of
+# type ``function_call_output`` (the client's tool RESULT). Both are spelled
+# exactly as OpenAI Realtime spells them — the whole point of the tool wire is
+# that a stock OpenAI client's tool loop works unmodified.
+#
+# They live HERE, with :data:`APPEND_EVENT_TYPE`, because this module is the
+# wire's name registry; :mod:`lobes.realtime._session` imports them for the
+# payload shapes it parses. Classifying them is deliberately NOT a change to
+# :func:`decide_inbound_message`: both stay :attr:`InboundKind.IGNORED` with
+# their payload handed back, exactly like ``response.create`` — "well-formed,
+# not audio" is this module's whole opinion, and the predicates below are
+# pure inspections a caller applies to that handed-back payload (the
+# :func:`lobes.realtime._conversation.is_response_create` pattern).
+SESSION_UPDATE_EVENT_TYPE = "session.update"
+CONVERSATION_ITEM_CREATE_EVENT_TYPE = "conversation.item.create"
+FUNCTION_CALL_OUTPUT_ITEM_TYPE = "function_call_output"
 
 # ---------------------------------------------------------------------------
 # Delta chunk sizing — see the module docstring's "Delta chunk sizing".
@@ -378,6 +412,40 @@ def decide_inbound_message(message: Mapping[str, object]) -> InboundDecision:
 
 
 # ---------------------------------------------------------------------------
+# Inbound control-event predicates — hebrew-realtime t4.
+#
+# Pure inspections of an already-decoded payload (the one an IGNORED
+# :class:`InboundDecision` hands back), so a frame is parsed once and this
+# module still grows no opinion on turn state. Neither predicate decides
+# anything: the session module owns what a session.update MEANS, and the
+# bridge owns whether a function_call_output is expected.
+# ---------------------------------------------------------------------------
+
+
+def is_session_update(payload: Mapping[str, object] | None) -> bool:
+    """Is this decoded client event a ``session.update``?"""
+    return bool(payload) and payload.get("type") == SESSION_UPDATE_EVENT_TYPE
+
+
+def is_function_call_output(payload: Mapping[str, object] | None) -> bool:
+    """Is this decoded client event a tool RESULT the client is returning?
+
+    True only for a ``conversation.item.create`` whose ``item`` is a mapping
+    of type ``function_call_output`` — a ``conversation.item.create`` carrying
+    any other item kind is somebody else's event, not a malformed tool result,
+    so this predicate answers False rather than raising. Whether the result's
+    ``call_id`` is the one outstanding call is the bridge's bookkeeping, not a
+    codec question; see
+    :func:`lobes.realtime._session.parse_function_call_output` for the shape
+    validation itself.
+    """
+    if not payload or payload.get("type") != CONVERSATION_ITEM_CREATE_EVENT_TYPE:
+        return False
+    item = payload.get("item")
+    return isinstance(item, Mapping) and item.get("type") == FUNCTION_CALL_OUTPUT_ITEM_TYPE
+
+
+# ---------------------------------------------------------------------------
 # Outbound: PCM16 bytes -> dict event(s).
 # ---------------------------------------------------------------------------
 
@@ -476,6 +544,9 @@ def iter_audio_deltas(
 __all__ = [
     "APPEND_EVENT_TYPE",
     "AUDIO_DELTA_EVENT_TYPE",
+    "SESSION_UPDATE_EVENT_TYPE",
+    "CONVERSATION_ITEM_CREATE_EVENT_TYPE",
+    "FUNCTION_CALL_OUTPUT_ITEM_TYPE",
     "DELTA_CHUNK_MS",
     "DEFAULT_DELTA_CHUNK_BYTES",
     "WireErrorCode",
@@ -485,6 +556,8 @@ __all__ = [
     "InboundKind",
     "InboundDecision",
     "decide_inbound_message",
+    "is_session_update",
+    "is_function_call_output",
     "encode_audio_chunk",
     "serialize_audio_delta",
     "iter_audio_deltas",
