@@ -6,11 +6,11 @@ optionally triggers a server-side "think" step: history + a system prompt go
 out as one chat/completions request, and the assistant's reply text comes
 back to be spoken. This module owns the SHAPE of that round trip — the
 request body, the request's URL/headers, and how a response (success or
-failure) turns into either a reply string or a named exception. It is a pure,
-stdlib-only module (``dataclasses``, ``json``, ``typing`` only — never
-``httpx``, ``urllib``, or a socket) so it imports and is fully unit-tested
-without the ``[realtime]`` extra, exactly like its siblings
-:mod:`lobes.realtime._segmenter` (VAD state machine) and
+failure) turns into either a reply string, a distinct tool-call result, or a
+named exception. It is a pure, stdlib-only module (``dataclasses``, ``json``,
+``typing`` only — never ``httpx``, ``urllib``, or a socket) so it imports and
+is fully unit-tested without the ``[realtime]`` extra, exactly like its
+siblings :mod:`lobes.realtime._segmenter` (VAD state machine) and
 :mod:`lobes.realtime._settings` (env parsing). The actual HTTP call —
 opening a connection, awaiting a response, retrying on timeout — belongs to
 the route layer (``app.py``, task #151 t6), which is a thin, ``pragma: no
@@ -20,13 +20,46 @@ cover`` shell that calls into this module on both ends: build a
 
 Config values this module needs (model, base URL, API key, max_tokens,
 temperature, system prompt) are all **explicit parameters** — this module
-never imports :mod:`lobes.realtime._settings` or
-:mod:`lobes.realtime._session` and never reads ``os.environ`` itself. The
-caller (task t6, wiring the live :class:`~lobes.realtime._settings.Settings`
-and a :class:`~lobes.realtime._session.Session`'s history) resolves those
-values and passes them through. Conversation history arrives as a plain
+never imports :mod:`lobes.realtime._settings` and never reads ``os.environ``
+itself. The caller (task t6, wiring the live
+:class:`~lobes.realtime._settings.Settings` and a
+:class:`~lobes.realtime._session.Session`'s history) resolves those values
+and passes them through. Conversation history arrives as a plain
 ``list[dict]`` of ``{"role": ..., "content": ...}`` messages — this module
 places no other requirement on where that list came from.
+
+The one exception to "stdlib-only, no sibling imports" is
+:mod:`lobes.realtime._session` itself, for two narrow, `pure` reasons (task
+#151 t5): the canonical :data:`DEFAULT_SYSTEM_PROMPT` text (aliased, not
+duplicated — see "Default system prompt" below) and the FLAT-to-NESTED tool
+translators (:func:`~lobes.realtime._session.realtime_tools_to_chat_completions`,
+:func:`~lobes.realtime._session.realtime_tool_choice_to_chat_completions` —
+see "Tools" below). ``_session`` is itself stdlib-only (no ``httpx``, no
+socket), so this does not pull the ``[realtime]`` extra into this module's
+import graph; it stays fully unit-testable without it.
+
+Default system prompt — the session's copy wins
+--------------------------------------------------------------------------
+This module used to carry its own near-duplicate English prompt text, which
+had already drifted from :mod:`lobes.realtime._session`'s
+``DEFAULT_SYSTEM_PROMPT`` — the copy a live :class:`~lobes.realtime._session.Session`
+actually falls back to. :data:`DEFAULT_SYSTEM_PROMPT` here is now a plain
+alias of that name, not a second copy, so the two can never disagree again.
+
+Tools — FLAT Realtime shape in, NESTED chat-completions shape on the wire
+--------------------------------------------------------------------------
+:func:`build_turn_payload` accepts ``tools`` in the same FLAT
+``{"type": "function", "name", "description", "parameters"}`` shape
+:class:`~lobes.realtime._session.SessionConfig.tools` holds, and nests them
+via :func:`~lobes.realtime._session.realtime_tools_to_chat_completions`
+before they go on the wire — this module is not a second place that shape
+translation is encoded. "The session declared tools" means a non-empty
+``tools`` sequence; ``None`` (not declared) and ``()`` (declared empty) both
+leave the payload BYTE-IDENTICAL to a call with no ``tools=`` argument at
+all — no ``"tools"`` key, no ``"tool_choice"`` key either, even if
+``tool_choice`` was passed. A reply's ``tool_calls`` come back through
+:func:`parse_turn_response` as a distinct :class:`ToolCallResult` — never a
+string, never synthesized as if it were spoken text.
 
 The measured shape this formalizes lives in ``scripts/realtime-voice-loop.py``'s
 ``think()``: ``model="multimodal"`` (the Gemma 4 12B lane — measured ~1s to a
@@ -89,8 +122,12 @@ caller, not here.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
+
+from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
+from ._session import realtime_tool_choice_to_chat_completions, realtime_tools_to_chat_completions
 
 # --- defaults, mirroring scripts/realtime-voice-loop.py's think() ----------
 
@@ -99,12 +136,16 @@ from typing import NoReturn
 DEFAULT_MAX_TOKENS = 160
 DEFAULT_TEMPERATURE = 0.7
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are the voice of this machine — a DGX Spark running the lobes fleet. "
-    "You are being spoken to out loud and your reply is read back aloud by a "
-    "text-to-speech voice, so answer in one or two short spoken sentences. "
-    "No markdown, no lists, no code blocks, no emoji — just what you would say."
-)
+# Alias, not a second copy (task #151 t5): this module previously carried its
+# own near-duplicate English prompt text, which had already drifted from
+# :data:`lobes.realtime._session.DEFAULT_SYSTEM_PROMPT` (the one a live
+# Session actually falls back to — see that module's own docstring). The
+# session's copy wins; this name stays exported, unchanged in value, so
+# every existing caller/import of ``_turn.DEFAULT_SYSTEM_PROMPT`` (this
+# module's own defaults below, and ``tests/test_realtime_turn.py``) keeps
+# working without having to know the canonical text now lives one module
+# over.
+DEFAULT_SYSTEM_PROMPT = _SESSION_DEFAULT_SYSTEM_PROMPT
 
 _CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
@@ -119,6 +160,8 @@ def build_turn_payload(
     model: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    tools: Sequence[Mapping[str, object]] | None = None,
+    tool_choice: str | Mapping[str, object] | None = None,
 ) -> dict:
     """Assemble the ``/v1/chat/completions`` JSON body for one voice turn.
 
@@ -127,12 +170,29 @@ def build_turn_payload(
     never mutated (the session's history is the caller's to own; this
     function only reads it). No thinking trace: ``chat_template_kwargs``
     always forces ``enable_thinking: False`` — a spoken turn cannot afford
-    the latency of a reasoning trace nobody hears.
+    the latency of a reasoning trace nobody hears (measured honored by
+    ``associate`` with tools on 2026-09-18: tool calling and
+    ``enable_thinking: false`` are not in tension).
 
     ``model`` falsy (``""``, ``None``, or simply omitted) OMITS the
     ``"model"`` key entirely rather than sending an empty string — see the
     module docstring's "Model resolution" section for why, and what that
     means for the caller (the gateway default-routes).
+
+    ``tools`` is the SAME FLAT Realtime shape
+    :class:`~lobes.realtime._session.SessionConfig.tools` holds
+    (``{"type": "function", "name", "description", "parameters"}``) — this
+    function nests it via
+    :func:`~lobes.realtime._session.realtime_tools_to_chat_completions`
+    before it goes in the payload, so no second place encodes that
+    translation. "Declared" means a non-empty sequence: ``None`` (not
+    declared) and ``()``/``[]`` (declared empty) are both treated as NOT
+    declared — the payload gets no ``"tools"`` key and no ``"tool_choice"``
+    key either, byte-identical to a call that never mentions tools at all,
+    even when a ``tool_choice`` argument was passed alongside them. When
+    tools ARE declared, ``tool_choice`` (if not ``None``) is nested via
+    :func:`~lobes.realtime._session.realtime_tool_choice_to_chat_completions`
+    and included too.
     """
     payload: dict = {}
     if model:
@@ -141,6 +201,10 @@ def build_turn_payload(
     payload["max_tokens"] = max_tokens
     payload["temperature"] = temperature
     payload["chat_template_kwargs"] = {"enable_thinking": False}
+    if tools:
+        payload["tools"] = realtime_tools_to_chat_completions(tools)
+        if tool_choice is not None:
+            payload["tool_choice"] = realtime_tool_choice_to_chat_completions(tool_choice)
     return payload
 
 
@@ -187,6 +251,8 @@ def build_turn_request(
     model: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    tools: Sequence[Mapping[str, object]] | None = None,
+    tool_choice: str | Mapping[str, object] | None = None,
 ) -> TurnRequest:
     """Convenience wrapper: the complete :class:`TurnRequest` in one call."""
     return TurnRequest(
@@ -198,6 +264,8 @@ def build_turn_request(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
+            tools=tools,
+            tool_choice=tool_choice,
         ),
     )
 
@@ -248,6 +316,70 @@ class TurnResponseError(TurnRequestError):
         self.status_code = status_code
 
 
+# --- the tool-call result: a distinct type, never confusable with text -------
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """The generate backend asked the client to run a tool — never text to speak.
+
+    :func:`parse_turn_response` returns this INSTEAD of a ``str`` when
+    ``message.tool_calls`` is present in the reply — a separate dataclass, not
+    a string carrying some sentinel, so a caller cannot accidentally hand this
+    to a TTS stage and speak it: the two return shapes are structurally
+    distinguishable, e.g. ``isinstance(result, ToolCallResult)``.
+
+    ``call_id``, ``name`` and ``arguments`` are the FIRST tool call of the
+    reply, carried through byte-for-byte (``arguments`` stays the raw JSON
+    *string* the backend sent — this module never parses it, exactly like
+    :class:`~lobes.realtime._session.FunctionCallOutput` never parses a
+    client's tool result). A reply's bridge tracks one outstanding call at a
+    time, so only the first is surfaced this way; ``tool_call_count`` is the
+    number of tool calls the reply actually carried (``1`` for the common
+    case), so a caller that wants to log/react to "the model asked for N
+    things at once" still can without this module surfacing more than one.
+    """
+
+    call_id: str
+    name: str
+    arguments: str
+    tool_call_count: int = 1
+
+
+def assistant_tool_call_message(result: ToolCallResult) -> dict:
+    """The ``{"role": "assistant", ...}`` history entry for a surfaced tool call.
+
+    Chat-completions shape: ``content`` is ``None`` (an assistant turn that
+    calls a tool carries no spoken text) and ``tool_calls`` holds exactly the
+    one call :class:`ToolCallResult` surfaced, with ``arguments`` passed
+    through as the same JSON string — never re-serialized, never
+    re-interpreted.
+    """
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": result.call_id,
+                "type": "function",
+                "function": {"name": result.name, "arguments": result.arguments},
+            }
+        ],
+    }
+
+
+def tool_result_message(call_id: str, content: str) -> dict:
+    """The ``{"role": "tool", ...}`` history entry for a tool's result.
+
+    ``call_id`` is the :class:`ToolCallResult`/``FunctionCallOutput`` handle
+    this result answers; ``content`` is the caller's result text verbatim —
+    this module has no opinion on its shape (a JSON string by convention,
+    same as :class:`~lobes.realtime._session.FunctionCallOutput.output`, but
+    never parsed here).
+    """
+    return {"role": "tool", "tool_call_id": call_id, "content": content}
+
+
 # --- response parsing + failure mapping --------------------------------------
 
 
@@ -264,8 +396,8 @@ def _error_object(data: dict | None) -> dict | None:
     return error if isinstance(error, dict) else None
 
 
-def parse_turn_response(status_code: int, body: bytes) -> str:
-    """Turn a ``/v1/chat/completions`` HTTP response into the assistant's reply text.
+def parse_turn_response(status_code: int, body: bytes) -> str | ToolCallResult:
+    """Turn a ``/v1/chat/completions`` HTTP response into a reply or a tool call.
 
     On any non-200 status: raises :class:`RoleInfeasibleError` when the body
     is the gateway's ``role_infeasible`` shape (status 404 AND the error
@@ -276,9 +408,18 @@ def parse_turn_response(status_code: int, body: bytes) -> str:
 
     On status 200: raises :class:`TurnResponseError` if the body is not
     valid JSON or is not shaped like a chat/completions response
-    (``choices[0].message`` missing, or ``content`` present but not a
-    string). A ``null``/absent ``content`` is NOT an error — it returns
-    ``""``, mirroring ``scripts/realtime-voice-loop.py``'s ``think()``
+    (``choices[0].message`` missing, ``content`` present but not a string, or
+    a malformed ``tool_calls``).
+
+    When ``message.tool_calls`` is present and non-empty, returns a
+    :class:`ToolCallResult` for the FIRST call — this is checked BEFORE
+    ``content`` is even looked at, so a reply that carries both (some
+    backends echo empty/partial text alongside a tool call) is never
+    mistaken for text to synthesize.
+
+    Otherwise (no ``tool_calls``): a ``null``/absent ``content`` is NOT an
+    error — it returns ``""``, mirroring
+    ``scripts/realtime-voice-loop.py``'s ``think()``
     (``(msg.get("content") or "").strip()``). Otherwise returns the reply
     text with surrounding whitespace stripped.
     """
@@ -291,7 +432,7 @@ def parse_turn_response(status_code: int, body: bytes) -> str:
         raise TurnResponseError(
             "generate backend returned a non-JSON response", status_code=status_code
         )
-    return _extract_reply_text(data)
+    return _extract_reply(data)
 
 
 def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
@@ -318,7 +459,7 @@ def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
     raise TurnResponseError(message, status_code=status_code)
 
 
-def _extract_reply_text(data: dict) -> str:
+def _extract_reply(data: dict) -> str | ToolCallResult:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         raise TurnResponseError("generate response missing 'choices'")
@@ -326,9 +467,45 @@ def _extract_reply_text(data: dict) -> str:
     message = first.get("message") if isinstance(first, dict) else None
     if not isinstance(message, dict):
         raise TurnResponseError("generate response missing choices[0].message")
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        return _extract_tool_call(tool_calls)
     content = message.get("content")
     if content is None:
         return ""
     if not isinstance(content, str):
         raise TurnResponseError("generate response 'content' is not a string")
     return content.strip()
+
+
+def _extract_tool_call(tool_calls: object) -> ToolCallResult:
+    """The FIRST call of ``message.tool_calls``, as a :class:`ToolCallResult`.
+
+    Raises :class:`TurnResponseError` on any shape defect — a tool call this
+    module cannot name (missing ``id``/``function.name``, or a
+    non-string ``arguments``) is a malformed backend response, exactly like a
+    missing ``choices[0].message`` is; it is never silently dropped in favor
+    of falling through to the text path.
+    """
+    if not isinstance(tool_calls, list) or not tool_calls:
+        raise TurnResponseError("generate response 'tool_calls' is not a non-empty list")
+    first = tool_calls[0]
+    if not isinstance(first, dict):
+        raise TurnResponseError("generate response tool_calls[0] is not an object")
+    call_id = first.get("id")
+    if not isinstance(call_id, str) or not call_id:
+        raise TurnResponseError("generate response tool_calls[0] missing 'id'")
+    function = first.get("function")
+    if not isinstance(function, dict):
+        raise TurnResponseError("generate response tool_calls[0] missing 'function'")
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        raise TurnResponseError("generate response tool_calls[0].function missing 'name'")
+    arguments = function.get("arguments")
+    if not isinstance(arguments, str):
+        raise TurnResponseError(
+            "generate response tool_calls[0].function.arguments is not a string"
+        )
+    return ToolCallResult(
+        call_id=call_id, name=name, arguments=arguments, tool_call_count=len(tool_calls)
+    )
