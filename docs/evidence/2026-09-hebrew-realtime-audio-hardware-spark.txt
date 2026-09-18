@@ -1,0 +1,36 @@
+hebrew-realtime — audio hardware check on the Spark (pre-acceptance)     2026-09-18
+Devices: card 1 = Seeed reSpeaker XVF3800 4-Mic Array (2886:001a) with its own speaker attached
+         card 2 = Pollen Robotics Reachy Mini Audio (38fb:1001), held by reachy-mini-daemon via pipewire
+Both expose S16_LE / 2 ch / 16000 Hz only at hw: level, and the SAME mixer layout (PCM,0 PCM,1 Headset,0 Headset,1).
+Operator approval (2026-09-18): "raising audio voice and microphone sensitivity as needed".
+All playback/capture through pipewire (pw-play / pw-record --target <node>), 16 kHz.
+
+MIXER, as found
+  card 1: PCM,0 100% 0 dB | PCM,1 67% -20 dB | Headset,0/1 capture 100% 0 dB
+  card 2: PCM,0  82% -11 dB | PCM,1 100% 0 dB | Headset,0/1 capture 100% 0 dB   (pipewire sink vol 65% -11 dB)
+CHANGE MADE: card 1 'PCM',1  40 -> 50  (-20 dB -> -10 dB).   Revert: amixer -c 1 sset 'PCM',1 40
+Capture gains were already at maximum on both devices — nothing to raise.
+
+TEST 1 — 1 kHz sine, 3 s (operator: "I could hear a note ... multiple notes, 3 times" -> both speakers play)
+  The measurement was INVALID for level: both microphones run stationary-noise suppression, which removes a
+  steady sine. Recorded here so the mistake is not repeated. (And a mono downmix hid a per-channel difference.)
+
+TEST 2 — speech-like signal (3.5 Hz amplitude-modulated low-passed noise, 4 s), stereo capture, per channel
+  rise = level during playback minus level in the 0.8 s before it
+  1) reSpeaker spk -> reSpeaker mic (AEC has the reference)   ch0 +10.0 dB   ch1 +4.1 dB
+  2) Reachy spk    -> Reachy mic    (AEC has the reference)   ch0 -34.0 dB   ch1 -34.0 dB  (-28 -> -62 dBFS)
+  3) reSpeaker spk -> Reachy mic    (no reference)            ch0  -0.3 dB   ch1 -0.3 dB   (inaudible to it)
+  4) Reachy spk    -> reSpeaker mic (no reference)            ch0 +18.2 dB   ch1 +17.7 dB
+  after the +10 dB change:
+  3') reSpeaker spk -> Reachy mic                             ch0 +10.7 dB   ch1 +10.7 dB
+  1') reSpeaker spk -> reSpeaker mic                          ch0  +8.1 dB   ch1  +6.3 dB
+
+READING (n=1-2 per cell; idle levels moved between runs, so treat as direction, not calibration)
+  - reSpeaker: AEC is partial — its own speaker leaks ~4-10 dB vs ~18 dB for a speaker it has no reference for.
+    ch1 carries less echo residual than ch0, so a client should take ONE channel (ch1) rather than downmix both.
+    scripts/realtime-he-accept.py currently downmixes via plughw -c 1 — to be settled with real speech in the
+    STT spike (t2), which records stereo.
+  - Reachy Mini: its microphone DROPS 34 dB below idle while its own speaker plays, both channels identical.
+    Excellent for echo; whether it also suppresses a human barging in is UNKNOWN until someone speaks over it.
+    Its idle level is high (-23..-28 dBFS).
+  - Nothing here tests barge-in, VAD behaviour, or intelligibility. No human speech was recorded.
