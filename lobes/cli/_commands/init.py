@@ -10,7 +10,10 @@ the co-resident embedding/reranker gears (the legacy 4B ``minor`` / 14B
 (alias ``--legacy``) restores the old single-model scaffold (one vLLM server, no
 gateway). ``--fleet`` is now a default-implied no-op kept for back-compat.
 ``--audio`` layers the realtime audio overlay on the fleet (incompatible with
-``--single``). Mutating: dry-run by default; ``--apply`` writes, ``--force``
+``--single``), and ``--audio-lang he`` stacks the Hebrew overlay on top of that
+(hebrew-realtime t15) — language is an OVERLAY choice, not a shape and not a
+variation, so ``--audio`` alone (== ``--audio-lang en``) scaffolds exactly what
+it always did. Mutating: dry-run by default; ``--apply`` writes, ``--force``
 overwrites.
 
 ``--shape <machine-as-brain|spark-lobe|thor-lobe|orin-lobe|orin-cortex|orin-associate|
@@ -687,12 +690,31 @@ def _gpu_override_written(profile: Profile) -> dict:
     }
 
 
-def _templates(fleet: bool, audio: bool) -> dict[str, str]:
+#: The audio overlay's LANGUAGE axis (hebrew-realtime t15). ``en`` is the
+#: default and means exactly the pre-t15 ``--audio``; ``he`` stacks the Hebrew
+#: overlay on top of it. Per-language extra templates, keyed by language — a
+#: third language lands as one entry here, not a new branch.
+AUDIO_LANG_DEFAULT = "en"
+AUDIO_LANG_TEMPLATES: dict[str, dict[str, str]] = {
+    AUDIO_LANG_DEFAULT: {},
+    "he": _compose.AUDIO_HE_TEMPLATES,
+}
+#: ``.env`` appends per language, in the order they are appended (English
+#: first, always: the Hebrew keys OVERRIDE a subset of them and ``.env`` is
+#: last-wins, so the order is the selection).
+AUDIO_LANG_ENV_APPENDS: dict[str, tuple] = {
+    AUDIO_LANG_DEFAULT: (),
+    "he": (_compose.append_audio_he_env,),
+}
+
+
+def _templates(fleet: bool, audio: bool, audio_lang: str = AUDIO_LANG_DEFAULT) -> dict[str, str]:
     if not fleet:
         return _compose.SINGLE_TEMPLATES
     templates = dict(_compose.FLEET_TEMPLATES)
     if audio:
         templates.update(_compose.AUDIO_TEMPLATES)
+        templates.update(AUDIO_LANG_TEMPLATES[audio_lang])
     return templates
 
 
@@ -924,6 +946,7 @@ def _dry_run_payload(
     profile_name: str | None,
     shape: Shape | None,
     force: bool = False,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> dict:
     """The ``--json`` shape of a dry run: what ``--apply`` would write."""
     payload = {
@@ -931,6 +954,7 @@ def _dry_run_payload(
         "fleet": fleet,
         "single": not fleet,
         "audio": audio,
+        "audio_lang": audio_lang,
         "target": str(target),
         "files": [
             {
@@ -966,8 +990,10 @@ def _scaffold_note(target: Path, name: str, force: bool) -> str:
     return _SCAFFOLD_NOTES[_compose.scaffold_action(target, name, force=force)]
 
 
-def _dry_run_scope(fleet: bool, audio: bool) -> str:
+def _dry_run_scope(fleet: bool, audio: bool, audio_lang: str = AUDIO_LANG_DEFAULT) -> str:
     if fleet and audio:
+        if audio_lang != AUDIO_LANG_DEFAULT:
+            return f"the fleet duo + audio overlay ({audio_lang}) "
         return "the fleet duo + audio overlay "
     if fleet:
         return "the fleet duo (main + multimodal) "
@@ -984,6 +1010,7 @@ def _dry_run_lines(
     profile_name: str | None,
     shape: Shape | None,
     force: bool = False,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> list[str]:
     """The human-readable dry-run plan, one line per thing ``--apply`` would do.
 
@@ -992,11 +1019,12 @@ def _dry_run_lines(
     GPU-access pair is exactly the omission that made a shadowed profile look
     like a working one).
     """
-    lines = [f"DRY RUN — would scaffold {_dry_run_scope(fleet, audio)}into {target}:"]
+    lines = [f"DRY RUN — would scaffold {_dry_run_scope(fleet, audio, audio_lang)}into {target}:"]
     for name, _exists in plan:
         lines.append(f"  {name}{_scaffold_note(target, name, force)}")
     if audio:
-        lines.append("  .env (+ audio keys appended)")
+        suffix = "" if audio_lang == AUDIO_LANG_DEFAULT else f", {audio_lang}"
+        lines.append(f"  .env (+ audio keys appended{suffix})")
     if fleet:
         lines.extend(_profile_plan_lines(target, profile, card, profile_name, shape))
         for line in (
@@ -1018,8 +1046,9 @@ def _emit_dry_run(
     shape: Shape | None,
     shape_explicit: bool = False,
     force: bool = False,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> None:
-    plan = _compose.scaffold_plan(target, _templates(fleet, audio))
+    plan = _compose.scaffold_plan(target, _templates(fleet, audio, audio_lang))
     profile = card = None
     if fleet:
         # Detection/warning happens on a dry run too — the plan must be honest
@@ -1033,11 +1062,15 @@ def _emit_dry_run(
         plan = plan + [_compose.plugin_plan(target)]
     if json_mode:
         emit_result(
-            _dry_run_payload(target, fleet, audio, plan, profile, card, profile_name, shape, force),
+            _dry_run_payload(
+                target, fleet, audio, plan, profile, card, profile_name, shape, force, audio_lang
+            ),
             json_mode=True,
         )
         return
-    lines = _dry_run_lines(target, fleet, audio, plan, profile, card, profile_name, shape, force)
+    lines = _dry_run_lines(
+        target, fleet, audio, plan, profile, card, profile_name, shape, force, audio_lang
+    )
     emit_result("\n".join(lines), json_mode=False)
 
 
@@ -1103,6 +1136,7 @@ def _apply_payload(
     card,
     profile_name: str | None,
     shape: Shape | None,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> dict:
     """The ``--apply --json`` result body."""
     payload = {
@@ -1110,6 +1144,7 @@ def _apply_payload(
         "fleet": fleet,
         "single": not fleet,
         "audio": audio,
+        "audio_lang": audio_lang,
         "files": [p.name for p in written],
     }
     if fleet:
@@ -1159,6 +1194,7 @@ def _emit_apply(
     profile_name: str | None,
     shape: Shape | None,
     shape_explicit: bool = False,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> None:
     profile = card = None
     if fleet:
@@ -1169,7 +1205,9 @@ def _emit_apply(
         profile, card = _resolve_fleet_profile(
             target, profile_name, shape, shape_explicit=shape_explicit
         )
-    written = _compose.write_scaffold(target, force=force, templates=_templates(fleet, audio))
+    written = _compose.write_scaffold(
+        target, force=force, templates=_templates(fleet, audio, audio_lang)
+    )
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
     # root-owned. The mg-logwrap entrypoint writes per-boot logs here (issue #50).
@@ -1185,9 +1223,17 @@ def _emit_apply(
         # Parakeet image) — there the keys are still written, and AUDIO_URL
         # forwards /v1/audio/* to a peer instead.
         _compose.append_audio_env(target)
+        # ...then the LANGUAGE overlay's keys, which override a subset of the
+        # English ones. Append-only, English-first: `.env` is last-wins, so the
+        # append order IS the language selection (#174's never-rewrite-a-line
+        # guarantee is what makes that safe).
+        for append_env in AUDIO_LANG_ENV_APPENDS[audio_lang]:
+            append_env(target)
     if json_mode:
         emit_result(
-            _apply_payload(target, fleet, audio, written, profile, card, profile_name, shape),
+            _apply_payload(
+                target, fleet, audio, written, profile, card, profile_name, shape, audio_lang
+            ),
             json_mode=True,
         )
         return
@@ -1201,7 +1247,13 @@ def _emit_apply(
     emit_result(
         f">> scaffolded {target}:\n"
         + "\n".join(f"  {p.name}" for p in written)
-        + (f"\n  {_compose.ENV_FILE} (+ audio keys)" if audio else "")
+        + (
+            f"\n  {_compose.ENV_FILE} (+ audio keys"
+            + ("" if audio_lang == AUDIO_LANG_DEFAULT else f", {audio_lang}")
+            + ")"
+            if audio
+            else ""
+        )
         + override_note
         + profile_note
         + f"\n>> next: {next_step}",
@@ -1827,9 +1879,47 @@ def _emit_from_lock(
 _RENDERER_AXES: tuple[tuple[str, str], ...] = (
     ("single", "--single"),
     ("audio", "--audio"),
+    ("audio_lang", "--audio-lang"),
     ("profile", "--profile"),
     ("shape", "--shape"),
 )
+
+
+def _resolve_audio_lang(args: argparse.Namespace, *, audio: bool, fleet: bool) -> str:
+    """Resolve ``--audio-lang``, refusing the two ways it can be meaningless.
+
+    Language is an axis OF the audio overlay, so it only means anything
+    alongside ``--audio`` on a fleet scaffold — passed without one, it would be
+    silently inert, the failure mode this file refuses everywhere else (see
+    :func:`_guard_from_lock_axes`). Unset is :data:`AUDIO_LANG_DEFAULT`, whose
+    rendering is byte-identical to the pre-t15 ``--audio``.
+    """
+    audio_lang = getattr(args, "audio_lang", None)
+    if audio_lang is None:
+        return AUDIO_LANG_DEFAULT
+    if not fleet:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--audio-lang is incompatible with --single",
+            remediation="the audio overlay layers on the fleet (the default): "
+            "drop --single, e.g. 'lobes init --audio --audio-lang he'",
+        )
+    if audio_lang not in AUDIO_LANG_TEMPLATES:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"unknown --audio-lang '{audio_lang}'",
+            remediation="the audio overlay ships these languages: "
+            + ", ".join(sorted(AUDIO_LANG_TEMPLATES)),
+        )
+    if not audio:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--audio-lang needs --audio",
+            remediation="--audio-lang selects a LANGUAGE for the audio overlay, "
+            "it does not scaffold one: add --audio, e.g. "
+            f"'lobes init --audio --audio-lang {audio_lang}'",
+        )
+    return audio_lang
 
 
 def _guard_from_lock_axes(args: argparse.Namespace) -> None:
@@ -1878,6 +1968,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     single = bool(getattr(args, "single", False))
     fleet = not single
     audio = bool(getattr(args, "audio", False))
+    audio_lang = _resolve_audio_lang(args, audio=audio, fleet=fleet)
     if audio and not fleet:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
@@ -1912,7 +2003,15 @@ def cmd_init(args: argparse.Namespace) -> int:
     shape_explicit = shape_name is not None
     if args.apply:
         _emit_apply(
-            target, fleet, audio, args.force, json_mode, profile_name, shape, shape_explicit
+            target,
+            fleet,
+            audio,
+            args.force,
+            json_mode,
+            profile_name,
+            shape,
+            shape_explicit,
+            audio_lang,
         )
     else:
         _emit_dry_run(
@@ -1924,6 +2023,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             shape,
             shape_explicit=shape_explicit,
             force=args.force,
+            audio_lang=audio_lang,
         )
     return 0
 
@@ -1963,6 +2063,20 @@ def register(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="Also scaffold the audio overlay (STT + TTS + realtime bridge). "
         "Layers on the fleet (the default); incompatible with --single.",
+    )
+    p.add_argument(
+        "--audio-lang",
+        dest="audio_lang",
+        # Validated in _resolve_audio_lang, not by argparse `choices`, so an
+        # unknown value reports through this file's own error convention
+        # (EXIT_USER_ERROR + a remediation naming the languages that exist)
+        # rather than argparse's exit 2.
+        metavar="{" + ",".join(sorted(AUDIO_LANG_TEMPLATES)) + "}",
+        help="Language for the audio overlay (default 'en' — exactly today's "
+        "--audio, byte for byte). 'he' stacks the Hebrew overlay "
+        "(docker-compose.audio-he.yml: Whisper STT + Chatterbox Multilingual) "
+        "on top of it. Needs --audio; language is an overlay choice, not a "
+        "shape and not a variation.",
     )
     p.add_argument(
         "--profile",

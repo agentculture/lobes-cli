@@ -205,6 +205,38 @@ AUDIO_TEMPLATES = {
     "fleet/_readiness.py": "_readiness.py",
 }
 AUDIO_ENV_TEMPLATE = "fleet/env.audio.example"
+# Hebrew audio overlay (lobes init --fleet --audio --audio-lang he,
+# hebrew-realtime t15). A THIRD compose layer, stacked ON TOP of AUDIO_OVERLAY:
+# it overrides that file's `stt`/`chatterbox`/`realtime`/`gateway` keys by
+# compose deep-merge rather than redefining the services, so it is meaningless
+# — and refused by compose, whose overrides may only name services the chain
+# declares — without the English overlay beneath it. Language is an OVERLAY
+# choice, not a shape and not a variation: nothing about the English overlay
+# changes when this one is added.
+AUDIO_HE_OVERLAY = "docker-compose.audio-he.yml"
+# The --audio-lang he extras layered on AUDIO_TEMPLATES: the third compose
+# layer, the two sidecar build files it swaps in, the Whisper server that one
+# of them COPYs, and the unwired BlueTTS build file.
+AUDIO_HE_TEMPLATES = {
+    "fleet/docker-compose.audio-he.yml": AUDIO_HE_OVERLAY,
+    # The `stt` service's build.dockerfile is overridden to this file (ivrit.ai
+    # Whisper large-v3-turbo on transformers, not Parakeet/NeMo).
+    "fleet/Dockerfile.whisper-stt": "Dockerfile.whisper-stt",
+    # listen_server_whisper.py is COPY'd into the Whisper image, exactly as
+    # listen_server.py is COPY'd into the Parakeet one — it MUST land at the
+    # deployment-dir root or `docker compose build stt` fails on the COPY.
+    "fleet/listen_server_whisper.py": "listen_server_whisper.py",
+    # The `chatterbox` service's build.dockerfile is overridden to this file
+    # (Chatterbox MULTILINGUAL — approved deviation d5).
+    "fleet/Dockerfile.chatterbox-ml": "Dockerfile.chatterbox-ml",
+    # BlueTTS (approved deviation d8) — a CPU Hebrew voice, shipped so an
+    # operator CAN opt in, deliberately wired into NO compose file and named by
+    # no default: its weights repo declared no licence, so fetching them is the
+    # operator's own deliberate act. The shipped Hebrew default voice stays
+    # Chatterbox Multilingual.
+    "fleet/Dockerfile.bluetts": "Dockerfile.bluetts",
+}
+AUDIO_HE_ENV_TEMPLATE = "fleet/env.audio-he.example"
 _INIT_REMEDIATION = (
     "run 'lobes init --apply' to scaffold ~/.lobes, or pass --compose-dir / set LOBES_DIR"
 )
@@ -543,8 +575,24 @@ def append_audio_env(target: os.PathLike | str) -> Path:
     appends its keys (NGC_API_KEY, ports, voices, AUDIO_URL …) so they extend the
     fleet config rather than overwrite it. Returns the ``.env`` path.
     """
+    return _append_env_template(target, AUDIO_ENV_TEMPLATE)
+
+
+def append_audio_he_env(target: os.PathLike | str) -> Path:
+    """Append the Hebrew overlay's env keys (``env.audio-he.example``) to ``.env``.
+
+    Runs AFTER :func:`append_audio_env`, never instead of it: the Hebrew keys
+    override a subset of the English ones (``STT_MODEL``, ``TTS_RUNTIME`` …) and
+    ``.env`` is last-wins, so the order is the selection. Append-only like every
+    other ``.env`` pass — an existing line is never rewritten (#174).
+    """
+    return _append_env_template(target, AUDIO_HE_ENV_TEMPLATE)
+
+
+def _append_env_template(target: os.PathLike | str, template: str) -> Path:
+    """Append a packaged ``env.*.example`` to the deployment's ``.env``."""
     env_path = Path(target).expanduser() / ENV_FILE
-    content = _read_template(files("lobes.templates"), AUDIO_ENV_TEMPLATE)
+    content = _read_template(files("lobes.templates"), template)
     with env_path.open("a", encoding="utf-8") as fh:
         fh.write(content if content.startswith("\n") else "\n" + content)
     return env_path
@@ -556,6 +604,15 @@ def append_audio_env(target: os.PathLike | str) -> Path:
 def audio_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     """True when the ``--audio`` overlay (``docker-compose.audio.yml``) is scaffolded."""
     return (Path(deploy_dir) / AUDIO_OVERLAY).is_file()
+
+
+def audio_he_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the Hebrew overlay (``docker-compose.audio-he.yml``) is scaffolded.
+
+    Mirrors :func:`audio_overlay_present`. Present only for an
+    ``--audio-lang he`` deployment; an English one never carries the file.
+    """
+    return (Path(deploy_dir) / AUDIO_HE_OVERLAY).is_file()
 
 
 def local_override_present(deploy_dir: os.PathLike | str) -> bool:
@@ -703,7 +760,9 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
     return containers
 
 
-def compose_file_args(*, audio: bool, shape: bool, local: bool, gpu: bool = False) -> list[str]:
+def compose_file_args(
+    *, audio: bool, shape: bool, local: bool, gpu: bool = False, audio_he: bool = False
+) -> list[str]:
     """The ``-f`` chain for a deployment made of the given overlays — THE single
     composition authority (issue #137). Every ``-f`` list lobes hands to
     ``docker compose`` — whole-deployment verbs via :func:`_compose_files`, the
@@ -722,6 +781,14 @@ def compose_file_args(*, audio: bool, shape: bool, local: bool, gpu: bool = Fals
     because a compose override may only name services some file in the same
     chain declares. That pairing is also why the audio half never appears
     without the audio overlay, including under ``lobes up <non-audio-role>``.
+
+    The Hebrew overlay (:data:`AUDIO_HE_OVERLAY`) is placed AFTER the audio
+    overlay and its GPU half, for the same reason and one more: it overrides
+    the English overlay's ``stt``/``chatterbox``/``realtime``/``gateway`` keys
+    by deep merge, so ordering it earlier would silently lose every Hebrew
+    value. It is strictly paired with the audio overlay — its services are
+    declared there, never here — so ``audio=False`` drops it too, whatever the
+    caller passed.
 
     The shape override is placed LAST of the LOBES-AUTHORED files — its compose
     ``!reset`` on the gateway ``depends_on`` clears the dangling edge to a
@@ -750,6 +817,8 @@ def compose_file_args(*, audio: bool, shape: bool, local: bool, gpu: bool = Fals
         files += ["-f", AUDIO_OVERLAY]
         if gpu:
             files += ["-f", GPU_AUDIO_OVERLAY]
+        if audio_he:
+            files += ["-f", AUDIO_HE_OVERLAY]
     if shape:
         files += ["-f", SHAPE_OVERLAY]
     if local:
@@ -771,6 +840,10 @@ def _compose_files(deploy_dir: os.PathLike | str, *, audio: bool | None = None) 
     """
     return compose_file_args(
         audio=audio_overlay_present(deploy_dir) if audio is None else audio,
+        # The Hebrew layer is a deployment FACT, not a per-target one: it is
+        # probed either way and the authority drops it whenever the audio
+        # overlay itself is excluded.
+        audio_he=audio_he_overlay_present(deploy_dir),
         shape=shape_overlay_present(deploy_dir),
         local=local_override_present(deploy_dir),
         gpu=gpu_overlay_present(deploy_dir),

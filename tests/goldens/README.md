@@ -22,7 +22,19 @@ This directory holds the **byte-for-byte** golden files
   `${VAR-}` slots (`*_SPECULATIVE_CONFIG`, the worker boolean toggles) are
   deliberately NOT here: they have no default to drift.
 
-Regenerate all three with:
+* `overlays/audio-he-defaults.env` — the same substitution surface for the
+  opt-in **Hebrew audio overlay**, `lobes/templates/fleet/docker-compose.audio-he.yml`
+  (hebrew-realtime t15). Language is an overlay choice, not a shape and not a
+  variation, so it gets an `overlays/` golden of its own rather than a
+  per-profile or per-shape one. It lives in a subdirectory because
+  `test_golden_file_set_matches_builtin_profiles` asserts the top-level `*.env`
+  set equals the built-in **profile** set — an overlay is not a profile.
+  Editing the Hebrew overlay must leave every other golden here
+  byte-identical, and vice versa: the English overlay
+  (`docker-compose.audio.yml`) has no golden at all, so a change that moves
+  *both* audio files is exactly the kind of diff to read twice.
+
+Regenerate all of them with:
 
 ```sh
 uv run python tests/goldens/regen.py
