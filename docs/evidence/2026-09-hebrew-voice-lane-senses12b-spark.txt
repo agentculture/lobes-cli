@@ -68,3 +68,38 @@ ARM (a) — is it the model or the export?  google/gemma-4-12B-it bf16, SAME ima
   Tool calling is equally clean on both arms.
   Open: a quality-preserving 4-bit 12B (e.g. the QAT export unsloth/gemma-4-12B-it-qat-w4a16 the Orin
   served, #176) is the obvious third arm; the 26B-A4B (deviation d2) is next.
+
+GATEWAY PRESSURE — RESOLVED (operator-approved 2026-09-18)
+  ~/.lobes/.env LOBES_IOWAIT_DEGRADED_THRESHOLD 50 -> 100 (backup .env.bak-*-pre-iowait-100), gateway
+  recreated with --no-deps. lobes status --pressure: mode warm (iowait still reads 91.6%; swap guard 75
+  still armed). model=multimodal through the gateway: HTTP 200.
+
+ARM — NVFP4 12B as the speculative DRAFT for the bf16 12B (operator idea: "NVFP4 for speed, BF16 for fixes")
+  vllm serve google/gemma-4-12B-it --speculative-config {"method":"draft_model",
+    "model":"coolthor/gemma-4-12B-it-NVFP4A16","num_speculative_tokens":5}
+  REFUSED at engine init on vLLM 0.23.1rc1.dev672:
+    AssertionError: All drafting layers should belong to the same kv cache group
+    (vllm/v1/spec_decode/llm_base_proposer.py:1621 validate_same_kv_cache_group)
+  Gemma 4 mixes sliding-window and global attention layers, i.e. more than one KV-cache group, which this
+  build's draft-model proposer does not support. Not a budget problem; no throughput was measured.
+  (Arithmetic ceiling had it booted: ~11 tok/s — each verify step still reads the bf16's 22.8 GiB.)
+
+ARM — google/gemma-4-12B-it-qat-w4a16-ct (Google's QAT 4-bit export), SAME lane flags incl. MTP n=1
+  Scratch container, util 0.14, max_model_len 32768. Model loading took 9.07 GiB; KV 81,099 tokens.
+  warmup   1.22 s  14 tok  11.5 tok/s   'שלום רב. איך אני יכול לעזור לך היום?'
+  H1       2.68 s  92 tok  34.4 tok/s   'מחשב נייד הוא מכשיר נייד הכולל מסך ומקלדת מובנים, בעוד מחשב שולחני הוא מכשיר קבוע המורכב מחלקים נפרדים. המחשב השולחני לרוב חזק יותר וגמיש יותר לשדרוג, אך המחשב הנייד נוח יותר לשימוש בתנועה.'
+  H2       1.73 s  50 tok  28.8 tok/s   'כדאי לטייל בחוף הים או לסעור בבוקר בנמל תל אביב. אפשר גם ללכת לבית קפה באזור השוק או בשיכון אשדוד.'
+  H3 tool  0.60 s  22 tok  36.7 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 1.54 s 57 tok  37.0 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       0.39 s  11 tok  27.9 tok/s   'בירת צרפת היא פריז.'
+  H6 long  8.96 s 271 tok  30.3 tok/s   (Jerusalem paragraph; two script-mixing glitches: 'היסטורيتها' carries
+                                         Arabic letters, 'המוסlimים' carries Latin letters)
+  RESULT: same speed and footprint as the coolthor NVFP4A16 export, none of its non-words, H5 answered
+  correctly. Not flawless (script-mixing inside two words in a 271-token reply). n=1 per prompt.
+
+SUMMARY TABLE (same 7 prompts, temp 0.2, thinking off, single stream)
+  export                         weights   decode      H5 "capital of France"   malformed Hebrew words
+  coolthor NVFP4A16 + MTP         9.25 GiB  ~33 tok/s   never says Paris         many ('מכשש','חורבןים',...)
+  google bf16 (no draft)         22.83 GiB  ~7.5 tok/s  'בירת צרפת היא פריז.'    none seen
+  google QAT w4a16-ct + MTP       9.07 GiB  ~30-37      'בירת צרפת היא פריז.'    2 script-mix glitches in H6
+  Tool call + tool-result turn: correct on all three.
