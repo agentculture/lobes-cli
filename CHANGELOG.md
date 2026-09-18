@@ -26,6 +26,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Re-running `lobes init --audio` no longer appends duplicate audio keys to `.env` (a later blank default used to override an operator's value; pre-existing in the English lane too): only absent keys are appended, existing lines are never rewritten.
+- Requests that declare tools send `parallel_tool_calls: false`, so the session's one-tool-call-per-step contract is real; a backend that still returns several is logged as a warning naming the dropped calls.
+- A streamed tool call with non-string `arguments` is rejected like the non-streamed one.
+- The phonikud vocalization timeout now returns at the deadline (the thread-pool context manager used to wait for the overdue worker), and the diacritizer is built once, off the event loop — the first Hebrew reply no longer freezes every session.
+- The Whisper sidecar refuses an oversized upload (`STT_MAX_UPLOAD_BYTES`, 413) and an over-long clip from the WAV header, before decoding it.
 - `_clean_for_tts` turns an ASCII double quote between Hebrew letters into gershayim instead of dropping it.
 - Web harness status line no longer reads 'waiting for session.created' for the whole session; blank transcripts no longer draw empty bubbles.
 
