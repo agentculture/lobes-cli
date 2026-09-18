@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-18T11:16:20Z",
-  "updated": "2026-09-18T11:42:09Z",
+  "updated": "2026-09-18T12:02:17Z",
   "claims": [
     {
       "id": "c1",
@@ -625,6 +625,18 @@
       "kind": "assumption",
       "text": "The reSpeaker XVF3800 is the first acceptance device, the Reachy Mini the second: the reSpeaker is unclaimed by any process and has mic + speaker on one USB device (so its hardware AEC sees the playback reference), whereas the Reachy card is held by reachy-mini-daemon and reachy-mini-cli still speaks the pre-#151 wire (#115)",
       "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "Fallback if associate's Hebrew is not good enough: the voice lane moves to Gemma 4 \u2014 senses 12B first (already supported), with the 26B-A4B MoE or the 31B as later candidates \u2014 and the Orin may be re-pointed over ssh to serve it. The trigger is a Hebrew speaker's verdict on associate's replies, not the model card",
+      "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
       "hard_questions": [],

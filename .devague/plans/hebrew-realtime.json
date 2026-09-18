@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-18T11:43:41Z",
-  "updated": "2026-09-18T11:47:30Z",
+  "updated": "2026-09-18T12:02:17Z",
   "targets": [
     {
       "id": "c1",
@@ -755,6 +755,14 @@
       "text": "associate is a mesh-shared lane on the Orin (max_num_seqs=2); a voice turn behind a long-context prefill has no priority and no local fallback (frame v4)",
       "kind": "unknown_nonblocking",
       "task_id": "t17",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r8",
+      "text": "associate's Hebrew is unofficial (card omits it; n=5 agent-judged probes, lapse l2). Operator fallback (frame c35): Gemma 4 senses 12B as the voice lane, 26B-A4B/31B later. Open facts to check before using it: (a) the Spark is free once ComfyUI is dropped and its profile already tunes senses at util 0.14 \u2014 hosting it LOCALLY removes the per-turn Spark->Orin hop and is what DEFAULT_VOICE_MODEL=multimodal already expects; (b) on the Orin (sm_87) only weight-only exports run \u2014 the 12B NVFP4A16 plausibly, the nvidia 31B modelopt NVFP4 (W4A4) not; (c) Gemma tool calling via the gemma4 parser pair is validated on the 31B only, the 12B is UNVALIDATED (#108); (d) the senses role contract forbids final_decision/repo_action, which relaying tool calls to a client does not violate",
+      "kind": "unknown_nonblocking",
+      "task_id": "t3",
       "resolved": false,
       "resolution": ""
     }
