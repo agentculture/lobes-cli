@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T14:02:38Z",
+  "updated": "2026-09-18T15:00:01Z",
   "deviations": [
     {
       "id": "d1",
@@ -92,6 +92,21 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Mixed-language transcription and speech (Latin words, paths, identifiers inside Hebrew \u2014 e.g. 'evidence' heard as 'Evidense', or a Latin word derailing the Hebrew voice) is NOT a concern for this product and is dropped from the acceptance bar: no mixed-script row is required in the TTS comparison or the acceptance transcript. The runaway guard stays as the generic protection.",
+      "task_ref": "t3",
+      "reason": "Operator decision 2026-09-18: 'Don't worry about issues like Evidense - it won't be an issue for us.' The intended use is Hebrew speech; tool arguments will not depend on spoken Latin identifiers",
+      "affects": [
+        "t17",
+        "c30",
+        "h29"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
     }
   ],
   "evidence": [],
