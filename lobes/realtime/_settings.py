@@ -106,6 +106,13 @@ class Settings:
     default_aec_mode: str
     barge_in_window_ms: int
     barge_in_model: str | None
+    # Stream the generate call and speak it sentence by sentence (approved
+    # deviation d7, 2026-09-18). Default TRUE: the whole point is that first
+    # audio stops depending on reply length. ``false`` selects the previous,
+    # whole-reply path byte-for-byte — the request body loses its ``stream``
+    # key and the route drives the non-streaming surface — so the rollback is
+    # exact, not approximate.
+    generate_stream: bool
 
     # Where the FastAPI app listens (inside the container).
     host: str
@@ -127,6 +134,19 @@ def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
         return int(env.get(key) or default)
     except (TypeError, ValueError):
         return int(default)
+
+
+# Tokens that turn a boolean knob OFF. The DEFAULT-ON direction is what makes
+# a denylist right here: a typo (``GENERATE_STREAM=ture``) leaves streaming on
+# — the deployed, measured behaviour — rather than silently reverting a
+# deployment to the slow path nobody asked for. Mirrors _vocalize.py's own
+# truthy-token set, inverted.
+_FALSY_TOKENS = frozenset({"0", "false", "no", "off"})
+
+
+def _is_off(value: str | None) -> bool:
+    """True iff *value* explicitly disables a default-on boolean knob."""
+    return (value or "").strip().lower() in _FALSY_TOKENS
 
 
 def _as_float(env: Mapping[str, str], key: str, default: float) -> float:
@@ -207,6 +227,9 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         default_aec_mode=env.get("DEFAULT_AEC_MODE") or "none",
         barge_in_window_ms=_as_int(env, "BARGE_IN_WINDOW_MS", 750),
         barge_in_model=env.get("BARGE_IN_MODEL") or None,
+        # Default ON (see the field's own comment): only an explicit falsy
+        # token puts the deployment back on the whole-reply path.
+        generate_stream=not _is_off(env.get("GENERATE_STREAM")),
         host=env.get("REALTIME_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container
         port=_as_int(env, "REALTIME_PORT", 8080),
     )

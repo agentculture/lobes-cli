@@ -162,6 +162,7 @@ def build_turn_payload(
     temperature: float = DEFAULT_TEMPERATURE,
     tools: Sequence[Mapping[str, object]] | None = None,
     tool_choice: str | Mapping[str, object] | None = None,
+    stream: bool = False,
 ) -> dict:
     """Assemble the ``/v1/chat/completions`` JSON body for one voice turn.
 
@@ -193,6 +194,15 @@ def build_turn_payload(
     tools ARE declared, ``tool_choice`` (if not ``None``) is nested via
     :func:`~lobes.realtime._session.realtime_tool_choice_to_chat_completions`
     and included too.
+
+    ``stream`` (approved deviation d7, sentence-level streaming) adds the
+    single ``"stream": true`` key and NOTHING else — no ``stream_options``,
+    which the served build's acceptance for this lane is unverified and which
+    buys nothing here (the bridge reports its own per-stage timings, not the
+    backend's usage block). ``stream=False`` — the default, and what
+    ``GENERATE_STREAM=false`` selects — leaves the payload byte-identical to
+    a call made before streaming existed, so the rollback is exact rather
+    than approximate.
     """
     payload: dict = {}
     if model:
@@ -205,6 +215,8 @@ def build_turn_payload(
         payload["tools"] = realtime_tools_to_chat_completions(tools)
         if tool_choice is not None:
             payload["tool_choice"] = realtime_tool_choice_to_chat_completions(tool_choice)
+    if stream:
+        payload["stream"] = True
     return payload
 
 
@@ -253,6 +265,7 @@ def build_turn_request(
     temperature: float = DEFAULT_TEMPERATURE,
     tools: Sequence[Mapping[str, object]] | None = None,
     tool_choice: str | Mapping[str, object] | None = None,
+    stream: bool = False,
 ) -> TurnRequest:
     """Convenience wrapper: the complete :class:`TurnRequest` in one call."""
     return TurnRequest(
@@ -266,6 +279,7 @@ def build_turn_request(
             temperature=temperature,
             tools=tools,
             tool_choice=tool_choice,
+            stream=stream,
         ),
     )
 
@@ -526,3 +540,178 @@ def _extract_tool_call(tool_calls: object) -> ToolCallResult:
     return ToolCallResult(
         call_id=call_id, name=name, arguments=arguments, tool_call_count=len(tool_calls)
     )
+
+
+# --- the streamed response: the same result, arriving in pieces --------------
+
+# The SSE field this consumer reads, and the sentinel that closes a stream.
+_SSE_DATA_PREFIX = "data:"
+_SSE_DONE = "[DONE]"
+
+
+@dataclass(frozen=True)
+class StreamItem:
+    """One piece of assistant TEXT, released the moment it arrived.
+
+    Deliberately a wrapper rather than a bare ``str``: a stream also carries
+    tool-call fragments, usage blocks and keep-alives, and a caller that gets
+    a list of these knows that everything in it is speakable text and nothing
+    else. Later kinds (a reasoning trace, say) can join this type without
+    changing :meth:`StreamAccumulator.feed_line`'s signature.
+    """
+
+    text: str
+
+
+class StreamAccumulator:
+    """Consume ``chat.completion.chunk`` SSE lines; end with ONE result.
+
+    The streaming counterpart of :func:`parse_turn_response`, and
+    deliberately its twin: :meth:`result` returns the SAME two shapes with
+    the same precedence (a tool call wins over text; the first call is
+    surfaced with a count; a malformed reply raises
+    :class:`TurnResponseError`), so ``GENERATE_STREAM`` is a transport switch
+    and never a behaviour switch.
+
+    Pure and incremental — it holds no socket, decides nothing about
+    sentences (that is :mod:`lobes.realtime._sentences`) and never blocks.
+    One per generate call.
+
+    Text-then-tool-call
+    -------------------
+    Some backends emit a little text before deciding to call a tool. The
+    moment ANY ``tool_calls`` delta appears this accumulator stops releasing
+    text (:attr:`saw_tool_call`) and :meth:`result` answers with the tool
+    call: a reply the model abandoned must not be spoken as if it were the
+    answer. Text released BEFORE that point has already left this module —
+    cancelling whatever the bridge queued from it is the bridge's job, and it
+    does exactly that.
+
+    Non-200 responses are NOT streams. The route reads such a body whole and
+    hands it to the existing
+    :meth:`~lobes.realtime._conversation.ConversationBridge.on_generate_response`
+    error path, so ``role_infeasible``/429/503 surfacing is untouched by
+    streaming.
+    """
+
+    def __init__(self) -> None:
+        self._text: list[str] = []
+        self._calls: dict[int, dict[str, str]] = {}
+        self._saw_tool_call = False
+        self._done = False
+
+    # -- observation ------------------------------------------------------
+
+    @property
+    def saw_tool_call(self) -> bool:
+        """Has any ``tool_calls`` fragment arrived? Then text stops flowing."""
+        return self._saw_tool_call
+
+    @property
+    def done(self) -> bool:
+        """Did the backend send its ``[DONE]`` sentinel?"""
+        return self._done
+
+    @property
+    def text(self) -> str:
+        """Every text delta seen so far, concatenated and unstripped."""
+        return "".join(self._text)
+
+    # -- inputs -----------------------------------------------------------
+
+    def feed_line(self, line: str | bytes) -> list[StreamItem]:
+        """Consume ONE SSE line; return the text it released (often none).
+
+        Blank lines, ``:`` comments, non-``data:`` fields and the ``[DONE]``
+        sentinel all yield nothing. A ``data:`` line that is not a JSON
+        object raises :class:`TurnResponseError` immediately — the same named
+        failure a malformed non-streamed body raises, surfaced at the line
+        that broke rather than swallowed into a truncated reply.
+        """
+        text = line.decode("utf-8", "replace") if isinstance(line, bytes) else line
+        text = text.strip()
+        if not text or text.startswith(":"):
+            return []
+        if not text.startswith(_SSE_DATA_PREFIX):
+            return []  # `event:`/`id:`/`retry:` — not this consumer's business
+        payload = text[len(_SSE_DATA_PREFIX) :].strip()
+        if not payload:
+            return []
+        if payload == _SSE_DONE:
+            self._done = True
+            return []
+        data = _load_json_object(payload.encode("utf-8"))
+        if data is None:
+            raise TurnResponseError("generate stream sent a non-JSON chunk")
+        return self._consume_chunk(data)
+
+    def result(self) -> str | ToolCallResult:
+        """The finished reply: a tool call if one was seen, else the text."""
+        if self._saw_tool_call:
+            return self._tool_call_result()
+        return self.text.strip()
+
+    # -- internals --------------------------------------------------------
+
+    def _consume_chunk(self, data: dict) -> list[StreamItem]:
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return []  # a usage-only final chunk carries no choices at all
+        first = choices[0]
+        delta = first.get("delta") if isinstance(first, dict) else None
+        if not isinstance(delta, dict):
+            return []
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            self._saw_tool_call = True
+            for fragment in tool_calls:
+                self._merge_tool_fragment(fragment)
+        content = delta.get("content")
+        if not isinstance(content, str) or not content or self._saw_tool_call:
+            return []
+        self._text.append(content)
+        return [StreamItem(text=content)]
+
+    def _merge_tool_fragment(self, fragment: object) -> None:
+        """Fold one ``tool_calls`` fragment into its index-keyed accumulator.
+
+        vLLM streams a call in pieces: the id and function name arrive once,
+        the arguments in as many fragments as the JSON takes. ``index`` is
+        what ties them together (and what keeps two parallel calls apart), so
+        a fragment with no index is attributed to call 0 — the only call a
+        single-call reply has.
+        """
+        if not isinstance(fragment, dict):
+            return
+        raw_index = fragment.get("index")
+        index = raw_index if isinstance(raw_index, int) else 0
+        call = self._calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        call_id = fragment.get("id")
+        if isinstance(call_id, str) and call_id:
+            call["id"] = call_id
+        function = fragment.get("function")
+        if not isinstance(function, dict):
+            return
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            call["name"] = name
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            call["arguments"] += arguments
+
+    def _tool_call_result(self) -> ToolCallResult:
+        """The FIRST call by index, validated exactly like the non-streamed one."""
+        if not self._calls:
+            raise TurnResponseError("generate stream announced a tool call it never described")
+        index = min(self._calls)
+        call = self._calls[index]
+        if not call["id"]:
+            raise TurnResponseError("generate stream tool call missing 'id'")
+        if not call["name"]:
+            raise TurnResponseError("generate stream tool call missing 'function.name'")
+        return ToolCallResult(
+            call_id=call["id"],
+            name=call["name"],
+            arguments=call["arguments"],
+            tool_call_count=len(self._calls),
+        )

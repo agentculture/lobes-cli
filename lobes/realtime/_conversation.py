@@ -164,6 +164,7 @@ from ._floor import (
     FailureReason,
     Floor,
     FloorState,
+    ReplySegment,
     ReplyText,
     ResponseDone,
     ResponseFailed,
@@ -172,6 +173,7 @@ from ._floor import (
     ToolCallRequested,
     estimate_spoken_prefix,
 )
+from ._sentences import SentenceChunker
 from ._session import (
     ErrorCode,
     ErrorEvent,
@@ -488,6 +490,12 @@ class GenerateConfig:
     model: str | None = None
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
+    # Ask the backend to STREAM the reply (approved deviation d7). Lives here
+    # rather than as a bridge argument for the same reason as the other five:
+    # it is consumed by the one build_turn_request call and nothing else.
+    # ``False`` — what GENERATE_STREAM=false renders — leaves the request body
+    # byte-identical to a pre-streaming deployment.
+    stream: bool = False
 
 
 class ConversationBridge:
@@ -556,6 +564,13 @@ class ConversationBridge:
         self._pending_item_id: str | None = None
         self._pending_response: int | None = None
         self._pending_synthesis: tuple[int, str] | None = None
+        # The STREAMING half (deviation d7): one chunker per reply, and an
+        # ORDERED queue of (turn_id, segment_index, text) the route's synth
+        # worker drains. A deque, not a single slot like _pending_synthesis,
+        # because segments pile up while an earlier one is being synthesized.
+        self._chunker = SentenceChunker()
+        self._stream_turn_id: int | None = None
+        self._pending_segments: deque[tuple[int, int, str]] = deque()
         self._tool_call: OutstandingToolCall | None = None
         self._closed_call_ids: deque[str] = deque(maxlen=CLOSED_CALL_MEMORY)
         self._timings_provider: Callable[[], StageTimings | None] | None = None
@@ -883,6 +898,9 @@ class ConversationBridge:
             # payload byte-identical to a call that never mentions tools.
             tools=self.session.config.tools,
             tool_choice=self.session.config.tool_choice,
+            # The operator's GENERATE_STREAM, threaded through to the one
+            # payload key that changes the transport (deviation d7).
+            stream=self._generate.stream,
         )
 
     def on_generate_response(
@@ -961,18 +979,127 @@ class ConversationBridge:
         return self.floor.fail_stage(reason, message, turn_id=turn_id)
 
     def take_pending_synthesis(self) -> tuple[int, str] | None:
-        """``(turn_id, reply_text)`` the route must now synthesize, or ``None``."""
+        """``(turn_id, reply_text)`` the route must now synthesize, or ``None``.
+
+        The NON-streaming surface, unchanged: one whole reply, taken once.
+        The streaming route drains :meth:`take_pending_segment` instead.
+        """
         pending, self._pending_synthesis = self._pending_synthesis, None
         return pending
 
-    def on_tts_audio(self, pcm: bytes, *, turn_id: int) -> bool:
+    # -- the streaming surface (approved deviation d7) --------------------
+
+    @property
+    def streaming_enabled(self) -> bool:
+        """Did the operator ask for streamed generation (``GENERATE_STREAM``)?
+
+        The route reads this to pick which of the two surfaces to drive. The
+        bridge itself supports both regardless — this is a wiring fact, not a
+        state machine mode.
+        """
+        return self._generate.stream
+
+    def response_in_progress(self, turn_id: int) -> bool:
+        """Is *turn_id*'s reply still being produced or spoken?
+
+        The delivery pump's loop condition. It lives here, not in the route,
+        for the usual reason: "which floor states mean audio may still be
+        coming" is a decision, and a route that guessed it wrong would either
+        spin forever or stop pumping mid-reply. A tool wait answers ``False``
+        — nothing will be delivered until the client comes back.
+        """
+        return turn_id == self.floor.turn_id and self.floor.state in (
+            FloorState.RESPONDING,
+            FloorState.SPEAKING,
+        )
+
+    def begin_generate_stream(self, turn_id: int) -> bool:
+        """Open a streamed generate for *turn_id*. ``True`` if it is live.
+
+        Resets the sentence chunker (the eager-first-sentence allowance is
+        per reply) and drops any segment left queued by an abandoned turn, so
+        a stale sentence can never be synthesized against a new one.
+        """
+        self._chunker.reset()
+        self._pending_segments.clear()
+        self._stream_turn_id = turn_id
+        return turn_id == self.floor.turn_id and self.floor.state is FloorState.RESPONDING
+
+    def on_generate_delta(self, text_delta: str, *, turn_id: int) -> bool:
+        """One streamed text delta. ``True`` if it was consumed.
+
+        Feeds the chunker and hands every COMPLETED sentence to the floor as
+        a non-final segment, queuing it for synthesis. Nothing is emitted on
+        the wire here: ``response.text.done`` still goes out exactly once, at
+        stream end, with the whole reply (see
+        :meth:`on_generate_stream_end`).
+        """
+        if turn_id != self._stream_turn_id or turn_id != self.floor.turn_id:
+            return False
+        for sentence in self._chunker.feed(text_delta):
+            self.floor.on_reply_segment(sentence, final=False, turn_id=turn_id)
+        return True
+
+    def on_generate_stream_end(self, result: str | ToolCallResult, *, turn_id: int) -> bool:
+        """The stream finished. ``True`` if the turn advanced.
+
+        A TEXT result flushes the chunker's remainder as the FINAL segment,
+        emits the single ``response.text.done`` with the full reply, and
+        records that full text as what history will carry once the reply is
+        delivered.
+
+        A TOOL CALL discards every segment already queued from a text prefix
+        — the model abandoned that text, so it must not be spoken — and then
+        takes exactly the non-streaming tool path.
+        """
+        if turn_id != self._stream_turn_id or turn_id != self.floor.turn_id:
+            return False
+        if isinstance(result, ToolCallResult):
+            return self._abandon_stream_for_tool_call(result, turn_id=turn_id)
+        tail = self._chunker.flush()
+        for sentence in tail[:-1]:
+            self.floor.on_reply_segment(sentence, final=False, turn_id=turn_id)
+        self._reply_text = result
+        if result.strip():
+            self._push(self.session.complete_response_text(result))
+        return self.floor.on_reply_segment(tail[-1] if tail else "", final=True, turn_id=turn_id)
+
+    def _abandon_stream_for_tool_call(self, result: ToolCallResult, *, turn_id: int) -> bool:
+        """Drop a spoken-text prefix and surface the tool call instead."""
+        self._pending_segments.clear()
+        self._reply_text = ""
+        self.floor.discard_reply_segments(turn_id=turn_id)
+        return self._request_tool_call(result, turn_id=turn_id)
+
+    def take_pending_segment(self) -> tuple[int, int, str] | None:
+        """``(turn_id, segment_index, text)`` to synthesize next, or ``None``.
+
+        In release order, one at a time, taken exactly once — the route's
+        synth worker calls this in a loop and answers each with
+        :meth:`on_tts_audio`. Order matters twice over: TTS runs serially
+        (``TTS_VOICE_CONCURRENCY`` is 1) and the floor delivers segments in
+        index order regardless.
+        """
+        if not self._pending_segments:
+            return None
+        return self._pending_segments.popleft()
+
+    @property
+    def pending_segments(self) -> int:
+        """How many segments are waiting to be synthesized (observation/tests)."""
+        return len(self._pending_segments)
+
+    def on_tts_audio(self, pcm: bytes, *, turn_id: int, segment_index: int = 0) -> bool:
         """The full-read synthesis returned; delivery can begin.
 
         Empty audio is a named TTS failure, not a silently completed reply —
         :func:`lobes.realtime.tts_client.synthesize` returns ``b""`` on a soft
         failure, and rendering that as "the machine spoke" would be a lie.
+
+        *segment_index* defaults to ``0`` — the only segment a non-streaming
+        reply has — so every pre-streaming caller is unchanged.
         """
-        return self.floor.on_audio_ready(pcm, turn_id=turn_id)
+        return self.floor.on_audio_ready(pcm, turn_id=turn_id, segment_index=segment_index)
 
     def fail_tts(self, message: str, *, turn_id: int, timed_out: bool = False) -> bool:
         """The TTS call failed by name."""
@@ -1027,6 +1154,22 @@ class ConversationBridge:
             self._reply_text = event.text
             self._push(self.session.complete_response_text(event.text))
             self._pending_synthesis = (event.turn_id, event.text)
+        elif isinstance(event, ReplySegment):
+            # A PIECE of a streamed reply: queue it for synthesis and say
+            # nothing on the wire. `response.text.done` is emitted once, with
+            # the whole reply, by on_generate_stream_end — the wire contract
+            # does not change because the transport did.
+            self._pending_segments.append((event.turn_id, event.index, event.text))
+            # Length only, never the text — the same discipline _turn.py
+            # documents for a reply. This line is how an operator SEES
+            # streaming working in the bridge log: one per sentence, arriving
+            # while the generate call is still open.
+            self.session.log.info(
+                "reply segment %d released (%d chars, final=%s)",
+                event.index,
+                len(event.text),
+                event.final,
+            )
         elif isinstance(event, ToolCallRequested):
             self._push(
                 self.session.emit_function_call_arguments_done(
@@ -1068,7 +1211,14 @@ class ConversationBridge:
         """
         if event.delivered_bytes <= 0:
             return
-        heard = estimate_spoken_prefix(event.reply_text, event.audio_end_ms, event.audio_total_ms)
+        # The floor computes the prefix ACROSS segments (a proportional
+        # estimate is only meaningful within one); `heard_text` is that
+        # answer, and for a single-segment reply it is byte-for-byte what
+        # estimate_spoken_prefix returns here. The fallback keeps a caller
+        # that constructs the event by hand working.
+        heard = event.heard_text or estimate_spoken_prefix(
+            event.reply_text, event.audio_end_ms, event.audio_total_ms
+        )
         if heard:
             self.session.append_history("assistant", heard)
 
@@ -1087,6 +1237,8 @@ class ConversationBridge:
         self._reply_text = ""
         self._pending_response = None
         self._pending_synthesis = None
+        self._pending_segments.clear()
+        self._stream_turn_id = None
 
     def _close_outstanding_tool_call(self) -> None:
         """Close the outstanding call, cancelling it in history if unanswered.
