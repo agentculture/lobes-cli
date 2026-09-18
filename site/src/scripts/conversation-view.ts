@@ -210,11 +210,12 @@ export function mountConversationView(root: HTMLElement): ConversationViewContro
 
     switch (event.type) {
       case "conversation.item.input_audio_transcription.completed": {
-        addTurn({
-          id: nextId("heard"),
-          kind: "heard",
-          text: typeof event.text === "string" ? event.text : "",
-        });
+        // A blank transcript is noise the STT confidence gate dropped — the
+        // event stream still shows it; the conversation has nothing to add.
+        const heard = typeof event.text === "string" ? event.text.trim() : "";
+        if (heard !== "") {
+          addTurn({ id: nextId("heard"), kind: "heard", text: heard });
+        }
         break;
       }
       case "response.text.done": {

@@ -43,6 +43,16 @@ describe("mountConversationView", () => {
     expect(textEl.textContent).toBe("מה השעה עכשיו?");
   });
 
+  it("renders no bubble for a blank transcript (noise the STT gate dropped)", () => {
+    // Seen in a real browser, 2026-09-18: a column of empty "YOU" bubbles.
+    const root = createRoot();
+    const view = mountConversationView(root);
+    for (const text of ["", "   ", undefined]) {
+      view.pushEvent({ type: "conversation.item.input_audio_transcription.completed", text });
+    }
+    expect(view.turns).toHaveLength(0);
+  });
+
   it("renders a said turn from response.text.done", () => {
     const root = createRoot();
     const view = mountConversationView(root);

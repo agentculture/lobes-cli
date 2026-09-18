@@ -35,7 +35,8 @@ describe("scheduling", () => {
     player.enqueueDelta(delta(100));
 
     expect(context.sources).toHaveLength(3);
-    expect(context.sources.map((s) => s.startedAt)).toEqual([0, 0.1, 0.2]);
+    // the first chunk waits out the jitter buffer; the rest follow back to back
+    expect(context.sources.map((s) => s.startedAt)).toEqual([0.15, 0.25, 0.35].map((t) => expect.closeTo(t, 6)));
     expect(player.getState()).toBe("playing");
   });
 
@@ -47,7 +48,29 @@ describe("scheduling", () => {
     context.currentTime = 5; // the first chunk finished long ago
     player.enqueueDelta(delta(100));
 
-    expect(context.sources[1].startedAt).toBe(5);
+    expect(context.sources[1].startedAt).toBeCloseTo(5.15, 6);
+  });
+
+  it("re-buffers after an underrun instead of starting every late chunk at 'now'", () => {
+    // Heard in a real browser, 2026-09-18: constant stutter. With zero margin,
+    // ordinary arrival jitter made chunk after chunk land a hair late.
+    const context = new FakeAudioContext();
+    const player = new DeltaPlayer(context);
+    player.enqueueDelta(delta(100)); // plays 0.15 .. 0.25
+    context.currentTime = 0.26; // underrun: the next chunk is 10 ms late
+    player.enqueueDelta(delta(100));
+    context.currentTime = 0.3;
+    player.enqueueDelta(delta(100)); // arrives with margin in hand: back to back
+    const starts = context.sources.map((s) => s.startedAt as number);
+    expect(starts[1]).toBeCloseTo(0.41, 6);
+    expect(starts[2]).toBeCloseTo(0.51, 6);
+  });
+
+  it("takes the jitter buffer from its options, and 0 restores the old behaviour", () => {
+    const context = new FakeAudioContext();
+    const player = new DeltaPlayer(context, { jitterBufferMs: 0 });
+    player.enqueueDelta(delta(100));
+    expect(context.sources[0].startedAt).toBe(0);
   });
 
   it("treats an empty delta as a no-op rather than a zero-length buffer", () => {
@@ -117,7 +140,7 @@ describe("stopping on barge-in", () => {
     const player = new DeltaPlayer(context, { onStop: (info) => stops.push(info) });
 
     for (let i = 0; i < 4; i += 1) player.enqueueDelta(delta(500)); // 2 s queued
-    context.currentTime = 0.75; // three quarters of a second has played
+    context.currentTime = 0.15 + 0.75; // the jitter buffer's lead-in, then 750 ms has played
 
     const info = player.stop("interrupted");
 

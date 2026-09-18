@@ -53,9 +53,20 @@ export interface PlaybackStopInfo {
   playedMs: number;
 }
 
+export const DEFAULT_JITTER_BUFFER_MS = 150;
+
 export interface DeltaPlayerOptions {
   /** Fixed at the TTS rate. Never derived from the negotiated input rate. */
   outputSampleRate?: number;
+  /**
+   * How far ahead of "now" playback (re)starts whenever the queue is empty —
+   * at the start of a reply and after any underrun. The server paces delivery
+   * only a little ahead of the playhead, so with no margin ordinary arrival
+   * jitter makes chunk after chunk land a hair late, and each late chunk is an
+   * audible gap (heard as constant stutter in a real browser, 2026-09-18).
+   * Default 150 ms; 0 restores start-immediately.
+   */
+  jitterBufferMs?: number;
   onState?(state: PlaybackState): void;
   onStop?(info: PlaybackStopInfo): void;
   /** Called whenever the queued/received totals change, for the UI readout. */
@@ -83,6 +94,9 @@ export class DeltaPlayer {
 
   private readonly sources = new Set<BufferSourceLike>();
   private playhead = 0;
+  private readonly jitterBufferS: number;
+  /** When the current uninterrupted run of audio starts (after its lead-in). */
+  private runStartedAt = 0;
   private replyStartedAt = 0;
   private state: PlaybackState = "idle";
   private tearingDown = false;
@@ -93,6 +107,7 @@ export class DeltaPlayer {
   constructor(context: AudioContextLike, options: DeltaPlayerOptions = {}) {
     this.context = context;
     this.outputSampleRate = options.outputSampleRate ?? TTS_OUTPUT_SAMPLE_RATE;
+    this.jitterBufferS = Math.max(0, options.jitterBufferMs ?? DEFAULT_JITTER_BUFFER_MS) / 1000;
     this.onStateChange = options.onState ?? (() => {});
     this.onStop = options.onStop ?? (() => {});
     this.onProgress = options.onProgress ?? (() => {});
@@ -104,7 +119,9 @@ export class DeltaPlayer {
 
   /** Milliseconds of received audio still ahead of the playhead. */
   get queuedMs(): number {
-    return Math.max(0, (this.playhead - this.context.currentTime) * 1000);
+    // Audio only: the jitter buffer's lead-in silence is not queued audio.
+    const from = Math.max(this.context.currentTime, this.runStartedAt);
+    return Math.max(0, (this.playhead - from) * 1000);
   }
 
   /** Milliseconds of the current reply already played out. */
@@ -141,7 +158,11 @@ export class DeltaPlayer {
     source.connect(this.context.destination);
     source.onended = () => this.handleEnded(source);
 
-    const startAt = Math.max(this.context.currentTime, this.playhead);
+    // Audio still queued: carry on back to back. Queue empty (a new reply, or
+    // an underrun): restart a jitter buffer ahead of now, not AT now.
+    const now = this.context.currentTime;
+    const startAt = this.playhead > now ? this.playhead : now + this.jitterBufferS;
+    if (startAt !== this.playhead) this.runStartedAt = startAt;
     if (this.state === "idle") {
       this.replyStartedAt = startAt;
       this.receivedMs = 0;
