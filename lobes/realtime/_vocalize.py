@@ -52,13 +52,11 @@ import logging
 import os
 import threading
 from collections.abc import Callable
-from typing import Generic, TypeVar
 
 log = logging.getLogger(__name__)
 
 Diacritizer = Callable[[str], str]
 
-_T = TypeVar("_T")
 
 # Generous default for a CPU int8 ONNX diacritizer on one sentence; the
 # hebrew-realtime spec notes phonikud's per-sentence latency on this box is
@@ -80,7 +78,7 @@ _GERESH = "׳"
 _GERSHAYIM = "״"
 
 
-class LazySingleton(Generic[_T]):
+class LazySingleton[T]:
     """Thread-safe, build-at-most-once-per-process lazy value.
 
     ``get()`` calls the *builder* passed to ``__init__`` at most once, even
@@ -98,13 +96,13 @@ class LazySingleton(Generic[_T]):
     for that concurrency guarantee.
     """
 
-    def __init__(self, builder: Callable[[], _T]) -> None:
+    def __init__(self, builder: Callable[[], T]) -> None:
         self._builder = builder
         self._lock = threading.Lock()
         self._built = False
-        self._value: _T | None = None
+        self._value: T | None = None
 
-    def get(self) -> _T | None:
+    def get(self) -> T | None:
         if self._built:
             return self._value
         with self._lock:

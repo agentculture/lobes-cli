@@ -254,7 +254,8 @@ class TestCheckUploadSize:
     def test_over_limit_is_refused(self, lsw) -> None:
         msg = lsw.check_upload_size(2001, 2000)
         assert msg is not None
-        assert "2001" in msg and "2000" in msg
+        assert "2001" in msg
+        assert "2000" in msg
 
     def test_default_cap_comfortably_covers_the_realtime_bridge_turn_audio(self, lsw) -> None:
         # The realtime bridge's own turn audio: max 30s at 16kHz mono PCM16,
