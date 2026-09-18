@@ -103,12 +103,12 @@ Decisions no deviation record covers:
 - SonarCloud: quality gate **OK** on `9455942` (reliability 3 → 1, new coverage 84.0 %); 2 late minor issues fixed in `576b7e5`, not yet re-analysed
 - CI on PR #279: lint, test, site-build, secrets-scan, version-check, test-publish, GitGuardian — pass
 - live: `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` (sections 1–10) and the six other `docs/evidence/2026-09-hebrew-*.txt` files — DGX Spark GB10, 2026-09-18, hand-carried wheel
-- devague records: evidence `e1`–`e17` and deltas `b1`–`b8` — ALL `llm`-origin and still **proposed** (the operator has not adjudicated them)
+- devague records: evidence `e1`–`e17` and deltas `b1`–`b8` — filed `llm`-origin, **approved by the operator on 2026-09-18** ("Confirm all"); `e17` is approved AS A FAILING record
 - commits: `main..2cc0da1` (97 commits) · PR: #279 (open) · issues: #276, #277, #278 · consumer note: agentculture/shabbos-goy#1
 
 ## Delivery Claims
 
-Approved lapses `l1` (grader-unverified: a scope verdict taken from a subagent without reading the file) and `l2` (n-below-claim: Hebrew quality judged on n=5 by the agent) cap the claims they touch. `l3` and `l4` are proposed — pending, not evidence.
+Approved lapses `l1` (grader-unverified: a scope verdict taken from a subagent without reading the file) and `l2` (n-below-claim: Hebrew quality judged on n=5 by the agent) cap the claims they touch. `l3` and `l4` (both control-absent: tests written without the red step being observed — the sentence chunker, and the tool-call hold) were approved by the operator on 2026-09-18 and cap what rests on those tests: the chunker's behaviour is claimed from the live sessions, not from its unit tests alone, and the tool hold stays at `low` with the merge it belongs to.
 
 | Claim | Confidence | Evidence |
 |-------|------------|----------|
@@ -120,7 +120,7 @@ Approved lapses `l1` (grader-unverified: a scope verdict taken from a subagent w
 | First audio went from 2.6 s to 1–113 ms after the commit | high (for one box, one speaker) | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.2, s.4, s.7 — live, human, reSpeaker; n = 7 turns |
 | Human barge-in stops the reply | medium | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.4, s.7, s.9 — n = 6 live interruptions, one device |
 | Hidden speculation is traceless when discarded and adopted only on a byte-identical request | medium | `tests/test_realtime_speculation.py` · `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.6–7; the discard count in the live session was not separated from scripted runs |
-| The continuation merge re-joins a paused sentence | low | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.8 — a doctored RECORDING only; zero live merges observed (s.9); `l4` pending on its tests |
+| The continuation merge re-joins a paused sentence, and a tool call is held while it still can | low | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.8 — a doctored RECORDING only; zero live merges observed (s.9); capped by approved lapse `l4` (the hold's tests never seen red) — the 499–500 ms hold itself WAS observed live on 7 tool turns |
 | The input-level gate ignores quiet voices | low | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.10 — a scaled recording stands in for a far voice; no real background speaker tried |
 | BlueTTS serves Hebrew at 93–305 ms per sentence behind the existing contract | high | `docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt` s.1 · `tests/test_bluetts_server.py` · operator: "Sounds perfect!" |
 | The web harness drives the session in a real browser | medium | driven in Chrome on the Spark (connect, arm, tools declared, transcript, reply, latency table); the stutter fix is NOT confirmed by ear and the browser tool-call path is untested |
@@ -132,7 +132,6 @@ Approved lapses `l1` (grader-unverified: a scope verdict taken from a subagent w
 ## Remaining Work / Follow-up
 
 - `t17` — deploy the PR's TestPyPI dev wheel on the Spark (update the override's `LOCAL_WHEEL`/pin; wait out the TestPyPI propagation race), run ONE session with the operator speaking: Hebrew in/out, a tool round trip, a barge-in, an STT negative control, the latency table. Then flip the docs from DECLARED/UNVALIDATED only for what it shows. Owner: operator + agent.
-- Operator adjudication: evidence `e1`–`e17`, deltas `b1`–`b8`, lapses `l3`, `l4` are all proposed.
 - PR #279 — awaiting the human merge decision; SonarCloud to re-analyse `576b7e5`.
 - `d4` (conikud) — decide whether it is withdrawn now that BlueTTS owns G2P, or still wanted for the Chatterbox path.
 - `o15` — capture traffic during a session if the "nothing leaves the box" claim matters.

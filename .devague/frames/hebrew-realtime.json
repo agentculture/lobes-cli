@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-18T11:16:20Z",
-  "updated": "2026-09-18T16:11:00Z",
+  "updated": "2026-09-18T18:13:44Z",
   "claims": [
     {
       "id": "c1",
@@ -964,7 +964,7 @@
         "lobes/realtime/_sentences.py"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     },
     {
       "id": "l4",
@@ -976,7 +976,7 @@
         "tests/test_realtime_continuation.py"
       ],
       "origin": "llm",
-      "status": "proposed"
+      "status": "approved"
     }
   ],
   "obligations": [
