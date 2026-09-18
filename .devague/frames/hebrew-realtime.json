@@ -1,0 +1,682 @@
+{
+  "slug": "hebrew-realtime",
+  "title": "hebrew-realtime",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-18T11:16:20Z",
+  "updated": "2026-09-18T11:25:38Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes ships a Hebrew realtime duplex voice session on the DGX Spark: speak Hebrew into GET /v1/realtime, an ivrit.ai Whisper model transcribes it, associate answers in Hebrew, phonikud vocalizes the reply before a Hebrew-capable TTS speaks it back \u2014 and when associate decides to call a tool, the call is handed to the connected client over the same socket and the client's result is spoken back, so an agent the client owns can operate this machine by voice",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "All four legs are exercised in ONE session on the Spark, not four separate demos: Hebrew speech in, Hebrew transcript, Hebrew reply audio out, and one tool round-trip whose result is spoken",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The builder of a voice agent that does operations on this machine. That agent, its tools and their execution are the AUDIENCE, not part of this deployment \u2014 lobes ships only the Hebrew realtime duplex session and the tool-call wire",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "No file under lobes/ executes a tool, imports an agent framework, or ships a tool definition; the only tool schemas in-tree are test fixtures and the acceptance client's",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "associate is the voice lane's speaker: the realtime bridge generates through model=associate (the fast model), not the current multimodal default",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "The bridge sends model=associate on every voice turn of the Hebrew deployment, and when associate is unreachable the session emits generate_failed naming hosted_by \u2014 never a silent answer from another model",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "associate's tool calling is connected to the realtime session: tools the client declares reach the generate call, and a tool call associate makes is delivered to the client over the socket, whose result continues the turn",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "A session that declares no tools emits exactly the pre-change event sequence (the additive-only contract reachy-mini-cli depends on), and a declared tool call is never synthesized as speech",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "decision",
+      "text": "ComfyUI/innereye is dropped from this box to make room for the Hebrew audio stack",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "STT is an ivrit.ai Hebrew Whisper model and the TTS path runs through phonikud (Hebrew diacritization/G2P) \u2014 replacing the English Parakeet + Chatterbox pair for this deployment",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "The STT sidecar really loads an ivrit-ai checkpoint (its readiness probe reports the model id) and the text reaching TTS has really passed through phonikud (observable as niqqud in a debug event or log), not a pass-through stub",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "before_state",
+      "text": "No realtime is running on the Spark today: ~/.lobes/.env has STT_FEASIBLE=false and TTS_FEASIBLE=false, only model-gear-gateway and model-gear-comfyui are up, and docker-compose.audio.yml + Dockerfile.parakeet/chatterbox there date from 2026-07-17..22 (pre-0.54.1). 'Replace existing realtime' is therefore a bring-up beside a stale overlay, not a swap of running sidecars",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "The live proof backs up ~/.lobes before touching it and never runs docker compose inside lobes/templates/ \u2014 the lobes-deploy skill's rule",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "assumption",
+      "text": "associate speaks usable Hebrew even though its model card does not list it: MEASURED live 2026-09-18 from the Spark gateway through the mesh to the Orin \u2014 two Hebrew prompts answered in fluent Hebrew in 1.59 s / 1.95 s (56/60 tokens, enable_thinking:false honored, no reasoning leak), with one wrong word choice in the first reply. Card lists only English, Spanish, French, German, Italian, Japanese",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "The realtime turn grows a tool-calling path that does not exist today: lobes/realtime never references tools/tool_choice (_turn.py:115-144 builds model/messages/max_tokens/temperature/chat_template_kwargs only; _turn.py:321-334 reads message.content and silently ignores tool_calls); SessionConfig has no tools field (_session.py:225-239); every client event except input_audio_buffer.append and response.create is dropped (_conversation.py:397-406); config arrives as WS query params, there is no session.update",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "Tool events use OpenAI Realtime's names and payload shapes verbatim (session.update tools, response.function_call_arguments.done, conversation.item.create with function_call_output, response.create to continue), so a stock OpenAI Realtime client's tool loop works unmodified",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The floor state machine gains a waiting-on-the-client's-tool state between RESPONDING and SPEAKING (_floor.py:190-246): machine-held so barge-in still interrupts it, no TTS deadline armed, and its own deadline \u2014 the existing 60 s per-stage timeouts are for backend HTTP calls the floor controls, not an external agent running a command",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Tool events use OpenAI Realtime's names and payload shapes verbatim (session.update tools, response.function_call_arguments.done, conversation.item.create with function_call_output, response.create to continue), so a stock OpenAI Realtime client's tool loop works unmodified",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h21",
+          "text": "Speaking while the floor waits on a tool interrupts it exactly as it interrupts speech, and a tool result that never arrives ends in a named timeout error with the session still usable \u2014 never a wedged floor",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "The live session's STT language stops being hardcoded English: app.py:208 sends data={'language':'en'} on every WS turn (the batch route's form default at app.py:131 is also 'en'), and both DEFAULT_SYSTEM_PROMPT copies (_session.py:564-569, _turn.py:102-107) are English \u2014 a Hebrew session needs a language knob and a Hebrew default prompt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "Speaking while the floor waits on a tool interrupts it exactly as it interrupts speech, and a tool result that never arrives ends in a named timeout error with the session still usable \u2014 never a wedged floor",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h22",
+          "text": "Language is a per-deployment default AND a per-session override, and with neither set the STT request still says 'en' byte-for-byte",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "phonikud sits in the TTS text path, after _clean_for_tts and before synthesis: tts_client.py's cleaning/splitting (160-177, 64-97, 185-218) is Latin-punctuation-shaped, entirely untested (module is coverage-omitted, pyproject.toml:70-86), counts niqqud combining marks against its 600-char ceiling, and passes gershayim through raw",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "Language is a per-deployment default AND a per-session override, and with neither set the STT request still says 'en' byte-for-byte",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h23",
+          "text": "phonikud failing or timing out degrades to un-vocalized text with a logged warning rather than a silent turn, and its per-sentence latency on this box's CPU is measured and written down",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Hebrew STT is a new sidecar, not a PARAKEET_MODEL override: listen_server.py:53 loads via nemo_asr ASRModel.from_pretrained, which cannot load a Whisper checkpoint, and Dockerfile.parakeet:20 bakes the Parakeet download. The sidecar keeps the existing contract (POST /v1/audio/transcriptions, /v1/health/ready with model_loaded+cuda_ok per _readiness.py) so the bridge and gateway do not change",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "phonikud failing or timing out degrades to un-vocalized text with a logged warning rather than a silent turn, and its per-sentence latency on this box's CPU is measured and written down",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h24",
+          "text": "The Hebrew STT sidecar answers the same two routes with the same response shapes as listen_server.py, so neither lobes/gateway nor the bridge's STT client changes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "boundary",
+      "text": "The gateway is not touched: /v1/realtime is an opaque byte tunnel gated on stt feasibility (gateway/_realtime.py:37-163) so new tool events pass unparsed; /v1/audio/* is path-routed with no model id or language; tools/tool_choice/streamed tool_calls pass byte-identical for associate and GATEWAY_FORCE_STRICT_TOOLS never reaches it (_STRICT_TOOL_LANES={'primary'}, server.py:399)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The Hebrew STT sidecar answers the same two routes with the same response shapes as listen_server.py, so neither lobes/gateway nor the bridge's STT client changes",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h25",
+          "text": "The PR's diff touches no file under lobes/gateway/",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "boundary",
+      "text": "The WebSocket session never crosses a box: the realtime tunnel refuses a peer-hosted stt lane (gateway/_realtime.py:18-26, server.py:5065-5150), so Hebrew STT + TTS + the bridge are co-located on the Spark with the gateway that terminates the socket, while associate stays on the Orin and is reached per-turn through the mesh (POST, single hop)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "The PR's diff touches no file under lobes/gateway/",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h26",
+          "text": "STT, TTS and the bridge for the Hebrew session all run on the Spark; only POST /v1/chat/completions crosses to the Orin, and it carries X-Lobes-Mesh-Member",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "non_goal",
+      "text": "hebrew-realtime is not a 'variation' in this repo's vocabulary and gets no deployments/<id>/ entry of that kind: lobes/variation.py:1-51 defines a variation as machine-type identity only, never a feature or language flavor. The closest existing axis is the deployment shape \u2014 and shapes today only turn roles on/off, with ROLE_SERVICE a flat stt->stt / tts->chatterbox map (shape_render.py:84-104) and no [roles.stt]/[roles.tts] tables",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "STT, TTS and the bridge for the Hebrew session all run on the Spark; only POST /v1/chat/completions crosses to the Orin, and it carries X-Lobes-Mesh-Member",
+          "status": "rejected",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "non_goal",
+      "text": "No agent, no tool implementations and no tool execution ship in lobes: the bridge never runs a tool, it relays the model's call to the client and waits. This keeps the role contract intact \u2014 associate is forbidden repo_action, and it stays a proposer; whatever acts on the machine is the client's agent under the client's authority",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "assumption",
+      "text": "The ivrit.ai STT candidate is ivrit-ai/whisper-large-v3-turbo (0.8B, Apache-2.0) served from transformers+PyTorch or vLLM's native Whisper path; the ivrit.ai page the user linked is a dataset/org landing page naming no model, and the faster-whisper/-ct2 variants ivrit.ai recommends are blocked on this box \u2014 CTranslate2 ships no aarch64 CUDA wheel (speaches-ai/speaches#620, filed against a DGX Spark)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "assumption",
+      "text": "phonikud runs on CPU inside the bridge or TTS sidecar: it is an int8 ONNX diacritizer (phonikud-onnx, phonikud-1.0.int8.onnx) plus a rule-based phonemize() to IPA, code CC BY 4.0 \u2014 and onnxruntime-gpu has no official aarch64 wheel, so CPU is the only no-build path. Its latency per sentence is unstated upstream and unmeasured here",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "boundary",
+      "text": "The English Parakeet + Chatterbox pair stays in-tree and stays the default (cite-don't-delete): Hebrew is a selectable alternative for the stt/tts roles, and a box that never asks for it renders byte-identical goldens",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "Every existing golden under tests/goldens/ is byte-identical after the change; only new goldens are added",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "success_signal",
+      "text": "An acceptance transcript under docs/evidence/ from the Spark: a synthesized-or-recorded Hebrew utterance through the gateway tunnel is transcribed correctly (with a negative control), answered by associate in Hebrew, spoken back as 24 kHz deltas, and a second utterance triggers a declared tool whose client-supplied result is spoken \u2014 with first-audio latency measured per stage. Until it lands every surface says DECLARED/UNVALIDATED (#108)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "The transcript includes a negative control for STT (a different utterance must NOT match), per-stage latency numbers for first audio, and uses the real Reachy Mini microphone rather than synthesized audio",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "Live validation uses real hardware on the Spark: a Reachy Mini Lite on USB supplies a microphone with AEC and direction-of-arrival plus a speaker, and a second reSpeaker will get its own speaker later \u2014 so the acceptance run is a real microphone with client-edge AEC, not synthesized audio",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The acceptance client captures from the Reachy Mini card with its AEC active, and barge-in is attempted while the speaker is actually playing \u2014 the case synthesized audio could never test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "assumption",
+      "text": "The hardware client is not ready-made: both USB devices capture S16_LE 2-channel 16 kHz only (the session wants mono, 16 kHz is an accepted rate), reachy-mini-daemon (pid 3192) and pipewire already hold the Reachy card, and reachy-mini-cli still speaks the pre-#151 binary wire (reachy-mini-cli#115) \u2014 so the live proof needs a small capture/playback client of its own, or #115 landed first",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "before_state",
+      "text": "Duplex streaming in both directions and barge-in are already built (#149/#151, paced delivery in 0.54.1): audio streams in as input_audio_buffer.append and out as response.audio.delta on one socket. hebrew-realtime reuses that session as-is and does not rebuild it",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "No change to _segmenter.py, _pcm.py or the audio half of _wire.py; the existing realtime test files pass unmodified except where they gain tool cases",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "after_state",
+      "text": "A Hebrew speaker talks to the Spark through a microphone and hears a Hebrew answer from associate on the same socket, can interrupt it, and can ask for something that needs a tool: the client receives the function call, runs it under its own authority, returns the output, and hears the result spoken. English realtime still renders and behaves exactly as before for any box that does not select Hebrew",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "English-default behaviour is proven by the unchanged offline suite plus unchanged goldens, not asserted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "why_it_matters",
+      "text": "Today the realtime lane is English-only by construction (Parakeet ignores language, app.py:208 hardcodes 'en') and cannot call tools at all, so a Hebrew-speaking operator cannot drive a machine agent by voice on local models; docs/realtime-pipeline.md:703-709 has carried tool calls as a named follow-up since #151",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The cited lines still say what is claimed at the commit the work branches from",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "First-audio latency is unbudgeted: generate is one non-streaming POST (1.6-2.0 s measured Spark->Orin for ~58 Hebrew tokens), Whisper is batch per committed turn, phonikud latency is unstated, and TTS is full-read before the first delta. Whether sentence-level streaming of generate->phonikud->TTS is in scope for v1 or a follow-up is undecided",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "The tool-wait deadline has no natural value: an external agent running a shell command is open-ended, the floor's 60 s stage timeouts are not, and what the user hears while waiting (silence, a spoken filler, nothing) is undesigned",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whisper-large-v3-turbo hallucinates on silence/short clips and Silero's 600 ms VAD_SILENCE_MS was tuned on English; Hebrew WER for the chosen checkpoint on this box, and whether vLLM's Whisper path or a plain transformers sidecar serves it, are both unmeasured",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "live deployment ~/.lobes on the Spark (docker ps, .env, docker-compose.audio.yml)",
+      "finding": "STT_FEASIBLE=false / TTS_FEASIBLE=false / PRIMARY_FEASIBLE=false / COMPOSE_PROFILES=innereye; containers up = gateway + comfyui only; audio overlay file is a stale Jul-22 copy building Dockerfile.realtime.local from a vendored lobes_cli-0.54.0 wheel",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "live memory on the GB10 (ps rss, free -g)",
+      "finding": "ComfyUI main.py holds 34.1 GiB RSS of 121 GiB (87 GiB used, 33 available); INNEREYE_DECLARED_PEAK_GIB=31.42. Dropping it is what funds a ~1.6 GiB Whisper-large-v3 + TTS pair; dropping it is pure deployment config (unset COMPOSE_PROFILES=innereye), no repo code change",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "associate live probe via http://localhost:8001/v1/chat/completions (model=associate, proxied to orin.tail0be7e0.ts.net:8000)",
+      "finding": "Hebrew replies 1.59 s and 1.95 s wall for 56/60 completion tokens; chat_template_kwargs enable_thinking:false produced direct content with no reasoning trace; a Hebrew 'list my home dir' request with one tool returned tool_calls=[list_directory {path:/home/spark}] in 0.48 s. Hebrew quality is unofficial: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B model card omits Hebrew",
+      "seeds": [
+        "c8",
+        "c3"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/realtime/_turn.py, _conversation.py, _session.py, _wire.py",
+      "finding": "No tools anywhere in the package; generate is one blocking non-streaming POST (app.py:583-587); conversation.item.create is silently ignored today; docs/realtime-pipeline.md:703-709 names tool calls over the session an explicit follow-up, not a near-done gap. New surface needed: session tools declaration, function-call out event, function_call_output in event, history entries with tool role",
+      "seeds": [
+        "c9",
+        "c4"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/realtime/_floor.py",
+      "finding": "States LISTENING/TRANSCRIBING/RESPONDING/SPEAKING/CLOSED; on_reply_text (515-532) moves RESPONDING->SPEAKING unconditionally; MACHINE_HELD_STATES, _STAGE_OF_STATE, Stage and FailureReason all need a tool member; after a tool result the turn loops back to RESPONDING (generate again with the result in history)",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/realtime/app.py STT forward + system prompts",
+      "finding": "_forward_turn_to_stt hardcodes language=en (app.py:208); no model name is sent to STT; VAD/segmenter/_pcm are language-agnostic and untouched; system prompt is overridable today via DEFAULT_SYSTEM_PROMPT env and per-session query param",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/realtime/tts_client.py + chatterbox_server.py",
+      "finding": "synthesize() POSTs {text,voice} to TTS_URL/v1/audio/synthesize and reads whole PCM16 24 kHz (no streaming); chatterbox_server.py calls ChatterboxTTS.from_pretrained + generate(text, exaggeration, cfg_weight, audio_prompt_path) \u2014 English single-language class, no language_id; voice lane is a separate semaphore pool",
+      "seeds": [
+        "c12",
+        "c6"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "lobes/templates/fleet/{docker-compose.audio.yml,Dockerfile.parakeet,listen_server.py,env.audio.example}",
+      "finding": "stt service builds Dockerfile.parakeet (NeMo, scitrera/dgx-spark-vllm base); PARAKEET_MODEL is runtime-read but NeMo-only; docs/parakeet-stt.md:38 says Parakeet is English-only and ignores language; the overlay is switched on by file presence, not a compose profile",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "lobes/gateway/_realtime.py, server.py audio fan-out + rewrite_model, _config.py",
+      "finding": "Gateway holds no STT/TTS model id and no language assumption; rewrite_model (server.py:234-245) touches only the model key; associate lane parsers are qwen3_coder + nemotron_v3 (fleet docker-compose.yml:1754-1755), tool calls VALIDATED live 2026-08-20, strict-tools UNPROBED",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "gateway realtime tunnel vs mesh forwarder",
+      "finding": "Mesh/proxy forwarding is POST-only; only the generate call leaves the box. The bridge already calls OPENAI_BASE_URL=http://gateway:8000, so model=associate resolves via the mesh with no bridge change beyond OPENAI_MODEL. Every voice turn therefore pays a Spark->Orin tailnet hop (measured 1.6-2.0 s for ~58 tokens non-streamed)",
+      "seeds": [
+        "c15",
+        "c3"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "lobes/variation.py, variation_catalog.py, profiles/shape_render.py, shapes.py, init.py --audio",
+      "finding": "--audio is a monolithic boolean (init.py:1962-1965); AUDIO_ROLES=('stt','tts') fixed; no language/engine axis exists anywhere in the repo (grep hebrew/phonikud/ivrit = 0 hits). A new shape means 4 new goldens per tests/goldens/README.md:49-54",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "CLAUDE.md associate role contract + user's stated audience",
+      "finding": "associate responsibilities include tool_use but forbid final_decision/security_decision/code_authoring/repo_action; relaying calls to a client-side executor is consistent with that, executing them server-side would not be",
+      "seeds": [
+        "c17",
+        "c4"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "https://www.ivrit.ai/en/ivrit-ai-2/ + https://huggingface.co/ivrit-ai + speaches#620",
+      "finding": "Landing page: 22,000 h dataset, no model named. HF org: whisper-large-v3, -turbo, -ct2, -turbo-ct2 (Oct 2025), whisper-large-v3-turbo-onnx (Dec 2025), Yiddish siblings, pyannote diarization; no TTS, no LLM, nothing streaming. Cards Apache-2.0; WER lives on an external leaderboard, not fetched. vLLM-loads-this-checkpoint is architecturally plausible, untested",
+      "seeds": [
+        "c18",
+        "c13"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "https://github.com/phonikud/phonikud README + org",
+      "finding": "Three stages: add niqqud -> add stress/vocal-shva marks (invented Unicode chars) -> IPA. API: Phonikud(path).add_diacritics(text); phonemize(vocalized). Designed to feed thewh1teagle/phonikud-tts (StyleTTS2/Piper, onnxruntime) whose LICENSE is non-commercial; ILSpeech/Saspeech datasets are non-commercial too",
+      "seeds": [
+        "c19",
+        "c12"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "tests/goldens contract + repo cite-don't-delete rule",
+      "finding": "Chatterbox appears in ~85 files and Parakeet's id in 12 (roles.py, explain/catalog.py, learn.py, docs, tests); every shape x card has a byte-for-byte golden .env. Replacing rather than adding would move every golden and break reachy-mini-cli's English path",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "USB audio on the Spark (lsusb, arecord -l, aplay -l)",
+      "finding": "38fb:1001 Pollen Robotics Reachy Mini Audio = ALSA card 2 (capture + playback); 2886:001a Seeed reSpeaker XVF3800 4-Mic Array = card 1 (capture + playback); /dev/ttyACM0 present; reachy-mini-cli installed at ~/.local/bin. Client-edge AEC is exactly where deviation d1 of #151 says AEC belongs, and it retires two standing UNVALIDATED items: real microphone, and barge-in under real echo",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "ALSA hw params + device holders (arecord --dump-hw-params, fuser, pgrep)",
+      "finding": "hw:1,0 and hw:2,0 both report FORMAT S16_LE, CHANNELS 2, RATE 16000; pcmC2D0p is held by pipewire; reachy-mini-daemon is running. Recalled gotcha (PR #150/#152): paplay hung on a sink the daemon held exclusively, and a /v1/realtime client must answer WebSocket PING or uvicorn drops it at ~20 s",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "lobes/realtime/app.py:583-587 _post_generate + tts_client synthesize + docs/evidence/",
+      "finding": "The WIRE streams both ways; the two stages INSIDE a turn do not \u2014 _post_generate is one awaited httpx POST returning resp.content (no stream/aiter anywhere in _turn.py, app.py, tts_client.py, _conversation.py), and TTS is read whole before the first delta. docs/evidence/ holds no realtime transcript newer than 2026-07-22, which predates the 0.54.1 pacing fix, so barge-in is built but has no in-repo live transcript",
+      "seeds": [
+        "c24"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}
