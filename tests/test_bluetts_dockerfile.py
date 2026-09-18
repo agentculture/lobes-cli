@@ -61,3 +61,10 @@ def test_same_internal_port_as_the_service_it_replaces() -> None:
 
 def test_dockerfile_ships_in_the_wheel() -> None:
     assert _DOCKERFILE.exists()
+
+
+def test_engine_dependencies_come_from_the_engines_own_lockfile() -> None:
+    """An unpinned resolve broke the G2P at warm-up (renikud-plus 0.5.0)."""
+    body = _instructions()
+    assert "uv export --frozen" in body
+    assert "--no-deps /opt/bluetts" in body

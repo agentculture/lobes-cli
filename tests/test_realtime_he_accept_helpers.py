@@ -625,3 +625,52 @@ def test_select_channel_takes_one_channel_and_never_averages() -> None:
     assert struct.unpack("<4h", rha.select_channel(stereo, 2, 1)) == (100, 200, 300, 400)
     assert rha.select_channel(stereo, 1, 0) == stereo
     assert len(rha.select_channel(stereo + b"\x01", 2, 1)) == 8  # a ragged tail is dropped
+
+
+# --- playback drain (2026-09-18: operator heard a streamed reply cut short) ---
+
+
+class _FakePlayer:
+    def __init__(self, exits_after_waits: int | None):
+        self.stdin = self
+        self.closed = False
+        self.terminated = False
+        self.waits: list[float] = []
+        self._exits_after = exits_after_waits
+        self._done = False
+
+    def close(self):
+        self.closed = True
+
+    def poll(self):
+        return 0 if self._done else None
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        if self._done:
+            return 0
+        if self._exits_after is not None and len(self.waits) >= self._exits_after:
+            self._done = True
+            return 0
+        raise rha.subprocess.TimeoutExpired("player", timeout)
+
+    def terminate(self):
+        self.terminated = True
+        self._done = True
+
+    def kill(self):
+        self._done = True
+
+
+def test_drain_lets_the_player_finish_buffered_audio_before_any_terminate():
+    player = _FakePlayer(exits_after_waits=1)
+    rha._drain_playback(player, timeout=20.0)
+    assert player.closed
+    assert player.waits == [20.0]
+    assert not player.terminated
+
+
+def test_drain_terminates_a_player_that_never_exits():
+    player = _FakePlayer(exits_after_waits=None)
+    rha._drain_playback(player, timeout=0.01)
+    assert player.closed and player.terminated

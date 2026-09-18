@@ -32,12 +32,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /usr/local/bin/uv
 
-# The engine, at a pinned commit. Cloned (not `uv pip install git+...`) because
+# The engine, at a pinned commit, with ITS OWN uv.lock as the dependency set.
+# Not optional: an unpinned resolve picked renikud-plus 0.5.0, which asks the
+# G2P weights repo for a datastore.json that does not exist (404 at warm-up,
+# measured 2026-09-18); the lock holds the 0.3.0 every measurement used. Cloned (not `uv pip install git+...`) because
 # voices/ and config/ live beside the package, not inside it.
 RUN git clone https://github.com/maxmelichov/BlueTTS /opt/bluetts \
     && git -C /opt/bluetts checkout --detach "${BLUETTS_REF}" \
     && rm -rf /opt/bluetts/.git /opt/bluetts/training /opt/bluetts/assets \
-    && uv pip install --system --no-cache /opt/bluetts scipy
+    && cd /opt/bluetts \
+    && uv export --frozen --no-dev --no-hashes --no-emit-project -o /tmp/bluetts-requirements.txt \
+    && uv pip install --system --no-cache -r /tmp/bluetts-requirements.txt \
+    && uv pip install --system --no-cache --no-deps /opt/bluetts \
+    && rm -f /tmp/bluetts-requirements.txt
 
 # Dev lane only (mirrors Dockerfile.chatterbox-ml): empty on release deployments.
 ARG LOBES_DEV_INDEX_URL=

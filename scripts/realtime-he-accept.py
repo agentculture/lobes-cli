@@ -924,6 +924,23 @@ def _run_subprocess_or_die(argv: list[str], *, stdin=None):
         raise RuntimeError(f"failed to start {argv[0]!r}: {exc}") from exc
 
 
+def _drain_playback(proc: subprocess.Popen, timeout: float = 20.0) -> None:
+    """Close the player's stdin and let it PLAY OUT what it has buffered before
+    any terminate. The server delivers ahead of the playhead (more so with
+    sentence streaming), so ``response.done`` arrives while audio is still
+    queued — terminating right away cut the operator's reply mid-sentence
+    (2026-09-18). EOF on stdin makes the player exit by itself when done."""
+    try:
+        if proc.stdin:
+            proc.stdin.close()
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _terminate(proc)
+
+
 def _terminate(proc: subprocess.Popen, timeout: float = 3.0) -> None:
     """Terminate AND wait for a child, then kill outright — leaving a
     subprocess alive holding the capture/playback device busy would fail the
@@ -1196,12 +1213,7 @@ def main(argv: list[str] | None = None) -> int:
         if mic_proc is not None:
             _terminate(mic_proc)
         if playback_proc is not None:
-            try:
-                if playback_proc.stdin:
-                    playback_proc.stdin.close()
-            except OSError:
-                pass
-            _terminate(playback_proc)
+            _drain_playback(playback_proc)
         if log_fh is not None:
             log_fh.close()
 
