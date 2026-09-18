@@ -224,3 +224,8 @@
 {"ts":"2026-09-16T14:06:28.800337+00:00","type":"pr_reply","pr":273,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-09-16T14:06:28.813844+00:00","type":"pr_batch_replied","pr":273,"count":4,"resolved":0}
 {"ts":"2026-09-16T14:06:29.709455+00:00","type":"pr_webhook_posted","pr":273,"event":"pr_replied"}
+{"ts":"2026-09-18T16:53:08.857130+00:00","type":"pr_opened","pr":279,"title":"Hebrew realtime: tool calls over /v1/realtime, Hebrew audio overlay, streaming + speculative turn-taking (0.81.0)"}
+{"ts":"2026-09-18T16:53:10.288814+00:00","type":"pr_review_triggered","pr":279,"command":"/agentic_review"}
+{"ts":"2026-09-18T16:53:10.985019+00:00","type":"pr_webhook_posted","pr":279,"event":"pr_opened"}
+{"ts":"2026-09-18T16:54:14.330306+00:00","type":"readiness_arrived","pr":279,"waited_secs":60}
+{"ts":"2026-09-18T16:54:19.097277+00:00","type":"pr_read","pr":279,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
