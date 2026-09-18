@@ -497,6 +497,10 @@ version = "0.80.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
+bluetts = [
+    { name = "fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 chatterbox = [
     { name = "fastapi" },
     { name = "uvicorn", extra = ["standard"] },
@@ -531,6 +535,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", marker = "extra == 'bluetts'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox-ml'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
@@ -541,11 +546,12 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'realtime'", specifier = ">=1.14" },
     { name = "silero-vad", marker = "extra == 'realtime'", specifier = ">=5.1" },
     { name = "torch", marker = "extra == 'realtime'", specifier = ">=2.5" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'bluetts'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox-ml'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'realtime'", specifier = ">=0.34" },
 ]
-provides-extras = ["realtime", "chatterbox", "chatterbox-ml"]
+provides-extras = ["realtime", "chatterbox", "chatterbox-ml", "bluetts"]
 
 [package.metadata.requires-dev]
 dev = [

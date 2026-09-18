@@ -52,6 +52,14 @@ chatterbox-ml = [
     "uvicorn[standard]>=0.34",
     "phonikud-onnx>=1.0",
 ]
+# The BlueTTS Hebrew voice sidecar (hebrew-realtime plan, approved deviation
+# d8) — templates/fleet/Dockerfile.bluetts. The engine itself (blue_onnx, MIT)
+# is installed by that Dockerfile from a pinned commit, not from PyPI (the PyPI
+# `blue-onnx` is a different, older line), so only the HTTP shell is listed.
+bluetts = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/lobes-cli"
