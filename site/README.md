@@ -107,9 +107,12 @@ Two settings, both in untracked places:
   never in this repo. This repo names no deployment's hostname and no
   operator's email.
 
-**The Access gate is the only thing standing between the internet and a
-proxy that injects the gateway key.** Never front the dev server with a
-tunnel that has no Access app on it.
+**The Access gate is the only thing standing between the internet and the
+gateway.** Setting a gateway key doesn't change that for tunnel users,
+because this proxy adds the key to every request that reaches it. Anyone
+past Access is the operator as far as the gateway can tell, whether or not
+`GATEWAY_API_KEY` is set. Never front the dev server with a tunnel that has
+no Access app on it.
 
 ## How the browser reaches a header-authenticated gateway
 

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-09-18T19:23:51Z",
-  "updated": "2026-09-18T19:30:49Z",
+  "updated": "2026-09-18T20:39:00Z",
   "claims": [
     {
       "id": "c1",
@@ -21,14 +21,20 @@
     {
       "id": "c2",
       "kind": "requirement",
-      "text": "The public gateway hostname moves to the new name by reusing the existing token-run tunnel: cultureflare remote-login setup (--no-access, service localhost:8001) on the new name, then teardown of the old name's DNS/ingress with --keep-tunnel \u2014 the gateway's own GATEWAY_API_KEY bearer gate stays the only auth, as today",
+      "text": "The public gateway hostname moves to the new name on the SAME token-run tunnel: cultureflare remote-login setup --no-access --service localhost:8001 --tunnel-name <existing tunnel> on the new name. Setup REPLACES the tunnel's whole ingress list (one hostname per tunnel; replace-not-merge), so the old name stops routing at that moment, not at teardown. Teardown --keep-tunnel then only deletes the old DNS record, since it never edits ingress. The gateway's own GATEWAY_API_KEY bearer gate stays the only auth. Acceptable here only because the operator chose an immediate teardown; a zero-downtime cutover would need a second tunnel and a second connector",
       "origin": "llm",
       "status": "proposed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The public gateway hostname moves to the new name by reusing the existing token-run tunnel: cultureflare remote-login setup (--no-access, service localhost:8001) on the new name, then teardown of the old name's DNS/ingress with --keep-tunnel \u2014 the gateway's own GATEWAY_API_KEY bearer gate stays the only auth, as today",
+          "kind": "requirement",
+          "reason": "Qodo on PR #280: c2 omitted --tunnel-name and wrongly implied teardown removes ingress; corrected to the executed sequence (verified against cultureflare _tunnel.ensure_tunnel_config + teardown)"
+        }
+      ]
     },
     {
       "id": "c3",
@@ -45,14 +51,20 @@
     {
       "id": "c4",
       "kind": "requirement",
-      "text": "The Spark's systemd unit Description and token-file name stop naming the old hostname (local, untracked edit); the old hostname's DNS record is torn down only after the new one answers 401 unauthenticated / 200 authenticated, including a 101 on /v1/realtime",
+      "text": "The Spark's systemd unit and token-file name stop naming the old hostname (local, untracked edit). The new hostname must answer 401 unauthenticated / 200 authenticated / 101 on /v1/realtime before the old DNS record is deleted. The old name's ROUTING already ends at the ingress replace (see c2)",
       "origin": "llm",
       "status": "proposed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "The Spark's systemd unit Description and token-file name stop naming the old hostname (local, untracked edit); the old hostname's DNS record is torn down only after the new one answers 401 unauthenticated / 200 authenticated, including a 101 on /v1/realtime",
+          "kind": "requirement",
+          "reason": "Qodo on PR #280: the old route is cut at setup, not at DNS teardown"
+        }
+      ]
     },
     {
       "id": "c5",
