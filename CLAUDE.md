@@ -930,6 +930,14 @@ Every model-ops verb resolves the deployment dir as: `--compose-dir` →
 `~/.model-gear` when those are set / already scaffolded (so a pre-rename
 deployment keeps working). There is no compose file at the repo root.
 
+**Never run `docker compose` inside `lobes/templates/`.** A compose run there
+starts a second project (named after the folder) that takes the real
+deployment's container names and lands on a network the gateway can't see. It
+happened on the Spark on 2026-09-18. To change a live box, edit the deployment
+(`~/.lobes`, after a backup), use the **`lobes-deploy`** skill's
+`scripts/lobes-compose.sh`, and carry the template half as a PR. See
+`docs/operating-a-deployment.md`.
+
 ## CLI surface
 
 ```text
@@ -1020,9 +1028,13 @@ wholesale re-vendor, not a merge: `devague learn skills:<name>` prints the
 source URL, and the copy is overwritten verbatim. `devague learn` — not this
 file — is the authority on how many legs the chain has.
 
-One skill is **local to this repo** (not vendored): **`model-runner`** — a thin
-pointer/shim to the `lobes` CLI for switching/serving/assessing the model. The
-real implementation is the `lobes` package; the shim `exec`s `lobes`.
+Two skills are **local to this repo** (not vendored): **`model-runner`** — a thin
+pointer/shim to the `lobes` CLI for switching/serving/assessing the model (the
+real implementation is the `lobes` package; the shim `exec`s `lobes`) — and
+**`lobes-deploy`**, the procedure for changing a LIVE box without confusing the
+packaged templates with the deployment (its `lobes-compose.sh` refuses to run
+compose in `lobes/templates/`). `.qwen/skills/lobes-deploy` links to it so Qwen
+Code finds it too, and `QWEN.md` points Qwen at it.
 
 The provenance of every vendored skill (citation path + authoring origin) is
 recorded in **`docs/skill-sources.md`**.

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.80.1] - 2026-09-18
+
+### Added
+
+- `lobes-deploy` skill (local): the procedure for changing a LIVE box without confusing the packaged templates (`lobes/templates/**`) with the deployment (`~/.lobes`). Its `scripts/lobes-compose.sh` runs `docker compose` with the deployment's own `-f` chain (from `lobes fleet files`), refuses the template folder, and is dry-run until `--apply`. `.qwen/skills/lobes-deploy` links to it and a new `QWEN.md` points Qwen Code at it.
+- `docs/operating-a-deployment.md`: templates vs deployment, hand-kept boxes, the one-service rebuild procedure, and the 2026-09-18 incident in which a compose run inside `lobes/templates/fleet/` replaced the Spark's ComfyUI container with one the gateway could not reach.
+
+### Fixed
+
+- innereye: `Dockerfile.comfyui` now installs `build-essential`. Triton compiles its launcher stub with `cc` the first time a kernel runs, so the image built by 0.80.0 failed every render at the first sampler step with `RuntimeError: Failed to find C compiler` (measured on the DGX Spark, 2026-09-18). A regression test pins the compiler and `python3.12-dev` in the runtime image.
+
 ## [0.80.0] - 2026-09-16
 
 ### Added

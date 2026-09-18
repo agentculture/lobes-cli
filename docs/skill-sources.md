@@ -97,3 +97,4 @@ here may diverge.
 | Skill | Citation path | Origin | Notes |
 |-------|---------------|--------|-------|
 | `model-runner` | — | lobes | Not vendored. Thin shim that `exec`s the `lobes` CLI (this repo's `lobes` package), with `model` as a deprecated alias. |
+| `lobes-deploy` | — | lobes | Not vendored. Procedure for changing a live box (templates vs `~/.lobes`); `scripts/lobes-compose.sh` wraps `docker compose` with the deployment's own `-f` chain and refuses the template folder. Linked from `.qwen/skills/lobes-deploy` for Qwen Code. Written after the 2026-09-18 Spark incident (`docs/operating-a-deployment.md`). |

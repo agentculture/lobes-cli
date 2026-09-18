@@ -79,15 +79,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ---------------------------------------------------------------------------
 # curl / ca-certificates — bootstrap pip, and TLS for the pytorch index
 # git                    — ComfyUI is installed by clone-at-tag, as the playbook does
+# build-essential        — a C compiler for Triton, which builds its launcher
+#                          stub with `cc` the first time a kernel runs. Without
+#                          one every render fails at the first sampler step with
+#                          "RuntimeError: Failed to find C compiler" (measured on
+#                          the Spark, 2026-09-18). A runtime need, not a build one.
 # libgomp1               — OpenMP runtime torch/scipy link against
 # libgl1 / libglib2.0-0  — the GL + glib shared objects the optional image stack
 #                          (PyOpenGL, spandrel, kornia) dlopens on import
-# python3.12(-dev)       — Ubuntu 24.04's system Python is 3.12.3, the venv's
+# python3.12(-dev)       — Ubuntu 24.04's system Python is 3.12.3, the venv's;
+#                          -dev also ships the Python.h that stub compiles against
 #
 # NOTE: python3-pip is intentionally NOT installed via apt — same reason as
 # Dockerfile.chatterbox: Ubuntu 24.04 ships a RECORD-less, Debian-patched pip
 # that trips PEP 668 "externally-managed-environment" on every install.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
         ca-certificates \
         curl \
         git \
