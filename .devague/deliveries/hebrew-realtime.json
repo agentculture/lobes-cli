@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T12:09:49Z",
+  "updated": "2026-09-18T12:18:36Z",
   "deviations": [
     {
       "id": "d1",
@@ -39,6 +39,23 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "h25 is relaxed from 'the branch touches nothing under lobes/gateway/' to 'additive gateway changes only \u2014 the /v1/realtime tunnel and request routing stay untouched'. The capabilities advert gains a NULLABLE language field on audio roles (null when undeclared, so the no-declaration advert is no longer byte-identical: it gains \"language\": null), and the fleet compose gateway service passes STT_MODEL/STT_RUNTIME/STT_LANGUAGE and the TTS equivalents through",
+      "task_ref": "t13",
+      "reason": "t13 proved plan risk r4: both advert serialisers use dataclasses.asdict (gateway/server.py:4224, cli/_commands/capabilities.py:260) so a conditional key is impossible without touching the gateway, and the gateway container never receives the new env keys, leaving live GET /capabilities advertising Parakeet on a Hebrew box. Operator chose an honest advert (c27) over a frozen gateway (h25) and accepted a nullable field, 2026-09-18",
+      "affects": [
+        "h25",
+        "c14",
+        "c27",
+        "h27",
+        "t15"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],

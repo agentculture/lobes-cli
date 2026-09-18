@@ -1,0 +1,48 @@
+hebrew-realtime — voice-lane bring-up (deviation d1): Gemma 4 12B senses, LOCAL on the Spark
+Box: DGX Spark GB10      Date: 2026-09-18      vLLM 0.23.1rc1.dev672+g93d8f834d (lobes/vllm-gemma4:local)
+
+DEPLOYMENT CHANGE (~/.lobes, backed up first — see 2026-09-hebrew-realtime-spike-spark.txt)
+  .env: MULTIMODAL_MODEL/SERVED_NAME -> coolthor/gemma-4-12B-it-NVFP4A16 (was the Orin mirror id),
+        MULTIMODAL_FEASIBLE=true ; docker-compose.shape.yml: vllm-multimodal un-dropped.
+  lobes-compose.sh --apply up -d --no-deps vllm-multimodal ; then ... gateway
+
+BOOT (first try, healthy after ~230 s, 0 restarts)
+  gpu_memory_utilization 0.14, max_model_len 32768, quantization compressed-tensors
+  tool_call_parser gemma4 + reasoning_parser gemma4 ; MTP draft google/gemma-4-12B-it-assistant (n=1)
+  Model loading took 9.25 GiB ; Available KV cache 3.48 GiB = 72,263 tokens = 2.21x at 32,768
+  GET /capabilities: senses feasible:true ready:true context 32768 mtp:true
+
+FINDING — the gateway shed EVERY senses request 429 "under pressure"
+  lobes status --pressure: mode busy, swap 21.9%, iowait 85-91% (threshold 50).
+  The iowait reading is an accounting artifact on this box, not load:
+    /proc/pressure/io  some avg300=98.84  full avg300=91.84  total=614,904 s  (~= the 7d06h uptime)
+    vmstat: b=54 but bi/bo ~0 ; no thread in D state (ps -eLo state) ; load average 0.61
+  ~/.lobes/.env's own comment documents the remedy (LOBES_IOWAIT_DEGRADED_THRESHOLD=100, swap guard
+  stays armed). NOT APPLIED: the change was blocked by the session's permission policy (shared safety
+  config) and is left to the operator. Until then model=multimodal through this gateway 429s.
+  It went unnoticed because the Spark hosted no LOCAL full-tier lane for weeks (proxied roles are
+  not shed locally).
+
+MEASUREMENT — direct on the lane (docker exec, localhost:8000), enable_thinking:false, temp 0.2
+  Hebrew system prompt: short spoken answers. e2e = wall incl. prefill, single stream, MTP on.
+  warmup   0.63 s  20 tok  31.7 tok/s
+  H1       1.87 s  61 tok  32.7 tok/s   'מחשב נייד הוא מכשש נייד שניתן לסחוב ולעבוד איתו בכל מקום. מחשב שולחני הוא מכשש גדול יותר שנועד לעבוד בתוך שולחן ואינו נייד.'
+  H2       1.43 s  47 tok  32.8 tok/s   'כדאי לטייל בחוף הים או לחוות בבוקרים בתוך העיר. אפשר גם לסיים בבילוי רגוע בבית קפה בחוף הים.'
+  H3 tool  0.61 s  22 tok  36.2 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]  content=None
+  H4 result 1.51 s 57 tok  37.8 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5 (tools declared, none needed; "מה בירת צרפת?")
+           1.22 s  39 tok  31.8 tok/s   'צרפת היא מדינה באירופה הממוקדת בצרפתית. היא ידועה בתרבותה העשירה ובמטאה שלה בפריזים.'
+  H6 long  9.21 s 300 tok  32.6 tok/s   (paragraph on Jerusalem; contains 'ביותרות', 'פולחה ופולחא', 'סטורית',
+                                         'חורבןים', 'נשתה', 'הנצרנות', 'יום יודיים')
+  No reasoning leaked in any reply.
+
+WHAT THIS SHOWS
+  + Tool calling works on the 12B with the gemma4 parser PAIR: a clean structured call and a correct
+    tool-result turn — the first live check of that pair on a 12B lane (n=1 each; not a validation, #108).
+  + Speed is fine for voice: ~32-38 tok/s, a 60-token reply in under 2 s, no cross-box hop.
+  - Hebrew output contains OBJECTIVE orthographic errors, independent of any fluency judgement:
+    a final-form letter mid-word ('חורבןים'), non-words ('מכשש' x2, 'ביותרות', 'סטורית'), and H5 never
+    names Paris. The same prompts to associate earlier today produced none of these (its one flaw was a
+    wrong word choice). Whether this is the model or the NVFP4A16 export is unknown — google/gemma-4-12B-it
+    (bf16) is in the HF cache and would separate the two.
+  The fluency verdict is the operator's (lapse l2: the agent does not grade Hebrew).
