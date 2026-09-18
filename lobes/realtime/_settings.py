@@ -17,7 +17,32 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ._session import DEFAULT_LANGUAGE as _SESSION_DEFAULT_LANGUAGE
 from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
+
+# The Hebrew voice-lane default system prompt (issue #151 t8 / hebrew-realtime
+# c30). Selected instead of :data:`_SESSION_DEFAULT_SYSTEM_PROMPT` ONLY when
+# an operator sets REALTIME_LANGUAGE=he and leaves DEFAULT_SYSTEM_PROMPT
+# unset — an explicit DEFAULT_SYSTEM_PROMPT always wins outright, exactly
+# like the English default it sits beside. Written IN Hebrew (the model is
+# instructed to answer in Hebrew, not merely told about Hebrew in English) —
+# Chatterbox reads the reply aloud verbatim, so the same "short spoken
+# sentences, no markdown" discipline as the English default applies, plus one
+# Hebrew-specific instruction the English prompt has no need for: a tool
+# result routinely contains file paths, identifiers, hashes, dates or long
+# numbers, and reading those aloud character-by-character produces
+# unintelligible/unnatural speech (worse in Hebrew, which has no standard
+# spoken convention for reading raw hex or dotted paths) — so the model must
+# DESCRIBE such values (how many there are, what kind, the meaningful part of
+# a name) instead of reciting them verbatim.
+DEFAULT_SYSTEM_PROMPT_HE = (
+    "את/ה הקול של המכונה הזו. פונים אליך בעל פה והתשובה שלך מוקראת בקול "
+    "רם על ידי מנוע טקסט-לדיבור, אז ענה/עני במשפט קצר אחד או שניים, "
+    "בעברית מדוברת בלבד. בלי מרקדאון, בלי רשימות, בלי קוד, בלי אמוג'ים — "
+    "רק מה שהיית אומר/ת בקול. כשתוצאה של כלי מכילה נתיבים, מזהים, "
+    "hash-ים, תאריכים או מספרים ארוכים — תאר/י אותם במקום להקריא אותם "
+    "תו-אחר-תו: כמה יש, מאיזה סוג, והחלק המשמעותי בשם."
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +55,22 @@ class Settings:
     openai_base_url: str  # the fleet LLM front, e.g. http://gateway:8000
     openai_api_key: str
     openai_model: str  # may be "" → the gateway default-routes
+    # The session-default STT/generate language (issue #151 t8 / hebrew-realtime
+    # c30, c3): mirrors _session.DEFAULT_LANGUAGE's own shape check (a
+    # deployment-wide default, overridable per-session exactly like every
+    # other _session default). Never validated here — an unsupported code is
+    # the STT/generate backend's problem, not this module's; this field only
+    # carries the operator's env-set deployment default through.
+    language: str
+    # Deadline (ms) a committed turn's tool-call round trip is allowed before
+    # it force-fails (issue #151 t8, spec c3: "tool-wait deadline knob"). Read
+    # but not yet consumed by any caller in this task — a later task wires it
+    # into the floor's per-stage deadline machinery (mirrors how
+    # VAD_MAX_TURN_MS landed as a settings-side read in #149 t6 before a
+    # later task consumed it). Clamped like every other millisecond knob in
+    # this module: a non-positive value would force-fail a tool call
+    # immediately rather than merely doing nothing.
+    tool_wait_timeout_ms: int
     # Operator-set DEFAULT system prompt for a session's generate calls (issue
     # #151 t8) — the OPERATOR half of "an operator-set default system prompt
     # via env and a per-session override in the connect config" (spec c34).
@@ -75,6 +116,11 @@ class Settings:
 # is not merely useless but actively harmful.
 _MIN_MAX_TURN_MS = 1_000
 
+# Floor for TOOL_WAIT_TIMEOUT_MS — same reasoning as _MIN_MAX_TURN_MS: a
+# non-positive deadline would force-fail a tool call before it could ever
+# complete, defeating tool_use entirely rather than merely being a no-op.
+_MIN_TOOL_WAIT_TIMEOUT_MS = 1_000
+
 
 def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
     try:
@@ -90,6 +136,19 @@ def _as_float(env: Mapping[str, str], key: str, default: float) -> float:
         return float(default)
 
 
+def _default_system_prompt_for_language(language: str) -> str:
+    """The built-in default system prompt for *language* (no operator override).
+
+    ``"he"`` (case-insensitive, region/script subtags ignored — mirrors
+    ``_session``'s own shape-only language check) gets
+    :data:`DEFAULT_SYSTEM_PROMPT_HE`; every other language, including the
+    default ``"en"``, gets the pre-existing
+    :data:`_SESSION_DEFAULT_SYSTEM_PROMPT` unchanged.
+    """
+    primary = (language or "").split("-", 1)[0].lower()
+    return DEFAULT_SYSTEM_PROMPT_HE if primary == "he" else _SESSION_DEFAULT_SYSTEM_PROMPT
+
+
 def build_settings(env: Mapping[str, str] | None = None) -> Settings:
     """Construct :class:`Settings` from environment variables (pure)."""
     env = os.environ if env is None else env
@@ -99,10 +158,23 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_base_url=(env.get("OPENAI_BASE_URL") or "http://gateway:8000").rstrip("/"),
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
+        language=env.get("REALTIME_LANGUAGE") or _SESSION_DEFAULT_LANGUAGE,
+        tool_wait_timeout_ms=max(
+            _MIN_TOOL_WAIT_TIMEOUT_MS, _as_int(env, "TOOL_WAIT_TIMEOUT_MS", 60_000)
+        ),
         # Empty/unset → the mirrored code-level fallback, same "or default"
         # idiom as every other string field above (an operator who blanks the
         # line in .env gets the safe spoken-style prompt back, not silence).
-        default_system_prompt=env.get("DEFAULT_SYSTEM_PROMPT") or _SESSION_DEFAULT_SYSTEM_PROMPT,
+        # A Hebrew deployment (REALTIME_LANGUAGE=he) gets the Hebrew variant
+        # instead of the English one — but only when the operator has NOT
+        # set an explicit DEFAULT_SYSTEM_PROMPT; an explicit value always
+        # wins outright, in either language.
+        default_system_prompt=(
+            env.get("DEFAULT_SYSTEM_PROMPT")
+            or _default_system_prompt_for_language(
+                env.get("REALTIME_LANGUAGE") or _SESSION_DEFAULT_LANGUAGE
+            )
+        ),
         default_voice=env.get("DEFAULT_VOICE") or "",
         # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
         # (or negative) blocks every TTS request forever; tts_speed is a percentage,
