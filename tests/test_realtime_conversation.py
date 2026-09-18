@@ -1540,3 +1540,542 @@ def test_app_py_paces_its_delivery_loop() -> None:
     body = ast.dump(ast.Module(body=delivery[0].body, type_ignores=[]))
     assert "delivery_pause_ms" in body, "the delivery loop does not compute a pace"
     assert "sleep" in body, "the delivery loop never sleeps — it will drain the socket"
+
+
+# ---------------------------------------------------------------------------
+# Tools (hebrew-realtime t7) — dispatch, call-id bookkeeping, event order,
+# and the synthetic cancel that keeps an abandoned tool call from dangling.
+# ---------------------------------------------------------------------------
+
+# The event type list a full armed TEXT turn has always produced. Criterion 1
+# is that declaring no tools changes NOTHING about it — pinned as data here so
+# a regression shows up as a diff of this list, not as a subtle reorder.
+ARMED_TEXT_TURN_SEQUENCE = [
+    S.EventType.SPEECH_STARTED,
+    S.EventType.SPEECH_STOPPED,
+    S.EventType.TRANSCRIPTION_COMPLETED,
+    S.EventType.RESPONSE_CREATED,
+    S.EventType.RESPONSE_TEXT_DONE,
+    S.EventType.RESPONSE_AUDIO_DELTA,
+    S.EventType.RESPONSE_AUDIO_DELTA,
+    S.EventType.RESPONSE_DONE,
+]
+
+WEATHER_TOOL = {
+    "type": "function",
+    "name": "get_weather",
+    "description": "current weather for a city",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+}
+
+
+def tool_call_body(
+    *,
+    call_id: str = "call_1",
+    name: str = "get_weather",
+    arguments: str = '{"city": "Haifa"}',
+    count: int = 1,
+) -> bytes:
+    calls = [
+        {
+            "id": call_id if i == 0 else f"{call_id}_{i}",
+            "type": "function",
+            "function": {"name": name, "arguments": arguments},
+        }
+        for i in range(count)
+    ]
+    return json.dumps({"choices": [{"message": {"tool_calls": calls}}]}).encode()
+
+
+def function_call_output(call_id: str, output: str = '{"celsius": 22}') -> dict:
+    return {
+        "type": W.CONVERSATION_ITEM_CREATE_EVENT_TYPE,
+        "item": {
+            "type": W.FUNCTION_CALL_OUTPUT_ITEM_TYPE,
+            "call_id": call_id,
+            "output": output,
+        },
+    }
+
+
+def tools_bridge(**overrides):
+    """A bridge whose session declared one tool at connect time."""
+    return make_bridge({"tools": [WEATHER_TOOL]}, **overrides)
+
+
+def run_to_tool_wait(bridge, clock, *, text="what is the weather in haifa", call_id="call_1"):
+    """Commit a turn and walk it to TOOL_WAIT; returns the turn id."""
+    commit_turn(bridge)
+    bridge.on_transcript(text)
+    turn_id = bridge.take_pending_response()
+    assert turn_id is not None
+    clock.advance(F.DEFAULT_BARGE_IN_WINDOW_MS)
+    assert bridge.build_generate_request(turn_id) is not None
+    assert bridge.on_generate_response(200, tool_call_body(call_id=call_id), turn_id=turn_id)
+    return turn_id
+
+
+# --- criterion 1: a session that never declares tools is byte-identical -----
+
+
+def test_a_text_turn_without_tools_emits_exactly_the_pre_change_sequence() -> None:
+    bridge, _, clock = make_bridge()
+    bridge.arm()
+    turn_id = run_to_speaking(bridge, clock)
+    bridge.on_tts_audio(pcm(CHUNK * 2), turn_id=turn_id)
+    pump(bridge, turn_id)
+
+    assert types_of(bridge.drain()) == ARMED_TEXT_TURN_SEQUENCE
+
+
+def test_a_session_with_no_tools_sends_a_generate_body_with_no_tool_keys() -> None:
+    bridge, _, _ = make_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("hello")
+    request = bridge.build_generate_request(bridge.take_pending_response())
+
+    assert "tools" not in request.body
+    assert "tool_choice" not in request.body
+
+
+def test_declared_tools_reach_the_generate_body_in_the_nested_shape() -> None:
+    bridge, _, _ = make_bridge({"tools": [WEATHER_TOOL], "tool_choice": "auto"})
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("what is the weather in haifa")
+    request = bridge.build_generate_request(bridge.take_pending_response())
+
+    assert request.body["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "current weather for a city",
+                "parameters": WEATHER_TOOL["parameters"],
+            },
+        }
+    ]
+    assert request.body["tool_choice"] == "auto"
+
+
+# --- on_control_event dispatch ---------------------------------------------
+
+
+def test_a_session_update_declaring_tools_is_applied_and_acknowledged() -> None:
+    bridge, _, _ = make_bridge()
+    acted = bridge.on_control_event(
+        {"type": W.SESSION_UPDATE_EVENT_TYPE, "session": {"tools": [WEATHER_TOOL]}}
+    )
+
+    assert acted is True
+    payloads = bridge.drain()
+    assert types_of(payloads) == [S.EventType.SESSION_UPDATED]
+    assert payloads[0]["session"]["tools"][0]["name"] == "get_weather"
+    assert bridge.session.config.tools is not None
+    # …and it reaches the very next generate call.
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("what is the weather in haifa")
+    request = bridge.build_generate_request(bridge.take_pending_response())
+    assert request.body["tools"][0]["function"]["name"] == "get_weather"
+
+
+def test_a_session_update_that_declares_nothing_supported_stays_a_no_op() -> None:
+    # The pre-change contract, kept verbatim: `{"session": {}}` names no
+    # supported field, so nothing is applied, nothing is emitted, and the
+    # dispatcher reports it did not act.
+    bridge, _, _ = make_bridge()
+    before = bridge.session.config
+
+    assert bridge.on_control_event({"type": W.SESSION_UPDATE_EVENT_TYPE, "session": {}}) is False
+    assert (
+        bridge.on_control_event({"type": W.SESSION_UPDATE_EVENT_TYPE, "session": {"voice": "x"}})
+        is False
+    )
+    assert bridge.drain() == []
+    assert bridge.session.config == before
+
+
+def test_a_malformed_session_update_is_a_named_error_and_the_session_lives() -> None:
+    bridge, _, _ = make_bridge()
+    before = bridge.session.config
+
+    assert bridge.on_control_event({"type": W.SESSION_UPDATE_EVENT_TYPE}) is True
+
+    payloads = bridge.drain()
+    assert types_of(payloads) == [S.EventType.ERROR]
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_SESSION_CONFIG
+    assert bridge.session.config == before
+    assert bridge.session.state is not S.SessionState.CLOSED
+    # still usable afterwards
+    bridge.arm()
+    assert bridge.armed is True
+
+
+def test_an_unknown_control_event_is_still_silently_ignored() -> None:
+    bridge, _, _ = make_bridge()
+    assert bridge.on_control_event({"type": "response.cancel"}) is False
+    assert bridge.on_control_event({"type": "conversation.item.create", "item": {}}) is False
+    assert bridge.drain() == []
+
+
+# --- criterion 2: transcript BEFORE the function-call event ----------------
+
+
+def test_the_transcript_event_precedes_the_function_call_event() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+
+    types = types_of(bridge.drain())
+    assert types == [
+        S.EventType.SPEECH_STARTED,
+        S.EventType.SPEECH_STOPPED,
+        S.EventType.TRANSCRIPTION_COMPLETED,
+        S.EventType.RESPONSE_CREATED,
+        S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE,
+    ]
+    assert types.index(S.EventType.TRANSCRIPTION_COMPLETED) < types.index(
+        S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE
+    )
+
+
+def test_a_tool_call_is_handed_to_the_client_and_never_synthesized() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+
+    event = bridge.drain()[-1]
+    assert event["type"] is S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE
+    assert event["call_id"] == "call_1"
+    assert event["name"] == "get_weather"
+    assert event["arguments"] == '{"city": "Haifa"}'
+    assert bridge.take_pending_synthesis() is None
+    assert bridge.floor.state is F.FloorState.TOOL_WAIT
+    assert bridge.awaiting_tool_result is True
+    assert bridge.session.get_history()[-1] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": '{"city": "Haifa"}'},
+            }
+        ],
+    }
+
+
+def test_only_the_first_of_several_tool_calls_is_surfaced() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("what is the weather in haifa and tel aviv")
+    turn_id = bridge.take_pending_response()
+    bridge.on_generate_response(200, tool_call_body(count=3), turn_id=turn_id)
+
+    calls = [
+        p for p in bridge.drain() if p["type"] is S.EventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE
+    ]
+    assert len(calls) == 1
+    assert calls[0]["call_id"] == "call_1"
+    assert bridge.outstanding_tool_call.call_id == "call_1"
+
+
+# --- criterion 3: call-id bookkeeping --------------------------------------
+
+
+def test_the_matching_output_is_recorded_and_waits_for_response_create() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+
+    assert bridge.on_control_event(function_call_output("call_1")) is True
+
+    assert bridge.drain() == []  # a result is not an event the client gets back
+    assert bridge.session.get_history()[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": '{"celsius": 22}',
+    }
+    # No second generate until the client asks for one.
+    assert bridge.take_pending_response() is None
+    assert bridge.floor.state is F.FloorState.TOOL_WAIT
+    assert bridge.awaiting_tool_result is False
+
+
+def test_response_create_after_a_tool_result_issues_the_follow_up_generate() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    turn_id = run_to_tool_wait(bridge, clock)
+    bridge.on_control_event(function_call_output("call_1"))
+
+    assert bridge.on_control_event({"type": C.RESPONSE_CREATE_EVENT_TYPE}) is True
+    assert bridge.floor.state is F.FloorState.RESPONDING
+    assert bridge.take_pending_response() == turn_id
+
+    request = bridge.build_generate_request(turn_id)
+    roles = [m["role"] for m in request.body["messages"]]
+    assert roles == ["system", "user", "assistant", "tool"]
+    assert request.body["messages"][-1]["tool_call_id"] == "call_1"
+
+    # …and the turn finishes as an ordinary spoken reply.
+    bridge.on_generate_response(200, chat_body("it is 22 degrees"), turn_id=turn_id)
+    assert bridge.take_pending_synthesis() == (turn_id, "it is 22 degrees")
+    assert bridge.outstanding_tool_call is None
+
+
+def test_an_orphan_tool_output_is_a_named_error_with_history_unchanged() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+    history = bridge.session.get_history()
+
+    assert bridge.on_control_event(function_call_output("call_nope")) is True
+
+    payloads = bridge.drain()
+    assert types_of(payloads) == [S.EventType.ERROR]
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_WIRE_EVENT
+    assert C.TOOL_OUTPUT_UNKNOWN_CALL_ID in str(payloads[0]["message"])
+    assert bridge.session.get_history() == history
+    assert bridge.floor.state is F.FloorState.TOOL_WAIT
+
+
+def test_a_tool_output_with_no_call_outstanding_at_all_is_an_orphan() -> None:
+    bridge, _, _ = tools_bridge()
+    bridge.arm()
+
+    assert bridge.on_control_event(function_call_output("call_1")) is True
+
+    payloads = bridge.drain()
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_WIRE_EVENT
+    assert C.TOOL_OUTPUT_UNKNOWN_CALL_ID in str(payloads[0]["message"])
+    assert bridge.session.get_history() == []
+
+
+def test_a_duplicate_tool_output_is_a_named_error_with_history_unchanged() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.on_control_event(function_call_output("call_1"))
+    bridge.drain()
+    history = bridge.session.get_history()
+
+    assert bridge.on_control_event(function_call_output("call_1", '{"celsius": 99}')) is True
+
+    payloads = bridge.drain()
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_WIRE_EVENT
+    assert C.TOOL_OUTPUT_DUPLICATE in str(payloads[0]["message"])
+    assert bridge.session.get_history() == history
+
+
+def test_a_late_tool_output_after_the_wait_expired_is_a_named_error() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    clock.advance(F.DEFAULT_TOOL_WAIT_TIMEOUT_MS)
+    assert bridge.tick() is True
+    bridge.drain()
+    history = bridge.session.get_history()
+
+    assert bridge.on_control_event(function_call_output("call_1")) is True
+
+    payloads = bridge.drain()
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_WIRE_EVENT
+    assert C.TOOL_OUTPUT_CALL_CLOSED in str(payloads[0]["message"])
+    assert bridge.session.get_history() == history
+
+
+def test_a_malformed_tool_output_frame_is_the_wire_error_it_has_always_been() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+
+    bad = {
+        "type": W.CONVERSATION_ITEM_CREATE_EVENT_TYPE,
+        "item": {"type": W.FUNCTION_CALL_OUTPUT_ITEM_TYPE, "call_id": "", "output": "x"},
+    }
+    assert bridge.on_control_event(bad) is True
+
+    payloads = bridge.drain()
+    assert payloads[0]["code"] is S.ErrorCode.INVALID_WIRE_EVENT
+    assert S.FunctionCallOutputError.reason in str(payloads[0]["message"])
+    assert bridge.awaiting_tool_result is True  # the real call is untouched
+
+
+def test_a_response_create_while_a_tool_call_is_outstanding_starts_no_generate() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+    history = bridge.session.get_history()
+
+    bridge.on_control_event({"type": C.RESPONSE_CREATE_EVENT_TYPE})
+
+    assert bridge.take_pending_response() is None
+    assert bridge.floor.state is F.FloorState.TOOL_WAIT
+    assert bridge.session.get_history() == history
+    assert bridge.drain() == []
+
+
+# --- criterion 4: the synthetic cancel -------------------------------------
+
+
+def test_an_expired_tool_wait_closes_the_call_with_a_synthetic_cancel() -> None:
+    bridge, cancels, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+    clock.advance(F.DEFAULT_TOOL_WAIT_TIMEOUT_MS)
+
+    assert bridge.tick() is True
+
+    payloads = bridge.drain()
+    assert payloads[-1]["code"] is S.ErrorCode.RESPONSE_TIMEOUT
+    assert "tool stage" in str(payloads[-1]["message"])
+    assert bridge.session.get_history()[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": C.TOOL_CALL_CANCELLED_OUTPUT,
+    }
+    assert bridge.outstanding_tool_call is None
+    assert bridge.floor.state is F.FloorState.LISTENING
+    assert (cancels.generate, cancels.tts) == (1, 1)
+
+
+def test_a_barge_in_during_a_tool_wait_closes_the_call_with_a_synthetic_cancel() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.drain()
+
+    bridge.on_speech_started(at_ms=9000)
+
+    payloads = bridge.drain()
+    assert S.EventType.RESPONSE_INTERRUPTED in types_of(payloads)
+    assert bridge.session.get_history()[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": C.TOOL_CALL_CANCELLED_OUTPUT,
+    }
+    assert bridge.outstanding_tool_call is None
+
+
+def test_the_history_of_a_cancelled_tool_call_never_dangles() -> None:
+    # The assistant tool_calls entry is ALWAYS followed by a tool entry with
+    # the same id — the shape a chat-completions backend requires. PROBED
+    # 2026-09-18: associate repeats an orphan tool result as fact, so nothing
+    # downstream would catch a bookkeeping miss.
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    clock.advance(F.DEFAULT_TOOL_WAIT_TIMEOUT_MS)
+    bridge.tick()
+
+    history = bridge.session.get_history()
+    for i, message in enumerate(history):
+        if message.get("tool_calls"):
+            answer = history[i + 1]
+            assert answer["role"] == "tool"
+            assert answer["tool_call_id"] == message["tool_calls"][0]["id"]
+
+
+def test_an_answered_call_cut_short_keeps_the_real_result_not_the_marker() -> None:
+    bridge, _, clock = tools_bridge()
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    bridge.on_control_event(function_call_output("call_1"))
+
+    bridge.on_speech_started(at_ms=9000)  # barge-in before response.create
+
+    assert bridge.session.get_history()[-1]["content"] == '{"celsius": 22}'
+    assert bridge.outstanding_tool_call is None
+
+
+def test_the_tool_wait_timeout_knob_reaches_the_floor() -> None:
+    bridge, _, clock = tools_bridge(tool_wait_timeout_ms=5_000)
+    bridge.arm()
+    run_to_tool_wait(bridge, clock)
+    clock.advance(4_999)
+    assert bridge.tick() is False
+    clock.advance(1)
+    assert bridge.tick() is True
+
+
+# --- generate-failure surfacing (t8's two xfail gaps) -----------------------
+
+
+def test_a_429_shed_names_its_status_and_retry_hint() -> None:
+    bridge, _, _ = make_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("hello")
+    turn_id = bridge.take_pending_response()
+    body = json.dumps(
+        {"error": {"message": "multimodal is under pressure; retry shortly", "code": "busy"}}
+    ).encode()
+
+    bridge.on_generate_response(429, body, turn_id=turn_id, headers={"Retry-After": "5"})
+
+    message = str(bridge.drain()[-1]["message"])
+    assert "under pressure" in message
+    assert "status=429" in message
+    assert "retry_after=5" in message
+
+
+def test_a_429_with_no_retry_after_header_says_so_rather_than_inventing_one() -> None:
+    bridge, _, _ = make_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("hello")
+    turn_id = bridge.take_pending_response()
+
+    bridge.on_generate_response(
+        429, b'{"error": {"message": "busy", "code": "busy"}}', turn_id=turn_id
+    )
+
+    message = str(bridge.drain()[-1]["message"])
+    assert "status=429" in message
+    assert f"retry_after={C.RETRY_AFTER_UNSPECIFIED}" in message
+
+
+def test_a_503_role_unverified_carries_its_pending_peer_structurally() -> None:
+    bridge, _, _ = make_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("hello")
+    turn_id = bridge.take_pending_response()
+    body = json.dumps(
+        {
+            "error": {
+                "message": "not served here yet",
+                "code": "role_unverified",
+                "hosted_by": "http://spark:8000",
+            }
+        }
+    ).encode()
+
+    bridge.on_generate_response(503, body, turn_id=turn_id)
+
+    message = str(bridge.drain()[-1]["message"])
+    assert "status=503" in message
+    assert "hosted_by=http://spark:8000" in message
+
+
+def test_a_404_role_infeasible_with_no_peer_still_never_says_hosted_by() -> None:
+    bridge, _, _ = make_bridge()
+    bridge.arm()
+    commit_turn(bridge)
+    bridge.on_transcript("hello")
+    turn_id = bridge.take_pending_response()
+    body = json.dumps({"error": {"code": "role_infeasible", "message": "not hosted"}}).encode()
+
+    bridge.on_generate_response(404, body, turn_id=turn_id)
+
+    message = str(bridge.drain()[-1]["message"])
+    assert "hosted_by" not in message
+    assert "status=404" in message

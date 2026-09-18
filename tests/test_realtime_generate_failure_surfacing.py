@@ -24,7 +24,10 @@ bodies (`lobes/gateway/server.py`):
   ``hosted_by`` naming the pending mesh member (the boot-window "not yet",
   distinct from the 404's terminal "never").
 
-GAPS FOUND (reported, not fixed — out of this task's file ownership):
+GAPS FOUND by t8 — BOTH CLOSED by hebrew-realtime t7, whose brief owned the
+two files these needed (``_conversation.py``, plus a minimal additive change
+to ``_turn.py``). The descriptions below are kept for the record; the two
+tests that named them are no longer ``xfail``:
 
 1. **429 status is not carried through the message text.** ``_busy_body``
    supplies its own ``error.message`` ("<lane> is under pressure; retry
@@ -54,13 +57,17 @@ GAPS FOUND (reported, not fixed — out of this task's file ownership):
    ``test_503_role_unverified_exception_has_no_structured_hosted_by``
    (xfail).
 
-Both gaps are for a later task (not t8, and not this file) to close — most
-likely by generalizing :func:`_turn._raise_for_error_status`'s hosted_by
+Both gaps were closed by t7, in exactly the two shapes sketched here:
+generalizing :func:`_turn._raise_for_error_status`'s hosted_by
 extraction to also cover ``role_unverified`` (and minting a distinct
 exception type for it, mirroring ``RoleInfeasibleError``), and by adding a
 ``headers`` parameter to
 :func:`~lobes.realtime._conversation.ConversationBridge.on_generate_response`
-so 429's ``Retry-After`` has somewhere to go.
+so 429's ``Retry-After`` has somewhere to go. t7 chose the plainer half of
+the first: ``TurnResponseError`` gained a ``hosted_by`` attribute rather than
+a new exception TYPE, because ``role_unverified`` means "not yet" — a
+transient failure a caller handles like any other — while
+``role_infeasible``'s terminal "never" is the one that earns its own type.
 """
 
 from __future__ import annotations
@@ -217,18 +224,12 @@ def test_429_busy_surfaces_as_a_named_generate_failed_never_reply_text():
     assert bridge.floor.state is F.FloorState.LISTENING
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GAP (hebrew-realtime t8, not fixed here — out of _turn.py/_conversation.py "
-        "file ownership): neither the numeric 429 status nor a Retry-After hint "
-        "reaches the ErrorEvent. _turn.parse_turn_response raises a plain "
-        "TurnResponseError whose .status_code attribute never enters "
-        "describe_failure's message text, and on_generate_response(status_code, "
-        "body) has no headers parameter for Retry-After to travel through at all."
-    ),
-)
-def test_429_busy_status_and_retry_after_are_not_surfaced():
+def test_429_busy_status_and_retry_after_are_surfaced():
+    # CLOSED by hebrew-realtime t7: on_generate_response now appends a
+    # machine-readable `(status=..., retry_after=...)` detail, and takes an
+    # optional `headers` mapping so a real Retry-After can travel. With no
+    # header the retryable status still says so explicitly
+    # (retry_after=unspecified) rather than staying silent.
     bridge = _make_bridge()
     turn_id = _commit_and_take_turn(bridge)
 
@@ -279,21 +280,12 @@ def test_503_role_unverified_message_text_still_names_the_pending_peer():
     assert "http://spark:8000" in str(error["message"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GAP (hebrew-realtime t8, not fixed here — out of _turn.py file "
-        "ownership): parse_turn_response(503, role_unverified) raises the "
-        "generic TurnResponseError — the SAME type an ordinary 5xx would "
-        "raise, with no distinguishing exception type and no structured "
-        "hosted_by attribute. A caller can only recover the pending peer's "
-        "origin by pattern-matching the gateway's message TEXT (proven "
-        "above), never by reading a field the way RoleInfeasibleError.hosted_by "
-        "lets a 404 caller do — and it cannot mechanically distinguish "
-        "'retry, not yet verified' from 'this box will never serve it'."
-    ),
-)
-def test_503_role_unverified_exception_has_no_structured_hosted_by():
+def test_503_role_unverified_exception_has_a_structured_hosted_by():
+    # CLOSED by hebrew-realtime t7: TurnResponseError carries `hosted_by`
+    # whenever the gateway's error body declared one, so a 503's pending peer
+    # is a field rather than something to grep out of English. It stays the
+    # generic type on purpose — role_unverified means "not yet", which a
+    # caller handles like any other transient failure.
     with pytest.raises(T.TurnResponseError) as excinfo:
         T.parse_turn_response(503, _role_unverified_body(hosted_by="http://spark:8000"))
     assert not isinstance(excinfo.value, T.RoleInfeasibleError)

@@ -309,11 +309,25 @@ class TurnResponseError(TurnRequestError):
     """Any other non-2xx or malformed ``/v1/chat/completions`` response —
     a different 404 (e.g. ``model_not_found``), a 5xx, or a body that is not
     valid JSON / not shaped like a chat/completions response.
+
+    ``hosted_by`` carries the gateway's own peer hint when the error body
+    declared one. The ``503 role_unverified`` shape (the mesh boot window,
+    ``lobes.gateway.server._role_unverified_body``) does exactly that, and
+    before this field a caller could only recover the pending peer's origin
+    by pattern-matching the gateway's English message text. It stays a plain
+    attribute on this generic type rather than a second
+    :class:`RoleInfeasibleError`-style subclass: ``role_unverified`` means
+    "not yet", which a caller handles like any other transient failure, while
+    ``role_infeasible``'s terminal "never" is the one that earns its own
+    type.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, hosted_by: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.hosted_by = hosted_by
 
 
 # --- the tool-call result: a distinct type, never confusable with text -------
@@ -448,15 +462,18 @@ def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
     message = (error.get("message") if error else None) or (
         f"generate backend returned HTTP {status_code}"
     )
+    hosted_by = error.get("hosted_by") if error else None
+    hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
     # A 404 whose error object names role_infeasible means this box does not
     # host the lane — a different fact from "the backend broke", and the one
     # that must carry `hosted_by` so the caller can name the peer instead of
     # silently falling back to another lane.
     if status_code == 404 and "role_infeasible" in (code, kind):
-        hosted_by = error.get("hosted_by") if error else None
-        hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
         raise RoleInfeasibleError(message, hosted_by=hosted_by)
-    raise TurnResponseError(message, status_code=status_code)
+    # Every OTHER shape keeps the hint too when the gateway sent one — a 503
+    # `role_unverified` names the mesh member that announced the lane, and
+    # that origin is a field here, not something to grep out of the message.
+    raise TurnResponseError(message, status_code=status_code, hosted_by=hosted_by)
 
 
 def _extract_reply(data: dict) -> str | ToolCallResult:
