@@ -261,11 +261,46 @@ MESH_UNFORWARDABLE_ROLES: frozenset[str] = frozenset({"innereye"})
 # The two audio-overlay sidecars — hardcoded here (as in the gateway/realtime
 # code) because they are NOT in the switchable catalog (lobes/catalog.py): they
 # are fixed GPU sidecars behind the /v1/audio/* facade, activated together by
-# ``lobes init --fleet --audio``.
+# ``lobes init --fleet --audio``. These are the DEFAULTS — what every
+# pre-#204 deployment (and any deployment that declares neither override)
+# serves and advertises. A Hebrew (or otherwise non-English) deployment
+# swaps the served checkpoint per sidecar without a repo change by
+# declaring :data:`_STT_MODEL_ENV`/:data:`_STT_RUNTIME_ENV` and their TTS
+# equivalents (task t13, spec claim c27) — see :func:`_declared_audio_engine`.
 _STT_MODEL = "nvidia/parakeet-tdt-0.6b-v2"  # Parakeet TDT 0.6B, NeMo ASR
 _STT_RUNTIME = "parakeet"
 _TTS_MODEL = "ResembleAI/chatterbox"  # Chatterbox, Resemble AI 0.5B, Apache-2.0
 _TTS_RUNTIME = "chatterbox"
+
+# The deployment-declared override keys for the two audio sidecars (issue
+# #204/t13, spec claim c27). Absent, unset, or blank → the hardcoded
+# defaults above, byte-identical to every pre-t13 deployment. A deployment
+# that swaps STT/TTS checkpoints (e.g. an ivrit-ai Whisper model for
+# Hebrew) declares these directly in its env; nothing here infers a served
+# model from a catalog, since the audio sidecars are not in the catalog to
+# begin with (see the comment above).
+_STT_MODEL_ENV = "STT_MODEL"
+_STT_RUNTIME_ENV = "STT_RUNTIME"
+_TTS_MODEL_ENV = "TTS_MODEL"
+_TTS_RUNTIME_ENV = "TTS_RUNTIME"
+
+# NOTE — language is deliberately NOT wired here (STT_LANGUAGE/TTS_LANGUAGE
+# are read nowhere in this module). Both the CLI (lobes/cli/_commands/
+# capabilities.py:_role_payload) and the gateway
+# (lobes/gateway/server.py:capabilities_payload) render a role's advert via
+# a blind ``dataclasses.asdict(info)`` over :class:`RoleInfo` — EVERY
+# dataclass field is always emitted, with whatever value it holds. Adding a
+# ``language`` field to ``RoleInfo`` would therefore emit
+# ``"language": null`` (or ``""``) on EVERY deployment that declares
+# nothing, which breaks the "byte-identical to main with nothing declared"
+# requirement (t13 acceptance criterion 1) — the key must be ABSENT, not
+# null, and only ``asdict``'s callers can make a field conditionally
+# absent. Both call sites are outside this task's ownership
+# (lobes/cli/_commands/capabilities.py is outside the "touch only
+# lobes/roles.py" scope; lobes/gateway/server.py is outside the "no
+# lobes/gateway/ changes" stop condition). This is exactly the r4 risk the
+# plan named: honoring c27's language half needs a gateway (and CLI)
+# change this task must not make. Reported, not worked around.
 # The ComfyUI render tenant (issue #82) — hardcoded for the same reason as the
 # audio sidecars above: it is NOT in the switchable catalog (lobes/catalog.py),
 # so there is no SupportedModel/role_hint to derive a served id from. Named
@@ -931,6 +966,25 @@ def _gateway_role(
     )
 
 
+def _declared_audio_engine(
+    role: str, env: Mapping[str, str], default_model: str, default_runtime: str
+) -> tuple[str, str]:
+    """The (model, runtime) pair a deployment declares for ``role`` (stt/tts).
+
+    Reads ``STT_MODEL``/``STT_RUNTIME`` (or the TTS equivalents) from ``env``;
+    an unset or blank key falls back to ``default_model``/``default_runtime``
+    independently — declaring only one of the pair overrides just that one,
+    never both. Never raises. See the module-level override-key constants
+    (:data:`_STT_MODEL_ENV` and siblings) for why this stays model/runtime
+    only, with no ``language`` counterpart, here (issue #204/t13).
+    """
+    model_key = _STT_MODEL_ENV if role == "stt" else _TTS_MODEL_ENV
+    runtime_key = _STT_RUNTIME_ENV if role == "stt" else _TTS_RUNTIME_ENV
+    model = (env.get(model_key) or "").strip() or default_model
+    runtime = (env.get(runtime_key) or "").strip() or default_runtime
+    return model, runtime
+
+
 def _audio_role(
     role: str,
     model: str,
@@ -1180,8 +1234,8 @@ def build_role_registry(
         and (audio_ready if audio_ready is not None else True)
     )
     for role, model, runtime in (
-        ("stt", _STT_MODEL, _STT_RUNTIME),
-        ("tts", _TTS_MODEL, _TTS_RUNTIME),
+        ("stt", *_declared_audio_engine("stt", resolved_env, _STT_MODEL, _STT_RUNTIME)),
+        ("tts", *_declared_audio_engine("tts", resolved_env, _TTS_MODEL, _TTS_RUNTIME)),
     ):
         registry[role] = _resolve_audio_role(
             role,
