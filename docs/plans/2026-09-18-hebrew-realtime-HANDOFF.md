@@ -136,3 +136,7 @@ Suite **5967 passed, 15 skipped**. Evidence sections 6–8 of `docs/evidence/202
 - Wire: a merged turn produces two `transcription.completed` items (half, then whole); nothing marks the supersession. The web harness will show both.
 - PocketTTS: operator says a Hebrew build exists (private HF Space `thewh1teeagle/pockettts`, 401 from here; no public Hebrew checkpoint found). A/B against BlueTTS when the operator can share it.
 - Lapses filed (proposed): l3, l4. **Next:** live-test layer B with the operator, decide the blank-onset question, stop `chatterbox`, then t15/d3/t16/t17.
+
+## Update 4 — live session with layers A+B (2026-09-18, night)
+
+Operator: "speed is great". 12 turns, 0 errors; plain replies first audio 328–370 ms after the commit; tool turns 1.16–1.64 s (the 500 ms tool hold is a fixed cost on every tool turn — a candidate to tune down, e.g. 300). **Zero continuation merges occurred**, so layer B's take-back is proven on a recording only. Mixed Hebrew/English (folder names) → issue **#277**. Evidence section 9.

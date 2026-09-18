@@ -139,3 +139,21 @@ SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM o
    The client still sees TWO transcription.completed items (the half, then the merged
    text) — no wire field marks the second as superseding the first.
    NOT yet tried with a live voice.
+
+9. LIVE, a human on the reSpeaker, layers A + B on (VAD_SILENCE_MS=500, VAD_EAGER_MS=160,
+   CONTINUATION_WINDOW_MS=1200, CONTINUATION_TOOL_HOLD_MS=500), 120 s, 12 turns.
+   Operator: "speed is great".
+     plain replies   — commit -> first audio: 370, 328, 333 ms  (=> ~830-870 ms after the
+                       speaker actually stopped, with the 500 ms confirming silence)
+     tool turns (7)  — tool call sent 499-500 ms after the commit (the hold, exactly);
+                       commit -> first audio 1156-1641 ms (hold + tool round trip + a second,
+                       un-speculated generate + TTS)
+     10 speculations adopted; 2 ordinary barge-ins (4.3 s and 6.2 s after the commit);
+     0 errors, 0 tracebacks.
+     CONTINUATION MERGES: 0. No mid-sentence pause produced an early commit followed by a
+     resume inside the window in this session, so layer B's take-back is STILL unproven
+     with a live voice — only the recording in section 8 exercises it. What this session
+     does show is that layer B's settings did no harm: no turn was split, no reply killed.
+   Mixed language remains weak both ways (folder 'evidence' heard as 'Evidense' / 'אבידנס',
+   English folder names hard to follow when spoken) — out of the acceptance bar (d6),
+   tracked in issue #277.
