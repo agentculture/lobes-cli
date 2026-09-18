@@ -213,3 +213,14 @@
 {"ts":"2026-09-16T12:44:54.522120+00:00","type":"pr_reply","pr":270,"thread_id":null,"in_reply_to":null}
 {"ts":"2026-09-16T12:44:54.534943+00:00","type":"pr_batch_replied","pr":270,"count":4,"resolved":0}
 {"ts":"2026-09-16T12:44:55.310544+00:00","type":"pr_webhook_posted","pr":270,"event":"pr_replied"}
+{"ts":"2026-09-16T13:49:41.998264+00:00","type":"pr_opened","pr":273,"title":"innereye: opt-in INNEREYE_UI_PORT publishes ComfyUI's web UI, default off"}
+{"ts":"2026-09-16T13:49:43.344161+00:00","type":"pr_review_triggered","pr":273,"command":"/agentic_review"}
+{"ts":"2026-09-16T13:49:44.196444+00:00","type":"pr_webhook_posted","pr":273,"event":"pr_opened"}
+{"ts":"2026-09-16T13:50:47.658801+00:00","type":"readiness_arrived","pr":273,"waited_secs":60}
+{"ts":"2026-09-16T13:50:53.243661+00:00","type":"pr_read","pr":273,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-09-16T14:06:24.956674+00:00","type":"pr_reply","pr":273,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T14:06:26.226974+00:00","type":"pr_reply","pr":273,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T14:06:27.562830+00:00","type":"pr_reply","pr":273,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T14:06:28.800337+00:00","type":"pr_reply","pr":273,"thread_id":null,"in_reply_to":null}
+{"ts":"2026-09-16T14:06:28.813844+00:00","type":"pr_batch_replied","pr":273,"count":4,"resolved":0}
+{"ts":"2026-09-16T14:06:29.709455+00:00","type":"pr_webhook_posted","pr":273,"event":"pr_replied"}

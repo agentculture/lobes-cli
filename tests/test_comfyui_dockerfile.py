@@ -135,3 +135,17 @@ def test_build_stage_verification_is_a_single_logical_line() -> None:
             break
     else:  # pragma: no cover - the RUN exists; this is the guard's own guard
         raise AssertionError("no build-stage python3 -c verification found")
+
+
+def test_ships_a_c_compiler_for_triton() -> None:
+    """Triton compiles its launcher stub with `cc` the first time a kernel runs,
+    so an image with no compiler fails every render at the first sampler step
+    ("RuntimeError: Failed to find C compiler" — the Spark, 2026-09-18). The
+    compiler has to be in the RUNTIME image and not only a build stage. The
+    stub also needs Python.h from python3.12-dev."""
+    instructions = "\n".join(ln for ln in _text().splitlines() if not ln.lstrip().startswith("#"))
+    apt = re.search(r"apt-get install[^\n]*\\\n((?:[^\n]*\\\n)*[^\n]*)", instructions)
+    assert apt, "no apt-get install instruction found"
+    packages = apt.group(1)
+    assert re.search(r"\bbuild-essential\b", packages), "Triton needs a C compiler at runtime"
+    assert re.search(r"\bpython3\.12-dev\b", packages), "Triton's launcher stub needs Python.h"
