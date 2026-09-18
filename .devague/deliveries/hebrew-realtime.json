@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T15:09:41Z",
+  "updated": "2026-09-18T15:12:11Z",
   "deviations": [
     {
       "id": "d1",
@@ -145,6 +145,23 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 8
+    },
+    {
+      "id": "d9",
+      "what": "Speculative ('spendy') turn-taking joins the plan, built after sentence streaming (d7) lands: (A) HIDDEN SPECULATION \u2014 at a short provisional silence (VAD_EAGER_MS ~250 ms) the server snapshots the turn audio and runs STT -> streamed generate -> first-clause TTS with NOTHING emitted and NO history written; resumed speech cancels it without trace, a confirmed end of turn promotes it and releases the ready audio at once. (B) EARLY COMMIT + CONTINUATION MERGE \u2014 the confirming silence drops to ~350-400 ms; when the user resumes shortly after a commit, the existing barge-in stops the reply, the aborted response is dropped from history, and the previous + new audio are re-transcribed as ONE turn. Both knobs are env-tunable and default OFF for the English overlay (byte-identical behaviour)",
+      "task_ref": "t6",
+      "reason": "Operator decision 2026-09-18: 'Do we still wait that 600ms-1000ms? We can short it by being spendy and cancelling if not relevant.' Target first audio 200-500 ms. Measured: the end-of-turn silence (1000 ms on this box after 600 ms split a deliberate sentence) is the largest single term of perceived latency; STT 150-215 ms, first clause ~250-350 ms, BlueTTS 160-325 ms all fit inside that wait. Wasted GPU work is free on a single-user local box. c24/h17 ('no change to _segmenter.py') is knowingly relaxed: the segmenter gains a provisional-silence event",
+      "affects": [
+        "t7",
+        "t12",
+        "t17",
+        "c24",
+        "h17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 9
     }
   ],
   "evidence": [],
