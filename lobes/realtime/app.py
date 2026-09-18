@@ -53,6 +53,7 @@ from ._segmenter import Segmenter, SpeechStarted, SpeechStopped
 from ._session import Session, SessionConfigError, event_to_dict, parse_session_config
 from ._settings import VOICE_LANE, settings
 from ._timings import FIRST_DELTA_STAGE, StageClock
+from ._turn import StreamAccumulator, TurnRequestError
 from ._wire import DEFAULT_DELTA_CHUNK_BYTES, InboundKind, decide_inbound_message
 from .audio_facade import (
     SpeechRequestError,
@@ -473,6 +474,7 @@ def _build_bridge(  # pragma: no cover
             base_url=settings.openai_base_url,
             api_key=settings.openai_api_key,
             model=resolve_voice_model(settings.openai_model),
+            stream=settings.generate_stream,
         ),
         barge_in_window_ms=settings.barge_in_window_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
@@ -624,6 +626,145 @@ async def _post_generate(request) -> tuple[int, bytes, dict[str, str]]:  # pragm
     return resp.status_code, resp.content, dict(resp.headers)
 
 
+# How long the delivery pump sleeps when there is nothing to send YET. Under
+# streaming, "nothing right now" is the normal state between segments — the
+# next one is still synthesizing — so the pump idles instead of exiting. Far
+# below one 100ms delta, so a segment never waits on the poll.
+_DELIVERY_IDLE_POLL_S = 0.01
+
+
+async def _stream_generate(  # pragma: no cover
+    request,
+    bridge: ConversationBridge,
+    sender: _Sender,
+    turn_id: int,
+    queue: asyncio.Queue,
+) -> tuple[int, bytes, dict[str, str]] | None:
+    """Stream the generate call, feeding sentences out as they complete.
+
+    The streaming twin of :func:`_post_generate`, and the whole reason first
+    audio stops depending on reply length: every line goes straight into
+    :class:`~lobes.realtime._turn.StreamAccumulator`, every text delta into
+    the bridge, and every sentence the bridge's chunker completes onto
+    *queue* for the synth worker — while generation is still running.
+
+    A NON-200 response is not a stream: the body is read whole and returned
+    as ``(status, body, headers)`` for the existing
+    :meth:`~lobes.realtime._conversation.ConversationBridge.on_generate_response`
+    error path, so ``role_infeasible``/429/503 surfacing is byte-identical to
+    the non-streaming lane. ``None`` means the stream completed and the
+    bridge was told so.
+    """
+    accumulator = StreamAccumulator()
+    async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
+        async with client.stream(
+            "POST", request.url, headers=request.headers, json=request.body
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                return response.status_code, body, dict(response.headers)
+            async for line in response.aiter_lines():
+                for item in accumulator.feed_line(line):
+                    bridge.on_generate_delta(item.text, turn_id=turn_id)
+                await _drain_segments(bridge, queue)
+    bridge.on_generate_stream_end(accumulator.result(), turn_id=turn_id)
+    await _drain_segments(bridge, queue)
+    await sender.flush()
+    return None
+
+
+async def _drain_segments(  # pragma: no cover
+    bridge: ConversationBridge, queue: asyncio.Queue
+) -> None:
+    """Move every ready segment onto the synth worker's queue, in order."""
+    while True:
+        pending = bridge.take_pending_segment()
+        if pending is None:
+            return
+        await queue.put(pending)
+
+
+async def _synth_worker(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    active: _ActiveResponse,
+    queue: asyncio.Queue,
+    clock: StageClock,
+) -> None:
+    """Synthesize queued segments, one at a time, in order.
+
+    SEQUENTIAL by design, not by omission: ``TTS_VOICE_CONCURRENCY`` is 1 and
+    the floor delivers segments in index order anyway, so a parallel worker
+    would buy nothing and could starve segment N of the gate while N+1 holds
+    it. The ``awaiting_tool_result`` guard comes FIRST, before any
+    ``synthesize`` call, for the same reason the non-streaming path checks it:
+    a tool turn must never be spoken.
+    """
+    tts_timings: dict[str, int] = {}
+    while True:
+        item = await queue.get()
+        if item is None:
+            return
+        if bridge.awaiting_tool_result:
+            return  # the reply became a tool call; nothing here is speakable
+        turn_id, segment_index, text = item
+        clock.start("tts")
+        try:
+            pcm = await synthesize(
+                text,
+                voice=settings.default_voice,
+                tts_url=settings.tts_url,
+                cancel_event=active.tts_cancel,
+                lane=VOICE_LANE,
+                language=bridge.session.config.language,
+                timings_out=tts_timings,
+            )
+        except httpx.TimeoutException as exc:
+            bridge.fail_tts(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+            await sender.flush()
+            return
+        clock.stop("tts")
+        phonikud_ms = tts_timings.get("phonikud")
+        if phonikud_ms is not None:
+            clock.record("phonikud", phonikud_ms)
+        # Empty audio is the floor's named tts_failed — never a silent segment.
+        bridge.on_tts_audio(pcm, turn_id=turn_id, segment_index=segment_index)
+        await sender.flush()
+
+
+async def _pump_delivery(  # pragma: no cover
+    bridge: ConversationBridge, sender: _Sender, turn_id: int, clock: StageClock
+) -> None:
+    """Paced audio-out for a STREAMED reply, across however many segments.
+
+    The non-streaming pump exits the moment ``deliver_next`` answers
+    ``False``; here that answer usually means "the next segment is still
+    synthesizing", so the loop idles instead and keeps going until the bridge
+    says the response is over (``response_in_progress`` — a floor decision,
+    not one this file makes). Pacing is the same
+    :func:`~lobes.realtime._conversation.delivery_pause_ms` the non-streaming
+    path uses, for the same reason: delivery must track the playhead, or
+    barge-in is inert.
+    """
+    started_ms = timestamp_ms()
+    chunks_sent = 0
+    while bridge.response_in_progress(turn_id):
+        if not bridge.deliver_next(turn_id=turn_id):
+            await asyncio.sleep(_DELIVERY_IDLE_POLL_S)
+            continue
+        await sender.flush()
+        clock.mark_first_delta()
+        chunks_sent += 1
+        pause_ms = delivery_pause_ms(
+            chunks_sent=chunks_sent,
+            chunk_bytes=DEFAULT_DELTA_CHUNK_BYTES,
+            sample_rate=TTS_SAMPLE_RATE,
+            elapsed_ms=timestamp_ms() - started_ms,
+        )
+        if pause_ms > 0:
+            await asyncio.sleep(pause_ms / 1000)
+
+
 def _start_pending_response(  # pragma: no cover
     bridge: ConversationBridge,
     sender: _Sender,
@@ -687,7 +828,14 @@ async def _drive_response(  # pragma: no cover
     it is a session-level task and is untouched by this return). The
     follow-up generate is the SAME turn coming back through
     :func:`_start_pending_response` when ``response.create`` releases it.
+
+    ``GENERATE_STREAM`` (default on) routes to :func:`_drive_streamed_response`
+    instead; everything below this line is the whole-reply path that
+    ``GENERATE_STREAM=false`` selects, unchanged.
     """
+    if bridge.streaming_enabled:
+        await _drive_streamed_response(bridge, sender, active, clock)
+        return
     turn_id = active.turn_id
     request = bridge.build_generate_request(turn_id)
     if request is None:
@@ -792,6 +940,82 @@ async def _drive_response(  # pragma: no cover
         )
         if pause_ms > 0:
             await asyncio.sleep(pause_ms / 1000)
+
+
+async def _drive_streamed_response(  # pragma: no cover
+    bridge: ConversationBridge, sender: _Sender, active: _ActiveResponse, clock: StageClock
+) -> None:
+    """The streamed turn: generate, synthesize and deliver, all at once.
+
+    Three concurrent pieces, because that overlap IS the feature (approved
+    deviation d7): the stream task feeds sentences out as they complete, the
+    synth worker turns each into audio in order, and the delivery pump sends
+    the first segment's chunks while the second is still being written. First
+    audio then costs one short sentence's synthesis instead of the whole
+    reply's.
+
+    Cancellation stops all three. ``cancel_generate`` cancels the stream task
+    and ``cancel_tts`` the synth worker (both wired through
+    :class:`_ActiveResponse`), and the ``finally`` below cancels whatever the
+    floor did not, so a barge-in cannot leave a worker speaking into the next
+    turn.
+    """
+    turn_id = active.turn_id
+    request = bridge.build_generate_request(turn_id)
+    if request is None:
+        return  # the turn was interrupted or failed before we got here
+    bridge.begin_generate_stream(turn_id)
+    queue: asyncio.Queue = asyncio.Queue()
+    clock.start("generate")
+    active.generate_task = asyncio.create_task(
+        _stream_generate(request, bridge, sender, turn_id, queue)
+    )
+    # The synth worker IS the TTS call as far as cancellation is concerned:
+    # the floor's cancel_tts hook must reach whatever synthesis is in flight.
+    active.tts_task = asyncio.create_task(_synth_worker(bridge, sender, active, queue, clock))
+    pump = asyncio.create_task(_pump_delivery(bridge, sender, turn_id, clock))
+    try:
+        # asyncio.wait(), not `await task` — the same distinction the
+        # non-streaming path documents: a cancelled CHILD is barge-in, our own
+        # cancellation is teardown, and collapsing both into one
+        # CancelledError is exactly the mistake that keeps a torn-down
+        # session running.
+        await asyncio.wait({active.generate_task})
+        if active.generate_task.cancelled():
+            return  # barge-in or teardown; the floor already emitted
+        try:
+            failure = active.generate_task.result()
+        except httpx.TimeoutException as exc:
+            bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+            return
+        except httpx.HTTPError as exc:
+            bridge.fail_generate(f"generate backend unreachable: {exc}", turn_id=turn_id)
+            return
+        except TurnRequestError as exc:
+            # A malformed chunk mid-stream: the named generate failure, never
+            # a half-spoken reply presented as a whole one.
+            bridge.fail_generate(f"generate stream failed: {exc}", turn_id=turn_id)
+            return
+        clock.stop("generate")
+        if failure is not None:
+            status_code, body, headers = failure
+            bridge.on_generate_response(status_code, body, turn_id=turn_id, headers=headers)
+            await sender.flush()
+            return
+        if bridge.awaiting_tool_result:
+            # The stream ended in a tool call: the client has the floor. Any
+            # text prefix was already discarded by the bridge.
+            clock.start("tool_wait")
+            return
+        await queue.put(None)  # no more segments are coming
+        await asyncio.wait({active.tts_task, pump})
+    finally:
+        # Whatever the floor did not already cancel — a failed generate leaves
+        # a worker blocked on an empty queue, and a barge-in leaves the pump.
+        for task in (active.tts_task, pump):
+            if task is not None and not task.done():
+                task.cancel()
+        await sender.flush()
 
 
 async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # pragma: no cover

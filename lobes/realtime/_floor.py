@@ -56,13 +56,33 @@ exactly like every other machine-held state, emitting
 
 ``speaking`` covers TWO sub-stages, because the Chatterbox sidecar has no
 streaming route — :func:`~lobes.realtime.tts_client.synthesize` is full-read,
-so the bridge holds the *complete* reply PCM before the first byte can go out:
+so the bridge holds the *complete* segment PCM before the first byte can go out:
 
 - **synthesizing** — the machine has committed to answering and TTS is in
   flight (:attr:`Floor.synthesizing`). Nothing is audible yet, but the floor
   is genuinely the machine's: the user's turn is over and an answer is coming.
 - **delivering** — the PCM arrived and is going out as sequential chunks, one
   per :meth:`Floor.deliver_next` call (:attr:`Floor.delivering`).
+
+A QUEUE of segments, not one buffer (deviation d7)
+---------------------------------------------------
+``speaking`` holds a LIST of segments, because sentence-level streaming
+(:mod:`lobes.realtime._sentences`) releases each finished sentence to TTS
+while generation continues. :meth:`Floor.on_reply_segment` appends one (the
+last carrying ``final=True``); :meth:`Floor.on_reply_text` is the
+one-segment convenience the non-streaming path keeps using, unchanged down to
+the event it emits. Audio attaches to ITS segment
+(``on_audio_ready(..., segment_index=N)``) and may arrive out of order;
+delivery is strictly IN ORDER regardless, and :class:`ResponseDone` fires only
+once the reply was marked final AND every segment has been delivered.
+
+Deadlines follow the same fact: generation continues DURING ``speaking``, so
+the ``generate`` deadline stays armed until the final segment arrives and only
+then does the ``tts`` one take over. One consequence is deliberate — while
+``generate`` is the armed stage, a TTS failure is still accepted
+(:meth:`Floor.fail_stage`), because a synthesis that failed is real whether or
+not its stage happens to hold the deadline, and an unspoken reply must never
+be silent.
 
 That pumped delivery is what makes interruption meaningful at all: it stops the
 **undelivered remainder**. A single blocking "send it all" would leave nothing
@@ -300,6 +320,25 @@ class ReplyText:
 
 
 @dataclass(frozen=True)
+class ReplySegment:
+    """ONE sentence of a streamed reply, ready to synthesize (deviation d7).
+
+    The streaming counterpart of :class:`ReplyText`: emitted once per segment
+    as generation releases it, carrying its ``index`` (the order delivery
+    must respect) and whether it is the ``final`` one. The non-streaming
+    path emits :class:`ReplyText` instead and never this — the two event
+    types are what let the bridge tell "this is the whole reply, speak it"
+    from "this is a piece, more is coming".
+    """
+
+    at_ms: int
+    turn_id: int
+    index: int
+    text: str
+    final: bool
+
+
+@dataclass(frozen=True)
 class ToolCallRequested:
     """The generate call returned a tool call instead of a spoken reply.
 
@@ -349,6 +388,14 @@ class ResponseInterrupted:
     chunks_delivered: int
     reply_text: str
     truncated: bool = True
+    # What the listener plausibly HEARD, computed across segments: the full
+    # text of every segment delivered whole, plus the estimated prefix of the
+    # one that was cut. For a single-segment (non-streaming) reply this is
+    # exactly ``estimate_spoken_prefix(reply_text, audio_end_ms,
+    # audio_total_ms)`` — additive, never a different answer. A caller
+    # writing history reads THIS rather than re-deriving it, because the
+    # proportional estimate is only correct within one segment.
+    heard_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -365,6 +412,7 @@ class ResponseFailed:
 FloorEvent = (
     ResponseStarted
     | ReplyText
+    | ReplySegment
     | ToolCallRequested
     | ResponseDone
     | ResponseInterrupted
@@ -375,6 +423,28 @@ EmitEvent = Callable[[FloorEvent], None]
 SendAudioChunk = Callable[[bytes], None]
 Cancel = Callable[[], None]
 Clock = Callable[[], int]
+
+
+@dataclass
+class _Segment:
+    """One sentence of the reply and the audio that speaks it.
+
+    Mutable and private: the queue's bookkeeping is the floor's own, and
+    every fact a caller may need leaves through a frozen event.
+    """
+
+    index: int
+    text: str
+    audio: bytes | None = None
+    offset: int = 0
+
+    @property
+    def total(self) -> int:
+        return len(self.audio or b"")
+
+    @property
+    def drained(self) -> bool:
+        return self.audio is not None and self.offset >= self.total
 
 
 def estimate_spoken_prefix(text: str, audio_end_ms: int, audio_total_ms: int) -> str:
@@ -419,9 +489,10 @@ class Floor:
 
     Inputs (the state machine's whole alphabet):
     :meth:`on_speech_started`, :meth:`on_turn_committed`, :meth:`on_transcript`,
-    :meth:`on_reply_text`, :meth:`on_tool_call`, :meth:`on_tool_result`,
-    :meth:`on_audio_ready`, :meth:`deliver_next`, :meth:`tick`,
-    :meth:`fail_stage`, :meth:`close`. Every one is total — defined from
+    :meth:`on_reply_text`, :meth:`on_reply_segment`,
+    :meth:`discard_reply_segments`, :meth:`on_tool_call`,
+    :meth:`on_tool_result`, :meth:`on_audio_ready`, :meth:`deliver_next`,
+    :meth:`tick`, :meth:`fail_stage`, :meth:`close`. Every one is total — defined from
     every state, returning ``False`` where it does not apply and never
     raising, because several of them are driven by a watchdog that can race a
     teardown.
@@ -470,9 +541,9 @@ class Floor:
         self._stage_started_ms = 0  # when the armed stage began (deadline)
         self._deadline_ms: int | None = None
         self._armed_stage: Stage | None = None
-        self._reply_text = ""
-        self._audio = b""
-        self._offset = 0
+        self._segments: list[_Segment] = []
+        self._current = 0
+        self._final_seen = False
         self._chunks_sent = 0
 
     # -- observation ------------------------------------------------------
@@ -493,13 +564,26 @@ class Floor:
 
     @property
     def synthesizing(self) -> bool:
-        """Speaking, but the full-read synthesis has not returned yet."""
-        return self._state is FloorState.SPEAKING and not self._audio
+        """Speaking, but the CURRENT segment's synthesis has not returned yet."""
+        return self._state is FloorState.SPEAKING and not self._deliverable
 
     @property
     def delivering(self) -> bool:
-        """Speaking, with reply audio in hand and chunks going out."""
-        return self._state is FloorState.SPEAKING and bool(self._audio)
+        """Speaking, with the current segment's audio in hand and chunks going out."""
+        return self._state is FloorState.SPEAKING and self._deliverable
+
+    @property
+    def segment_count(self) -> int:
+        """How many reply segments this turn has queued (observation/tests)."""
+        return len(self._segments)
+
+    @property
+    def _deliverable(self) -> bool:
+        """Is there audio ready to send right now, in segment order?"""
+        return any(
+            segment.audio and not segment.drained
+            for segment in self._segments[self._current : self._current + 1]
+        )
 
     @property
     def armed_stage(self) -> Stage | None:
@@ -517,11 +601,13 @@ class Floor:
 
     @property
     def delivered_bytes(self) -> int:
-        return self._offset
+        """Bytes actually sent, across every segment of this reply."""
+        return sum(segment.offset for segment in self._segments)
 
     @property
     def pending_audio_bytes(self) -> int:
-        return len(self._audio) - self._offset
+        """Bytes synthesized but not yet sent, across every segment."""
+        return sum(segment.total - segment.offset for segment in self._segments)
 
     # -- inputs -----------------------------------------------------------
 
@@ -573,23 +659,96 @@ class Floor:
         return True
 
     def on_reply_text(self, text: str, *, turn_id: int | None = None) -> bool:
-        """The generate call returned. An empty reply is a named failure —
-        the user gets a rendered error rather than unexplained silence."""
+        """The generate call returned the WHOLE reply. An empty reply is a
+        named failure — the user gets a rendered error rather than
+        unexplained silence.
+
+        The one-segment convenience over :meth:`on_reply_segment`: it accepts
+        only from ``responding``, arms the TTS deadline at once (nothing is
+        still generating), and emits :class:`ReplyText` rather than
+        :class:`ReplySegment`, which is how the bridge tells a whole reply
+        from a piece of one.
+        """
         if not self._accepts(FloorState.RESPONDING, turn_id):
             return False
-        self._disarm()
+        return self._append_segment(text, final=True, streamed=False)
+
+    def on_reply_segment(self, text: str, *, final: bool, turn_id: int | None = None) -> bool:
+        """One SENTENCE of a streamed reply (deviation d7). ``True`` if taken.
+
+        The first segment moves ``responding`` to ``speaking``; later ones
+        append to the queue while the machine is already speaking. The
+        ``generate`` deadline stays armed until *final* arrives, because
+        generation is still running — only then does the TTS deadline take
+        over, matching :meth:`on_reply_text` exactly.
+
+        An empty *final* segment is how a stream whose flush produced nothing
+        closes the reply: with real segments already queued it simply marks
+        the end, and with NO segments at all it is the same empty-reply
+        failure :meth:`on_reply_text` names.
+        """
+        if self._state is FloorState.RESPONDING:
+            if not self._accepts(FloorState.RESPONDING, turn_id):
+                return False
+        elif not self._accepts(FloorState.SPEAKING, turn_id):
+            return False
+        return self._append_segment(text, final=final, streamed=True)
+
+    def _append_segment(self, text: str, *, final: bool, streamed: bool) -> bool:
+        """Queue one reply segment and re-point the deadline. Always ``True``."""
         if not text.strip():
-            self._fail(
-                Stage.GENERATE,
-                FailureReason.GENERATE_FAILED,
-                "the generate lane returned an empty reply",
-            )
+            if not final:
+                return False
+            if not self._segments:
+                self._disarm()
+                self._fail(
+                    Stage.GENERATE,
+                    FailureReason.GENERATE_FAILED,
+                    "the generate lane returned an empty reply",
+                )
+                return True
+            self._final_seen = True
+            self._rearm_speaking()
+            self._complete_if_drained()
             return True
-        self._reply_text = text
+        segment = _Segment(index=len(self._segments), text=text)
+        self._segments.append(segment)
         self._state = FloorState.SPEAKING
-        self._arm(Stage.TTS)
-        self._emit(ReplyText(at_ms=self._clock(), turn_id=self._turn_id, text=text))
+        self._final_seen = self._final_seen or final
+        self._rearm_speaking()
+        if streamed:
+            self._emit(
+                ReplySegment(
+                    at_ms=self._clock(),
+                    turn_id=self._turn_id,
+                    index=segment.index,
+                    text=text,
+                    final=final,
+                )
+            )
+        else:
+            self._emit(ReplyText(at_ms=self._clock(), turn_id=self._turn_id, text=text))
         return True
+
+    def _rearm_speaking(self) -> None:
+        """Point the single armed deadline at whatever is actually pending.
+
+        Before the final segment the answer is still being GENERATED, so the
+        generate deadline stays armed (re-arming it would let a wedged stream
+        run forever, one segment at a time). Once the reply is final, the
+        wait is on synthesis — the TTS deadline — and once every segment has
+        its audio there is nothing left to time out at all: delivery is
+        paced by the route, not bounded by a backend.
+        """
+        if not self._final_seen:
+            if self._armed_stage is not Stage.GENERATE:
+                self._arm(Stage.GENERATE)
+            return
+        if any(segment.audio is None for segment in self._segments):
+            if self._armed_stage is not Stage.TTS:
+                self._arm(Stage.TTS)
+            return
+        self._disarm()
 
     def on_tool_call(
         self, *, call_id: str, name: str, arguments: str, turn_id: int | None = None
@@ -633,22 +792,34 @@ class Floor:
         self._arm(Stage.GENERATE)
         return True
 
-    def on_audio_ready(self, pcm: bytes, *, turn_id: int | None = None) -> bool:
-        """The full-read synthesis returned; delivery can begin.
+    def on_audio_ready(
+        self, pcm: bytes, *, turn_id: int | None = None, segment_index: int = 0
+    ) -> bool:
+        """A segment's full-read synthesis returned; its delivery can begin.
 
         Empty audio is a named TTS failure, never a silently completed reply:
         :func:`lobes.realtime.tts_client.synthesize` returns ``b""`` on a soft
         failure, and rendering that as "the machine spoke" would be a lie.
+
+        *segment_index* defaults to ``0`` — the only segment a non-streaming
+        reply has — so every pre-streaming caller is unchanged. Segments may
+        finish synthesis OUT OF ORDER (the route is free to parallelize);
+        delivery still runs strictly in order. Audio for a segment that was
+        never announced, or that already has some, is refused: both mean the
+        route and the floor disagree about the reply, and guessing which is
+        right would speak the wrong bytes.
         """
-        if not self._accepts(FloorState.SPEAKING, turn_id) or self.delivering:
+        if not self._accepts(FloorState.SPEAKING, turn_id):
             return False
-        self._disarm()
+        segment = self._segment(segment_index)
+        if segment is None or segment.audio is not None:
+            return False
         if not pcm:
+            self._disarm()
             self._fail(Stage.TTS, FailureReason.TTS_FAILED, "the tts lane returned no audio")
             return True
-        self._audio = pcm
-        self._offset = 0
-        self._chunks_sent = 0
+        segment.audio = pcm
+        self._rearm_speaking()
         return True
 
     def deliver_next(self) -> bool:
@@ -656,27 +827,85 @@ class Floor:
 
         The route pumps this — ``while floor.deliver_next(): await ...`` — so
         the receive side keeps running between chunks and a barge-in can
-        actually land mid-reply. On the final chunk the floor emits
+        actually land mid-reply. Segments drain IN ORDER: a later segment
+        whose audio arrived first waits its turn, because playback order is
+        the reply's meaning. ``False`` means "nothing to send RIGHT NOW",
+        which under streaming may simply be "the next segment is still
+        synthesizing" — the route keeps pumping until the response ends.
+
+        On the final chunk of the FINAL segment the floor emits
         :class:`ResponseDone` and returns to ``listening``.
         """
-        if not self.delivering or self._offset >= len(self._audio):
+        if self._state is not FloorState.SPEAKING:
             return False
-        chunk = self._audio[self._offset : self._offset + self.chunk_bytes]
+        segment = self._segment(self._current)
+        if segment is None or segment.audio is None or segment.drained:
+            return False
+        chunk = segment.audio[segment.offset : segment.offset + self.chunk_bytes]
         self._send(chunk)
-        self._offset += len(chunk)
+        segment.offset += len(chunk)
         self._chunks_sent += 1
-        if self._offset >= len(self._audio):
-            self._emit(
-                ResponseDone(
-                    at_ms=self._clock(),
-                    turn_id=self._turn_id,
-                    audio_ms=self._audio_ms(self._offset),
-                    audio_bytes=self._offset,
-                    chunks=self._chunks_sent,
-                )
-            )
-            self._release()
+        if not segment.drained:
+            return True
+        self._current += 1
+        self._complete_if_drained()
         return True
+
+    def _complete_if_drained(self) -> None:
+        """Emit :class:`ResponseDone` once the FINAL segment has been sent.
+
+        Called from both sides of a race the streamed path can genuinely
+        lose: delivery may drain the only segment BEFORE the stream ends (no
+        later chunk for the completion to ride on), or the final marker may
+        land first and the last chunk after. Whichever arrives second
+        completes the response; without this the floor sits in ``speaking``
+        forever and the route's pump spins on a reply that can never finish.
+        """
+        if self._state is not FloorState.SPEAKING or not self._final_seen:
+            return
+        if self._current < len(self._segments):
+            return
+        delivered = self.delivered_bytes
+        self._emit(
+            ResponseDone(
+                at_ms=self._clock(),
+                turn_id=self._turn_id,
+                audio_ms=self._audio_ms(delivered),
+                audio_bytes=delivered,
+                chunks=self._chunks_sent,
+            )
+        )
+        self._release()
+
+    def discard_reply_segments(self, *, turn_id: int | None = None) -> bool:
+        """Abandon a streamed reply's queued segments; back to ``responding``.
+
+        The one thing a stream can do that a whole-reply call cannot: emit
+        some text and THEN call a tool. The text is not the answer any more,
+        so every queued segment — and every byte of audio already synthesized
+        for it — is dropped rather than spoken, and the floor returns to
+        ``responding`` with the generate deadline re-armed so
+        :meth:`on_tool_call` can take it from there.
+
+        Whatever was already DELIVERED is already spoken and cannot be
+        unsaid; in practice nothing is, because a tool-call fragment arrives
+        long before the first synthesis returns. Refused (``False``) from any
+        state but ``speaking``.
+        """
+        if not self._accepts(FloorState.SPEAKING, turn_id):
+            return False
+        self._segments = []
+        self._current = 0
+        self._chunks_sent = 0
+        self._final_seen = False
+        self._state = FloorState.RESPONDING
+        self._arm(Stage.GENERATE)
+        return True
+
+    def _segment(self, index: int) -> _Segment | None:
+        if 0 <= index < len(self._segments):
+            return self._segments[index]
+        return None
 
     def tick(self) -> bool:
         """Expire the armed stage's deadline if it is due. ``True`` if it was.
@@ -701,12 +930,17 @@ class Floor:
     ) -> bool:
         """A backend failed by name (unreachable, non-2xx, ``role_infeasible``).
 
-        Accepted only while that stage is the armed one, so a failure that
+        Accepted while that stage is the armed one, so a failure that
         surfaces after the floor moved on is ignored rather than tearing down
-        an unrelated turn.
+        an unrelated turn — with ONE named exception (deviation d7): while a
+        streamed reply is still generating, ``generate`` holds the deadline
+        even though TTS is genuinely in flight on an earlier segment, so a
+        TTS failure is accepted throughout ``speaking``. Refusing it there
+        would leave the response wedged until the generate deadline expired
+        and then blame the wrong stage.
         """
         stage = _STAGE_OF_REASON[reason]
-        if self._armed_stage is not stage:
+        if not self._accepts_failure(stage):
             return False
         if turn_id is not None and turn_id != self._turn_id:
             return False
@@ -734,6 +968,13 @@ class Floor:
         self._state = FloorState.CLOSED
 
     # -- internals --------------------------------------------------------
+
+    def _accepts_failure(self, stage: Stage) -> bool:
+        if self._armed_stage is stage:
+            return True
+        # See fail_stage's docstring: a streamed reply speaks and generates at
+        # the same time, and only one stage can hold the deadline.
+        return stage is Stage.TTS and self._state is FloorState.SPEAKING
 
     def _accepts(self, expected: FloorState, turn_id: int | None) -> bool:
         if self._state is not expected:
@@ -767,9 +1008,40 @@ class Floor:
     def _audio_ms(self, n_bytes: int) -> int:
         return n_bytes * 1000 // (self.sample_rate * BYTES_PER_SAMPLE)
 
+    def _reply_text_so_far(self) -> str:
+        """Every segment released so far, as one reply string."""
+        return " ".join(segment.text for segment in self._segments).strip()
+
+    def _heard_text(self) -> str:
+        """What the listener plausibly heard, segment by segment.
+
+        A proportional estimate is only meaningful WITHIN one segment: a
+        later segment may have no audio at all yet, so measuring the cut
+        against the whole reply's byte total would claim the user heard a
+        sentence that was never synthesized. So: every fully-delivered
+        segment contributes its text verbatim, and only the segment being
+        delivered is estimated (:func:`estimate_spoken_prefix`).
+        """
+        heard: list[str] = []
+        for segment in self._segments:
+            if segment.offset <= 0:
+                break
+            if segment.drained:
+                heard.append(segment.text)
+                continue
+            prefix = estimate_spoken_prefix(
+                segment.text,
+                self._audio_ms(segment.offset),
+                self._audio_ms(segment.total),
+            )
+            if prefix:
+                heard.append(prefix)
+            break
+        return " ".join(heard).strip()
+
     def _interrupt(self) -> None:
-        delivered = self._offset
-        total = len(self._audio)
+        delivered = self.delivered_bytes
+        total = sum(segment.total for segment in self._segments)
         event = ResponseInterrupted(
             at_ms=self._clock(),
             turn_id=self._turn_id,
@@ -779,7 +1051,8 @@ class Floor:
             delivered_bytes=delivered,
             undelivered_bytes=total - delivered,
             chunks_delivered=self._chunks_sent,
-            reply_text=self._reply_text,
+            reply_text=self._reply_text_so_far(),
+            heard_text=self._heard_text(),
         )
         self._cancel_both()
         self._release()
@@ -803,9 +1076,9 @@ class Floor:
         """Hand the floor back to the user and drop everything the turn held."""
         self._disarm()
         self._state = FloorState.LISTENING
-        self._reply_text = ""
-        self._audio = b""
-        self._offset = 0
+        self._segments = []
+        self._current = 0
+        self._final_seen = False
         self._chunks_sent = 0
 
 
@@ -821,6 +1094,7 @@ __all__ = [
     "FailureReason",
     "ResponseStarted",
     "ReplyText",
+    "ReplySegment",
     "ToolCallRequested",
     "ResponseDone",
     "ResponseInterrupted",

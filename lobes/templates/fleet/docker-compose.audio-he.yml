@@ -192,3 +192,13 @@ services:
       # TTS, for debugging Hebrew vocalization/gershayim handling; empty/off
       # in normal operation.
       - TTS_DEBUG_TEXT=${TTS_DEBUG_TEXT:-}
+      # GENERATE_STREAM: stream the generate call and speak it sentence by
+      # sentence (approved deviation d7, 2026-09-18) instead of waiting for
+      # the whole reply and then the whole synthesis. Default `true` — first
+      # audio then costs one short sentence's synthesis rather than the whole
+      # reply's (MEASURED before this change: 2.6s for a one-sentence reply,
+      # 7.3s for a longer one). Set `false` to fall back to the previous
+      # whole-reply path byte-for-byte. Wired HERE and not in
+      # docker-compose.audio.yml because the English overlay must stay
+      # byte-identical (criterion 2 of the Hebrew overlay).
+      - GENERATE_STREAM=${GENERATE_STREAM:-true}
