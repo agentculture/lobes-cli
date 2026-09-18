@@ -5,7 +5,7 @@
   "schema_version": 5,
   "status": "exported",
   "created": "2026-09-18T11:43:41Z",
-  "updated": "2026-09-18T12:02:17Z",
+  "updated": "2026-09-18T13:29:57Z",
   "targets": [
     {
       "id": "c1",
@@ -707,8 +707,8 @@
       "text": "Which runtime serves the ivrit.ai Whisper checkpoint on the GB10 (transformers+PyTorch vs vLLM's Whisper path) is unmeasured; t10's Dockerfile cannot be written until t2 picks one",
       "kind": "unknown_nonblocking",
       "task_id": "t2",
-      "resolved": false,
-      "resolution": ""
+      "resolved": true,
+      "resolution": "transformers+PyTorch: same latency (0.14 s per 9.35 s clip) and text as vLLM Whisper, 1.56 GiB vs a ~7 GiB reservation, full control of the listen_server contract; bracketed non-speech tags filtered to empty (docs/evidence/2026-09-hebrew-stt-spike-spark.txt)"
     },
     {
       "id": "r2",

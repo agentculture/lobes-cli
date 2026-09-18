@@ -1,0 +1,67 @@
+hebrew-realtime — live proof 2/3 (plan task t2): Hebrew STT spike, ivrit-ai/whisper-large-v3-turbo on the GB10
+Box: DGX Spark GB10     Date: 2026-09-18     Image for both runtimes: lobes/vllm-gemma4:local
+  (vLLM 0.23.1rc1.dev672+g93d8f834d, transformers 5.12.1, torch 2.11.0+cu130). Checkpoint: Apache-2.0, 3.1 GiB cache.
+CTranslate2/faster-whisper not attempted: no aarch64 CUDA wheel (speaches-ai/speaches#620).
+
+RECORDING (the operator, a native Hebrew speaker, reading 11 prompted sentences + 1 silent slot)
+  One 161 s session, beep-cued 10 s slots, captured SIMULTANEOUSLY and in stereo from
+    reSpeaker XVF3800 (pipewire source ...XVF3800...analog-stereo.3) -> clips respeaker_ch0 / respeaker_ch1
+    Reachy Mini Audio (both channels identical)                    -> clips reachy_ch0
+  36 clips of 9.35 s, 16 kHz mono PCM16, cut at beep+0.45 s. Audio kept out of the repo (scratchpad).
+  KNOWN CONTAMINATION, not model error:
+    slot 1  the clip start clipped the first two words ("שלום, אני") — a cutting artefact of this harness
+    slot 4  a second person spoke in the room before the operator; every arm transcribed her too
+    slot 6  "ארבע וחצי" came back as "1630" on two of three mics — number FORMATTING, not mishearing
+    slot 12 was meant to be silence but the room was not silent
+
+RUNTIMES (language forced to "he", greedy / temperature 0, one clip at a time, after one warm-up)
+  transformers fp16 : load 1.0 s (page-cached), peak CUDA 1.56 GiB, median 0.140 s per 9.35 s clip (RTF ~0.015)
+  vLLM whisper      : util 0.06 (~7.3 GiB reserved), weights 1.51 GiB, healthy after ~90 s, KV 25,866 tokens,
+                      median 0.144 s per clip through POST /v1/audio/transcriptions
+  Transcripts identical on 32/36 clips. The 4 differences: slot-4 bystander wording (1), and the silent
+  slot on all three mics — transformers emitted a bracketed non-speech tag, vLLM returned EMPTY text:
+      reachy s12      tf '(צחוק)'   vllm ''
+      respeaker s12   tf '(הורות)'  vllm ''      (both channels)
+
+ACCURACY vs the typed reference (punctuation stripped, הכל==הכול; contamination above NOT removed)
+  transformers respeaker_ch0  word errors 13/75 = WER 17.3%   per-slot [2, 0, 1, 5, 0, 2, 1, 0, 0, 0, 2]
+  transformers respeaker_ch1  word errors 11/75 = WER 14.7%   per-slot [2, 0, 1, 5, 0, 0, 1, 0, 0, 0, 2]
+  transformers reachy_ch0     word errors 12/75 = WER 16.0%   per-slot [2, 0, 1, 3, 0, 3, 0, 0, 1, 0, 2]
+  transformers negative control: slot-11 audio vs slot-3 reference -> 7/7 word errors (must be high)
+  vllm         respeaker_ch0  word errors 13/75 = WER 17.3%   per-slot [2, 0, 1, 5, 0, 2, 1, 0, 0, 0, 2]
+  vllm         respeaker_ch1  word errors 11/75 = WER 14.7%   per-slot [2, 0, 1, 5, 0, 0, 1, 0, 0, 0, 2]
+  vllm         reachy_ch0     word errors 12/75 = WER 16.0%   per-slot [2, 0, 1, 3, 0, 3, 0, 0, 1, 0, 2]
+  vllm         negative control: slot-11 audio vs slot-3 reference -> 7/7 word errors (must be high)
+  Excluding slots 1 and 4 (harness artefact, bystander) the residual errors are:
+    "בתיקיית" -> "בתיקייה" (all mics) ; "אותו" -> "אותה" (reSpeaker) ; "פגישה" -> "אישה" (Reachy only) ;
+    "תזכיר" -> "תזכירי" (Reachy only) ; slot 11 "החלון ... הציפורים" -> "השולחן ... הסיפורים" on ALL three mics
+    (identical across mics and runtimes — whether that is what was actually said is the operator's to confirm).
+  Negative control: slot-11 audio scored against slot-3's reference = 7/7 word errors, as it must be.
+
+TRANSCRIPTS — transformers, reSpeaker ch1 (the cleanest arm)
+  s01  בודק עכשיו את מערכת הדיבור בעברית.
+  s02  מה מזג האוויר היום בתל אביב?
+  s03  תראה לי אילו קבצים יש בתיקייה המסמכים.
+  s04  רומי, תחברי לך כמה טוב? כמה זיכרון פנוי יש עכשיו במחשב.
+  s05  תפתח בבקשה את הקובץ האחרון שעבדתי עליו.
+  s06  אני רוצה לקבוע פגישה ביום שלישי בשעה ארבע וחצי.
+  s07  תעצור את השרת ותפעיל אותה מחדש.
+  s08  מה ההבדל בין מחשב נייד למחשב שולחני?
+  s09  תזכיר לי מחר בבוקר לקנות חלב ולחם.
+  s10  תודה רבה, זה הכל להיום.
+  s11  החתול ישב על השולחן והסתכל על הסיפורים.
+  s12  (הורות)
+
+MICROPHONE / CHANNEL
+  reSpeaker ch1 14.7% < Reachy 16.0% < reSpeaker ch0 17.3% raw WER; ch1 is the only arm that kept "ארבע וחצי"
+  and "פגישה". Together with the echo-residual measurement (2026-09-hebrew-realtime-audio-hardware-spark.txt,
+  ch1 +4..6 dB vs ch0 +8..10 dB) this settles it: the acceptance client takes reSpeaker CHANNEL 1, no downmix.
+  n = 11 sentences, one speaker, one room: direction, not a benchmark.
+
+DECISION (resolves plan risk r1): the Hebrew STT sidecar uses TRANSFORMERS, not vLLM.
+  Same latency and same text. Transformers costs 1.56 GiB instead of a ~7 GiB utilisation reservation, loads in
+  seconds instead of ~90 s, and lives in a sidecar lobes fully controls — so it can honour the listen_server
+  contract exactly (readiness with model id + cuda_ok, the language field). vLLM's one advantage, EMPTY text on
+  non-speech, must be reproduced in the sidecar: a transcript that is only a bracketed tag, e.g. '(צחוק)',
+  is returned as empty text. That matters more than accuracy here — with tools declared, a phantom
+  transcript is a phantom command (frame claim c31).
