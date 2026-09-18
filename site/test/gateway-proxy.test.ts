@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ALLOWED_HOSTS_VAR,
   DEFAULT_GATEWAY_URL,
   GATEWAY_API_KEY_VAR,
   GATEWAY_URL_VAR,
@@ -8,6 +9,7 @@ import {
   applyCredential,
   buildProxyConfig,
   describeProxy,
+  readAllowedHosts,
   readProxyEnvironment,
 } from "../proxy/gateway-proxy.mjs";
 
@@ -147,5 +149,23 @@ describe("describeProxy", () => {
   it("says plainly when no credential is attached", () => {
     const line = describeProxy({ gatewayUrl: DEFAULT_GATEWAY_URL, apiKey: "" });
     expect(line).toContain("no credential");
+  });
+});
+
+describe("readAllowedHosts", () => {
+  it("declares nothing when unset, so Vite keeps its loopback-only default", () => {
+    expect(readAllowedHosts({})).toEqual([]);
+    expect(readAllowedHosts({ [ALLOWED_HOSTS_VAR]: "   " })).toEqual([]);
+  });
+
+  it("splits, trims and drops empty entries", () => {
+    const env = { [ALLOWED_HOSTS_VAR]: " a.example.test , ,b.example.test," };
+    expect(readAllowedHosts(env)).toEqual(["a.example.test", "b.example.test"]);
+  });
+
+  it("never widens to every host", () => {
+    // Vite reads `true` as "allow any Host" — the DNS-rebinding hole its check
+    // exists to close. A literal "true" in the env is a hostname, not a switch.
+    expect(readAllowedHosts({ [ALLOWED_HOSTS_VAR]: "true" })).toEqual(["true"]);
   });
 });

@@ -104,6 +104,34 @@ export function readProxyEnvironment(env) {
 }
 
 /**
+ * The env var naming the extra `Host` headers the dev server answers.
+ *
+ * Unset is the local default: Vite accepts loopback hosts only and rejects
+ * any other `Host` with "Blocked request". An operator who puts this dev
+ * server behind a tunnel (served through Cloudflare, gated by Cloudflare
+ * Access SSO) lists that public hostname here, in the git-ignored `.env` —
+ * never in this repo, which names no deployment's hostname.
+ */
+export const ALLOWED_HOSTS_VAR = "LOBES_SITE_ALLOWED_HOSTS";
+
+/**
+ * Read the comma-separated allowed-hosts list for `vite.server.allowedHosts`.
+ *
+ * Pure, like {@link readProxyEnvironment}. Returns hostnames only and never
+ * the boolean `true` (Vite's "allow any Host" — the DNS-rebinding hole the
+ * check exists to close), so a stray `true` in `.env` stays a hostname.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {string[]}
+ */
+export function readAllowedHosts(env) {
+  return (env[ALLOWED_HOSTS_VAR] ?? "")
+    .split(",")
+    .map((host) => host.trim())
+    .filter((host) => host !== "");
+}
+
+/**
  * @param {string} value
  * @returns {string}
  */
