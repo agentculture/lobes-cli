@@ -66,3 +66,28 @@ SIDECAR PROOF (plan task t11) + SAMPLING VARIANCE, 2026-09-18
     temperature 0.3                   WER  8.8%   4.3 .. 8.6 s
   Shipped: TTS_TEMPERATURE, default 0.3. For scale, the same STT scores ~15% raw WER on the operator's own
   voice, so ~9% end-to-end is good. n = 8: 0.5-vs-0.8 is noise; 0.3's edge showed on WER and on duration.
+
+ARM BlueTTS (operator suggestion, https://bluetts.com, github.com/maxmelichov/BlueTTS @0e38dbf 2026-08-13), 2026-09-18
+  Supertonic-architecture TTS, ONNX Runtime, package blue-onnx 2.5.0 (code MIT). Weights notmax123/BlueTTS2.5-onnx
+  (269 MB, 8 ONNX graphs). Hebrew G2P = RenikudPlus, downloaded on first Hebrew synthesis — takes PLAIN Hebrew text:
+  no phonikud, no conikud, no niqqud step. Voices: noa, adam, daniel, lily (+ zero-shot voice conversion).
+  LICENCE GAP: the code is MIT; the Hugging Face weights repo declares NO licence (no tag, no cardData.license).
+  Run: uv venv in the scratchpad, CPU ONLY on the GB10 (onnxruntime CPU wheel, intra_op_threads=8), voice noa.
+    load 0.42 s ; first Hebrew call 37 s (one-time G2P weight download + warm-up)
+    sentence                                              synth min / median    audio     RTF
+    b1 'שלום, אני העוזר הקולי שלך. במה אפשר לעזור?'  (42 ch)   289 / 310 ms    3.20 s   0.090
+    b2 'בתיקיית המסמכים יש שלושה קבצים, ...'          (57 ch)   325 / 375 ms    3.97 s   0.082
+    b3 'מה ההבדל בין מחשב נייד למחשב שולחני?'         (36 ch)   205 / 208 ms    2.58 s   0.080
+    b4 'כן, אני שומע אותך מצוין.'                      (24 ch)   161 / 178 ms    1.60 s   0.100
+    b5 'כן.'                                           ( 3 ch)    92 /  95 ms    0.35 s   0.263
+    output 44100 Hz (the session wire is 24000 Hz: a resample is needed).
+  Round trip through the live Hebrew STT sidecar: b1 0/8, b2 0/9, b3 0/7, b4 0/5 -> WER 0%
+    (Chatterbox Multilingual + niqqud at temperature 0.3: 8.8%; at 0.8: 14.7%; without niqqud: 92%).
+  Deterministic output: no sampling run-ons were seen (n = 15 syntheses), unlike Chatterbox.
+  OPERATOR, listening on the Reachy speaker: "Sounds perfect!"
+
+  COMPARISON for the voice lane                 first sentence ready    round-trip WER   failure modes seen
+    Chatterbox Multilingual + phonikud, GPU       1700-1900 ms            8.8%             run-on synthesis (24.5 s, 11.7 s)
+    BlueTTS, CPU                                   160-325 ms              0%               none in 15
+  n = 4-5 sentences, one voice, one listener: direction, not a benchmark. Not measured: GPU execution provider
+  (no official aarch64 onnxruntime-gpu wheel), per-chunk streaming inside a sentence, long paragraphs, the other voices.

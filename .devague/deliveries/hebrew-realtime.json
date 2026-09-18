@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T15:01:12Z",
+  "updated": "2026-09-18T15:09:41Z",
   "deviations": [
     {
       "id": "d1",
@@ -124,6 +124,27 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 7
+    },
+    {
+      "id": "d8",
+      "what": "The Hebrew voice is BlueTTS (github.com/maxmelichov/BlueTTS, Supertonic architecture, ONNX on CPU, code MIT, RenikudPlus G2P built in, plain Hebrew text in) \u2014 replacing Chatterbox Multilingual as the voice-lane TTS and superseding the conikud migration (d4): with BlueTTS no separate diacritizer/G2P stage is needed. Chatterbox Multilingual + phonikud stays in-tree as the alternative engine",
+      "task_ref": "t11",
+      "reason": "Operator proposal and verdict 2026-09-18 ('What about using bluetts.com?' ... 'Sounds perfect!'), after asking for ~200-400 ms first audio. Measured on the GB10 CPU: 160-325 ms per sentence (RTF ~0.08-0.10) vs Chatterbox's 1.7-1.9 s, 0% round-trip WER vs 8.8%, no run-on syntheses. It also removes the non-commercial phonikud-tts question (q4). Open: the Hugging Face weights repo declares no licence; output is 44.1 kHz and needs resampling to the 24 kHz wire",
+      "affects": [
+        "t3",
+        "t9",
+        "t16",
+        "t17",
+        "c6",
+        "c12",
+        "h23",
+        "h5",
+        "c19"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 8
     }
   ],
   "evidence": [],
