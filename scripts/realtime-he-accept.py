@@ -791,6 +791,35 @@ def _wait_for(
     _ = expected_type  # kept for symmetry with realtime-smoke.py's signature
 
 
+def _wait_until(
+    event_log: _EventLog,
+    reader: _Reader,
+    start_index: int,
+    wanted: tuple[str, ...],
+    deadline: float,
+) -> tuple[dict | None, int]:
+    """Return the first event at/after *start_index* whose type is in *wanted*
+    (or is a server ``error``), skipping everything else. Found live 2026-09-18:
+    the server interleaves transcription / response.* events between the ones
+    this client cares about, and a wait that returned "whatever came next"
+    failed a healthy session on the transcript event."""
+    idx = start_index
+    while True:
+        events = event_log.snapshot()
+        while idx < len(events):
+            event = events[idx]
+            idx += 1
+            if event.get("type") in wanted or event.get("type") == "error":
+                return event, idx
+        if reader.fatal_error is not None:
+            return reader.fatal_error, idx
+        if reader.closed.is_set() and idx >= len(event_log.snapshot()):
+            return None, idx
+        if time.monotonic() >= deadline:
+            return None, idx
+        time.sleep(0.05)
+
+
 def _run_subprocess_or_die(argv: list[str], *, stdin=None):
     """Start a capture/playback subprocess with piped stderr. Raises
     :class:`RuntimeError` immediately if it could not even be started
@@ -880,6 +909,12 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_SESSION_ERROR
         print(f"PASS [session.updated]: tools={declared_tools}")
 
+        # Conversation is OPT-IN on this server (#151): a session that never sends
+        # response.create only transcribes. Found live 2026-09-18 — without this
+        # the server heard the request, transcribed it, and (correctly) did nothing.
+        send(client, build_response_create_event())
+        print("SENT [response.create]: session armed")
+
         try:
             playback_proc = _run_subprocess_or_die(
                 build_playback_argv(args.backend, speaker_device), stdin=subprocess.PIPE
@@ -889,11 +924,11 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_AUDIO_BACKEND_FAILED
 
         def player() -> None:
+            played = 0  # index of the next event to look at — never replay a delta
             while not reader.closed.is_set():
                 events = event_log.snapshot()
-                # Consume response.audio.delta events as they land; a plain
-                # linear scan is fine at this event volume.
-                for event in events:
+                fresh, played = events[played:], len(events)
+                for event in fresh:
                     if event.get("type") == "response.audio.delta":
                         try:
                             pcm = rs.decode_audio_delta_event(event)
@@ -955,20 +990,30 @@ def main(argv: list[str] | None = None) -> int:
                 if len(event_log.snapshot()) - idx > 0:
                     break  # a server event arrived; stop feeding and process it
 
-        event, idx = _wait_for(
-            event_log, reader, idx, "input_audio_buffer.speech_started", deadline
+        event, idx = _wait_until(
+            event_log, reader, idx, ("input_audio_buffer.speech_started",), deadline
         )
         ok, detail = rs.classify_event_or_timeout(event, "input_audio_buffer.speech_started")
         print(f"{'PASS' if ok else 'FAIL'} [speech-started]: {detail}")
 
-        event, idx = _wait_for(
-            event_log, reader, idx, "input_audio_buffer.speech_stopped", deadline
+        event, idx = _wait_until(
+            event_log,
+            reader,
+            idx,
+            ("conversation.item.input_audio_transcription.completed",),
+            deadline,
         )
-        ok, detail = rs.classify_event_or_timeout(event, "input_audio_buffer.speech_stopped")
-        print(f"{'PASS' if ok else 'FAIL'} [speech-stopped]: {detail}")
+        if event is None or event.get("type") == "error":
+            print(f"FAIL [transcript]: {event!r}")
+            return EXIT_TIMEOUT if event is None else EXIT_SESSION_ERROR
+        print(f"HEARD [transcript]: {event.get('text')!r}")
 
-        event, idx = _wait_for(
-            event_log, reader, idx, "response.function_call_arguments.done", deadline
+        event, idx = _wait_until(
+            event_log,
+            reader,
+            idx,
+            ("response.function_call_arguments.done", "response.done"),
+            deadline,
         )
         if event is None:
             print("FAIL [tool-call]: TIMEOUT waiting for a tool call")
@@ -976,8 +1021,15 @@ def main(argv: list[str] | None = None) -> int:
         if event.get("type") == "error":
             print(f"FAIL [tool-call]: server error {event!r}")
             return EXIT_SESSION_ERROR
-        if event.get("type") != "response.function_call_arguments.done":
-            print(f"FAIL [tool-call]: unexpected event {event!r}")
+        if event.get("type") == "response.done":
+            spoken = [
+                e.get("text") for e in event_log.snapshot() if e.get("type") == "response.text.done"
+            ]
+            print(
+                f"FAIL [tool-call]: the model answered in speech without calling the tool: {spoken}"
+            )
+            print()
+            print(build_latency_table([event]))
             return EXIT_SESSION_ERROR
         call_id = event.get("call_id")
         try:
@@ -997,7 +1049,11 @@ def main(argv: list[str] | None = None) -> int:
         send(client, build_function_call_output_event(call_id, output))
         send(client, build_response_create_event())
 
-        event, idx = _wait_for(event_log, reader, idx, "response.done", deadline)
+        event, idx = _wait_until(event_log, reader, idx, ("response.done",), deadline)
+        for said in (
+            e.get("text") for e in event_log.snapshot() if e.get("type") == "response.text.done"
+        ):
+            print(f"SPOKEN [response.text.done]: {said!r}")
         response_done_events = [e for e in event_log.snapshot() if e.get("type") == "response.done"]
         if event is not None and event.get("type") == "response.done":
             print("PASS [response.done]")
