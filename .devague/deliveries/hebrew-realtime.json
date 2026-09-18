@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T15:00:01Z",
+  "updated": "2026-09-18T15:01:12Z",
   "deviations": [
     {
       "id": "d1",
@@ -107,6 +107,23 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 6
+    },
+    {
+      "id": "d7",
+      "what": "Sentence-level STREAMING of the reply moves INTO this plan: the generate call streams (SSE), a pure sentence chunker releases each completed sentence to TTS while generation continues, and audio deltas start as soon as the first sentence is synthesized. Tool calls are assembled from streamed tool_calls deltas and never spoken. Barge-in cancels the stream, pending syntheses and undelivered audio. A non-streaming fallback stays for backends that cannot stream",
+      "task_ref": "t12",
+      "reason": "Operator decision 2026-09-18 ('We need realtime stream'). Measured live: first audio 2.6 s for a one-sentence reply and 7.3 s for a longer one, of which whole-reply TTS was 1.9-5.9 s; the engine synthesizes ~1.5x faster than real time, so per-sentence pipelining keeps first audio near ~2 s independent of reply length. This was plan risk r6 (parked as a follow-up); the operator pulled it forward",
+      "affects": [
+        "t7",
+        "t6",
+        "t5",
+        "t17",
+        "c33"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 7
     }
   ],
   "evidence": [],
