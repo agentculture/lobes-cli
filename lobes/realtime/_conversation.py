@@ -906,6 +906,40 @@ class ConversationBridge:
             stream=self._generate.stream,
         )
 
+    def build_speculative_request(self, transcript: str) -> TurnRequest | None:
+        """The generate call this turn WOULD make if it ended now with *transcript*.
+
+        Hidden speculation (approved deviation d9, :mod:`._speculation`): pure
+        and traceless — no history entry, no event, no floor transition. The
+        request is assembled exactly as :meth:`build_generate_request` will
+        assemble the real one once the commit has appended the transcript, so
+        the two are byte-identical when nothing changed in between; that
+        equality (:func:`~._speculation.can_adopt`) is the whole adoption rule.
+
+        ``None`` — do not speculate — for an unarmed session (ears-only must
+        stay ears-only), a non-streaming one (there is no stream to adopt), an
+        empty transcript, or any floor state other than LISTENING: a pause
+        while a reply is running or a tool result is outstanding belongs to a
+        barge-in, not to a fresh turn.
+        """
+        if not self.armed or not self._generate.stream or not transcript.strip():
+            return None
+        if self.floor.state is not FloorState.LISTENING or self.awaiting_tool_result:
+            return None
+        history = self.session.get_history() + [{"role": "user", "content": transcript}]
+        return build_turn_request(
+            history,
+            base_url=self._generate.base_url,
+            api_key=self._generate.api_key,
+            system_prompt=self.session.system_prompt,
+            model=self._generate.model,
+            max_tokens=self._generate.max_tokens,
+            temperature=self._generate.temperature,
+            tools=self.session.config.tools,
+            tool_choice=self.session.config.tool_choice,
+            stream=True,
+        )
+
     def on_generate_response(
         self,
         status_code: int,

@@ -101,6 +101,11 @@ class Settings:
     # VAD / turn detection (used by the realtime WS pipeline).
     vad_threshold: float
     vad_silence_ms: int
+    # Hidden speculation (approved deviation d9): the provisional pause, in ms,
+    # at which the route starts STT -> generate -> TTS out of sight. 0 = OFF
+    # (the default; English deployments are byte-identical). Inert unless it
+    # is below vad_silence_ms and GENERATE_STREAM is on.
+    vad_eager_ms: int
     vad_prefix_padding_ms: int
     vad_max_turn_ms: int
     default_turn_detection: str
@@ -216,6 +221,7 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         tts_voice_concurrency=max(1, _as_int(env, "TTS_VOICE_CONCURRENCY", 1)),
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
+        vad_eager_ms=max(0, _as_int(env, "VAD_EAGER_MS", 0)),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
         # VAD_MAX_TURN_MS: hard cap on one uninterrupted turn before the
         # segmenter force-commits it (lobes.realtime._segmenter's

@@ -143,7 +143,34 @@ class SpeechStopped:
     reason: str
 
 
-Event = SpeechStarted | SpeechStopped
+@dataclass(frozen=True)
+class SpeechPaused:
+    """NOT a boundary: the speaker has been quiet for ``eager_silence_ms``.
+
+    Emitted at most once per silence run, only when ``eager_silence_ms`` is
+    armed (hebrew-realtime d9, layer A). ``audio`` is a SNAPSHOT of the whole
+    turn so far — the turn stays open and keeps accumulating, so the eventual
+    :class:`SpeechStopped` ``audio`` begins with exactly these bytes and adds
+    only non-speech chunks. That prefix property is what lets a caller start
+    working on the turn now and adopt the work at the commit.
+    """
+
+    at_ms: int
+    audio: bytes
+
+
+@dataclass(frozen=True)
+class SpeechResumed:
+    """NOT a boundary: speech returned after a :class:`SpeechPaused`.
+
+    The snapshot the pause carried no longer describes the turn — whatever
+    was started from it must be thrown away.
+    """
+
+    at_ms: int
+
+
+Event = SpeechStarted | SpeechStopped | SpeechPaused | SpeechResumed
 
 
 class Segmenter:
@@ -168,12 +195,19 @@ class Segmenter:
         vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS,
         vad_prefix_padding_ms: int = DEFAULT_VAD_PREFIX_PADDING_MS,
         max_turn_ms: int = DEFAULT_MAX_TURN_MS,
+        eager_silence_ms: int | None = None,
     ) -> None:
         self._vad_probability = vad_probability
         self.vad_threshold = vad_threshold
         self.vad_silence_ms = vad_silence_ms
         self.vad_prefix_padding_ms = vad_prefix_padding_ms
         self.max_turn_ms = max_turn_ms
+        # Armed only when it can fire BEFORE the commit; anything else (None,
+        # <= 0, >= vad_silence_ms) is inert and the event sequence is exactly
+        # the pre-d9 one.
+        armed = eager_silence_ms is not None and 0 < eager_silence_ms < vad_silence_ms
+        self.eager_silence_ms = eager_silence_ms if armed else None
+        self._paused = False
 
         # Padding rounds DOWN to whole 32ms chunks (documented above).
         padding_chunks = max(0, vad_prefix_padding_ms // VAD_CHUNK_MS)
@@ -242,8 +276,10 @@ class Segmenter:
 
         self._turn_chunks.append(chunk)
         self._turn_ms += VAD_CHUNK_MS
+        resumed = False
         if is_speech:
             self._silence_run_ms = 0
+            resumed, self._paused = self._paused, False
         else:
             self._silence_run_ms += VAD_CHUNK_MS
 
@@ -251,6 +287,15 @@ class Segmenter:
             return self._commit("silence")
         if self._turn_ms >= self.max_turn_ms:
             return self._commit("max_turn")
+        if resumed:
+            return SpeechResumed(at_ms=self._stream_ms)
+        if (
+            self.eager_silence_ms is not None
+            and not self._paused
+            and self._silence_run_ms >= self.eager_silence_ms
+        ):
+            self._paused = True
+            return SpeechPaused(at_ms=self._stream_ms, audio=b"".join(self._turn_chunks))
         return None
 
     def _commit(self, reason: str) -> SpeechStopped:
@@ -263,5 +308,6 @@ class Segmenter:
         self._turn_chunks = []
         self._silence_run_ms = 0
         self._turn_ms = 0
+        self._paused = False
         self._preroll.clear()
         return event

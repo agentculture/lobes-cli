@@ -206,3 +206,10 @@ services:
       # be before a comma may end the FIRST spoken piece (default 24). Lower
       # means earlier first audio and a shorter first piece.
       - REPLY_FIRST_CLAUSE_MIN_CHARS=${REPLY_FIRST_CLAUSE_MIN_CHARS:-24}
+      # VAD_EAGER_MS: hidden speculation (approved deviation d9). At this much
+      # provisional silence the bridge starts STT -> generate -> TTS out of
+      # sight; resumed speech discards it without trace, a confirmed end of
+      # turn adopts it. 0 = OFF (default). Costs wasted compute on every
+      # mid-sentence pause. Inert unless below VAD_SILENCE_MS with
+      # GENERATE_STREAM on.
+      - VAD_EAGER_MS=${VAD_EAGER_MS:-0}
