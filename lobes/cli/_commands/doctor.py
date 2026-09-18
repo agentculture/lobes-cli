@@ -725,10 +725,15 @@ def _expected_templates(deploy_dir: Path) -> dict[str, str]:
 
     The audio set is expected iff the overlay compose file is scaffolded —
     audio is opt-in, so a no-audio deployment is never flagged for lacking it.
+    The Hebrew set (t15) follows the same rule one layer up: expected iff the
+    Hebrew overlay itself is scaffolded, so an English deployment is never told
+    it is missing a file it deliberately does not have.
     """
     templates = dict(_compose.FLEET_TEMPLATES)
     if _compose.audio_overlay_present(deploy_dir):
         templates.update(_compose.AUDIO_TEMPLATES)
+    if _compose.audio_he_overlay_present(deploy_dir):
+        templates.update(_compose.AUDIO_HE_TEMPLATES)
     return templates
 
 
@@ -742,6 +747,12 @@ def _audio_env_defaults() -> dict[str, str]:
     """The audio overlay's ``env.audio.example`` defaults, keyed by env var."""
     root = _resource_files(_TEMPLATES_PACKAGE)
     return _parse_env_text(_compose._read_template(root, _compose.AUDIO_ENV_TEMPLATE))
+
+
+def _audio_he_env_defaults() -> dict[str, str]:
+    """The Hebrew overlay's ``env.audio-he.example`` defaults, keyed by env var."""
+    root = _resource_files(_TEMPLATES_PACKAGE)
+    return _parse_env_text(_compose._read_template(root, _compose.AUDIO_HE_ENV_TEMPLATE))
 
 
 def _dropped_role_prefixes(deploy_dir: Path) -> tuple[str, ...]:
@@ -890,6 +901,11 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
     missing = {k: v for k, v in required.items() if k not in deployed}
     if _compose.audio_overlay_present(deploy_dir):
         missing.update({k: v for k, v in _audio_env_defaults().items() if k not in deployed})
+    # The Hebrew layer's own keys, only on a deployment that HAS that layer —
+    # they override a subset of the English ones, so healing them onto an
+    # English box would silently re-language it.
+    if _compose.audio_he_overlay_present(deploy_dir):
+        missing.update({k: v for k, v in _audio_he_env_defaults().items() if k not in deployed})
     template_defaults = _template_env_defaults()
     stale: list[str] = []
     overridden: list[str] = []

@@ -245,7 +245,11 @@ def _shape_blocked_services(deploy_dir: Path, services: list[str], target: str) 
 
 
 def _compose_file_args(
-    needs_audio: bool, shape_present: bool, local_override: bool, gpu_present: bool = False
+    needs_audio: bool,
+    shape_present: bool,
+    local_override: bool,
+    gpu_present: bool = False,
+    audio_he_present: bool = False,
 ) -> list[str]:
     """The ``-f`` chain for the compose invocation — delegates to the single
     composition authority (:func:`lobes.runtime._compose.compose_file_args`,
@@ -263,9 +267,17 @@ def _compose_file_args(
     it is probed rather than derived from the target. Its audio half is paired
     with the audio overlay by the authority itself, so a non-audio target still
     never pulls in a file naming services the chain does not declare.
+
+    ``audio_he_present`` (the Hebrew overlay, t15) is a deployment fact too —
+    it rides with the audio overlay, so the authority drops it for any target
+    that does not need audio.
     """
     return _compose.compose_file_args(
-        audio=needs_audio, shape=shape_present, local=local_override, gpu=gpu_present
+        audio=needs_audio,
+        shape=shape_present,
+        local=local_override,
+        gpu=gpu_present,
+        audio_he=audio_he_present,
     )
 
 
@@ -333,6 +345,7 @@ def cmd_up(args: argparse.Namespace) -> int:
         shape_present,
         _compose.local_override_present(deploy_dir),
         _compose.gpu_overlay_present(deploy_dir),
+        _compose.audio_he_overlay_present(deploy_dir),
     )
     build = _resolve_build(args, action)
     argv = _compose.compose_service_argv(action, compose_files, services, build=build)

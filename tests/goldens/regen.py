@@ -13,6 +13,11 @@ Rewrites every golden this directory owns:
 * ``tests/goldens/template-defaults.env`` — the ``${VAR:-default}`` (and
   conditional ``${VAR:+alternate}``) substitution surface of
   ``lobes/templates/fleet/docker-compose.yml``.
+* ``tests/goldens/overlays/audio-he-defaults.env`` — the same surface for the
+  opt-in Hebrew audio overlay, ``docker-compose.audio-he.yml`` (hebrew-realtime
+  t15). In ``overlays/`` and not beside ``template-defaults.env`` because
+  ``tests/test_profile_goldens.py`` asserts the top-level ``*.env`` set equals
+  the built-in PROFILE set, and an overlay is not a profile.
 * ``tests/goldens/shapes/<shape>__<card>.env`` — one per (deployment-shape,
   card) pair that is NOT the whole-brain identity shape (brain-shapes t3), the
   sorted ``KEY=VALUE`` projection of
@@ -62,7 +67,10 @@ from lobes.profiles.shapes import (  # noqa: E402
 )
 
 FLEET_COMPOSE = _REPO_ROOT / "lobes" / "templates" / "fleet" / "docker-compose.yml"
+AUDIO_HE_COMPOSE = _REPO_ROOT / "lobes" / "templates" / "fleet" / "docker-compose.audio-he.yml"
 _SHAPES_DIR = _GOLDENS_DIR / "shapes"
+_OVERLAYS_DIR = _GOLDENS_DIR / "overlays"
+AUDIO_HE_GOLDEN = _OVERLAYS_DIR / "audio-he-defaults.env"
 
 _VAR_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
@@ -156,6 +164,19 @@ def extract_template_defaults(text: str) -> set[str]:
 def template_defaults_text() -> str:
     """The sorted ``VAR=default\\n`` projection of the fleet compose template."""
     text = FLEET_COMPOSE.read_text(encoding="utf-8")
+    lines = sorted(extract_template_defaults(text))
+    return "\n".join(lines) + "\n"
+
+
+def audio_he_defaults_text() -> str:
+    """The sorted ``VAR=default\\n`` projection of the Hebrew audio overlay.
+
+    Same extractor as :func:`template_defaults_text` — the Hebrew overlay is
+    another compose file with a ``${VAR:-default}`` surface, and nothing else
+    in this directory can see an edit to it (it is not a profile, not a shape,
+    and not part of the base template).
+    """
+    text = AUDIO_HE_COMPOSE.read_text(encoding="utf-8")
     lines = sorted(extract_template_defaults(text))
     return "\n".join(lines) + "\n"
 
@@ -322,6 +343,9 @@ def write_goldens() -> list[Path]:
     template_path = _GOLDENS_DIR / "template-defaults.env"
     template_path.write_text(template_defaults_text(), encoding="utf-8")
     written.append(template_path)
+    _OVERLAYS_DIR.mkdir(exist_ok=True)
+    AUDIO_HE_GOLDEN.write_text(audio_he_defaults_text(), encoding="utf-8")
+    written.append(AUDIO_HE_GOLDEN)
     SWITCH_GOLDEN.write_text(switch_plan_text(), encoding="utf-8")
     written.append(SWITCH_GOLDEN)
     written.extend(write_shape_goldens())
