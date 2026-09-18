@@ -17,9 +17,15 @@ import io
 import wave
 from dataclasses import dataclass
 
+from ._session import DEFAULT_LANGUAGE
 from .protocol import TTS_SAMPLE_RATE
 
 SUPPORTED_FORMATS = ("wav", "pcm")
+
+# The multipart file part a turn's audio travels in. A fixed name/type,
+# because the turn is always the WAV container pcm_to_container built.
+STT_TURN_FILENAME = "turn.wav"
+STT_WAV_CONTENT_TYPE = "audio/wav"
 _MEDIA_TYPE = {"wav": "audio/wav", "pcm": "audio/pcm"}
 
 # OpenAI's documented /v1/audio/speech ``speed`` multiplier range. Out-of-range
@@ -104,6 +110,42 @@ def pcm_to_container(
     raise SpeechRequestError(
         f"unsupported response_format {fmt!r}; supported: {', '.join(SUPPORTED_FORMATS)}"
     )
+
+
+def resolve_stt_language(requested: str | None, default: str = DEFAULT_LANGUAGE) -> str:
+    """The language code one STT call declares: *requested*, else *default*.
+
+    Two levels, the same shape the session config uses: a caller's own value
+    (a ``/v1/realtime`` session's negotiated ``language``, or the batch
+    route's ``language`` form field) wins over the deployment default
+    (``REALTIME_LANGUAGE``), which wins over the built-in ``"en"``. A blank or
+    absent request is NOT a language — it falls through to the default rather
+    than declaring ``""`` to Parakeet.
+    """
+    text = (requested or "").strip()
+    return text or (default or DEFAULT_LANGUAGE)
+
+
+def build_stt_forward_fields(
+    language: str | None, default: str = DEFAULT_LANGUAGE
+) -> dict[str, str]:
+    """The multipart FORM fields of one Parakeet ``/v1/audio/transcriptions`` POST.
+
+    Exactly one field, ``language`` — so an unconfigured deployment sends
+    ``{"language": "en"}``, byte-for-byte what this route sent before the
+    Hebrew work landed. Pure and stdlib-only precisely so that byte-identity
+    is a test, not a claim about a route CI cannot import.
+    """
+    return {"language": resolve_stt_language(language, default)}
+
+
+def build_stt_forward_files(
+    content: bytes,
+    filename: str = STT_TURN_FILENAME,
+    content_type: str = STT_WAV_CONTENT_TYPE,
+) -> dict[str, tuple[str, bytes, str]]:
+    """The multipart FILE part of the same POST, in httpx's ``files=`` shape."""
+    return {"file": (filename or STT_TURN_FILENAME, content, content_type or STT_WAV_CONTENT_TYPE)}
 
 
 def aggregate_audio_ready(tts_ready: bool, stt_ready: bool) -> tuple[int, dict]:

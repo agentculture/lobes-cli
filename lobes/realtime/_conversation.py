@@ -179,6 +179,7 @@ from ._session import (
     FunctionCallOutputError,
     Session,
     SessionConfigError,
+    StageTimings,
     event_to_dict,
     parse_function_call_output,
 )
@@ -557,6 +558,28 @@ class ConversationBridge:
         self._pending_synthesis: tuple[int, str] | None = None
         self._tool_call: OutstandingToolCall | None = None
         self._closed_call_ids: deque[str] = deque(maxlen=CLOSED_CALL_MEMORY)
+        self._timings_provider: Callable[[], StageTimings | None] | None = None
+
+    def set_timings_provider(self, provider: Callable[[], StageTimings | None] | None) -> None:
+        """Let the route attach the per-stage stopwatch it reads on ``response.done``.
+
+        The route owns TIME (see the module docstring), so it is the only
+        thing that can bracket a POST or a socket write; this is where the
+        result of that measuring reaches the wire. Optional and additive: a
+        bridge with no provider — every offline test, and any route that does
+        not measure — completes a response exactly as before, with no
+        ``timings`` key at all.
+
+        Called at ``ResponseDone``, so the provider sees the whole turn,
+        including both generate legs of a tool turn.
+        """
+        self._timings_provider = provider
+
+    def _response_timings(self) -> StageTimings | None:
+        """This response's measured stages, or ``None`` when nobody measured."""
+        if self._timings_provider is None:
+            return None
+        return self._timings_provider() or None
 
     # -- outbound ---------------------------------------------------------
 
@@ -1016,7 +1039,7 @@ class ConversationBridge:
         elif isinstance(event, ResponseDone):
             self.session.append_history("assistant", self._reply_text)
             self._clear_turn()
-            self._push(self.session.complete_response())
+            self._push(self.session.complete_response(self._response_timings()))
         elif isinstance(event, ResponseInterrupted):
             self._record_interrupted_reply(event)
             self._clear_turn()

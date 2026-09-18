@@ -390,6 +390,7 @@ async def synthesize(
     cancel_event: asyncio.Event | None = None,
     lane: str = BATCH_LANE,
     language: str = "en",
+    timings_out: dict | None = None,
 ) -> bytes:
     """Synthesize text via the Chatterbox TTS sidecar, returning PCM16 audio at 24000Hz.
 
@@ -417,6 +418,14 @@ async def synthesize(
     itself. When the diacritizer is unavailable (env unset, or it failed to
     load), the request degrades to un-vocalized Hebrew rather than failing.
 
+    ``timings_out`` (hebrew-realtime t12) is an optional mapping this call
+    writes its own measured stages into — today exactly one, ``"phonikud"``:
+    the milliseconds spent in the diacritizer, which happens INSIDE this
+    function and is therefore unobservable to the route that reports it on
+    ``response.done``. Written only when vocalization actually ran, so an
+    English reply leaves the mapping untouched and every existing caller
+    (which passes none at all) is unaffected.
+
     Returns:
         Raw PCM16 bytes at 24000Hz (empty bytes if nothing to synthesize).
     """
@@ -440,7 +449,10 @@ async def synthesize(
             # its own worker thread with a deadline) — run the whole thing
             # off the event loop so a slow phonikud call never stalls other
             # concurrent TTS/session work.
+            started = time.monotonic()
             clean = await asyncio.to_thread(vocalize_hebrew, clean, diacritizer)
+            if timings_out is not None:
+                timings_out["phonikud"] = int((time.monotonic() - started) * 1000)
 
     # Split into chunks that fit within the conservative Chatterbox ceiling
     chunks = _split_for_tts(clean)
@@ -466,6 +478,7 @@ async def synthesize_stream(
     cancel_event: asyncio.Event | None = None,
     lane: str = BATCH_LANE,
     language: str = "en",
+    timings_out: dict | None = None,
 ):
     """Compatibility wrapper — calls synthesize() and yields the result as a single chunk."""
     data = await synthesize(
@@ -476,6 +489,7 @@ async def synthesize_stream(
         cancel_event=cancel_event,
         lane=lane,
         language=language,
+        timings_out=timings_out,
     )
     if data:
         yield data
