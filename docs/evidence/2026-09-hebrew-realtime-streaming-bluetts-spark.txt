@@ -89,3 +89,23 @@ SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM o
    What this does NOT change: the 1000 ms the VAD waits before confirming the turn. Perceived
    latency is now ~= VAD_SILENCE_MS; going below it is layer B (earlier commit +
    continuation merge), not built.
+
+7. LIVE, a human on the reSpeaker XVF3800, hidden speculation ON (VAD_EAGER_MS=250,
+   VAD_SILENCE_MS=1000), streaming + BlueTTS, 120 s:
+     7 turns. speech_stopped -> first response.audio.delta: 1, 113, 31, 2, 1, 42, 80 ms
+       (section 4, same device, speculation off: 671-1020 ms)
+     bridge log: 10 speculations ran, 9 ADOPTED... for 7 committed turns — i.e. some
+       speculations were started at mid-sentence pauses and discarded; no event or history
+       entry corresponds to them. (The 9-vs-7 adopted count includes the scripted runs'
+       window; not separated.)
+     3 deliberate barge-ins, at 3711 / 2380 / 1811 ms into the reply — all honoured
+       (response.interrupted), each followed by a correctly heard new turn.
+     0 errors, 0 tracebacks in the bridge log.
+   Transcripts, verbatim: 'אה, מה קורה? אני מנסה לראות איך זה עובד' /
+     'הבנתי, רגע, אני רוצה להגיד שאנחנו ב-Speech to Text, Text to Speech' /
+     'וואו, רגע, שניה, אנחנו ממש מדברים ביחד.' /
+     "אני רוצה להקליט את זה כדי שחבר'ה ישמעו איך זה נראה." /
+     'אוקיי, רגע, שנייה, תגידי נושאורך.'  (STT slip: "משפט ארוך" heard as 'נושאורך'; the
+       model dutifully said 'נושא ארוך.') /
+     'לא, לא, זה משפט ממש ממש ארוך.' / 'כן, אני רוצה לחסום אותך באמצע ...'
+   Perceived latency is now the VAD's own 1000 ms confirmation wait and nothing else.
