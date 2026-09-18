@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-09-18T11:16:20Z",
-  "updated": "2026-09-18T12:02:17Z",
+  "updated": "2026-09-18T15:26:31Z",
   "claims": [
     {
       "id": "c1",
@@ -953,6 +953,18 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l3",
+      "code": "control-absent",
+      "what": "d7 streaming agent wrote lobes/realtime/_sentences.py before running its tests, so that file's tests were never observed failing (test-first held, the red step did not)",
+      "skipped_check": "run the new tests red before implementing",
+      "refs": [
+        "d7",
+        "lobes/realtime/_sentences.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [

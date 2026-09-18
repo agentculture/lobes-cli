@@ -98,3 +98,13 @@ cd ~/git/lobes-cli && LOBES_API_KEY="$GATEWAY_API_KEY" python3 -u scripts/realti
 - **BlueTTS weights licence:** the operator will ask the author himself. Do NOT contact the author or draft an issue. Until a licence is declared, BlueTTS may run on this box but its weights repo must not be referenced by a shipped template as a default.
 - **reSpeaker wiring:** USB to the Spark, speaker plugged DIRECTLY into the reSpeaker's own 3.5 mm output — i.e. the correct wiring for its echo canceller (the chip's reference is what it plays over USB). So `converged: false` is NOT a wiring mistake. Still unexplained; next things to read with `~/git/microphone-cli`: firmware version, the reference/far-end gain and any `TEST_AEC_DISABLE_CONTROL`-style parameter, and whether the 3.5 mm output level (`'PCM',1`) is too low for the filter to see an echo at all. The operator asked whether "a screen" (monitor speakers) would work: NO for echo cancellation — audio played through HDMI never passes through the reSpeaker, so its canceller has no reference for it and the echo would be worse, not better. **Fallback the operator accepted: use the Reachy Mini.**
 - **Reachy session silence:** the operator simply stopped talking. So a HUMAN BARGE-IN IS STILL UNTESTED on any device.
+
+## Update — d7 streaming MERGED (2026-09-18, after the handoff)
+
+- `agent/he-stream` merged `--no-ff`; worktree and branch removed. Full suite **5882 passed, 15 skipped**; black/isort/flake8 clean. No pre-existing test file was modified (checked from the diff stat: six NEW test files only). Templates touched: the two `audio-he` files only.
+- Probe run by the main agent: the chunker keeps `14:30` whole and merges a short `שלום!` into the next sentence.
+- **NOT deployed.** The live `realtime` container still runs the pre-streaming wheel. Next-step 3 (rebuild wheel → redeploy) now carries streaming with it.
+- `GENERATE_STREAM` defaults **true for every language**, English included — a default-behaviour change that no live run has exercised yet. `GENERATE_STREAM=false` is the exact rollback.
+- Left out by the agent because `_session.py` was frozen for it: `response.text.delta` events and the `first_sentence` / `first_audio_ready` timing keys (`STAGE_TIMING_KEYS` is pinned to six by a test). Under streaming, `response.text.done` can arrive AFTER the first audio deltas. `docs/realtime-pipeline.md` not updated (fold into t16).
+- Lapse **l3** filed (proposed): the agent never saw `_sentences.py`'s tests fail before implementing.
+- Next steps list: item 1 is DONE; start at item 2 (BlueTTS sidecar).
