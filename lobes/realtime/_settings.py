@@ -17,6 +17,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS
 from ._session import DEFAULT_LANGUAGE as _SESSION_DEFAULT_LANGUAGE
 from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
 
@@ -113,6 +114,10 @@ class Settings:
     # key and the route drives the non-streaming surface — so the rollback is
     # exact, not approximate.
     generate_stream: bool
+    # How long the reply's OPENING clause must be (base characters) before a
+    # comma may end the first spoken piece — _sentences.SentenceChunker's
+    # eager_first_min_chars. Lower = earlier first audio, shorter first piece.
+    reply_first_clause_min_chars: int
 
     # Where the FastAPI app listens (inside the container).
     host: str
@@ -230,6 +235,9 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         # Default ON (see the field's own comment): only an explicit falsy
         # token puts the deployment back on the whole-reply path.
         generate_stream=not _is_off(env.get("GENERATE_STREAM")),
+        reply_first_clause_min_chars=max(
+            0, _as_int(env, "REPLY_FIRST_CLAUSE_MIN_CHARS", DEFAULT_EAGER_FIRST_MIN_CHARS)
+        ),
         host=env.get("REALTIME_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container
         port=_as_int(env, "REALTIME_PORT", 8080),
     )

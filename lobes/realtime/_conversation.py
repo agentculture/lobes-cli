@@ -173,7 +173,7 @@ from ._floor import (
     ToolCallRequested,
     estimate_spoken_prefix,
 )
-from ._sentences import SentenceChunker
+from ._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS, SentenceChunker
 from ._session import (
     ErrorCode,
     ErrorEvent,
@@ -496,6 +496,9 @@ class GenerateConfig:
     # ``False`` — what GENERATE_STREAM=false renders — leaves the request body
     # byte-identical to a pre-streaming deployment.
     stream: bool = False
+    # The streamed reply's first-clause threshold (REPLY_FIRST_CLAUSE_MIN_CHARS)
+    # — consumed only by this bridge's SentenceChunker.
+    first_clause_min_chars: int = DEFAULT_EAGER_FIRST_MIN_CHARS
 
 
 class ConversationBridge:
@@ -568,7 +571,7 @@ class ConversationBridge:
         # ORDERED queue of (turn_id, segment_index, text) the route's synth
         # worker drains. A deque, not a single slot like _pending_synthesis,
         # because segments pile up while an earlier one is being synthesized.
-        self._chunker = SentenceChunker()
+        self._chunker = SentenceChunker(eager_first_min_chars=generate.first_clause_min_chars)
         self._stream_turn_id: int | None = None
         self._pending_segments: deque[tuple[int, int, str]] = deque()
         self._tool_call: OutstandingToolCall | None = None

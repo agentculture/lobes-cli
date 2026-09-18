@@ -475,6 +475,7 @@ def _build_bridge(  # pragma: no cover
             api_key=settings.openai_api_key,
             model=resolve_voice_model(settings.openai_model),
             stream=settings.generate_stream,
+            first_clause_min_chars=settings.reply_first_clause_min_chars,
         ),
         barge_in_window_ms=settings.barge_in_window_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),

@@ -329,3 +329,12 @@ def test_the_accumulator_and_the_bridge_compose_end_to_end() -> None:
     assert bridge.take_pending_segment()[2] == "משפט ראשון ארוך מספיק."
     assert bridge.take_pending_segment()[2] == "משפט שני ארוך מספיק."
     assert bridge.take_pending_segment() is None
+
+
+def test_generate_config_threads_the_first_clause_threshold_into_the_chunker():
+    from lobes.realtime._conversation import GenerateConfig
+    from lobes.realtime._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS
+
+    assert GenerateConfig(base_url="http://x").first_clause_min_chars == (
+        DEFAULT_EAGER_FIRST_MIN_CHARS
+    )

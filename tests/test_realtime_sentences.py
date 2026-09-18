@@ -229,3 +229,24 @@ def test_nothing_is_ever_lost_between_feed_and_flush() -> None:
     text = "ראשית, הנה הסבר קצר. שנית, יש עוד פרט אחד חשוב! ולבסוף, זהו."
     released = chunk_all(chunker, *[text[i : i + 5] for i in range(0, len(text), 5)])
     assert "".join(released).replace(" ", "") == text.replace(" ", "")
+
+
+# --- a tunable first-clause break (2026-09-18 latency tuning) ---------------
+
+
+def test_default_first_clause_still_waits_for_24_chars():
+    chunker = SentenceChunker()
+    assert chunker.feed("מצטער, אני לא ") == []
+
+
+def test_a_lowered_first_clause_threshold_releases_a_short_opening_clause():
+    chunker = SentenceChunker(eager_first_min_chars=5)
+    assert chunker.feed("מצטער, אני לא ") == ["מצטער,"]
+    # only the FIRST piece gets the allowance: later commas wait for a terminator
+    assert chunker.feed("מוצא תיקייה, בשם ") == []
+    assert chunker.feed("מסמכים. ") == ["אני לא מוצא תיקייה, בשם מסמכים."]
+
+
+def test_a_lowered_threshold_never_releases_below_itself():
+    chunker = SentenceChunker(eager_first_min_chars=5)
+    assert chunker.feed("כן, בטח ") == []

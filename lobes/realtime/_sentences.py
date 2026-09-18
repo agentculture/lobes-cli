@@ -190,7 +190,15 @@ class SentenceChunker:
             if end is None:
                 continue
             piece = buf[:end].strip()
-            if _base_char_length(piece) < self.min_sentence_chars:
+            # The FIRST piece's crumb floor follows the eager threshold when an
+            # operator lowers it below min_sentence_chars (latency tuning: a
+            # short opening clause like "מצטער," buys first audio ~300 ms
+            # sooner, and the pause after it falls on a comma, where a pause
+            # belongs). At the defaults (24 vs 12) this is the same floor.
+            floor = self.min_sentence_chars
+            if eager:
+                floor = min(floor, self.eager_first_min_chars)
+            if _base_char_length(piece) < floor:
                 continue  # a crumb: merge it into whatever comes next
             self._buf = buf[end:].lstrip()
             return piece

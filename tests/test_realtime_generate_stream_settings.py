@@ -43,3 +43,17 @@ def test_the_hebrew_overlay_is_the_one_that_wires_it() -> None:
         encoding="utf-8"
     )
     assert "GENERATE_STREAM" not in (templates / "env.audio.example").read_text(encoding="utf-8")
+
+
+def test_first_clause_threshold_defaults_to_the_chunkers_own():
+    from lobes.realtime._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS
+
+    assert build_settings({}).reply_first_clause_min_chars == DEFAULT_EAGER_FIRST_MIN_CHARS
+
+
+def test_first_clause_threshold_is_read_from_the_environment():
+    assert build_settings({"REPLY_FIRST_CLAUSE_MIN_CHARS": "5"}).reply_first_clause_min_chars == 5
+
+
+def test_a_typo_keeps_the_default_first_clause_threshold():
+    assert build_settings({"REPLY_FIRST_CLAUSE_MIN_CHARS": "soon"}) == build_settings({})

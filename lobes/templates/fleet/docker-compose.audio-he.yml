@@ -202,3 +202,7 @@ services:
       # docker-compose.audio.yml because the English overlay must stay
       # byte-identical (criterion 2 of the Hebrew overlay).
       - GENERATE_STREAM=${GENERATE_STREAM:-true}
+      # REPLY_FIRST_CLAUSE_MIN_CHARS: how long the reply's opening clause must
+      # be before a comma may end the FIRST spoken piece (default 24). Lower
+      # means earlier first audio and a shorter first piece.
+      - REPLY_FIRST_CLAUSE_MIN_CHARS=${REPLY_FIRST_CLAUSE_MIN_CHARS:-24}
