@@ -2,7 +2,7 @@
   "plan_slug": "hebrew-realtime",
   "schema_version": 2,
   "created": "2026-09-18T12:03:53Z",
-  "updated": "2026-09-18T15:12:11Z",
+  "updated": "2026-09-18T18:11:33Z",
   "deviations": [
     {
       "id": "d1",
@@ -162,9 +162,448 @@
       "status": "approved",
       "classification": "risky",
       "seq": 9
+    },
+    {
+      "id": "d10",
+      "what": "Input-level gate VAD_MIN_LEVEL_PCT: speech whose held peak level is below a configurable % of full scale is ignored (opens no turn, interrupts no reply). Default off; 4 on the Spark.",
+      "task_ref": "t8",
+      "reason": "operator request during live testing, 2026-09-18: 'We need an ignore on low voice, like 3-5%. Even 10% or make it configurable' \u2014 Silero cannot tell a far voice from a near one",
+      "affects": [
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 27
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_realtime_conversation.py + test_realtime_session.py (-k ears/armed/sequence, 23 passed)",
+      "behavior_text": "an unarmed session emits only the transcription sequence; no floor call without arm",
+      "contract_text": "no new event type appears unless the client declares tools or arms",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline pytest ran green at the named commit; it exercises the pure bridge modules \u2014 the FastAPI route shell (app.py) is never imported offline",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_realtime_session.py + test_realtime_wire.py (-k session_update/tools, 27 passed)",
+      "behavior_text": "flat tools + tool_choice accepted, session.updated echoes what took effect, malformed input is a named error",
+      "contract_text": "session.update accepts the Realtime flat tool shape",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline pytest ran green at the named commit; it exercises the pure bridge modules \u2014 the FastAPI route shell (app.py) is never imported offline",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_realtime_session.py, test_realtime_turn.py, test_realtime_conversation.py, test_realtime_parallel_tool_calls.py (-k tool, 68 passed); LIVE: docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt s.2, s.9",
+      "behavior_text": "tools sent nested with tool_choice (+parallel_tool_calls:false), a tool_calls reply becomes response.function_call_arguments.done",
+      "contract_text": "tool-enabled turn relays the model's call to the client",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline suite green at the named commit AND seven live tool turns on the DGX Spark 2026-09-18 (list_directory calls with correct arguments)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_realtime_conversation.py + test_realtime_he_accept_helpers.py (-k order/transcript, 13 passed); LIVE: accept client 'ORDER OK' on every scripted run",
+      "behavior_text": "transcription.completed precedes any function-call event of the turn",
+      "contract_text": "transcript before tool call, every time",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; the acceptance client asserts the order on the wire and printed ORDER OK in all scripted live runs",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_realtime_conversation.py + test_realtime_session.py (-k function_call_output/call_id/duplicate/closed, 14 passed); LIVE: call_closed error observed docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt s.8",
+      "behavior_text": "orphan, late and duplicate outputs get named errors (unknown_call_id / call_closed / duplicate_output)",
+      "contract_text": "only the single outstanding call_id is accepted",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; a late result was refused live with the named call_closed error",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_realtime_floor.py (-k tool, 17 passed)",
+      "behavior_text": "tool_wait is machine-held, interruptible past the guard window, arms no TTS deadline, expires into a named timeout",
+      "contract_text": "tool-wait floor state",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline pytest ran green at the named commit; it exercises the pure bridge modules \u2014 the FastAPI route shell (app.py) is never imported offline",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_realtime_conversation.py (-k cancel/synthetic/interrupt, 11 passed)",
+      "behavior_text": "an interrupted or expired tool wait closes the assistant tool_calls entry with a synthetic cancelled output",
+      "contract_text": "no lane ever receives a dangling tool call",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline pytest ran green at the named commit; it exercises the pure bridge modules \u2014 the FastAPI route shell (app.py) is never imported offline",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_realtime_generate_failure_surfacing.py + test_realtime_turn.py (25 passed)",
+      "behavior_text": "404 role_infeasible / 429 / 503 surface as generate_failed with hosted_by; never a silent fallback",
+      "contract_text": "failure surfacing of the voice lane (the model half was amended by d1: multimodal, not associate)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline pytest ran green at the named commit; it exercises the pure bridge modules \u2014 the FastAPI route shell (app.py) is never imported offline \u2014 failure surfacing only; the 'model=associate' half of this obligation no longer holds by approved deviation d1",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_realtime_stt_forward.py (10 passed); LIVE: Hebrew transcripts in every session",
+      "behavior_text": "session language, else deployment default, else en; nothing configured = byte-identical multipart body",
+      "contract_text": "language reaches the STT sidecar",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; live Hebrew transcription through the bridge on 2026-09-18",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_listen_server_whisper.py (90 passed); LIVE: sidecar healthy and serving, docs/evidence/2026-09-hebrew-stt-spike-spark.txt",
+      "behavior_text": "same JSON shape as listen_server.py; readiness reports model_loaded/cuda_ok",
+      "contract_text": "Whisper sidecar HTTP contract",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; the container has served every live session since 2026-09-18",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_realtime_vocalize.py (17 passed) + tests/test_tts_client_hebrew_diacritizer.py (run with httpx: passed)",
+      "behavior_text": "phonikud runs per Hebrew chunk; failure or timeout degrades to un-vocalized text with a warning, now AT the deadline",
+      "contract_text": "vocalize before TTS, degrade never fail",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; NOTE the live box no longer exercises this path (BlueTTS, d8, phonikud off)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_roles_audio_language.py + test_roles_audio_advert.py (16 passed); byte-compare of the advert against main's code: identical (4918 bytes)",
+      "behavior_text": "declared model/runtime/language advertised; nothing declared = today's advert byte-for-byte",
+      "contract_text": "stt/tts advert honesty",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit plus a direct byte comparison against main. NOT shown on the live gateway: its image is still the released 0.79.0",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 21
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_profile_goldens.py, test_shape_goldens.py, test_switch_plan_goldens.py, test_audio_he_goldens.py, test_init_audio_he.py (109 passed); git diff main -- tests/goldens shows only additions + regen.py/README",
+      "behavior_text": "every existing golden byte-identical; Hebrew only in a new golden",
+      "contract_text": "goldens contract",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; diff stat against main inspected",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 22
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_realtime_timings.py + test_realtime_session.py (-k timing/stage, 38 passed); LIVE: response.done timings in every session log",
+      "behavior_text": "response.done carries per-stage ms; absent stages omitted, not zeroed",
+      "contract_text": "additive stage timings",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; live timings observed e.g. {first_delta:369, generate:365, stt:1, tts:619} with tool_wait/phonikud absent",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 23
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o16",
+      "test_ref": "observation: ~/.lobes.pre-hebrew-realtime-20260918T121206Z exists; 17 in-place *.bak-2026* files; every compose call on ~/.lobes went through lobes-compose.sh",
+      "behavior_text": "timestamped backup before the first edit; compose only via lobes-compose.sh",
+      "contract_text": "operator seam on the live deployment",
+      "evidence_type": "observation",
+      "strength": "coverage",
+      "strength_basis": "backup and per-edit .bak files verified present on disk; the RESTORE half was never exercised",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 24
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o17",
+      "test_ref": "tests/test_realtime_he_accept_helpers.py (76 passed); LIVE: reSpeaker sessions docs/evidence/2026-09-hebrew-realtime-streaming-bluetts-spark.txt s.4, s.7, s.9; Reachy Mini session in docs/evidence/2026-09-hebrew-realtime-first-loop-spark.txt",
+      "behavior_text": "capture and playback on the same USB device, same-device check enforced, one channel selected",
+      "contract_text": "acceptance client and audio hardware",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "offline green at the named commit; live on both devices \u2014 after the reSpeaker's pipewire profile was corrected its AEC converged and self-interruptions went from 6/7 turns to 0",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-09-18T18:10:08",
+        "commit": "576b7e5"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 25
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o18",
+      "test_ref": "docs/evidence/2026-09-accept-hebrew-realtime-spark.txt \u2014 DOES NOT EXIST (plan task t17 not run)",
+      "behavior_text": "one session: Hebrew in, Hebrew out, a tool round trip, a barge-in, an STT negative control, the latency table",
+      "contract_text": "the acceptance transcript",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "The pieces exist across several live sessions (Hebrew in/out, 7 tool turns, 4 human barge-ins, latency tables) but NOT in one session, NOT from the PR's dev wheel, and the STT negative control was run in the STT spike, not in a session. Unmet as written.",
+      "outcome": "fail",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 26
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "The voice lane is model=multimodal (Gemma 4 26B-A4B) hosted LOCALLY on the Spark, not model=associate on the Orin; no generate hop leaves the box",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "Nothing leaves the Spark during a Hebrew session (the single associate hop with X-Lobes-Mesh-Member no longer exists). NOT verified by a traffic capture \u2014 inferred from the wiring",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "On the Spark the Hebrew voice is BlueTTS with the bridge's phonikud hook switched off; the phonikud path remains the shipped default (Chatterbox Multilingual) and is covered offline only",
+      "caused_by": [
+        "d8"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "Spoken replies stream sentence by sentence (GENERATE_STREAM, default on for EVERY language); response.text.done may arrive after the first audio delta",
+      "caused_by": [
+        "d7"
+      ],
+      "evidence_refs": [
+        "e3",
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "Hidden speculation (VAD_EAGER_MS) and the continuation merge with a tool-call hold (CONTINUATION_WINDOW_MS / CONTINUATION_TOOL_HOLD_MS), both default off; one take-back per utterance",
+      "caused_by": [
+        "d9"
+      ],
+      "evidence_refs": [
+        "e3"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "added",
+      "behavior_text": "stt/tts adverts carry a language key only when declared; both serializers share lobes.roles.role_payload",
+      "caused_by": [
+        "d3"
+      ],
+      "evidence_refs": [
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "removed",
+      "behavior_text": "The conikud migration (d4) was never performed: BlueTTS runs its own G2P, so no external diacritizer swap is needed on the BlueTTS path",
+      "caused_by": [
+        "d8"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b8",
+      "kind": "added",
+      "behavior_text": "Input-level gate VAD_MIN_LEVEL_PCT: speech below a held peak level is ignored entirely. Verified on a scaled recording only (2.7 % peak: zero events; 34 %: heard); not yet with a real background voice",
+      "caused_by": [
+        "d10"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
