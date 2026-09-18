@@ -37,6 +37,7 @@ WHAT THIS SETTLES
     (tts_client already has a too-SHORT check, _is_truncated; the too-LONG side is missing).
   * Speed: RTF ~0.6 when stable (1.7 s to synthesize a 2.9 s sentence) — first audio waits for the whole
     sentence. Peak 3.16 GiB.
-NOT YET MEASURED: the operator's verdict on the niqqud arm (played 2026-09-18, awaiting it); any phoneme-input
+OPERATOR VERDICT on the phonikud-niqqud arm, heard on the reSpeaker speaker: "Much better now!!"
+NOT YET MEASURED: any phoneme-input
 engine; conikud (d4); a mixed Hebrew+Latin sentence (h29); over-the-air round trip with the niqqud arm.
 n = 3 sentences per arm, one sample each, stochastic engine: direction, not a benchmark.
