@@ -22,7 +22,7 @@ If you are building a client, read the contract instead:
 |---|---|---|
 | VAD / turn-taking | Silero, `server_vad` | PulseVAD was tried and false-triggered on all four non-speech clips |
 | STT | `ivrit-ai/whisper-large-v3-turbo`, transformers fp16 (`Dockerfile.whisper-stt`, `listen_server_whisper.py`) | ~170–200 ms per turn |
-| generate | the gateway's own `/v1/chat/completions`, `OPENAI_MODEL=multimodal` | on the Spark: `nvidia/Gemma-4-26B-A4B-NVFP4`, `gemma4` tool + reasoning parsers, 32–44 tok/s |
+| generate | the gateway's own `/v1/chat/completions`, `OPENAI_MODEL=multimodal` | on the Spark: `nvidia/Gemma-4-26B-A4B-NVFP4`, `gemma4` tool + reasoning parsers, 32–44 tok/s; native 262144 window since 2026-09-19 (was 32768; `docs/evidence/2026-09-19-accept-multimodal-gemma26b-native-context-spark.txt`) |
 | TTS (shipped default) | Chatterbox **Multilingual**, `language_id="he"`, phonikud niqqud (`Dockerfile.chatterbox-ml`) | seconds per sentence; needs niqqud; samples non-deterministically, hence a runaway guard |
 | TTS (measured best) | **BlueTTS**, CPU ONNX (`Dockerfile.bluetts`, `lobes.realtime.bluetts_server`) | 93–305 ms per sentence, its own G2P, no niqqud wanted — see *BlueTTS* below for why it is not the default |
 
