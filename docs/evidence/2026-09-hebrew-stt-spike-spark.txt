@@ -75,3 +75,17 @@ SIDECAR PROOF (plan task t10) — lobes/templates/fleet/Dockerfile.whisper-stt +
   filter working on real audio. No `language` field -> Hebrew (STT_LANGUAGE default). A 161 s clip -> HTTP 413
   clip_too_long. One defect found and fixed after this run: transcripts carried Whisper's leading space.
   NOT yet proven: the service inside the deployment's compose chain, and the bridge calling it.
+
+RE-RECORD of sentence 11 (operator confirmed the sentence was read as written), 2026-09-18, sidecar image
+  take 2, slot 2 (slower reading):
+    reSpeaker ch0 / ch1  'החתול ישב על החלון והסתכל על הציפורים.'   <- exactly the reference
+    Reachy               'החתול ישב על החלום והסתכל על הציפורים.'   ("החלון" -> "החלום")
+  take 2, slot 1: the operator began before the beep; every mic has only the tail 'ויסתכל על הציפורים.'
+  => the first session's 'השולחן ... הסיפורים' was a one-off of that utterance (pace / room noise), not a
+     fixed model confusion. The reSpeaker again beat the Reachy microphone on the same utterance.
+  take 1 (the operator was not ready — near-silent slots) exposed two things worth more than the sentence:
+    * slot 2 came back as 'תודה רבה' on all three mics — Whisper's classic silence hallucination. It is PLAIN
+      TEXT, so the bracketed-tag filter cannot catch it. In the realtime session the server VAD gates what
+      reaches STT, so a silent clip should not arrive — but that is a mitigation, not a guarantee, and it is
+      the phantom-command hazard frame claim c31 exists for: the client MUST see the transcript before acting.
+    * one transcript carried an invisible bidi control (U+202B). Fixed: the sidecar strips bidi controls.

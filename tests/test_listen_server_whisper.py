@@ -285,3 +285,21 @@ class TestResponseShapeParity:
             assert set(body["error"].keys()) == {"message", "code"}
             assert isinstance(body["error"]["message"], str)
             assert isinstance(body["error"]["code"], str)
+
+
+class TestStripBidiControls:
+    """Measured live 2026-09-18: a transcript arrived as ' \\u202b<hebrew>.'."""
+
+    def test_the_measured_case(self, lsw) -> None:
+        mod = lsw
+        assert (
+            mod.strip_bidi_controls(" \u202b\u05ea\u05d5\u05d3\u05d4 \u05e8\u05d1\u05d4.").strip()
+            == "\u05ea\u05d5\u05d3\u05d4 \u05e8\u05d1\u05d4."
+        )
+
+    def test_every_control_is_removed_and_visible_text_is_untouched(self, lsw) -> None:
+        mod = lsw
+        controls = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+        assert mod.strip_bidi_controls(controls) == ""
+        plain = "\u05e9\u05dc\u05d5\u05dd hello 123 (\u05e6\u05d7\u05d5\u05e7)"
+        assert mod.strip_bidi_controls(plain) == plain

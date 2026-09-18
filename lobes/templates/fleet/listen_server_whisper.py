@@ -104,6 +104,21 @@ def resolve_language(
     return default
 
 
+# Unicode bidirectional CONTROL characters (LRM/RLM/ALM, the embedding/override
+# set, the isolate set). Measured live 2026-09-18: a Hebrew transcript came
+# back as ' \u202bתודה רבה.' - invisible, but it breaks string equality, tool
+# arguments and the TTS text path downstream.
+_BIDI_CONTROLS = dict.fromkeys(
+    [0x200E, 0x200F, 0x061C, *range(0x202A, 0x202F), *range(0x2066, 0x206A)]
+)
+
+
+def strip_bidi_controls(text: str) -> str:
+    """Remove invisible bidi control characters; every visible character,
+    Hebrew or not, is left exactly as it was."""
+    return text.translate(_BIDI_CONTROLS)
+
+
 def filter_non_speech_only(text: str) -> str:
     """Return ``""`` iff *text* consists ONLY of one or more bracketed/
     parenthesised tags (round or square brackets, no nesting), with only
@@ -367,7 +382,7 @@ if _FASTAPI_AVAILABLE:
         text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
         # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
         # listen_server.py's callers never see one, so strip before filtering.
-        text = filter_non_speech_only(text.strip())
+        text = filter_non_speech_only(strip_bidi_controls(text).strip())
 
         return build_success_response(text)
 
