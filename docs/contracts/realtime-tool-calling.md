@@ -185,6 +185,10 @@ tool) — read it as a worked example, then replace its tool with yours.
   forgiving on the tool side: case-insensitive, fuzzy, and return near matches
   in the error so the model can recover in one step.
 - A noise burst with no words in it still counts as an interruption.
+- The operator may set an input-level gate (`VAD_MIN_LEVEL_PCT`): audio whose
+  peak stays below it produces **no events at all**. If a quiet speaker gets no
+  `speech_started`, that is why — raise the capture gain or ask for a lower
+  threshold.
 - One session per connection; no resume — a reconnect is a new session with
   empty history.
 - The WebSocket is never proxied across mesh boxes: connect to the box that

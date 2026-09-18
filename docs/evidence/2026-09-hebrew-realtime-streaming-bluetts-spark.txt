@@ -157,3 +157,15 @@ SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM o
    Mixed language remains weak both ways (folder 'evidence' heard as 'Evidense' / 'אבידנס',
    English folder names hard to follow when spoken) — out of the acceptance bar (d6),
    tracked in issue #277.
+
+10. INPUT-LEVEL GATE (VAD_MIN_LEVEL_PCT=4 on this box), scripted.
+    Levels measured first, per 32 ms chunk, % of full scale, on the operator's own
+    recordings: reSpeaker session RMS p50 0.55 / p90 6.81 / max 19.3, PEAK p50 1.53 / p90 18.1 /
+    max 54.5; three reSpeaker clips PEAK p90 14.5-17.5, max 23-34. => speech peaks 15-55 %,
+    the room floor 1-2 %; speech RMS is only 5-9 %, which is why the gate is on PEAK.
+    Same utterance (respeaker_ch1_s03.wav), two gains:
+      x0.08 -> peak  2.7 % : 0 speech_started, 0 transcripts (the session saw nothing)
+      x1.00 -> peak 34.4 % : heard as before
+    A scaled recording is a stand-in for a far voice, not one: a real far voice also differs
+    in reverberation and in how the device's AGC treats it. NOT yet tried with a real
+    background speaker or a TV.
