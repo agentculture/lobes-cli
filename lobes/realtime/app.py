@@ -1263,6 +1263,7 @@ async def _arm_segmenter(  # pragma: no cover
         vad_prefix_padding_ms=settings.vad_prefix_padding_ms,
         max_turn_ms=settings.vad_max_turn_ms,
         eager_silence_ms=settings.vad_eager_ms or None,
+        min_level_pct=settings.vad_min_level_pct,
     )
 
 

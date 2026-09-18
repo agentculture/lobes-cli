@@ -213,6 +213,12 @@ services:
       # mid-sentence pause. Inert unless below VAD_SILENCE_MS with
       # GENERATE_STREAM on.
       - VAD_EAGER_MS=${VAD_EAGER_MS:-0}
+      # VAD_MIN_LEVEL_PCT: ignore quiet voices (background talk, a TV). A chunk
+      # counts as speech only while the held PEAK input level is at least this
+      # % of full scale. 0 = OFF (default). Measured on a reSpeaker: direct
+      # speech peaks 15-55 %, the room floor 1-2 % — start at 3-5. Depends on
+      # the microphone's gain; tune per device.
+      - VAD_MIN_LEVEL_PCT=${VAD_MIN_LEVEL_PCT:-0}
       # CONTINUATION_WINDOW_MS: continuation merge (deviation d9, layer B). An
       # onset this soon after a silence commit is the speaker carrying on: the
       # reply stops, the half-turn leaves history, and both halves are

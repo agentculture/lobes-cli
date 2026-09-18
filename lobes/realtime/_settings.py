@@ -101,6 +101,12 @@ class Settings:
     # VAD / turn detection (used by the realtime WS pipeline).
     vad_threshold: float
     vad_silence_ms: int
+    # Ignore quiet voices (background talk, a TV, the next room): a chunk counts
+    # as speech only while the held PEAK input level is at least this % of full
+    # scale. 0 = off. Direct speech on a reSpeaker peaks at 15-55 %, the room
+    # floor at 1-2 % — 3-5 is a sensible start. Depends on the microphone's
+    # gain, so tune it per device.
+    vad_min_level_pct: float
     # Hidden speculation (approved deviation d9): the provisional pause, in ms,
     # at which the route starts STT -> generate -> TTS out of sight. 0 = OFF
     # (the default; English deployments are byte-identical). Inert unless it
@@ -231,6 +237,7 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         tts_voice_concurrency=max(1, _as_int(env, "TTS_VOICE_CONCURRENCY", 1)),
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
+        vad_min_level_pct=max(0.0, _as_float(env, "VAD_MIN_LEVEL_PCT", 0.0)),
         vad_eager_ms=max(0, _as_int(env, "VAD_EAGER_MS", 0)),
         continuation_window_ms=max(0, _as_int(env, "CONTINUATION_WINDOW_MS", 0)),
         continuation_tool_hold_ms=max(0, _as_int(env, "CONTINUATION_TOOL_HOLD_MS", 500)),

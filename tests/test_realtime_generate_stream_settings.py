@@ -79,3 +79,10 @@ def test_continuation_merge_is_off_by_default():
 def test_continuation_window_is_read_from_the_environment():
     assert build_settings({"CONTINUATION_WINDOW_MS": "1200"}).continuation_window_ms == 1200
     assert build_settings({"CONTINUATION_WINDOW_MS": "-1"}).continuation_window_ms == 0
+
+
+def test_the_level_gate_is_off_by_default_and_configurable():
+    assert build_settings({}).vad_min_level_pct == 0.0
+    assert build_settings({"VAD_MIN_LEVEL_PCT": "4.5"}).vad_min_level_pct == 4.5
+    assert build_settings({"VAD_MIN_LEVEL_PCT": "loud"}).vad_min_level_pct == 0.0
+    assert build_settings({"VAD_MIN_LEVEL_PCT": "-2"}).vad_min_level_pct == 0.0
