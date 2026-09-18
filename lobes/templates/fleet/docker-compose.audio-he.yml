@@ -1,4 +1,5 @@
-# lobes FLEET — Hebrew realtime overlay (hebrew-realtime plan, issue #151 t8).
+# lobes FLEET — Hebrew realtime overlay (hebrew-realtime plan, issue #151
+# t8/t10).
 #
 # A THIRD docker-compose layer, on top of the base fleet AND the audio
 # overlay:
@@ -11,19 +12,60 @@
 # declares for `realtime` (STT_URL, TTS_URL, OPENAI_BASE_URL, VAD_*, ...)
 # still applies unchanged unless repeated here.
 #
-# THIS TASK (t8) wires only the `realtime` service's env — the language, the
-# tool-wait deadline, the voice-lane model default, and the two Hebrew
-# vocalization/debug knobs `tts_client.py`/`_vocalize.py` already read
-# directly from `os.environ` (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT). Later
-# tasks in this plan add the Hebrew stt/tts SIDECAR SERVICES themselves
-# (Ivrit-AI STT, a Hebrew-capable TTS voice) to this same overlay file, in
-# dependency order — this file does not declare or override the `stt` /
-# `chatterbox` services.
+# t8 wired only the `realtime` service's env — the language, the tool-wait
+# deadline, the voice-lane model default, and the two Hebrew vocalization/
+# debug knobs `tts_client.py`/`_vocalize.py` already read directly from
+# `os.environ` (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT).
+#
+# THIS TASK (t10) adds the Hebrew STT sidecar: the `stt` service's `build:`
+# block is overridden to `Dockerfile.whisper-stt` (an ivrit.ai Whisper
+# large-v3-turbo transformers server — see that Dockerfile's header for why
+# it reuses Dockerfile.parakeet's base image) instead of a full service
+# redefinition — `container_name`/`healthcheck`/`volumes`/`expose`/
+# `PARAKEET_PORT` all stay inherited unchanged from docker-compose.audio.yml
+# (same service name, same internal port, so the realtime bridge's
+# STT_URL=http://stt:${PARAKEET_PORT:-9002} needs no change). It also passes
+# STT_MODEL/STT_RUNTIME/STT_LANGUAGE through to the `gateway` service —
+# approved deviation d3 (hebrew-realtime plan, 2026-09-18) — so
+# `GET /capabilities` can name the engine actually served for the `stt` role
+# (lobes/roles.py's `_declared_audio_engine`, merged task t13) instead of
+# advertising the Parakeet default while a Whisper server actually answers.
+# A Hebrew-capable TTS voice sidecar is a later task's addition to this same
+# overlay file.
 #
 # docker-compose.audio.yml and env.audio.example (the English overlay) stay
 # BYTE-IDENTICAL across this change — a Hebrew deployment is opt-in, layered
 # on top, never a mutation of the English default.
 services:
+  # --- Hebrew STT: ivrit.ai Whisper large-v3-turbo (transformers), not
+  # Parakeet/NeMo. Only `build.dockerfile` and the STT_* environment differ
+  # from docker-compose.audio.yml's `stt` service — everything else
+  # (container_name, healthcheck, volumes, expose, PARAKEET_PORT) is
+  # inherited unchanged via compose's deep merge of mapping keys.
+  stt:
+    build:
+      dockerfile: Dockerfile.whisper-stt
+    environment:
+      # STT_MODEL: the Whisper checkpoint id, read by listen_server_whisper.py
+      # (MODEL_NAME) and by lobes/roles.py's GET /capabilities advertisement
+      # (via the gateway's own copy of this key, below).
+      - STT_MODEL=${STT_MODEL:-ivrit-ai/whisper-large-v3-turbo}
+      # STT_LANGUAGE: the session-default transcription language, read by
+      # listen_server_whisper.py's resolve_language() when the per-request
+      # `language` form field is absent. "he" for a Hebrew deployment.
+      - STT_LANGUAGE=${STT_LANGUAGE:-he}
+      # STT_RUNTIME: informational — names the serving stack for
+      # GET /capabilities; the container fixed on transformers, not a
+      # switchable knob.
+      - STT_RUNTIME=transformers
+
+  # --- gateway: advertise the Whisper engine actually served (deviation d3) -
+  gateway:
+    environment:
+      - STT_MODEL=${STT_MODEL:-ivrit-ai/whisper-large-v3-turbo}
+      - STT_RUNTIME=${STT_RUNTIME:-transformers}
+      - STT_LANGUAGE=${STT_LANGUAGE:-he}
+
   realtime:
     environment:
       # The session-default STT/generate language (lobes/realtime/_settings.py
