@@ -1,0 +1,171 @@
+hebrew-realtime — sentence streaming (d7) + BlueTTS sidecar (d8), live on the DGX Spark GB10
+Date: 2026-09-18. Branch spec/hebrew-realtime (wheel lobes_cli-0.80.1, local build).
+Stack: gateway 0.79.0 -> realtime bridge (GENERATE_STREAM=true) -> vllm-multimodal
+(nvidia/Gemma-4-26B-A4B-NVFP4, MTP) ; stt = ivrit-ai whisper turbo ; tts = model-gear-bluetts
+(lobes.realtime.bluetts_server, BlueTTS @0e38dbf, onnxruntime CPU, voice noa, 5 steps,
+44.1 kHz -> 24 kHz polyphase 80/147). Bridge phonikud hook OFF (PHONIKUD_MODEL_PATH empty).
+Input: a RECORDED utterance streamed by scripts/realtime-he-accept.py --script-mode
+(respeaker_ch1_s03.wav, "תראה לי אילו קבצים יש בתיקייה המסמכים") — no live microphone,
+so nothing here is evidence about AEC or barge-in.
+
+1. BlueTTS sidecar, POST /v1/audio/synthesize measured INSIDE the container (3 runs each)
+     42 chars  min 235 ms  med 301 ms  audio 3.20 s
+     57 chars  min 293 ms  med 305 ms  audio 3.97 s
+     24 chars  min 172 ms  med 175 ms  audio 1.60 s
+      3 chars  min  93 ms  med  94 ms  audio 0.35 s
+     32 chars (vocalized input, niqqud stripped server-side)  min 145 ms  audio 1.25 s
+   Six never-seen 35-38 char sentences, first call each: 211-274 ms (no cold-shape penalty).
+   UNDER a live turn (generate still streaming on the same CPU): 413 ms and 508 ms for the
+   first segment, 258-302 ms for the second.
+   Readiness: 503 until the warm-up synthesis (loads RenikudPlus G2P) — 1757 ms, once.
+
+   BUILD FAILURE FOUND AND FIXED: an unpinned resolve installed renikud-plus 0.5.0, which
+   requests notmax123/RenikudPlus/datastore.json -> 404 at warm-up (container never ready).
+   The image now installs the engine's dependencies from the engine's own uv.lock
+   (renikud-plus 0.3.0, the version every measurement used).
+
+2. Full turn with a tool call (list_directory), wire-log timestamps
+     speech_stopped -> transcript.completed            192 ms
+     transcript -> response.function_call_arguments    427 ms
+     (client answers the tool after it finishes streaming the wav: ~3.17 s, client-side)
+     tool result -> first response.audio.delta:
+        REPLY_FIRST_CLAUSE_MIN_CHARS=24 (default)     1153 ms, 1119 ms   (2 runs)
+            = ~620-690 ms until the first full sentence (34-37 chars) + 413-508 ms TTS
+        REPLY_FIRST_CLAUSE_MIN_CHARS=5                 624 ms,  607 ms   (2 runs)
+            segment 0 = "מצטער," (6 chars), then 27-31 chars, then the rest
+   Reference, same box earlier the same day, whole-reply path + Chatterbox Multilingual:
+   2.6 s to first audio for a one-sentence reply, 7.3 s for a longer one.
+   response.done timings of the default run: stt 196, generate 1407, tool_wait 3169,
+   tts 783, first_delta 4944 (first_delta spans the client's 3.17 s tool wait).
+
+3. CLIENT BUG FOUND BY THE OPERATOR'S EAR: the reply was heard cut mid-sentence
+   ("...You cou-"). The wire log shows the server delivered all 4.81 s of audio and no
+   response.interrupted; scripts/realtime-he-accept.py closed the player's stdin and
+   terminated it immediately on response.done, discarding what was still buffered (the
+   server delivers ahead of the playhead, more so with streaming). Fixed: _drain_playback
+   waits for the player to finish on EOF. Operator confirmed the re-run played to the end.
+   This probably explains some earlier "ended prematurely" reports at session end; it does
+   NOT explain the reSpeaker's server-logged self-interruptions.
+
+NOT measured here: a live microphone, a human barge-in, how the early "מצטער," piece
+SOUNDS (the pause after it), concurrent sessions, English with GENERATE_STREAM on.
+
+4. LIVE session, a human on the reSpeaker XVF3800 (capture channel 1, its own 3.5 mm speaker),
+   120 s, streaming + BlueTTS, REPLY_FIRST_CLAUSE_MIN_CHARS=5, VAD_SILENCE_MS=1000.
+   ROOT CAUSE of the day's reSpeaker trouble found first: the card's pipewire profile had
+   switched to output:iec958-stereo (digital) and the sink sat at 34 % (-28 dB), so almost
+   nothing reached the speaker ("I could barely hear"). Set to
+   output:analog-stereo+input:analog-stereo at 100 %. After that the chip's echo canceller
+   reads `converged: true` (microphone-cli) — it read `false` all day. Whether playback was
+   equally quiet during the earlier self-interruption runs was NOT checked at the time.
+     3 turns; speech_stopped -> first audio: 858, 1020, 671 ms (response.done first_delta 863 / - / 673)
+     turn 1 and 3 played to the end: ZERO self-interruptions (earlier run: 6 in 7 turns)
+     turn 2: the operator barged in on purpose 806 ms into the reply -> response.interrupted
+       (truncated: true), next turn heard 'אין, סליחה, רגע.' and answered
+       'אין בעיה, אני מחכה. קח את הזמן.'  — the FIRST human barge-in recorded on this stack.
+     Operator: "Works perfectly and also I practiced barge-in".
+   Transcripts were accurate, incl. mixed Hebrew/English ('speech to text, text to speech');
+   one STT slip: 'שונה' for 'שומע' in turn 1 (the model answered it literally).
+   Only the first 22 s carry events; the remaining ~98 s are silent in the log (no error) —
+   n=3 turns, one barge-in. Small sample.
+
+5. BlueTTS levers, inside the container (4 runs each, min / median ms):
+      6 chars: steps 5 108/118   steps 3  81/85    steps 2  86/95
+     19 chars: steps 5 150/154   steps 3 123/146   steps 2 107/110
+     37 chars: steps 5 218/226   steps 3 176/221   steps 2 170/181
+   Step count buys ~20-25 %; the fixed pipeline (G2P, encoder, vocoder) dominates.
+   Audio quality at 2-3 steps NOT auditioned.
+
+6. HIDDEN SPECULATION (d9 layer A), VAD_EAGER_MS=250, VAD_SILENCE_MS=1000, same recorded
+   utterance, scripted (no live microphone), 2 runs:
+                                         before (s.2)     speculation on
+     speech_stopped -> transcript           192 ms            0 ms   (transcript reused)
+     speech_stopped -> tool call            619 ms        31 / 30 ms
+   Bridge log: "speculation ready in 566 / 573 / 574 ms" (STT + whole streamed generate,
+   measured from the provisional pause), "speculation ADOPTED" x2. THREE speculations for
+   TWO turns: one started at a mid-utterance pause in the recording and was discarded on
+   resumed speech — no event, no history entry (the wire logs show nothing between
+   speech_started and speech_stopped).
+   What this does NOT change: the 1000 ms the VAD waits before confirming the turn. Perceived
+   latency is now ~= VAD_SILENCE_MS; going below it is layer B (earlier commit +
+   continuation merge), not built.
+
+7. LIVE, a human on the reSpeaker XVF3800, hidden speculation ON (VAD_EAGER_MS=250,
+   VAD_SILENCE_MS=1000), streaming + BlueTTS, 120 s:
+     7 turns. speech_stopped -> first response.audio.delta: 1, 113, 31, 2, 1, 42, 80 ms
+       (section 4, same device, speculation off: 671-1020 ms)
+     bridge log: 10 speculations ran, 9 ADOPTED... for 7 committed turns — i.e. some
+       speculations were started at mid-sentence pauses and discarded; no event or history
+       entry corresponds to them. (The 9-vs-7 adopted count includes the scripted runs'
+       window; not separated.)
+     3 deliberate barge-ins, at 3711 / 2380 / 1811 ms into the reply — all honoured
+       (response.interrupted), each followed by a correctly heard new turn.
+     0 errors, 0 tracebacks in the bridge log.
+   Transcripts, verbatim: 'אה, מה קורה? אני מנסה לראות איך זה עובד' /
+     'הבנתי, רגע, אני רוצה להגיד שאנחנו ב-Speech to Text, Text to Speech' /
+     'וואו, רגע, שניה, אנחנו ממש מדברים ביחד.' /
+     "אני רוצה להקליט את זה כדי שחבר'ה ישמעו איך זה נראה." /
+     'אוקיי, רגע, שנייה, תגידי נושאורך.'  (STT slip: "משפט ארוך" heard as 'נושאורך'; the
+       model dutifully said 'נושא ארוך.') /
+     'לא, לא, זה משפט ממש ממש ארוך.' / 'כן, אני רוצה לחסום אותך באמצע ...'
+   Perceived latency is now the VAD's own 1000 ms confirmation wait and nothing else.
+
+8. CONTINUATION MERGE (d9 layer B), scripted. Box settings: VAD_SILENCE_MS=500,
+   VAD_EAGER_MS=160, CONTINUATION_WINDOW_MS=1200, CONTINUATION_TOOL_HOLD_MS=500.
+   Input: the same utterance with 750 ms of digital silence inserted at a quiet point
+   (paused.wav) — "תראה לי אילו קבצים יש בתיקייה | המסמכים".
+
+   8a. FIRST ATTEMPT (no tool hold) — FAILED, and why:
+        5.00 commit 'תראה לי אילו קבצים יש בתיקייה'
+        5.18 response.function_call_arguments.done  (180 ms after the commit, args path '.')
+        5.36 speech resumes -> merge REFUSED (a tool call the client already has cannot be
+             taken back) -> second turn 'המסמכים' alone -> a second tool call -> the turn split.
+       Fix: a finished tool call is HELD until CONTINUATION_TOOL_HOLD_MS after the commit
+       while a take-back is still possible; speech is never held.
+
+   8b. WITH the hold:
+        4.55 commit 'תראה לי אילו קבצים יש בתיקייה'   (speculation ADOPTED)
+        4.90 speech resumes, 350 ms after the commit — INSIDE the 750 ms barge-in guard —
+             response.interrupted; history rewound; bridge log:
+             "continuation: merging 3552 ms of the previous commit"
+        6.17 commit, transcript 'תראה לי אילו קבצים יש בתיקייה המסמכים'  (ONE turn, adopted)
+        6.67 tool call list_directory {'path': 'מסמכים'}   (held 500 ms; correct argument)
+   STILL WRONG in that run, pre-existing and NOT fixed: a noise blip at 7.21 (blank
+   transcript, dropped by the STT confidence gate) counted as an ordinary barge-in and
+   closed the outstanding tool call ("call_closed" when the client answered at 12.23).
+   With a 1000 ms silence that blip was absorbed into the turn's tail; a short commit
+   exposes it. An onset whose transcript turns out blank should arguably not cost the
+   user their reply — open design question, not addressed.
+   The client still sees TWO transcription.completed items (the half, then the merged
+   text) — no wire field marks the second as superseding the first.
+   NOT yet tried with a live voice.
+
+9. LIVE, a human on the reSpeaker, layers A + B on (VAD_SILENCE_MS=500, VAD_EAGER_MS=160,
+   CONTINUATION_WINDOW_MS=1200, CONTINUATION_TOOL_HOLD_MS=500), 120 s, 12 turns.
+   Operator: "speed is great".
+     plain replies   — commit -> first audio: 370, 328, 333 ms  (=> ~830-870 ms after the
+                       speaker actually stopped, with the 500 ms confirming silence)
+     tool turns (7)  — tool call sent 499-500 ms after the commit (the hold, exactly);
+                       commit -> first audio 1156-1641 ms (hold + tool round trip + a second,
+                       un-speculated generate + TTS)
+     10 speculations adopted; 2 ordinary barge-ins (4.3 s and 6.2 s after the commit);
+     0 errors, 0 tracebacks.
+     CONTINUATION MERGES: 0. No mid-sentence pause produced an early commit followed by a
+     resume inside the window in this session, so layer B's take-back is STILL unproven
+     with a live voice — only the recording in section 8 exercises it. What this session
+     does show is that layer B's settings did no harm: no turn was split, no reply killed.
+   Mixed language remains weak both ways (folder 'evidence' heard as 'Evidense' / 'אבידנס',
+   English folder names hard to follow when spoken) — out of the acceptance bar (d6),
+   tracked in issue #277.
+
+10. INPUT-LEVEL GATE (VAD_MIN_LEVEL_PCT=4 on this box), scripted.
+    Levels measured first, per 32 ms chunk, % of full scale, on the operator's own
+    recordings: reSpeaker session RMS p50 0.55 / p90 6.81 / max 19.3, PEAK p50 1.53 / p90 18.1 /
+    max 54.5; three reSpeaker clips PEAK p90 14.5-17.5, max 23-34. => speech peaks 15-55 %,
+    the room floor 1-2 %; speech RMS is only 5-9 %, which is why the gate is on PEAK.
+    Same utterance (respeaker_ch1_s03.wav), two gains:
+      x0.08 -> peak  2.7 % : 0 speech_started, 0 transcripts (the session saw nothing)
+      x1.00 -> peak 34.4 % : heard as before
+    A scaled recording is a stand-in for a far voice, not one: a real far voice also differs
+    in reverberation and in how the device's AGC treats it. NOT yet tried with a real
+    background speaker or a TV.

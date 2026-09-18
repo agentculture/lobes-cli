@@ -1,0 +1,122 @@
+# lobes Chatterbox Multilingual TTS sidecar — the Hebrew-capable `chatterbox`
+# service (hebrew-realtime plan, task t11; approved deviation d5, operator
+# 2026-09-18).
+#
+# `docker-compose.audio-he.yml` overrides the `chatterbox` service's
+# `build.dockerfile` to THIS file instead of Dockerfile.chatterbox — the
+# SAME base image, SAME torch/chatterbox-tts/Perth install recipe (the
+# engine already ships `chatterbox.mtl_tts.ChatterboxMultilingualTTS` and
+# 'he' as one of its 23 SUPPORTED_LANGUAGES — confirmed live on the
+# lobes-chatterbox:latest image, 2026-09-18, no rebuild needed to GET the
+# multilingual class). The delta from Dockerfile.chatterbox is exactly two
+# things:
+#   1. one extra pip install: phonikud-onnx (this sidecar's preferred Hebrew
+#      diacritizer — see chatterbox_multilingual_server.py's module
+#      docstring for the full decision table; CPU-only, CC BY 4.0).
+#   2. the ENTRYPOINT runs chatterbox_multilingual_server, not
+#      chatterbox_server — the `lobes-cli[chatterbox-ml]` extra (installed
+#      below) pulls the SAME fastapi/uvicorn glue as `[chatterbox]` plus
+#      phonikud-onnx.
+# Everything else — base image, system deps, the pinned torch/torchaudio/
+# Perth combo, the dev-lane wheel install step — is BYTE-IDENTICAL to
+# Dockerfile.chatterbox; see that file's header comment for the full
+# rationale (CUDA 13 base, the Perth ABI conflict with NGC pytorch, the
+# get-pip.py bootstrap for Ubuntu 24.04's PEP-668-guarded pip).
+#
+# The phonikud ONNX model file itself (phonikud-1.0.int8.onnx) is NOT baked
+# into this image and NOT committed to this repo — same convention as every
+# other fleet lane's weights (mounted HF cache volume). The operator places
+# it in the mounted cache dir and points PHONIKUD_MODEL_PATH at it (see
+# env.audio-he.example). TTS_DIACRITIZE=auto degrades to undiacritized
+# Hebrew (with a logged warning) rather than failing when the file/package
+# is unavailable — never a hard startup failure.
+#
+# VALIDATED base (2026-06-21, DGX Spark, see Dockerfile.chatterbox): this
+# file's own multilingual-specific delta (phonikud-onnx install,
+# chatterbox_multilingual_server routes, the runaway guard) is UNVALIDATED —
+# no arm64 GPU build of THIS Dockerfile has run yet. A real `docker build`
+# plus a live boot on the DGX Spark is this task's own explicit stop
+# condition (see this task's final report): the main agent runs that build.
+FROM nvidia/cuda:13.0.1-cudnn-runtime-ubuntu24.04
+ARG MODEL_GEAR_VERSION
+
+# ---------------------------------------------------------------------------
+# System dependencies — identical to Dockerfile.chatterbox.
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        ffmpeg \
+        libsndfile1 \
+        libgomp1 \
+        python3.12 \
+        python3.12-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Bootstrap a fresh pip — identical to Dockerfile.chatterbox (see that file's
+# header comment for why: Ubuntu 24.04's Debian-patched pip is RECORD-less
+# and PEP-668-guarded).
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED \
+    && curl -sSL https://bootstrap.pypa.io/get-pip.py | python3.12
+
+# ---------------------------------------------------------------------------
+# Install the proven torch 2.11.0+cu128 + torchaudio 2.11.0+cu128 combo —
+# identical pins to Dockerfile.chatterbox. Do NOT change these without
+# re-validating Perth's C extension against the new ABI (see that file).
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir \
+        torch==2.11.0+cu128 \
+        torchaudio==2.11.0+cu128 \
+        --extra-index-url https://download.pytorch.org/whl/cu128
+
+# ---------------------------------------------------------------------------
+# Install Chatterbox and its dependencies — identical to Dockerfile.chatterbox.
+# The SAME chatterbox-tts==0.1.7 wheel already ships chatterbox.mtl_tts
+# (ChatterboxMultilingualTTS); no extra package is needed to get the
+# multilingual class itself.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir chatterbox-tts==0.1.7 --no-deps \
+    && python3.12 -m pip install --no-cache-dir \
+        "numpy>=1.24,<2.0" \
+        "librosa==0.11.0" \
+        "pyloudnorm==0.2.0" \
+        "transformers==5.2.0" \
+        "diffusers==0.29.0" \
+        "conformer==0.3.2" \
+        "safetensors==0.5.3" \
+        "s3tokenizer==0.3.0" \
+        "spacy-pkuseg==1.0.1" \
+        "pykakasi==2.3.0" \
+        "omegaconf==2.3.1"
+
+# ---------------------------------------------------------------------------
+# Install Perth 1.0.1 (Resemble AI vocoder) — identical to Dockerfile.chatterbox.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir "resemble-perth==1.0.1" --no-deps
+
+# ---------------------------------------------------------------------------
+# THE DELTA FROM Dockerfile.chatterbox, part 1: phonikud-onnx — the CC BY 4.0
+# int8 ONNX Hebrew diacritizer this sidecar prefers (see
+# chatterbox_multilingual_server.py's module docstring's decision table).
+# CPU-only (onnxruntime-gpu has no official aarch64 wheel), installed
+# separately from the torch/torchaudio/Perth GPU stack above — it has no ABI
+# entanglement with them. The model WEIGHTS are not installed here (see this
+# file's header comment) — only the runtime package.
+# ---------------------------------------------------------------------------
+RUN python3.12 -m pip install --no-cache-dir "phonikud-onnx>=1.0"
+
+# ---------------------------------------------------------------------------
+# Install the lobes-cli server module. THE DELTA FROM Dockerfile.chatterbox,
+# part 2: the [chatterbox-ml] extra (fastapi + uvicorn + phonikud-onnx,
+# declared in pyproject.toml) instead of [chatterbox] — same fastapi/uvicorn
+# pins, phonikud-onnx already installed just above (pip no-ops on it here).
+# ---------------------------------------------------------------------------
+ARG LOBES_DEV_INDEX_URL=
+RUN if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        python3.12 -m pip install --no-cache-dir --no-deps \
+            --index-url "${LOBES_DEV_INDEX_URL}" "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && python3.12 -m pip install --no-cache-dir "lobes-cli[chatterbox-ml]==${MODEL_GEAR_VERSION}"
+
+EXPOSE 9000
+ENTRYPOINT ["python3.12", "-m", "lobes.realtime.chatterbox_multilingual_server"]

@@ -1,0 +1,62 @@
+# lobes STT — ivrit.ai Whisper large-v3-turbo Hebrew ASR sidecar
+# (hebrew-realtime plan, t10). Serves the SAME listen_server contract as
+# Dockerfile.parakeet's listen_server.py (POST /v1/audio/transcriptions,
+# GET /v1/health/ready) but on transformers + PyTorch instead of NeMo.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS BASE IMAGE
+# ---------------------------------------------------------------------------
+# scitrera/dgx-spark-vllm:0.16.0-t4 is the EXACT base Dockerfile.parakeet
+# already uses, so the audio overlay gains no second CUDA base (the tradeoff
+# Dockerfile.chatterbox's header weighs the other way, when Perth's ABI
+# forced it off the NGC pytorch base).
+#
+# Provenance, stated precisely: the t2 RUNTIME spike (transformers vs vLLM,
+# docs/evidence/2026-09-hebrew-stt-spike-spark.txt) ran inside the fleet's
+# vLLM image, NOT this base. THIS recipe was proven separately on the DGX
+# Spark GB10, 2026-09-18: built in 46 s, /v1/health/ready answered ready with
+# the model id ~15 s after start, and the operator's recorded Hebrew clips
+# transcribed through POST /v1/audio/transcriptions in ~0.17 s each with the
+# same text as the spike.
+# ---------------------------------------------------------------------------
+FROM scitrera/dgx-spark-vllm:0.16.0-t4
+
+# ffmpeg — kept for parity with Dockerfile.parakeet / format flexibility;
+# the realtime bridge itself always sends 16kHz mono PCM16 WAV, decoded here
+# with stdlib `wave` (see listen_server_whisper.py).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv, then the transformers/serving deps ON TOP of the base image's already
+# -validated torch (2.11.0+cu130) — never reinstall torch here, it would
+# risk pulling a different, unvalidated CUDA wheel. Operator preference:
+# `uv pip install --system` over plain pip everywhere it's viable.
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache-dir \
+        "transformers>=5.12" \
+        soundfile \
+        fastapi \
+        "uvicorn[standard]"
+
+# Do NOT bake STT_MODEL into the image — it is served from the mounted HF
+# cache volume (docker-compose.audio.yml's `stt` service already mounts
+# ${HF_CACHE}), exactly like every other fleet lane. HF_HUB_DISABLE_XET=1
+# avoids the uncapped hf-xet downloader that OOM-killed a co-resident lane
+# on this box before (see memory: orin-uncapped-process-oom-kills-associate).
+ENV HF_HUB_DISABLE_XET=1
+
+WORKDIR /app
+# _readiness.py is a vendored copy of lobes/realtime/_readiness.py (stdlib
+# only, no wheel needed) — SHARED with Dockerfile.parakeet's copy, not a new
+# one. Copied here so listen_server_whisper.py can import it as a top-level
+# module without requiring the lobes wheel to be installed.
+COPY _readiness.py /app/_readiness.py
+COPY listen_server_whisper.py /app/listen_server_whisper.py
+
+# Same port env as Dockerfile.parakeet (PARAKEET_PORT, default 9002) — the
+# realtime bridge's STT_URL=http://stt:${PARAKEET_PORT:-9002} needs no
+# change to target whichever server the `stt` container runs.
+EXPOSE 9002
+
+CMD ["python3", "/app/listen_server_whisper.py"]

@@ -1,0 +1,93 @@
+hebrew-realtime — Hebrew TTS, first measured arms (plan task t3, re-ordered by deviation d5)     2026-09-18
+Box: DGX Spark GB10. Engine: chatterbox-tts 0.1.7 ChatterboxMultilingualTTS (language_id="he"), inside the
+EXISTING lobes-chatterbox:latest image (it already ships mtl_tts; 'he' is one of its 23 languages). MIT.
+Scoring: the synthesized WAV is transcribed DIRECTLY by the Hebrew STT sidecar (ivrit-ai whisper turbo,
+confidence gate off) and compared with the intended text — an objective intelligibility round trip.
+
+Sentences  he1 'שלום, אני העוזר הקולי שלך. במה אפשר לעזור?'
+           he2 'בתיקיית המסמכים יש שלושה קבצים, והאחרון עודכן אתמול בערב.'
+           he3 'מה ההבדל בין מחשב נייד למחשב שולחני?'
+
+ARM plain Hebrew (image as shipped; log: "dicta_onnx not available - Hebrew text processing skipped")
+  he1 [7/8]  'שלום, אי הוא זר, קל ישאל, במה שר לזר?'
+  he2 [10/9] 'פיקית המסמך המייה שלוש הקבצים, והחורון עוד כאן תמול ברב.'
+  he3 [5/7]  'מה הבדל בין מחבניק למחבשולחני?'
+  round-trip WER 92%.  Operator, listening on the reSpeaker speaker: "hebrew sounds weird".
+  Over the air (reSpeaker speaker -> Reachy mic) two of three came back empty.
+
+ARM phonikud niqqud (phonikud-onnx 1.0 int8, CPU) -> Chatterbox, Chatterbox's own diacritizer disabled
+  vocalize 30 / 37 / 44 ms per sentence on this box's CPU  (the latency frame claim c19 said was unmeasured)
+  phonikud's invented stress/shva marks (U+05AB, U+05BD, '|') were stripped: standard niqqud only.
+  he1 [0/8]  'שלום, אני העוזר הקולי שלך, במה אפשר לעזור?'
+  he2 [1/9]  'בתיקיית המסמכים יש 3 קבצים, והאחרון עודכן אתמול בערב.'   (the miss is number FORMATTING)
+  he3 [0/7]  'מה ההבדל בין מחשב נייד למחשב שולחני?'
+  round-trip WER 4%.   synth 1.72 / 5.86 / 1.72 s for 2.92 / 11.56 / 2.84 s of audio.
+
+ARM Dicta niqqud (dicta-onnx, Chatterbox's OWN built-in Hebrew path once the package is installed)
+  Niqqud text IDENTICAL to phonikud's on all three sentences.
+  he2 [0/9], he3 [0/7] perfect; he1 RAN AWAY: 24.5 s of audio for an 8-word sentence, the first clause right and
+  then ~35 invented words. Same input text as the phonikud arm's he1, so this is Chatterbox SAMPLING INSTABILITY,
+  not a diacritizer difference. (The phonikud arm's he2 also ran long: 11.6 s for 9 words, words correct.)
+
+WHAT THIS SETTLES
+  * Chatterbox Multilingual is unusable for Hebrew WITHOUT niqqud and good WITH it (92% -> 4% on n=3).
+    The merged t9 hook (vocalize Hebrew spans before TTS) is therefore load-bearing, not decoration.
+  * Either diacritizer works; phonikud is already wired (t9), costs ~35 ms, and is CC BY 4.0.
+  * A RUNAWAY GUARD is required: reject/retry a synthesis whose duration is implausibly long for its text
+    (tts_client already has a too-SHORT check, _is_truncated; the too-LONG side is missing).
+  * Speed: RTF ~0.6 when stable (1.7 s to synthesize a 2.9 s sentence) — first audio waits for the whole
+    sentence. Peak 3.16 GiB.
+OPERATOR VERDICT on the phonikud-niqqud arm, heard on the reSpeaker speaker: "Much better now!!"
+NOT YET MEASURED: any phoneme-input
+engine; conikud (d4); a mixed Hebrew+Latin sentence (h29); over-the-air round trip with the niqqud arm.
+n = 3 sentences per arm, one sample each, stochastic engine: direction, not a benchmark.
+
+SIDECAR PROOF (plan task t11) + SAMPLING VARIANCE, 2026-09-18
+  Scratch image = lobes-chatterbox:latest + phonikud-onnx + THIS BRANCH's wheel (uv build), entrypoint
+  lobes.realtime.chatterbox_multilingual_server. NOT a build of Dockerfile.chatterbox-ml itself: that recipe
+  installs lobes-cli[chatterbox-ml] from PyPI by version, which cannot exist until this branch is released.
+  GET /v1/health/ready -> {"status":"ready"} ~30 s after start (weights cached), log: internal Hebrew
+  diacritizer bypassed, warm-up synthesis succeeded.
+  POST /v1/audio/synthesize with PLAIN Hebrew (sidecar adds the niqqud), content-type audio/pcm, 24 kHz:
+    sc1 2.06 s -> 3.40 s audio   'שלום, אני ארזלו קולי שלך. בשיא מה אתשר לעזור?'            (2 words wrong)
+    sc2 2.76 s -> 4.92 s audio   'בסות איקיית המסמכים יש שלושה קלצים, והאחרון עודכן אתמול בערב.' (2 wrong)
+    sc3 1.61 s -> 2.60 s audio   'מה ההבדל בין מחשב נייד לכמחשב שולחני?'                       (1 wrong)
+    sc4 mixed Hebrew + Latin path + filename + date, 4.41 s -> 8.20 s:
+        'בתיקיה, HomeSparkDocs נמצאים שלושה קבצים, ביניהם ריאדמי, ... מתאריך 2006/18.'
+        -> Latin paths and dates are NOT spoken usefully. Confirms frame claim c30: the Hebrew system prompt
+           must make the model DESCRIBE paths/identifiers, and this engine must not be handed them raw.
+    sc5 ALREADY-vocalized input -> 'שלום, זה משפט שכבר מנוקד.' exact (no double diacritization).
+  First thought — the merged t9 hook diacritizes word-by-word and loses context — was CHECKED AND WRONG:
+  vocalize_hebrew sends clause-sized spans and its output is byte-identical to whole-sentence phonikud.
+  The real cause is the engine's sampling: the earlier "4%" was one lucky draw per sentence.
+  8 samples per setting (2 sentences x 4), phonikud niqqud in, scored through the Hebrew STT sidecar:
+    temperature 0.8 (engine default)  WER 14.7%   9-word sentence lasted 4.7 .. 12.6 s
+    temperature 0.5                   WER 19.1%   4.8 .. 6.2 s
+    temperature 0.3                   WER  8.8%   4.3 .. 8.6 s
+  Shipped: TTS_TEMPERATURE, default 0.3. For scale, the same STT scores ~15% raw WER on the operator's own
+  voice, so ~9% end-to-end is good. n = 8: 0.5-vs-0.8 is noise; 0.3's edge showed on WER and on duration.
+
+ARM BlueTTS (operator suggestion, https://bluetts.com, github.com/maxmelichov/BlueTTS @0e38dbf 2026-08-13), 2026-09-18
+  Supertonic-architecture TTS, ONNX Runtime, package blue-onnx 2.5.0 (code MIT). Weights notmax123/BlueTTS2.5-onnx
+  (269 MB, 8 ONNX graphs). Hebrew G2P = RenikudPlus, downloaded on first Hebrew synthesis — takes PLAIN Hebrew text:
+  no phonikud, no conikud, no niqqud step. Voices: noa, adam, daniel, lily (+ zero-shot voice conversion).
+  LICENCE GAP: the code is MIT; the Hugging Face weights repo declares NO licence (no tag, no cardData.license).
+  Run: uv venv in the scratchpad, CPU ONLY on the GB10 (onnxruntime CPU wheel, intra_op_threads=8), voice noa.
+    load 0.42 s ; first Hebrew call 37 s (one-time G2P weight download + warm-up)
+    sentence                                              synth min / median    audio     RTF
+    b1 'שלום, אני העוזר הקולי שלך. במה אפשר לעזור?'  (42 ch)   289 / 310 ms    3.20 s   0.090
+    b2 'בתיקיית המסמכים יש שלושה קבצים, ...'          (57 ch)   325 / 375 ms    3.97 s   0.082
+    b3 'מה ההבדל בין מחשב נייד למחשב שולחני?'         (36 ch)   205 / 208 ms    2.58 s   0.080
+    b4 'כן, אני שומע אותך מצוין.'                      (24 ch)   161 / 178 ms    1.60 s   0.100
+    b5 'כן.'                                           ( 3 ch)    92 /  95 ms    0.35 s   0.263
+    output 44100 Hz (the session wire is 24000 Hz: a resample is needed).
+  Round trip through the live Hebrew STT sidecar: b1 0/8, b2 0/9, b3 0/7, b4 0/5 -> WER 0%
+    (Chatterbox Multilingual + niqqud at temperature 0.3: 8.8%; at 0.8: 14.7%; without niqqud: 92%).
+  Deterministic output: no sampling run-ons were seen (n = 15 syntheses), unlike Chatterbox.
+  OPERATOR, listening on the Reachy speaker: "Sounds perfect!"
+
+  COMPARISON for the voice lane                 first sentence ready    round-trip WER   failure modes seen
+    Chatterbox Multilingual + phonikud, GPU       1700-1900 ms            8.8%             run-on synthesis (24.5 s, 11.7 s)
+    BlueTTS, CPU                                   160-325 ms              0%               none in 15
+  n = 4-5 sentences, one voice, one listener: direction, not a benchmark. Not measured: GPU execution provider
+  (no official aarch64 onnxruntime-gpu wheel), per-chunk streaming inside a sentence, long paragraphs, the other voices.

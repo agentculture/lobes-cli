@@ -17,7 +17,33 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS
+from ._session import DEFAULT_LANGUAGE as _SESSION_DEFAULT_LANGUAGE
 from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
+
+# The Hebrew voice-lane default system prompt (issue #151 t8 / hebrew-realtime
+# c30). Selected instead of :data:`_SESSION_DEFAULT_SYSTEM_PROMPT` ONLY when
+# an operator sets REALTIME_LANGUAGE=he and leaves DEFAULT_SYSTEM_PROMPT
+# unset — an explicit DEFAULT_SYSTEM_PROMPT always wins outright, exactly
+# like the English default it sits beside. Written IN Hebrew (the model is
+# instructed to answer in Hebrew, not merely told about Hebrew in English) —
+# Chatterbox reads the reply aloud verbatim, so the same "short spoken
+# sentences, no markdown" discipline as the English default applies, plus one
+# Hebrew-specific instruction the English prompt has no need for: a tool
+# result routinely contains file paths, identifiers, hashes, dates or long
+# numbers, and reading those aloud character-by-character produces
+# unintelligible/unnatural speech (worse in Hebrew, which has no standard
+# spoken convention for reading raw hex or dotted paths) — so the model must
+# DESCRIBE such values (how many there are, what kind, the meaningful part of
+# a name) instead of reciting them verbatim.
+DEFAULT_SYSTEM_PROMPT_HE = (
+    "את/ה הקול של המכונה הזו. פונים אליך בעל פה והתשובה שלך מוקראת בקול "
+    "רם על ידי מנוע טקסט-לדיבור, אז ענה/עני במשפט קצר אחד או שניים, "
+    "בעברית מדוברת בלבד. בלי מרקדאון, בלי רשימות, בלי קוד, בלי אמוג'ים — "
+    "רק מה שהיית אומר/ת בקול. כשתוצאה של כלי מכילה נתיבים, מזהים, "
+    "hash-ים, תאריכים או מספרים ארוכים — תאר/י אותם במקום להקריא אותם "
+    "תו-אחר-תו: כמה יש, מאיזה סוג, והחלק המשמעותי בשם."
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +56,22 @@ class Settings:
     openai_base_url: str  # the fleet LLM front, e.g. http://gateway:8000
     openai_api_key: str
     openai_model: str  # may be "" → the gateway default-routes
+    # The session-default STT/generate language (issue #151 t8 / hebrew-realtime
+    # c30, c3): mirrors _session.DEFAULT_LANGUAGE's own shape check (a
+    # deployment-wide default, overridable per-session exactly like every
+    # other _session default). Never validated here — an unsupported code is
+    # the STT/generate backend's problem, not this module's; this field only
+    # carries the operator's env-set deployment default through.
+    language: str
+    # Deadline (ms) a committed turn's tool-call round trip is allowed before
+    # it force-fails (issue #151 t8, spec c3: "tool-wait deadline knob"). Read
+    # but not yet consumed by any caller in this task — a later task wires it
+    # into the floor's per-stage deadline machinery (mirrors how
+    # VAD_MAX_TURN_MS landed as a settings-side read in #149 t6 before a
+    # later task consumed it). Clamped like every other millisecond knob in
+    # this module: a non-positive value would force-fail a tool call
+    # immediately rather than merely doing nothing.
+    tool_wait_timeout_ms: int
     # Operator-set DEFAULT system prompt for a session's generate calls (issue
     # #151 t8) — the OPERATOR half of "an operator-set default system prompt
     # via env and a per-session override in the connect config" (spec c34).
@@ -59,12 +101,44 @@ class Settings:
     # VAD / turn detection (used by the realtime WS pipeline).
     vad_threshold: float
     vad_silence_ms: int
+    # Ignore quiet voices (background talk, a TV, the next room): a chunk counts
+    # as speech only while the held PEAK input level is at least this % of full
+    # scale. 0 = off. Direct speech on a reSpeaker peaks at 15-55 %, the room
+    # floor at 1-2 % — 3-5 is a sensible start. Depends on the microphone's
+    # gain, so tune it per device.
+    vad_min_level_pct: float
+    # Hidden speculation (approved deviation d9): the provisional pause, in ms,
+    # at which the route starts STT -> generate -> TTS out of sight. 0 = OFF
+    # (the default; English deployments are byte-identical). Inert unless it
+    # is below vad_silence_ms and GENERATE_STREAM is on.
+    vad_eager_ms: int
+    # Continuation merge (approved deviation d9, layer B): an onset within this
+    # many ms of a SILENCE commit is the speaker carrying on, not a barge-in —
+    # the reply stops, the half-turn leaves history, both halves are
+    # re-transcribed as one turn. 0 = OFF (default). What makes a short
+    # VAD_SILENCE_MS affordable.
+    continuation_window_ms: int
+    # While a continuation is still possible, a finished TOOL CALL is held
+    # this long after the commit before it is sent (a tool call cannot be
+    # taken back; speech can, and is never held). Only with the merge on.
+    continuation_tool_hold_ms: int
     vad_prefix_padding_ms: int
     vad_max_turn_ms: int
     default_turn_detection: str
     default_aec_mode: str
     barge_in_window_ms: int
     barge_in_model: str | None
+    # Stream the generate call and speak it sentence by sentence (approved
+    # deviation d7, 2026-09-18). Default TRUE: the whole point is that first
+    # audio stops depending on reply length. ``false`` selects the previous,
+    # whole-reply path byte-for-byte — the request body loses its ``stream``
+    # key and the route drives the non-streaming surface — so the rollback is
+    # exact, not approximate.
+    generate_stream: bool
+    # How long the reply's OPENING clause must be (base characters) before a
+    # comma may end the first spoken piece — _sentences.SentenceChunker's
+    # eager_first_min_chars. Lower = earlier first audio, shorter first piece.
+    reply_first_clause_min_chars: int
 
     # Where the FastAPI app listens (inside the container).
     host: str
@@ -75,6 +149,11 @@ class Settings:
 # is not merely useless but actively harmful.
 _MIN_MAX_TURN_MS = 1_000
 
+# Floor for TOOL_WAIT_TIMEOUT_MS — same reasoning as _MIN_MAX_TURN_MS: a
+# non-positive deadline would force-fail a tool call before it could ever
+# complete, defeating tool_use entirely rather than merely being a no-op.
+_MIN_TOOL_WAIT_TIMEOUT_MS = 1_000
+
 
 def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
     try:
@@ -83,11 +162,37 @@ def _as_int(env: Mapping[str, str], key: str, default: int) -> int:
         return int(default)
 
 
+# Tokens that turn a boolean knob OFF. The DEFAULT-ON direction is what makes
+# a denylist right here: a typo (``GENERATE_STREAM=ture``) leaves streaming on
+# — the deployed, measured behaviour — rather than silently reverting a
+# deployment to the slow path nobody asked for. Mirrors _vocalize.py's own
+# truthy-token set, inverted.
+_FALSY_TOKENS = frozenset({"0", "false", "no", "off"})
+
+
+def _is_off(value: str | None) -> bool:
+    """True iff *value* explicitly disables a default-on boolean knob."""
+    return (value or "").strip().lower() in _FALSY_TOKENS
+
+
 def _as_float(env: Mapping[str, str], key: str, default: float) -> float:
     try:
         return float(env.get(key) or default)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _default_system_prompt_for_language(language: str) -> str:
+    """The built-in default system prompt for *language* (no operator override).
+
+    ``"he"`` (case-insensitive, region/script subtags ignored — mirrors
+    ``_session``'s own shape-only language check) gets
+    :data:`DEFAULT_SYSTEM_PROMPT_HE`; every other language, including the
+    default ``"en"``, gets the pre-existing
+    :data:`_SESSION_DEFAULT_SYSTEM_PROMPT` unchanged.
+    """
+    primary = (language or "").split("-", 1)[0].lower()
+    return DEFAULT_SYSTEM_PROMPT_HE if primary == "he" else _SESSION_DEFAULT_SYSTEM_PROMPT
 
 
 def build_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -99,10 +204,23 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         openai_base_url=(env.get("OPENAI_BASE_URL") or "http://gateway:8000").rstrip("/"),
         openai_api_key=env.get("OPENAI_API_KEY") or "EMPTY",
         openai_model=env.get("OPENAI_MODEL") or "",
+        language=env.get("REALTIME_LANGUAGE") or _SESSION_DEFAULT_LANGUAGE,
+        tool_wait_timeout_ms=max(
+            _MIN_TOOL_WAIT_TIMEOUT_MS, _as_int(env, "TOOL_WAIT_TIMEOUT_MS", 120_000)
+        ),
         # Empty/unset → the mirrored code-level fallback, same "or default"
         # idiom as every other string field above (an operator who blanks the
         # line in .env gets the safe spoken-style prompt back, not silence).
-        default_system_prompt=env.get("DEFAULT_SYSTEM_PROMPT") or _SESSION_DEFAULT_SYSTEM_PROMPT,
+        # A Hebrew deployment (REALTIME_LANGUAGE=he) gets the Hebrew variant
+        # instead of the English one — but only when the operator has NOT
+        # set an explicit DEFAULT_SYSTEM_PROMPT; an explicit value always
+        # wins outright, in either language.
+        default_system_prompt=(
+            env.get("DEFAULT_SYSTEM_PROMPT")
+            or _default_system_prompt_for_language(
+                env.get("REALTIME_LANGUAGE") or _SESSION_DEFAULT_LANGUAGE
+            )
+        ),
         default_voice=env.get("DEFAULT_VOICE") or "",
         # Clamp to >=1: tts_concurrency seeds an asyncio.Semaphore, and Semaphore(0)
         # (or negative) blocks every TTS request forever; tts_speed is a percentage,
@@ -119,6 +237,10 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         tts_voice_concurrency=max(1, _as_int(env, "TTS_VOICE_CONCURRENCY", 1)),
         vad_threshold=_as_float(env, "VAD_THRESHOLD", 0.5),
         vad_silence_ms=_as_int(env, "VAD_SILENCE_MS", 600),
+        vad_min_level_pct=max(0.0, _as_float(env, "VAD_MIN_LEVEL_PCT", 0.0)),
+        vad_eager_ms=max(0, _as_int(env, "VAD_EAGER_MS", 0)),
+        continuation_window_ms=max(0, _as_int(env, "CONTINUATION_WINDOW_MS", 0)),
+        continuation_tool_hold_ms=max(0, _as_int(env, "CONTINUATION_TOOL_HOLD_MS", 500)),
         vad_prefix_padding_ms=_as_int(env, "VAD_PREFIX_PADDING_MS", 300),
         # VAD_MAX_TURN_MS: hard cap on one uninterrupted turn before the
         # segmenter force-commits it (lobes.realtime._segmenter's
@@ -135,6 +257,12 @@ def build_settings(env: Mapping[str, str] | None = None) -> Settings:
         default_aec_mode=env.get("DEFAULT_AEC_MODE") or "none",
         barge_in_window_ms=_as_int(env, "BARGE_IN_WINDOW_MS", 750),
         barge_in_model=env.get("BARGE_IN_MODEL") or None,
+        # Default ON (see the field's own comment): only an explicit falsy
+        # token puts the deployment back on the whole-reply path.
+        generate_stream=not _is_off(env.get("GENERATE_STREAM")),
+        reply_first_clause_min_chars=max(
+            0, _as_int(env, "REPLY_FIRST_CLAUSE_MIN_CHARS", DEFAULT_EAGER_FIRST_MIN_CHARS)
+        ),
         host=env.get("REALTIME_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container
         port=_as_int(env, "REALTIME_PORT", 8080),
     )

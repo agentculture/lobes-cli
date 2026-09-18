@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from lobes.realtime._session import DEFAULT_SYSTEM_PROMPT
+from lobes.realtime._session import DEFAULT_LANGUAGE, DEFAULT_SYSTEM_PROMPT
 from lobes.realtime._settings import (
     BATCH_LANE,
+    DEFAULT_SYSTEM_PROMPT_HE,
     VOICE_LANE,
     build_settings,
     normalize_tts_lane,
@@ -26,6 +27,8 @@ def test_defaults_point_at_the_fleet_compose_network() -> None:
     assert s.default_voice == ""  # Chatterbox default voice (empty = built-in)
     assert s.vad_max_turn_ms == 30_000
     assert s.default_system_prompt == DEFAULT_SYSTEM_PROMPT
+    assert s.language == DEFAULT_LANGUAGE == "en"
+    assert s.tool_wait_timeout_ms == 120_000
 
 
 def test_overrides_and_trailing_slash_stripped() -> None:
@@ -171,3 +174,68 @@ def test_default_system_prompt_blank_env_falls_back_to_the_mirrored_default() ->
     assert build_settings({"DEFAULT_SYSTEM_PROMPT": ""}).default_system_prompt == (
         DEFAULT_SYSTEM_PROMPT
     )
+
+
+# --- REALTIME_LANGUAGE / TOOL_WAIT_TIMEOUT_MS (hebrew-realtime t8) ----------
+
+
+def test_language_default_and_override() -> None:
+    assert build_settings({}).language == "en"
+    assert build_settings({"REALTIME_LANGUAGE": "he"}).language == "he"
+
+
+def test_language_blank_env_falls_back_to_default() -> None:
+    assert build_settings({"REALTIME_LANGUAGE": ""}).language == "en"
+
+
+def test_tool_wait_timeout_ms_default_and_override() -> None:
+    assert build_settings({}).tool_wait_timeout_ms == 120_000
+    assert build_settings({"TOOL_WAIT_TIMEOUT_MS": "15000"}).tool_wait_timeout_ms == 15000
+
+
+def test_tool_wait_timeout_ms_is_clamped_to_a_sane_floor() -> None:
+    # Same danger class as VAD_MAX_TURN_MS: a non-positive deadline would
+    # force-fail every tool call instantly.
+    for bad in ("0", "-1", "-60000"):
+        assert build_settings({"TOOL_WAIT_TIMEOUT_MS": bad}).tool_wait_timeout_ms == 1_000
+    assert build_settings({"TOOL_WAIT_TIMEOUT_MS": "not-a-number"}).tool_wait_timeout_ms == 120_000
+
+
+# --- Hebrew default system prompt (hebrew-realtime t8) ----------------------
+#
+# DEFAULT_SYSTEM_PROMPT env, when set, ALWAYS wins outright (both languages).
+# When unset, the built-in default depends on REALTIME_LANGUAGE: "he" gets
+# DEFAULT_SYSTEM_PROMPT_HE, everything else (including "en" and unset) gets
+# the pre-existing English default unchanged.
+
+
+def test_hebrew_language_selects_the_hebrew_default_system_prompt() -> None:
+    s = build_settings({"REALTIME_LANGUAGE": "he"})
+    assert s.default_system_prompt == DEFAULT_SYSTEM_PROMPT_HE
+    assert s.default_system_prompt != DEFAULT_SYSTEM_PROMPT
+
+
+def test_english_language_keeps_the_english_default_system_prompt() -> None:
+    assert build_settings({"REALTIME_LANGUAGE": "en"}).default_system_prompt == (
+        DEFAULT_SYSTEM_PROMPT
+    )
+    # Unset REALTIME_LANGUAGE mirrors DEFAULT_LANGUAGE ("en") — same result.
+    assert build_settings({}).default_system_prompt == DEFAULT_SYSTEM_PROMPT
+
+
+def test_explicit_default_system_prompt_wins_over_hebrew_language() -> None:
+    # An operator-set DEFAULT_SYSTEM_PROMPT always wins outright — in either
+    # language — exactly like the pre-existing English-only contract.
+    s = build_settings({"REALTIME_LANGUAGE": "he", "DEFAULT_SYSTEM_PROMPT": "You are terse."})
+    assert s.default_system_prompt == "You are terse."
+
+
+def test_hebrew_default_system_prompt_is_spoken_style_and_names_the_describe_rule() -> None:
+    # A light content check, not a translation test: the Hebrew prompt must
+    # still carry the two properties the English one is pinned on — spoken,
+    # short replies — plus the Hebrew-specific "describe, don't recite"
+    # instruction for paths/ids/hashes/long numbers.
+    assert DEFAULT_SYSTEM_PROMPT_HE != ""
+    assert "markdown" not in DEFAULT_SYSTEM_PROMPT_HE  # written in Hebrew, not English
+    # Hebrew letters (Alef through Tav) are present.
+    assert any("א" <= ch <= "ת" for ch in DEFAULT_SYSTEM_PROMPT_HE)

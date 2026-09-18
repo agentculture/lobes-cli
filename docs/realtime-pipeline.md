@@ -700,20 +700,28 @@ The audio surface **does not**:
 - Force conversation on anyone. `/v1/realtime` answers only after an explicit
   `response.create`; a session that never sends one is transcription-only,
   byte-for-byte the #149 sequence on the new wire.
-- Expose the **full** OpenAI Realtime API. This session adopts the
-  **audio-path event shapes only** — `input_audio_buffer.append`,
-  `response.audio.delta`, `response.create`, and the transcription events.
-  `session.update` semantics, the complete `conversation.item.*` schema, the
-  full response lifecycle, tool calls over the session and ephemeral tokens
-  are a **named follow-up**, not a gap to read as almost-done: claiming more
-  would over-advertise. Nothing here even reads `response.create`'s body.
+- Expose the **full** OpenAI Realtime API. The session speaks the audio-path
+  events (`input_audio_buffer.append`, `response.audio.delta`,
+  `response.create`, the transcription events) and, since the hebrew-realtime
+  work, a **tool-call round trip**: `session.update` (tools, `tool_choice`),
+  `response.function_call_arguments.done`, and
+  `conversation.item.create{function_call_output}` — relayed to the client,
+  never executed here (the client contract is
+  [`contracts/realtime-tool-calling.md`](contracts/realtime-tool-calling.md)).
+  Still a **named follow-up**: the rest of `session.update`, the complete
+  `conversation.item.*` schema, `response.text.delta`, and ephemeral tokens.
 - Resume anything. Sessions stay ephemeral (below) — an interrupted or
   in-flight response is simply gone on disconnect; there is no replay.
-- Swap the STT engine — Parakeet (NeMo ASR) remains the hardcoded STT backend.
-  TTS has been migrated from Magpie (NVIDIA NIM, proprietary) to Chatterbox
-  (Resemble AI, open-weights, Apache-2.0). Silero VAD is likewise hardcoded —
-  none of the three (Parakeet, Chatterbox, Silero) is in the switchable
-  catalog (`lobes/catalog.py`).
+- Put the audio engines in the switchable catalog. Parakeet (NeMo ASR) and
+  Chatterbox (Resemble AI, Apache-2.0; it replaced the proprietary Magpie NIM)
+  are the **English overlay's** engines and Silero is the VAD; none of the
+  three is in `lobes/catalog.py`, and there is no `lobes switch` for them. A
+  deployment CAN serve a different pair by layering an overlay that overrides
+  the sidecars' builds — the opt-in Hebrew overlay (ivrit.ai Whisper +
+  Chatterbox Multilingual, see [`hebrew-realtime.md`](hebrew-realtime.md)) is
+  the first — and declares what it serves through `STT_MODEL`/`STT_RUNTIME`/
+  `STT_LANGUAGE` and the `TTS_*` equivalents, which `GET /capabilities`
+  advertises.
 - Add an audio-specific auth scheme. Both the batch routes and the
   `/v1/realtime` handshake are gated by the same opt-in `GATEWAY_API_KEY`
   bearer check as every other gateway data-plane route — see

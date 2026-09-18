@@ -1,0 +1,49 @@
+hebrew-realtime — live proof 1/3 (plan task t1): back up ~/.lobes, stop ComfyUI
+Box: DGX Spark GB10 (mesh name: spark)      Date: 2026-09-18 (UTC ~12:12-12:20)
+Operator decision: frame claim c5 ("ComfyUI/innereye is dropped from this box").
+Method: the lobes-deploy skill; every compose command ran through
+.claude/skills/lobes-deploy/scripts/lobes-compose.sh against ~/.lobes.
+No docker compose command was run inside lobes/templates/.
+
+BACKUP (taken before any edit)
+  /home/spark/.lobes.pre-hebrew-realtime-20260918T121206Z
+  rsync -a of ~/.lobes excluding logs/ (540M of logs; 1.8M of config kept).
+  Verified byte-identical: .env, docker-compose.override.yml.
+  In-place copy of the one edited file: ~/.lobes/.env.bak-20260918-*-pre-hebrew-realtime
+
+BEFORE
+  docker ps:  model-gear-comfyui Up (healthy), model-gear-gateway Up (healthy)
+  ComfyUI queue (GET :8188/queue): running 0, pending 0  -> nothing in flight
+  free -g:    total 121  used 88  free 21  available 33
+  ps rss:     python3.12 /opt/ComfyUI/main.py = 34.1 GiB resident
+  .env:       COMPOSE_PROFILES=innereye ; INNEREYE_BASE_URL=http://comfyui:8188
+  GET /capabilities: innereye feasible:true ready:true
+
+ACTIONS
+  1. lobes-compose.sh --apply stop comfyui
+       -> Container model-gear-comfyui Stopped (Exited 137)
+     (first attempt put --apply AFTER the subcommand; the helper treated it as a
+      dry-run and nothing happened — the flag must precede the subcommand)
+  2. ~/.lobes/.env: COMPOSE_PROFILES emptied; INNEREYE_BASE_URL commented out
+     (an opt-in backend with no base URL is infeasible — never half-served)
+  3. lobes-compose.sh --apply up -d --no-deps gateway
+       -> only model-gear-gateway recreated; /capabilities answered 200 ~6 s later
+
+AFTER
+  free -g:    total 121  used 22  free 86  available 99     (+66 GiB available)
+  docker ps:  model-gear-gateway Up ; model-gear-comfyui Exited (kept, not removed)
+  GET /capabilities:
+    innereye  feasible:false ready:false   (no hosted_by: no other box hosts it;
+                                            every mesh peer now 404s role_infeasible)
+    associate feasible:false ready:true proxied:true hosted_by orin  (unchanged)
+    worker    feasible:false ready:true proxied:true hosted_by thor  (unchanged)
+    stt / tts / senses / cortex: feasible:false (unchanged — nothing hosted yet)
+
+RESTORE
+  cd ~/.lobes && cp .env.bak-20260918-*-pre-hebrew-realtime .env
+  lobes-compose.sh --apply --profile innereye up -d --no-deps comfyui
+  lobes-compose.sh --apply up -d --no-deps gateway
+  (or restore the whole directory from the backup path above)
+
+NOT DONE HERE
+  Bringing up the senses lane, the Hebrew STT spike (t2) and the TTS A/B (t3).

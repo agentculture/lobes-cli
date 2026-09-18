@@ -1,0 +1,85 @@
+hebrew-realtime — FIRST working Hebrew voice loop with a tool round trip, live on the DGX Spark     2026-09-18
+STATUS: a scripted run (the operator's RECORDED voice streamed as the microphone), not the t17 acceptance.
+NOT shown here: a live microphone, barge-in by a human, the Reachy Mini, the web harness, mixed-script replies.
+
+STACK (all on this box, through the gateway's /v1/realtime tunnel, bearer-gated)
+  STT   ivrit-ai/whisper-large-v3-turbo, transformers sidecar (Dockerfile.whisper-stt), confidence gate -0.35
+  LLM   senses = nvidia/Gemma-4-26B-A4B-NVFP4 (model=multimodal), MTP draft, thinking off
+  TTS   Chatterbox Multilingual (he), sidecar adds phonikud niqqud, temperature 0.3, runaway guard
+  VAD   Silero (server_vad)          bridge: lobes 0.80.1 built from branch spec/hebrew-realtime (local wheel)
+  Deployment deltas live in ~/.lobes/docker-compose.override.yml (the CLI does not know the audio-he overlay
+  yet — plan task t15); backups *.bak-20260918-173708-pre-hebrew-audio. The gateway image is the RELEASED
+  0.79.0, so GET /capabilities still advertises Parakeet/Chatterbox for stt/tts (t13's fix is not deployed).
+Client: scripts/realtime-he-accept.py --script-mode, WAV = the operator reading
+        'תראה לי אילו קבצים יש בתיקיית המסמכים' (reSpeaker ch1), one tool declared via session.update.
+
+WHAT IT TOOK — four runs, each failure a real finding
+  run 1  client bug: it never sent response.create, and conversation is opt-in (#151) -> the server
+         transcribed and correctly did nothing. Also the client's waits took "whatever event came next".
+         FIXED in the client: arm after session.updated; wait by event type; never replay an audio delta.
+  run 2  generate_failed (status=401): the bridge had no gateway key (OPENAI_API_KEY left .env with the audio
+         overlay in July). The failure SPOKE — a named error carrying the status reached the client.
+  run 3  everything worked up to the tool call, then the recorded sentence's ~850 ms pause before its last word
+         was cut as a NEW turn (VAD_SILENCE_MS=600) while the floor was in TOOL_WAIT:
+           response interrupted reason=barge_in -> outstanding call closed with the synthetic cancel ->
+           the client's late function_call_output refused: invalid_wire_event 'call_closed: the tool call ...
+           was closed before this result arrived'.
+         i.e. t6/t7's interruption + bookkeeping rules behaved exactly as designed, on real traffic.
+         CHANGE: VAD_SILENCE_MS 600 -> 1000 on this box (a latency-for-robustness trade, to retune live).
+  run 4  EXIT 0:
+    PASS handshake 101, session.created, session.updated tools=['list_directory'], session armed
+    HEARD  'תראה לי אילו קבצים יש בתיקייה המסמכים'
+    PASS   tool-call  list_directory {'path': 'מסמכים'}
+    PASS   order      transcript.completed (index 4) preceded the tool call (index 6)
+    TOOL   {"error": "path does not exist: 'מסמכים'"}          (client-side sandbox, --tool-root docs/)
+    SPOKEN 'מצטער, לא מצאתי תיקייה בשם מסמכים. תוכל לבדוק שוב את השם או להגיד לי איפה לחפש?'
+    PASS   response.done, reply played as 24 kHz deltas on the reSpeaker speaker
+    timings from response.done alone (ms):  stt 215 | generate 1519 (two legs) | tool_wait 3210 | tts 3077 |
+                                            first_delta 8023     (phonikud absent: the SIDECAR vocalizes, the
+                                            bridge image has no phonikud-onnx, so its own hook degrades)
+
+READING
+  * First audio ~8 s after the turn commits, of which ~1 s is the raised silence threshold's cost upstream,
+    3.2 s is tool_wait (far more than a local listdir needs — the client/bridge hand-off is unexplained),
+    3.1 s is whole-sentence TTS and 1.5 s is two generate legs. This is the unbudgeted first-audio latency the
+    plan parked (risk r6); sentence-level streaming is the known remedy.
+  * The model passed the user's Hebrew word as the path and recovered gracefully from the tool's error.
+  * Known defects left open: the client's same-device check misreads this box's pipewire source name
+    ('...analog-stereo.3') — bypassed with --allow-split-devices here; compose tags the multilingual TTS build
+    as lobes-chatterbox:latest, which is ALSO the local Dockerfile's base (rebuilds will stack).
+
+LIVE MICROPHONE SESSIONS (the operator speaking Hebrew), 2026-09-18 — client --converse 120, mic feeder thread
+  Client fixes these needed: the mic must stream for the WHOLE session (it used to stop at the first server
+  event, so no turn could end and nobody could barge in); same-device check now ignores pipewire's numeric
+  profile suffix; --capture-channel takes ONE channel.
+
+  SESSION A — reSpeaker XVF3800 (mic ch1 + its own speaker):  turns=7  interruptions=6  tool_calls=0
+    HEARD 'היי, מה קורה?'                         SAID 'הכל טוב, איך אני יכול לעזור לך היום?'   -> INTERRUPTED
+    HEARD 'הכול טוב, איך אני יכול?'  <- ITS OWN VOICE, transcribed                              -> INTERRUPTED
+    HEARD 'כן, זה נראה כאילו אתה בא לסיים את המשפט ואז זה מסתיים.'   (the operator, describing the bug)
+    SAID  'סליחה, נראה שיש לי בעיה קלה עם סיום משפטים...'                                       -> INTERRUPTED
+    Operator: "I think it self-cut, or just ended prematurely."
+    CAUSE, measured with the sibling microphone-cli (`microphone array aec get`):
+        reSpeaker XVF3800   converged: false   bypass false  echo-suppression true
+        Reachy Mini Audio   converged: true    bypass false  echo-suppression true
+    The reSpeaker's echo canceller has NOT adapted, so its own speaker reaches the VAD as speech and barges in
+    on itself. 24 s of speech-like playback with the capture stream open did not converge it. UNRESOLVED:
+    wiring of its speaker output vs the chip's reference, a firmware setting, or the flag's reading.
+    (My +10 dB speaker change earlier made the echo louder; it was not the root cause.)
+
+  SESSION B — Reachy Mini (mic + its own speaker):  turns=2  interruptions=0  tool_calls=1  errors=0
+    HEARD 'אתה שומע אותי?'  SAID 'כן, אני שומע אותך מצוין. איך אני יכול לעזור?'
+          timings ms: stt 154 | generate 479 | tts 1942 | first_delta 2575
+    HEARD 'אילו קבצים יש בתיקייה Evidense?'
+    TOOL  list_directory({'path': 'Evidense'}) -> {"error": "path does not exist: 'Evidense'"}
+    SAID  'לא מצאתי תיקייה בשם Evidense. אולי התכוונת לשם אחר?'
+          timings ms: stt 182 | generate 1114 | tool_wait 35 | tts 5925 | first_delta 7297
+    - No self-interruption on a converged AEC. First audio 2.6 s for a plain answer; TTS is 75% of it.
+    - tool_wait 35 ms live: the 3.2 s seen in the scripted run was an artefact of that client, not the bridge.
+    - RUNAWAY MISSED: the second reply was 11.72 s of audio for 51 characters — the Latin 'Evidense' inside
+      Hebrew derailed the engine — and the guard's 13.2 s ceiling let it through. RETUNED to
+      0.12 s/char + 2.0 s (8.1 s for that sentence); the live normal replies (2.92 s, 3.04 s) still pass.
+    - 'evidence' was transcribed 'Evidense', so the tool looked for a folder that does not exist: the
+      mixed-language weakness, now seen end to end.
+    NOT TESTED in session B: a human barge-in (interruptions=0 — nobody spoke over it, or the Reachy's
+    -34 dB playback ducking hid it: unknown), and anything after the second turn (~80 s of silence).

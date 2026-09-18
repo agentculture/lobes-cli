@@ -26,6 +26,8 @@ def test_stdlib_realtime_helpers_import_without_the_extra() -> None:
         "lobes.realtime._settings",
         "lobes.realtime.protocol",
         "lobes.realtime.audio_facade",
+        "lobes.realtime._tts_text",
+        "lobes.realtime._vocalize",
     ):
         importlib.import_module(name)
 

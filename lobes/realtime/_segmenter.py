@@ -82,6 +82,7 @@ audio or emit each other's events.
 
 from __future__ import annotations
 
+from array import array
 from collections import deque
 from dataclasses import dataclass
 from typing import Callable
@@ -107,6 +108,29 @@ DEFAULT_VAD_PREFIX_PADDING_MS = 300
 DEFAULT_MAX_TURN_MS = 30_000
 
 VadProbability = Callable[[bytes], float]
+
+# The input-level gate (``min_level_pct``). Silero answers "is this speech?",
+# not "is it addressed to me?": a quiet voice across the room scores as high as
+# the person at the microphone. The gate adds that question — a chunk counts as
+# speech only while the PEAK level is at least ``min_level_pct`` % of full
+# scale. Peak, not RMS: measured on a reSpeaker XVF3800 (2026-09-18) direct
+# speech peaks at 15-55 % against a 1-2 % room floor, a clean gap, while its
+# RMS (5-9 %) sits too close to a sensible threshold. The peak is HELD over a
+# short window, like a level meter, so the quiet gaps between a loud speaker's
+# syllables do not read as silence and chop the turn.
+LEVEL_HOLD_MS = 256
+# A threshold at or above full scale would make the microphone deaf; the cap
+# keeps a typo (500 for 5.00) survivable.
+MAX_MIN_LEVEL_PCT = 90.0
+
+
+def chunk_peak_pct(chunk: bytes) -> float:
+    """The largest absolute PCM16 sample in *chunk*, as a % of full scale."""
+    samples = array("h")
+    samples.frombytes(chunk[: len(chunk) - (len(chunk) % BYTES_PER_SAMPLE)])
+    if not samples:
+        return 0.0
+    return min(100.0, max(max(samples), -min(samples)) / 32768 * 100)
 
 
 @dataclass(frozen=True)
@@ -143,7 +167,34 @@ class SpeechStopped:
     reason: str
 
 
-Event = SpeechStarted | SpeechStopped
+@dataclass(frozen=True)
+class SpeechPaused:
+    """NOT a boundary: the speaker has been quiet for ``eager_silence_ms``.
+
+    Emitted at most once per silence run, only when ``eager_silence_ms`` is
+    armed (hebrew-realtime d9, layer A). ``audio`` is a SNAPSHOT of the whole
+    turn so far — the turn stays open and keeps accumulating, so the eventual
+    :class:`SpeechStopped` ``audio`` begins with exactly these bytes and adds
+    only non-speech chunks. That prefix property is what lets a caller start
+    working on the turn now and adopt the work at the commit.
+    """
+
+    at_ms: int
+    audio: bytes
+
+
+@dataclass(frozen=True)
+class SpeechResumed:
+    """NOT a boundary: speech returned after a :class:`SpeechPaused`.
+
+    The snapshot the pause carried no longer describes the turn — whatever
+    was started from it must be thrown away.
+    """
+
+    at_ms: int
+
+
+Event = SpeechStarted | SpeechStopped | SpeechPaused | SpeechResumed
 
 
 class Segmenter:
@@ -168,12 +219,23 @@ class Segmenter:
         vad_silence_ms: int = DEFAULT_VAD_SILENCE_MS,
         vad_prefix_padding_ms: int = DEFAULT_VAD_PREFIX_PADDING_MS,
         max_turn_ms: int = DEFAULT_MAX_TURN_MS,
+        eager_silence_ms: int | None = None,
+        min_level_pct: float = 0.0,
     ) -> None:
         self._vad_probability = vad_probability
         self.vad_threshold = vad_threshold
         self.vad_silence_ms = vad_silence_ms
         self.vad_prefix_padding_ms = vad_prefix_padding_ms
         self.max_turn_ms = max_turn_ms
+        # Armed only when it can fire BEFORE the commit; anything else (None,
+        # <= 0, >= vad_silence_ms) is inert and the event sequence is exactly
+        # the pre-d9 one.
+        armed = eager_silence_ms is not None and 0 < eager_silence_ms < vad_silence_ms
+        self.eager_silence_ms = eager_silence_ms if armed else None
+        self._paused = False
+        # 0 (or less) = off: every pre-gate deployment segments identically.
+        self.min_level_pct = min(MAX_MIN_LEVEL_PCT, max(0.0, min_level_pct))
+        self._recent_peaks: "deque[float]" = deque(maxlen=max(1, LEVEL_HOLD_MS // VAD_CHUNK_MS))
 
         # Padding rounds DOWN to whole 32ms chunks (documented above).
         padding_chunks = max(0, vad_prefix_padding_ms // VAD_CHUNK_MS)
@@ -227,6 +289,9 @@ class Segmenter:
         self._stream_ms += VAD_CHUNK_MS
         probability = self._vad_probability(chunk)
         is_speech = probability >= self.vad_threshold
+        if self.min_level_pct:
+            self._recent_peaks.append(chunk_peak_pct(chunk))
+            is_speech = is_speech and max(self._recent_peaks) >= self.min_level_pct
 
         if not self._speaking:
             if is_speech:
@@ -242,8 +307,10 @@ class Segmenter:
 
         self._turn_chunks.append(chunk)
         self._turn_ms += VAD_CHUNK_MS
+        resumed = False
         if is_speech:
             self._silence_run_ms = 0
+            resumed, self._paused = self._paused, False
         else:
             self._silence_run_ms += VAD_CHUNK_MS
 
@@ -251,6 +318,15 @@ class Segmenter:
             return self._commit("silence")
         if self._turn_ms >= self.max_turn_ms:
             return self._commit("max_turn")
+        if resumed:
+            return SpeechResumed(at_ms=self._stream_ms)
+        if (
+            self.eager_silence_ms is not None
+            and not self._paused
+            and self._silence_run_ms >= self.eager_silence_ms
+        ):
+            self._paused = True
+            return SpeechPaused(at_ms=self._stream_ms, audio=b"".join(self._turn_chunks))
         return None
 
     def _commit(self, reason: str) -> SpeechStopped:
@@ -263,5 +339,6 @@ class Segmenter:
         self._turn_chunks = []
         self._silence_run_ms = 0
         self._turn_ms = 0
+        self._paused = False
         self._preroll.clear()
         return event

@@ -26,75 +26,97 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
+import os
 import time
 
 import httpx
 
 from ._settings import BATCH_LANE, VOICE_LANE, new_tts_lane_semaphores, normalize_tts_lane, settings
+
+# The pure text helpers (_clean_for_tts, _split_for_tts, trailing_pause_ms,
+# _min_plausible_duration, _is_truncated, and the
+# _EMOJI_RE/_MARKDOWN_RE/_MAX_CLEAN_CHARS constants) now live in
+# lobes.realtime._tts_text — a stdlib-only sibling with no httpx import, so
+# they are unit-tested offline (tests/test_realtime_tts_text.py). They are
+# imported below under their historical names so every existing caller of
+# ``lobes.realtime.tts_client._clean_for_tts`` (etc.) is unaffected; several
+# (the regex/constant names) are not called from this module directly, so
+# they carry an explicit noqa rather than being silently dropped.
+from ._tts_text import (  # noqa: F401 - re-exported for backward compatibility
+    _EMOJI_RE,
+    _MARKDOWN_RE,
+    _MAX_CLEAN_CHARS,
+    _clean_for_tts,
+    _is_truncated,
+    _min_plausible_duration,
+    _split_for_tts,
+    trailing_pause_ms,
+)
+from ._vocalize import Diacritizer, LazySingleton, build_phonikud_diacritizer, vocalize_hebrew
 from .protocol import TTS_SAMPLE_RATE, resolve_voice
 
 log = logging.getLogger(__name__)
 
 _req_counter = 0  # monotonic request ID for log correlation
 
-# Regex to strip emoji (Supplementary Multilingual Plane + common emoji ranges)
-_EMOJI_RE = re.compile(
-    "[\U0001f600-\U0001f64f"  # emoticons
-    "\U0001f300-\U0001f5ff"  # symbols & pictographs
-    "\U0001f680-\U0001f6ff"  # transport & map
-    "\U0001f1e0-\U0001f1ff"  # flags
-    "\U00002702-\U000027b0"  # dingbats
-    "\U0000fe00-\U0000fe0f"  # variation selectors
-    "\U0000200d"  # zero-width joiner
-    "\U000024c2-\U0001f251"
-    "]+",
-    flags=re.UNICODE,
-)
-
-# Markdown-style formatting
-_MARKDOWN_RE = re.compile(r"[*_~`#]")
-
-# Max chars of *cleaned* text per TTS request.
-# Conservative chunking ceiling for Chatterbox (no hard SSML or Triton token limit;
-# kept at 600 to avoid extremely long single requests and preserve latency).
-_MAX_CLEAN_CHARS = 600
+# Env var read by _get_hebrew_diacritizer(); a Hebrew-hosting deployment
+# points this at its phonikud ONNX checkpoint (docs/specs/2026-09-18-hebrew-realtime.md).
+_PHONIKUD_MODEL_PATH_ENV = "PHONIKUD_MODEL_PATH"
 
 
-def _split_for_tts(text: str, max_chars: int = _MAX_CLEAN_CHARS) -> list[str]:
-    """Split *text* into chunks of at most *max_chars* characters.
+# Lazily built, cached at most once per process — building it imports
+# phonikud_onnx (see lobes.realtime._vocalize.build_phonikud_diacritizer),
+# which only exists inside the realtime container's [hebrew] extra.
+#
+# Wrapped in a LazySingleton (Qodo finding: "first Hebrew reply freezes all
+# sessions") rather than a bare module-global + flag: the old pattern set
+# its "attempted" flag BEFORE the (slow) build ran, so a concurrent caller
+# could observe "already attempted" and get back `None` mid-build instead of
+# waiting for the real result — and the build itself used to run
+# synchronously on the event loop, blocking every other session.
+# `_get_hebrew_diacritizer()` is safe to call via `asyncio.to_thread` (see
+# `_maybe_vocalize_hebrew` below): the lock inside LazySingleton makes
+# concurrent callers block on the SAME build rather than each seeing a torn
+# intermediate state, and running it off the loop means other coroutines
+# keep making progress while it does.
+def _build_hebrew_diacritizer() -> Diacritizer | None:
+    """The one-shot builder passed to :data:`_hebrew_diacritizer_singleton`.
 
-    Tries to break at the last ``", "`` before the limit, then last ``" "``,
-    and hard-cuts only as a last resort.  Returns a single-element list when
-    the text already fits.
+    Returns ``None`` (and logs why, once) when ``PHONIKUD_MODEL_PATH`` is
+    unset or the model fails to load — callers then skip vocalization and
+    speak un-vocalized Hebrew rather than fail the whole TTS request.
     """
-    if len(text) <= max_chars:
-        return [text]
+    model_path = os.environ.get(_PHONIKUD_MODEL_PATH_ENV)
+    if not model_path:
+        log.warning(
+            "[TTS] language=he requested but %s is unset — skipping Hebrew vocalization",
+            _PHONIKUD_MODEL_PATH_ENV,
+        )
+        return None
+    try:
+        return build_phonikud_diacritizer(model_path)
+    # Degrade to un-vocalized text, never crash TTS.
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "[TTS] failed to build phonikud diacritizer from %s=%s — skipping Hebrew vocalization",
+            _PHONIKUD_MODEL_PATH_ENV,
+            model_path,
+        )
+        return None
 
-    chunks: list[str] = []
-    remaining = text
-    while len(remaining) > max_chars:
-        window = remaining[:max_chars]
-        # Prefer splitting at last ", " (natural pause)
-        idx = window.rfind(", ")
-        if idx > 0:
-            cut = idx + 2  # keep the comma+space with the left chunk
-        else:
-            # Fall back to last space
-            idx = window.rfind(" ")
-            if idx > 0:
-                cut = idx + 1
-            else:
-                # Hard cut — no good break point
-                cut = max_chars
-        chunk = remaining[:cut].strip()
-        if chunk:
-            chunks.append(chunk)
-        remaining = remaining[cut:].strip()
 
-    if remaining:
-        chunks.append(remaining)
-    return chunks
+_hebrew_diacritizer_singleton: LazySingleton[Diacritizer] = LazySingleton(_build_hebrew_diacritizer)
+
+
+def _get_hebrew_diacritizer() -> Diacritizer | None:
+    """Return the process-wide Hebrew diacritizer, building it on first use.
+
+    Thread-safe and build-at-most-once via :class:`LazySingleton`. Callers
+    that must not block the event loop call this through
+    ``asyncio.to_thread`` (see :func:`_maybe_vocalize_hebrew`) rather than
+    directly.
+    """
+    return _hebrew_diacritizer_singleton.get()
 
 
 # Module-level clients — ONE PER LANE (issue #151 t7), reused across requests
@@ -157,67 +179,6 @@ def _get_semaphore(lane: str) -> asyncio.Semaphore:
     return _tts_semaphores[normalize_tts_lane(lane)]
 
 
-def _clean_for_tts(text: str) -> str:
-    """Strip emoji, markdown, dashes, quotes and normalize for TTS input."""
-    text = _EMOJI_RE.sub(" ", text)
-    text = _MARKDOWN_RE.sub("", text)
-    # Em-dash / en-dash → comma (natural pause; raw dashes confuse TTS)
-    text = text.replace("—", ", ")
-    text = text.replace("–", ", ")
-    # Curly single quotes / apostrophes → ASCII apostrophe (preserves contractions)
-    text = text.replace("‘", "'")
-    text = text.replace("’", "'")
-    # Strip double-quotes (TTS doesn't need to voice them)
-    text = re.sub(r'["“”]', "", text)
-    # Remove markdown list markers at line start:  - item  /  1. item
-    text = re.sub(r"(?m)^\s*-\s+", " ", text)
-    text = re.sub(r"(?m)^\s*\d+[.)]\s+", " ", text)
-    # Collapse whitespace / newlines
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-# ---------------------------------------------------------------------------
-# Punctuation-aware pause helpers
-# ---------------------------------------------------------------------------
-
-
-def trailing_pause_ms(original_text: str) -> int:
-    """Return inter-sentence silence duration (ms) based on ending punctuation.
-
-    Examines the *original* sentence text (before TTS cleaning) so that
-    trailing emoji and raw punctuation are still visible.
-    """
-    s = original_text.rstrip()
-    if not s:
-        return 200
-
-    # Check multi-char patterns first (longest match wins).
-    # Count the trailing run of "!" by string ops rather than a `!{3,}$` regex:
-    # on a long run that is not at the end, that pattern backtracks per start
-    # position (quadratic — Sonar S8786). rstrip is linear and says the same thing.
-    if len(s) - len(s.rstrip("!")) >= 3:
-        return 400
-    if s.endswith(("?!", "!?")):
-        return 350
-    if s.endswith("!!"):
-        return 350
-    if s.endswith(("...", "…")):
-        return 400
-    if s.endswith("."):
-        return 350
-    if s.endswith("?"):
-        return 350
-    if s.endswith("!"):
-        return 300
-
-    # Trailing emoji
-    if _EMOJI_RE.search(s[-2:]):
-        return 250
-
-    return 200
-
-
 class _Retry:
     """Sentinel type: the attempt failed, but a retry within the same semaphore
     hold may still succeed.
@@ -233,20 +194,6 @@ class _Retry:
 
 
 _RETRY = _Retry()
-
-
-def _min_plausible_duration(clean: str) -> float:
-    """Shortest audio duration that is plausible for *clean*.
-
-    Ratio-based: expect at least 15 ms per character (normal speech at 125 %
-    runs 60–80 ms/char, so 15 ms is very conservative).
-    """
-    return max(0.5, len(clean) * 0.015)
-
-
-def _is_truncated(clean: str, duration: float) -> bool:
-    """True when returned audio is implausibly short for the text it should speak."""
-    return len(clean) > 10 and duration < _min_plausible_duration(clean)
 
 
 def _handle_tts_response(
@@ -453,6 +400,44 @@ async def _synthesize_single(
         return b""  # should not reach here
 
 
+async def _maybe_vocalize_hebrew(
+    clean: str,
+    language: str,
+    timings_out: dict | None,
+) -> str:
+    """Run Hebrew vocalization on *clean* when *language* is ``"he"``,
+    entirely off the event loop, returning *clean* unchanged otherwise.
+
+    Extracted out of :func:`synthesize` to keep that function's cognitive
+    complexity inside the gate (Sonar S3776); behavior and log lines are
+    unchanged. Both steps run via ``asyncio.to_thread``:
+
+    - ``_get_hebrew_diacritizer()`` (Qodo finding): it lazily BUILDS the
+      phonikud ONNX model on first use, which is slow — calling it directly
+      on the event loop froze every other concurrent session for the
+      duration of that first build. ``LazySingleton`` (see
+      ``lobes.realtime._vocalize``) keeps the build itself safe under
+      concurrent callers.
+    - :func:`lobes.realtime._vocalize.vocalize_hebrew` — unchanged from
+      before this task, already run off the loop with its own timeout.
+
+    When the diacritizer is unavailable (env unset, or it failed to load),
+    this degrades to returning *clean* un-vocalized, exactly as before.
+    """
+    if language != "he":
+        return clean
+
+    diacritizer = await asyncio.to_thread(_get_hebrew_diacritizer)
+    if diacritizer is None:
+        return clean
+
+    started = time.monotonic()
+    vocalized = await asyncio.to_thread(vocalize_hebrew, clean, diacritizer)
+    if timings_out is not None:
+        timings_out["phonikud"] = int((time.monotonic() - started) * 1000)
+    return vocalized
+
+
 async def synthesize(
     text: str,
     voice: str | None = None,
@@ -460,6 +445,8 @@ async def synthesize(
     tts_url: str | None = None,
     cancel_event: asyncio.Event | None = None,
     lane: str = BATCH_LANE,
+    language: str = "en",
+    timings_out: dict | None = None,
 ) -> bytes:
     """Synthesize text via the Chatterbox TTS sidecar, returning PCM16 audio at 24000Hz.
 
@@ -476,6 +463,25 @@ async def synthesize(
     it never queues behind unrelated batch TTS work. An existing caller that
     passes nothing gets exactly today's behavior.
 
+    ``language`` (issue hebrew-realtime t9) defaults to ``"en"`` — cleaned/
+    split output for that default is byte-identical to before this task. A
+    caller (wired by a later task) passes ``"he"`` to run the cleaned text
+    through :func:`lobes.realtime._vocalize.vocalize_hebrew` — using the
+    process-wide diacritizer built from ``PHONIKUD_MODEL_PATH`` — after
+    cleaning and before chunking, so niqqud reaches both the chunk-size
+    accounting (which counts base characters, not niqqud combining marks —
+    see ``lobes.realtime._tts_text._base_char_length``) and the sidecar
+    itself. When the diacritizer is unavailable (env unset, or it failed to
+    load), the request degrades to un-vocalized Hebrew rather than failing.
+
+    ``timings_out`` (hebrew-realtime t12) is an optional mapping this call
+    writes its own measured stages into — today exactly one, ``"phonikud"``:
+    the milliseconds spent in the diacritizer, which happens INSIDE this
+    function and is therefore unobservable to the route that reports it on
+    ``response.done``. Written only when vocalization actually ran, so an
+    English reply leaves the mapping untouched and every existing caller
+    (which passes none at all) is unaffected.
+
     Returns:
         Raw PCM16 bytes at 24000Hz (empty bytes if nothing to synthesize).
     """
@@ -491,6 +497,8 @@ async def synthesize(
     if not clean:
         log.debug("[TTS] skipping empty text after cleanup (original: %s)", text[:40])
         return b""
+
+    clean = await _maybe_vocalize_hebrew(clean, language, timings_out)
 
     # Split into chunks that fit within the conservative Chatterbox ceiling
     chunks = _split_for_tts(clean)
@@ -515,6 +523,8 @@ async def synthesize_stream(
     tts_url: str | None = None,
     cancel_event: asyncio.Event | None = None,
     lane: str = BATCH_LANE,
+    language: str = "en",
+    timings_out: dict | None = None,
 ):
     """Compatibility wrapper — calls synthesize() and yields the result as a single chunk."""
     data = await synthesize(
@@ -524,6 +534,8 @@ async def synthesize_stream(
         tts_url=tts_url,
         cancel_event=cancel_event,
         lane=lane,
+        language=language,
+        timings_out=timings_out,
     )
     if data:
         yield data

@@ -628,3 +628,78 @@ def test_the_delta_chunk_size_is_the_only_one_in_the_tree() -> None:
 
     assert not hasattr(floor_module, "DEFAULT_CHUNK_BYTES")
     assert DEFAULT_DELTA_CHUNK_BYTES == 4800  # 100 ms at 24 kHz PCM16
+
+
+# ---------------------------------------------------------------------------
+# hebrew-realtime t4 — the non-audio client event names and their predicates.
+#
+# The audio codec half of this module is untouched by the tool work (that is
+# an acceptance criterion, not an aspiration); what it gains is the wire's
+# NAMES for the two client events the session-tools contract adds, and two
+# pure predicates over an already-decoded payload.
+# ---------------------------------------------------------------------------
+
+
+def test_new_client_event_names_are_openai_realtime_names_verbatim() -> None:
+    assert W.SESSION_UPDATE_EVENT_TYPE == "session.update"
+    assert W.CONVERSATION_ITEM_CREATE_EVENT_TYPE == "conversation.item.create"
+    assert W.FUNCTION_CALL_OUTPUT_ITEM_TYPE == "function_call_output"
+
+
+def test_is_session_update_recognises_the_client_declaration() -> None:
+    assert W.is_session_update({"type": "session.update", "session": {"tools": []}}) is True
+    assert W.is_session_update({"type": "session.updated"}) is False
+    assert W.is_session_update({"type": "response.create"}) is False
+    assert W.is_session_update(None) is False
+    assert W.is_session_update({}) is False
+
+
+def test_is_function_call_output_recognises_the_clients_tool_result() -> None:
+    assert (
+        W.is_function_call_output(
+            {
+                "type": "conversation.item.create",
+                "item": {"type": "function_call_output", "call_id": "c1", "output": "ok"},
+            }
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"type": "response.create"},
+        # A conversation.item.create carrying some OTHER item kind belongs to
+        # somebody else — False, not a malformed tool result.
+        {"type": "conversation.item.create", "item": {"type": "message"}},
+        {"type": "conversation.item.create", "item": "not-an-object"},
+        {"type": "conversation.item.create"},
+    ],
+)
+def test_is_function_call_output_answers_false_rather_than_raising(payload: object) -> None:
+    assert W.is_function_call_output(payload) is False
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"type": "session.update", "session": {"tools": []}},
+        {
+            "type": "conversation.item.create",
+            "item": {"type": "function_call_output", "call_id": "c1", "output": "ok"},
+        },
+    ],
+)
+def test_the_new_control_events_stay_ignored_by_the_codec(event: dict) -> None:
+    # decide_inbound_message is deliberately unchanged: "well-formed, not
+    # audio" is the only thing a codec can honestly say about them, and the
+    # payload comes back so the caller parses the frame once.
+    decision = decide_inbound_message({"type": "websocket.receive", "text": json.dumps(event)})
+
+    assert decision.kind is InboundKind.IGNORED
+    assert decision.payload == event
+    assert decision.audio is None
+    assert decision.error is None

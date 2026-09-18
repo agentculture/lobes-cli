@@ -1,0 +1,137 @@
+hebrew-realtime — voice-lane bring-up (deviation d1): Gemma 4 12B senses, LOCAL on the Spark
+Box: DGX Spark GB10      Date: 2026-09-18      vLLM 0.23.1rc1.dev672+g93d8f834d (lobes/vllm-gemma4:local)
+
+DEPLOYMENT CHANGE (~/.lobes, backed up first — see 2026-09-hebrew-realtime-spike-spark.txt)
+  .env: MULTIMODAL_MODEL/SERVED_NAME -> coolthor/gemma-4-12B-it-NVFP4A16 (was the Orin mirror id),
+        MULTIMODAL_FEASIBLE=true ; docker-compose.shape.yml: vllm-multimodal un-dropped.
+  lobes-compose.sh --apply up -d --no-deps vllm-multimodal ; then ... gateway
+
+BOOT (first try, healthy after ~230 s, 0 restarts)
+  gpu_memory_utilization 0.14, max_model_len 32768, quantization compressed-tensors
+  tool_call_parser gemma4 + reasoning_parser gemma4 ; MTP draft google/gemma-4-12B-it-assistant (n=1)
+  Model loading took 9.25 GiB ; Available KV cache 3.48 GiB = 72,263 tokens = 2.21x at 32,768
+  GET /capabilities: senses feasible:true ready:true context 32768 mtp:true
+
+FINDING — the gateway shed EVERY senses request 429 "under pressure"
+  lobes status --pressure: mode busy, swap 21.9%, iowait 85-91% (threshold 50).
+  The iowait reading is an accounting artifact on this box, not load:
+    /proc/pressure/io  some avg300=98.84  full avg300=91.84  total=614,904 s  (~= the 7d06h uptime)
+    vmstat: b=54 but bi/bo ~0 ; no thread in D state (ps -eLo state) ; load average 0.61
+  ~/.lobes/.env's own comment documents the remedy (LOBES_IOWAIT_DEGRADED_THRESHOLD=100, swap guard
+  stays armed). NOT APPLIED: the change was blocked by the session's permission policy (shared safety
+  config) and is left to the operator. Until then model=multimodal through this gateway 429s.
+  It went unnoticed because the Spark hosted no LOCAL full-tier lane for weeks (proxied roles are
+  not shed locally).
+
+MEASUREMENT — direct on the lane (docker exec, localhost:8000), enable_thinking:false, temp 0.2
+  Hebrew system prompt: short spoken answers. e2e = wall incl. prefill, single stream, MTP on.
+  warmup   0.63 s  20 tok  31.7 tok/s
+  H1       1.87 s  61 tok  32.7 tok/s   'מחשב נייד הוא מכשש נייד שניתן לסחוב ולעבוד איתו בכל מקום. מחשב שולחני הוא מכשש גדול יותר שנועד לעבוד בתוך שולחן ואינו נייד.'
+  H2       1.43 s  47 tok  32.8 tok/s   'כדאי לטייל בחוף הים או לחוות בבוקרים בתוך העיר. אפשר גם לסיים בבילוי רגוע בבית קפה בחוף הים.'
+  H3 tool  0.61 s  22 tok  36.2 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]  content=None
+  H4 result 1.51 s 57 tok  37.8 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5 (tools declared, none needed; "מה בירת צרפת?")
+           1.22 s  39 tok  31.8 tok/s   'צרפת היא מדינה באירופה הממוקדת בצרפתית. היא ידועה בתרבותה העשירה ובמטאה שלה בפריזים.'
+  H6 long  9.21 s 300 tok  32.6 tok/s   (paragraph on Jerusalem; contains 'ביותרות', 'פולחה ופולחא', 'סטורית',
+                                         'חורבןים', 'נשתה', 'הנצרנות', 'יום יודיים')
+  No reasoning leaked in any reply.
+
+WHAT THIS SHOWS
+  + Tool calling works on the 12B with the gemma4 parser PAIR: a clean structured call and a correct
+    tool-result turn — the first live check of that pair on a 12B lane (n=1 each; not a validation, #108).
+  + Speed is fine for voice: ~32-38 tok/s, a 60-token reply in under 2 s, no cross-box hop.
+  - Hebrew output contains OBJECTIVE orthographic errors, independent of any fluency judgement:
+    a final-form letter mid-word ('חורבןים'), non-words ('מכשש' x2, 'ביותרות', 'סטורית'), and H5 never
+    names Paris. The same prompts to associate earlier today produced none of these (its one flaw was a
+    wrong word choice). Whether this is the model or the NVFP4A16 export is unknown — google/gemma-4-12B-it
+    (bf16) is in the HF cache and would separate the two.
+  The fluency verdict is the operator's (lapse l2: the agent does not grade Hebrew).
+
+OPERATOR VERDICT (2026-09-18, on the NVFP4A16 outputs above): "the discrepancies are not major and not
+blockers for us."
+
+ARM (a) — is it the model or the export?  google/gemma-4-12B-it bf16, SAME image, SAME prompts
+  Scratch container (docker run, --memory 60g, HF_HUB_OFFLINE=1), util 0.30, max_model_len 8192, NO MTP,
+  beside the live lane; removed afterwards. Model loading took 22.83 GiB; KV 100,151 tokens.
+  warmup   2.75 s  13 tok   4.7 tok/s   'שלום רב איך אני יכול לעזור לך היום.'
+  H1       6.47 s  48 tok   7.4 tok/s   'מחשב נייד הוא נייד ונוח לנשיאה בעוד מחשב שולחני הוא קבוע אך לרוב חזק ובעל יכולות שדרוג גבוהות יותר.'
+  H2       7.64 s  58 tok   7.6 tok/s   'כדאי לטייל ברחוב דיזנגוף או בנמל תל אביב ולשתות קפה בבית קפה מקומי. אפשר גם ליהנות מסיבוב בשוק הפשפשים או באזור המדרחוב.'
+  H3 tool  3.09 s  22 tok   7.1 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 7.64 s 57 tok   7.5 tok/s   'בתיקייה יש את הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       1.59 s  11 tok   6.9 tok/s   'בירת צרפת היא פריז.'
+  H6 long 37.99 s 291 tok   7.7 tok/s   (paragraph on Jerusalem — no malformed words of the kind seen above)
+
+  RESULT: the orthographic damage is the coolthor NVFP4A16 EXPORT, not Gemma 4 12B. bf16 answers H5
+  correctly and produces none of the non-words. But bf16 decodes at ~7.5 tok/s (bandwidth-bound, 22.8 GiB
+  read per token, no draft) vs ~33 tok/s for the 4-bit export with MTP — a 60-token reply takes ~8 s,
+  too slow for voice. Same prompts, n=1 per prompt per arm, temp 0.2: a comparison, not a benchmark.
+  Tool calling is equally clean on both arms.
+  Open: a quality-preserving 4-bit 12B (e.g. the QAT export unsloth/gemma-4-12B-it-qat-w4a16 the Orin
+  served, #176) is the obvious third arm; the 26B-A4B (deviation d2) is next.
+
+GATEWAY PRESSURE — RESOLVED (operator-approved 2026-09-18)
+  ~/.lobes/.env LOBES_IOWAIT_DEGRADED_THRESHOLD 50 -> 100 (backup .env.bak-*-pre-iowait-100), gateway
+  recreated with --no-deps. lobes status --pressure: mode warm (iowait still reads 91.6%; swap guard 75
+  still armed). model=multimodal through the gateway: HTTP 200.
+
+ARM — NVFP4 12B as the speculative DRAFT for the bf16 12B (operator idea: "NVFP4 for speed, BF16 for fixes")
+  vllm serve google/gemma-4-12B-it --speculative-config {"method":"draft_model",
+    "model":"coolthor/gemma-4-12B-it-NVFP4A16","num_speculative_tokens":5}
+  REFUSED at engine init on vLLM 0.23.1rc1.dev672:
+    AssertionError: All drafting layers should belong to the same kv cache group
+    (vllm/v1/spec_decode/llm_base_proposer.py:1621 validate_same_kv_cache_group)
+  Gemma 4 mixes sliding-window and global attention layers, i.e. more than one KV-cache group, which this
+  build's draft-model proposer does not support. Not a budget problem; no throughput was measured.
+  (Arithmetic ceiling had it booted: ~11 tok/s — each verify step still reads the bf16's 22.8 GiB.)
+
+ARM — google/gemma-4-12B-it-qat-w4a16-ct (Google's QAT 4-bit export), SAME lane flags incl. MTP n=1
+  Scratch container, util 0.14, max_model_len 32768. Model loading took 9.07 GiB; KV 81,099 tokens.
+  warmup   1.22 s  14 tok  11.5 tok/s   'שלום רב. איך אני יכול לעזור לך היום?'
+  H1       2.68 s  92 tok  34.4 tok/s   'מחשב נייד הוא מכשיר נייד הכולל מסך ומקלדת מובנים, בעוד מחשב שולחני הוא מכשיר קבוע המורכב מחלקים נפרדים. המחשב השולחני לרוב חזק יותר וגמיש יותר לשדרוג, אך המחשב הנייד נוח יותר לשימוש בתנועה.'
+  H2       1.73 s  50 tok  28.8 tok/s   'כדאי לטייל בחוף הים או לסעור בבוקר בנמל תל אביב. אפשר גם ללכת לבית קפה באזור השוק או בשיכון אשדוד.'
+  H3 tool  0.60 s  22 tok  36.7 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 1.54 s 57 tok  37.0 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       0.39 s  11 tok  27.9 tok/s   'בירת צרפת היא פריז.'
+  H6 long  8.96 s 271 tok  30.3 tok/s   (Jerusalem paragraph; two script-mixing glitches: 'היסטורيتها' carries
+                                         Arabic letters, 'המוסlimים' carries Latin letters)
+  RESULT: same speed and footprint as the coolthor NVFP4A16 export, none of its non-words, H5 answered
+  correctly. Not flawless (script-mixing inside two words in a 271-token reply). n=1 per prompt.
+
+SUMMARY TABLE (same 7 prompts, temp 0.2, thinking off, single stream)
+  export                         weights   decode      H5 "capital of France"   malformed Hebrew words
+  coolthor NVFP4A16 + MTP         9.25 GiB  ~33 tok/s   never says Paris         many ('מכשש','חורבןים',...)
+  google bf16 (no draft)         22.83 GiB  ~7.5 tok/s  'בירת צרפת היא פריז.'    none seen
+  google QAT w4a16-ct + MTP       9.07 GiB  ~30-37      'בירת צרפת היא פריז.'    2 script-mix glitches in H6
+  Tool call + tool-result turn: correct on all three.
+
+LIVE LANE SWITCHED to google/gemma-4-12B-it-qat-w4a16-ct (2026-09-18; .env.bak-*-pre-qat12b)
+  lane healthy after ~240 s, 0 restarts; through the gateway model=multimodal -> 'בירת צרפת היא פריז.'
+
+ARM (b), deviation d2 — nvidia/Gemma-4-26B-A4B-NVFP4 (MoE, ~4B active) + MTP draft google/gemma-4-26B-A4B-it-assistant (n=1)
+  Scratch container beside the live lane, SAME image/parsers, util 0.28, max_model_len 32768. Booted first try
+  (healthy ~270 s). Model loading took 18.94 GiB; KV 535,046 tokens. Removed afterwards.
+  warmup   1.08 s  12 tok  11.1 tok/s   'שלום! איך אני יכול לעזור לך היום?'
+  H1       1.58 s  61 tok  38.5 tok/s   'מחשב נייד הוא קומפקטי וכולל מסך ומקלדת מובנים לניידות, בעוד מחשב שולחני מורכב מיחידות נפרדות ומתאים יותר לעבודה קבועה ועוצמתית.'
+  H2       1.95 s  62 tok  31.8 tok/s   'מומלץ לטייל בשוק הכרמל או לנצל את הבוקר בטיול רגוע לאורך הטיילת מול הים. תוכלו גם ליהנות מקפה טוב באחת מבתי הקפה הציפיות בשכונת פיתחו.'
+  H3 tool  0.47 s  18 tok  38.5 tok/s   tool_calls=[list_directory {"path": "/home/spark"}]
+  H4 result 1.28 s 57 tok  44.4 tok/s   'בתיקייה ישנם הקבצים 2026-09-18-hebrew-realtime.md, 2026-07-15-challenge-skill.md ו-README.md.'
+  H5       0.31 s  11 tok  35.0 tok/s   'בירת צרפת היא פריז.'
+  H6 long  8.33 s 300 tok  36.0 tok/s   (Jerusalem paragraph; no script mixing; odd words seen: 'רוביות', 'הציפיות בשכונת פיתחו')
+  SpecDecoding metrics (whole run): mean acceptance length 1.58, per-position acceptance 0.585.
+  RESULT: as fast as or faster than the 12B (32-44 tok/s vs 30-37), correct tool call and tool-result turn,
+  visibly fewer Hebrew defects than either 4-bit 12B. Costs ~10 GiB more weights. n=1 per prompt — a
+  comparison, not a benchmark; the fluency verdict is the operator's. The 31B arm was NOT run.
+
+LIVE LANE PROMOTED to nvidia/Gemma-4-26B-A4B-NVFP4 (operator-approved 2026-09-18; .env.bak-*-pre-gemma26b)
+  .env: MULTIMODAL_MODEL/SERVED_NAME, MULTIMODAL_QUANTIZATION=modelopt, MULTIMODAL_GPU_MEM_UTIL=0.28,
+        MULTIMODAL_SPECULATIVE_CONFIG -> mtp draft google/gemma-4-26B-A4B-it-assistant (n=1).
+  lobes-compose.sh --apply up -d --no-deps vllm-multimodal : healthy after ~310 s, 0 restarts.
+  Model loading took 18.94 GiB ; GPU KV cache 515,376 tokens = 15.73x at 32,768.
+  Through the gateway (model=multimodal):
+    'שלום' -> 'שלום! איך אני יכול לעזור לך היום?'
+    'מה בירת צרפת?' -> 'בירת צרפת היא פריז.'                      0.28 s, 11 tok
+    'אילו קבצים יש בתיקייה /home/spark ?' + 1 tool -> list_directory {"path": "/home/spark"}   0.42 s, 18 tok
+  free -g after: used 58 / 121, available 62.
+  ADVERT GAP: GET /capabilities reports senses quant 'compressed-tensors' while the lane serves
+  modelopt NVFP4 — the quant field is not read from the deployment's declaration.
+  The 31B arm is dropped by operator decision ("No need for 31B").

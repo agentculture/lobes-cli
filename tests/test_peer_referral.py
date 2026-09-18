@@ -39,7 +39,6 @@ var:
 
 from __future__ import annotations
 
-import dataclasses
 import json
 
 from lobes.gateway import server as S
@@ -47,6 +46,7 @@ from lobes.gateway._config import build_config
 from lobes.gateway._mesh_routing import build_snapshot
 from lobes.gateway._mesh_wire import Fingerprint, RoleInfo
 from lobes.gateway._routing import list_models_payload
+from lobes.roles import role_payload  # noqa: E402,I001 - the shared advert serializer (d3)
 from lobes.roles import ROLES, annotate_peer_referrals, build_role_registry
 
 _CORTEX_ID = "sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP"
@@ -317,7 +317,7 @@ def test_annotate_peer_referrals_stays_a_no_op_with_an_always_empty_table() -> N
     env = _spark_lobe_env()
     table, cfg = build_config(env)
     registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
+    payload = {role: role_payload(registry[role]) for role in ROLES}
     annotate_peer_referrals(payload, table)
     for role in ROLES:
         assert "hosted_by" not in payload[role], role
@@ -333,7 +333,7 @@ def test_capabilities_bytes_identical_without_mesh_or_peer_config() -> None:
     env = _spark_lobe_env()
     table, cfg = build_config(env)
     registry = build_role_registry(table, cfg, env=env, gateway_url=_GATEWAY_URL)
-    expected = json.dumps({role: dataclasses.asdict(registry[role]) for role in ROLES})
+    expected = json.dumps({role: role_payload(registry[role]) for role in ROLES})
     got = json.dumps(S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL))
     assert got == expected
     assert "hosted_by" not in got

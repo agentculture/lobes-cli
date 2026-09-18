@@ -136,7 +136,28 @@ function summarizeConfig(config: unknown): string {
   const rate = config.input_sample_rate ?? "?";
   const aec = config.aec_mode ?? "?";
   const turnDetection = config.turn_detection ?? "?";
-  return `${rate}Hz, turn_detection=${turnDetection}, aec_mode=${aec}`;
+  const language = typeof config.language === "string" ? config.language : "en (default)";
+  return `${rate}Hz, turn_detection=${turnDetection}, aec_mode=${aec}, language=${language}`;
+}
+
+/**
+ * `response.done.timings` — additive and optional (see `_session.py`'s
+ * `StageTimings`). Renders ONLY the stages present, in pipeline order, never
+ * inventing a zero for one that was not measured. Tolerates an unknown extra
+ * key (a future streaming change) by appending it after the known ones
+ * rather than dropping it.
+ */
+function summarizeTimings(timings: unknown): string {
+  if (!isRecord(timings)) return "";
+  const known = ["stt", "generate", "tool_wait", "phonikud", "tts", "first_delta"] as const;
+  const parts: string[] = [];
+  for (const key of known) {
+    if (key in timings) parts.push(`${key}=${timings[key]}ms`);
+  }
+  for (const [key, value] of Object.entries(timings)) {
+    if (!(known as readonly string[]).includes(key)) parts.push(`${key}=${String(value)}ms`);
+  }
+  return parts.length > 0 ? ` timings: ${parts.join(", ")}` : "";
 }
 
 interface ClassifyContext {
@@ -289,7 +310,7 @@ function classifyEvent(raw: RawEvent, ctx: ClassifyContext): Classified {
         icon: meta.icon,
         label: meta.label,
         timeText: formatElapsed(raw, ctx.sessionStartMs),
-        detailText: `response_id=${raw.response_id ?? "?"}`,
+        detailText: `response_id=${raw.response_id ?? "?"}${summarizeTimings(raw.timings)}`,
       };
     case "response.interrupted":
       return {
@@ -298,6 +319,34 @@ function classifyEvent(raw: RawEvent, ctx: ClassifyContext): Classified {
         label: meta.label,
         timeText: formatElapsed(raw, ctx.sessionStartMs),
         detailText: `response_id=${raw.response_id ?? "?"} truncated=${raw.truncated ?? true}`,
+      };
+    case "session.updated": {
+      const session = isRecord(raw.session) ? raw.session : {};
+      const tools = Array.isArray(session.tools) ? session.tools : [];
+      const toolNames = tools
+        .map((tool) => (isRecord(tool) && typeof tool.name === "string" ? tool.name : "?"))
+        .join(", ");
+      const parts = Object.keys(session);
+      return {
+        family: meta.family,
+        icon: meta.icon,
+        label: meta.label,
+        timeText: formatElapsed(raw, ctx.sessionStartMs),
+        detailText:
+          parts.length === 0
+            ? "no field took effect (an update with only unsupported keys)"
+            : `fields=${parts.join(",")}${toolNames ? ` tools=[${toolNames}]` : ""}`,
+      };
+    }
+    case "response.function_call_arguments.done":
+      return {
+        family: meta.family,
+        icon: meta.icon,
+        label: `tool call: ${typeof raw.name === "string" ? raw.name : "?"}`,
+        timeText: formatElapsed(raw, ctx.sessionStartMs),
+        detailText: `call_id=${raw.call_id ?? "?"} args=${truncate(
+          typeof raw.arguments === "string" ? raw.arguments : "{}"
+        )}`,
       };
     default:
       // Exhaustiveness guard — every EventType above has its own case, so
@@ -376,6 +425,12 @@ export function mountEventStream(root: HTMLElement): EventStreamController {
     const detail = document.createElement("span");
     detail.className = "es-detail";
     detail.textContent = entry.detailText;
+    // Hebrew transcripts/replies live in this same generic detail text (the
+    // log has no per-event-type markup); `dir="auto"` lets the Unicode
+    // Bidi Algorithm pick RTL per-row from the row's own first strong
+    // character, so a Hebrew transcript renders right-to-left and an
+    // English one is untouched — no language flag to thread through here.
+    detail.setAttribute("dir", "auto");
     body.append(detail);
 
     row.append(body);

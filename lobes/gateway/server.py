@@ -55,7 +55,6 @@ always empty in practice; the mechanics below are unchanged and dormant.
 
 from __future__ import annotations
 
-import dataclasses
 import hmac
 import http.client
 import json
@@ -4190,6 +4189,7 @@ def capabilities_payload(
         annotate_peer_referrals,
         annotate_replicas,
         build_role_registry,
+        role_payload,
     )
 
     resolved_env = os.environ if env is None else env
@@ -4221,7 +4221,7 @@ def capabilities_payload(
         peer_ready=peer_ready,
         peer_context=peer_context,
     )
-    payload = {role: dataclasses.asdict(registry[role]) for role in ROLES}
+    payload = {role: role_payload(registry[role]) for role in ROLES}
     # Opt-in honest referral (mesh-brain t3): annotate each unhosted
     # (feasible=false) role with the OPERATOR-DECLARED peer origin that hosts
     # it (table.peer_origins). With no peer config (the default) this is a

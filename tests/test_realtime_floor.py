@@ -22,6 +22,7 @@ import pytest
 import lobes.realtime._floor as _floor
 from lobes.realtime._floor import (
     DEFAULT_BARGE_IN_WINDOW_MS,
+    DEFAULT_TOOL_WAIT_TIMEOUT_MS,
     FailureReason,
     Floor,
     FloorState,
@@ -31,6 +32,7 @@ from lobes.realtime._floor import (
     ResponseInterrupted,
     ResponseStarted,
     Stage,
+    ToolCallRequested,
     estimate_spoken_prefix,
 )
 from lobes.realtime.protocol import BYTES_PER_SAMPLE, TTS_SAMPLE_RATE
@@ -790,3 +792,175 @@ def test_estimate_spoken_prefix_cuts_proportionally_on_a_word_boundary() -> None
 def test_estimate_spoken_prefix_handles_a_zero_length_reply() -> None:
     assert estimate_spoken_prefix("", 0, 0) == ""
     assert estimate_spoken_prefix("something", 5, 0) == "something"
+
+
+# --- tool-call wait (issue #151 t6) -------------------------------------------
+
+
+def drive_to_tool_wait(floor: Floor, clock: FakeClock) -> None:
+    """Walk the floor to RESPONDING and have it receive a tool call."""
+    assert floor.on_turn_committed() is True
+    clock.advance(DEFAULT_BARGE_IN_WINDOW_MS)  # leave the guard window
+    assert floor.on_transcript("what's the weather in tel aviv") is True
+    assert (
+        floor.on_tool_call(call_id="call_1", name="get_weather", arguments='{"city": "Tel Aviv"}')
+        is True
+    )
+
+
+def test_a_tool_call_moves_responding_to_the_tool_wait_state_and_arms_no_tts_deadline() -> None:
+    floor, rec, clock = make_floor()
+    drive_to_tool_wait(floor, clock)
+
+    assert floor.state is FloorState.TOOL_WAIT
+    assert floor.machine_holds_floor is True
+    assert floor.armed_stage is Stage.TOOL  # never Stage.TTS
+    call = rec.of_type(ToolCallRequested)[0]
+    assert (call.call_id, call.name, call.arguments) == (
+        "call_1",
+        "get_weather",
+        '{"city": "Tel Aviv"}',
+    )
+
+
+def test_a_tool_call_is_only_accepted_from_responding() -> None:
+    floor, rec, _ = make_floor()
+    # Nothing is in flight yet — a tool call cannot arrive out of nowhere.
+    assert floor.on_tool_call(call_id="c", name="n", arguments="{}") is False
+    assert floor.state is FloorState.LISTENING
+    assert rec.of_type(ToolCallRequested) == []
+
+
+def test_a_tool_result_returns_the_floor_to_responding_and_rearms_the_generate_deadline() -> None:
+    floor, rec, clock = make_floor(generate_timeout_ms=5_000)
+    drive_to_tool_wait(floor, clock)
+    clock.advance(1_000)
+
+    assert floor.on_tool_result() is True
+    assert floor.state is FloorState.RESPONDING
+    assert floor.armed_stage is Stage.GENERATE
+    assert floor.deadline_ms == floor.stage_started_ms + 5_000
+
+
+@pytest.mark.parametrize(
+    "position",
+    ("listening", "transcribing", "responding", "synthesizing", "delivering", "closed"),
+)
+def test_a_tool_result_outside_the_tool_wait_state_is_refused_without_changing_state(
+    position: str,
+) -> None:
+    floor, rec, clock = make_floor()
+    if position == "closed":
+        floor.close()
+    elif position != "listening":
+        drive_to(floor, clock, position)
+    state_before = floor.state
+    events_before = list(rec.events)
+
+    assert floor.on_tool_result() is False
+    assert floor.state is state_before
+    assert rec.events == events_before  # refused silently, no spurious transition
+
+
+def test_speech_onset_during_tool_wait_interrupts_with_stage_tool() -> None:
+    floor, rec, clock = make_floor()
+    drive_to_tool_wait(floor, clock)
+
+    assert floor.on_speech_started() is True
+    assert floor.state is FloorState.LISTENING
+    interruption = rec.of_type(ResponseInterrupted)[0]
+    assert interruption.stage is Stage.TOOL
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
+
+
+def test_a_committed_turn_also_interrupts_from_tool_wait() -> None:
+    floor, rec, clock = make_floor()
+    drive_to_tool_wait(floor, clock)
+    first_turn = floor.turn_id
+
+    assert floor.on_turn_committed() is True
+    assert len(rec.of_type(ResponseInterrupted)) == 1
+    assert floor.state is FloorState.TRANSCRIBING
+    assert floor.turn_id != first_turn
+
+
+def test_close_is_safe_from_tool_wait() -> None:
+    floor, rec, clock = make_floor()
+    drive_to_tool_wait(floor, clock)
+
+    floor.close()
+    assert floor.state is FloorState.CLOSED
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
+    assert rec.of_type(ResponseInterrupted) == []  # the session layer owns close events
+
+
+def test_tool_wait_timeout_returns_the_floor_to_listening_with_a_named_failure() -> None:
+    bound = 4_000
+    floor, rec, clock = make_floor(tool_wait_timeout_ms=bound)
+    drive_to_tool_wait(floor, clock)
+    assert floor.deadline_ms == floor.stage_started_ms + bound
+
+    clock.now_ms = floor.deadline_ms - 1
+    assert floor.tick() is False  # not yet
+    assert floor.state is FloorState.TOOL_WAIT
+
+    clock.advance(1)
+    assert floor.tick() is True
+    assert floor.state is FloorState.LISTENING
+
+    failed = rec.of_type(ResponseFailed)[0]
+    assert failed.stage is Stage.TOOL
+    assert failed.reason is FailureReason.TOOL_WAIT_TIMEOUT
+    assert str(bound) in failed.message
+    assert rec.cancelled_generate == 1
+    assert rec.cancelled_tts == 1
+
+
+def test_tool_wait_timeout_does_not_re_expire() -> None:
+    floor, rec, clock = make_floor(tool_wait_timeout_ms=1_000)
+    drive_to_tool_wait(floor, clock)
+    clock.advance(10_000)
+
+    assert floor.tick() is True
+    assert floor.tick() is False  # disarmed with the transition
+    assert len(rec.of_type(ResponseFailed)) == 1
+
+
+def test_tool_wait_timeout_default_is_120_seconds() -> None:
+    assert DEFAULT_TOOL_WAIT_TIMEOUT_MS == 120_000
+    floor, _, clock = make_floor()
+    drive_to_tool_wait(floor, clock)
+    assert floor.deadline_ms == floor.stage_started_ms + DEFAULT_TOOL_WAIT_TIMEOUT_MS
+
+
+def test_a_stale_tool_result_for_an_abandoned_turn_is_ignored() -> None:
+    floor, rec, clock = make_floor(tool_wait_timeout_ms=1_000)
+    drive_to_tool_wait(floor, clock)
+    stale_turn = floor.turn_id
+    clock.advance(1_000)
+    floor.tick()  # the tool wait expired; the floor moved on
+    assert floor.state is FloorState.LISTENING
+
+    assert floor.on_tool_result(turn_id=stale_turn) is False
+    assert floor.state is FloorState.LISTENING
+
+
+def test_a_stale_tool_call_never_lands_on_a_later_turn() -> None:
+    floor, rec, clock = make_floor(generate_timeout_ms=1_000)
+    floor.on_turn_committed()
+    clock.advance(DEFAULT_BARGE_IN_WINDOW_MS)
+    floor.on_transcript("first question")
+    turn_one = floor.turn_id
+    clock.advance(1_000)
+    floor.tick()  # turn 1's generate timed out
+
+    floor.on_turn_committed()  # turn 2 opens
+    clock.advance(DEFAULT_BARGE_IN_WINDOW_MS)
+    floor.on_transcript("second question")
+    assert floor.state is FloorState.RESPONDING
+
+    assert floor.on_tool_call(call_id="stale", name="n", arguments="{}", turn_id=turn_one) is False
+    assert floor.state is FloorState.RESPONDING
+    assert rec.of_type(ToolCallRequested) == []

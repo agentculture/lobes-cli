@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.81.0] - 2026-09-18
+
+### Added
+
+- Hebrew realtime overlay: `lobes init --fleet --audio --audio-lang he` layers `docker-compose.audio-he.yml` on the audio overlay (ivrit-ai Whisper turbo STT on transformers with an avg-logprob hallucination gate; Chatterbox Multilingual TTS with phonikud niqqud and a runaway guard). The English overlay's files are byte-identical without it. `lobes fleet`/`lobes up` include the overlay when present; `lobes doctor` heals it only where it is already scaffolded.
+- Tool calls over `/v1/realtime` (OpenAI Realtime event names): `session.update` tools/`tool_choice` -> `session.updated`, `response.function_call_arguments.done`, `conversation.item.create{function_call_output}`, a `tool_wait` floor state with `TOOL_WAIT_TIMEOUT_MS`. lobes relays and never executes a tool. `response.done` carries per-stage `timings`.
+- Sentence-level streaming of spoken replies (`GENERATE_STREAM`, default ON for every language; `false` is the exact previous path) and `REPLY_FIRST_CLAUSE_MIN_CHARS`.
+- `VAD_MIN_LEVEL_PCT` (default off): an input-level gate — speech whose held PEAK level is below this % of full scale is ignored, so background talk and a TV open no turn and interrupt no reply.
+- Hidden speculation (`VAD_EAGER_MS`, default off): STT -> generate -> TTS start at a provisional pause, are discarded without trace if speech resumes, and are adopted only when the real generate request is byte-identical.
+- Continuation merge (`CONTINUATION_WINDOW_MS`, default off): an early commit is taken back, once per utterance, when the speaker carries on; a finished tool call is held `CONTINUATION_TOOL_HOLD_MS`.
+- BlueTTS CPU Hebrew voice sidecar (`lobes.realtime.bluetts_server`, `Dockerfile.bluetts`, extra `bluetts`) — wired into no compose file and naming no weights repo (the weights declare no licence).
+- `stt`/`tts` adverts honour `STT_MODEL`/`STT_RUNTIME`/`STT_LANGUAGE` and the `TTS_*` equivalents; `language` is absent unless declared (`lobes.roles.role_payload` is now the one advert serializer).
+- `docs/contracts/` for client-facing wire contracts, starting with `realtime-tool-calling.md`; `docs/hebrew-realtime.md`; `scripts/realtime-he-accept.py` acceptance client.
+- Web harness (`site/`): language selector, RTL conversation view, browser-side demo tools, latency table, playback jitter buffer.
+
+### Changed
+
+- Spoken replies are streamed by default on every `/v1/realtime` deployment, English included; `response.text.done` may now arrive after the first `response.audio.delta`.
+- `ConversationBridge.on_speech_started` returns whether the onset was a continuation.
+
+### Fixed
+
+- Re-running `lobes init --audio` no longer appends duplicate audio keys to `.env` (a later blank default used to override an operator's value; pre-existing in the English lane too): only absent keys are appended, existing lines are never rewritten.
+- Requests that declare tools send `parallel_tool_calls: false`, so the session's one-tool-call-per-step contract is real; a backend that still returns several is logged as a warning naming the dropped calls.
+- A streamed tool call with non-string `arguments` is rejected like the non-streamed one.
+- The phonikud vocalization timeout now returns at the deadline (the thread-pool context manager used to wait for the overdue worker), and the diacritizer is built once, off the event loop — the first Hebrew reply no longer freezes every session.
+- The Whisper sidecar refuses an oversized upload (`STT_MAX_UPLOAD_BYTES`, 413) and an over-long clip from the WAV header, before decoding it.
+- `_clean_for_tts` turns an ASCII double quote between Hebrew letters into gershayim instead of dropping it.
+- Web harness status line no longer reads 'waiting for session.created' for the whole session; blank transcripts no longer draw empty bubbles.
+
 ## [0.80.1] - 2026-09-18
 
 ### Added

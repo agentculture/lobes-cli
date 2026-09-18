@@ -1,0 +1,28 @@
+hebrew-realtime — VAD comparison: Silero (what lobes/realtime already runs) vs PulseVAD (operator suggestion)
+Box: DGX Spark GB10    Date: 2026-09-18    Both at threshold 0.5, 16 kHz mono, get_speech_timestamps over whole clips.
+PulseVAD: pip `pulsevad` 0.1.3 (MIT, uploaded 2026-09-09, github.com/AydinAdnan/PulseVAD), 2.1k INT8 ONNX, 200 ms windows.
+Silero:   pip `silero-vad` (the engine lobes/realtime/_segmenter.py is fed by), 32 ms windows.
+Scratch container, removed afterwards. Audio = the operator's recordings from the STT spike (not in the repo).
+
+clip (9.3-9.4 s)                                       silero                  pulsevad
+near-silent, reSpeaker ch1 (Whisper -> 'תודה רבה')      2 seg  0.8 s  256 ms    2 seg  0.4 s  58 ms
+near-silent, Reachy mic                                0 seg  0.0 s  184 ms    3 seg  0.7 s  47 ms
+'silence' slot, room not silent, reSpeaker ch1         0 seg  0.0 s  240 ms    5 seg  1.9 s  45 ms
+'silence' slot, room not silent, Reachy mic            0 seg  0.0 s  211 ms    4 seg  2.3 s  42 ms
+speech: sentence 2                                     2 seg  2.8 s  201 ms    3 seg  3.3 s  55 ms
+speech: sentence 8                                     5 seg  4.5 s  222 ms    7 seg  5.3 s  48 ms
+speech + bystander: sentence 4                         1 seg  2.9 s  213 ms    4 seg  3.3 s  49 ms
+speech: sentence 11 retake                             4 seg  6.5 s  263 ms    4 seg  6.1 s  43 ms
+(ms = wall time to scan the whole clip on CPU inside the container)
+
+READING
+  - On the four NON-speech clips Silero rejected three outright; PulseVAD flagged speech in all four. That is the
+    direction PulseVAD's own README reports (noise-only false-alarm rate 6.3% vs Silero 0.0%; music 33.3% vs 15.7%;
+    mean F1 across noisy domains 90.1 vs 93.6) — it wins on clean-speech F1 (99.3 vs 96.9), size (27 KB) and speed.
+  - For THIS product a false "speech" is the expensive error: the clip reaches Whisper, which hallucinates plain
+    text on non-speech ('תודה רבה'), and with tools declared that is a phantom command. Speed is irrelevant here
+    (~50 vs ~220 ms per 9 s, against 1-2 s of generation), and 200 ms windows would coarsen endpointing/barge-in.
+  - DECISION: keep Silero. PulseVAD stays a candidate only for an on-device (microcontroller) VAD, not this session.
+  - Silero is not a guarantee: one near-silent clip still passed 0.8 s — the very clip Whisper turned into
+    'תודה רבה'. Frame claim c31 (transcript always precedes any tool call) remains the real safeguard.
+  n = 8 clips, one room, one speaker: direction, not a benchmark.

@@ -1,0 +1,58 @@
+# BlueTTS sidecar — the Hebrew voice (hebrew-realtime plan, approved deviation d8).
+#
+# A drop-in for the `chatterbox` service: same internal port, same
+# POST /v1/audio/synthesize contract (raw PCM16 mono 24 kHz). CPU-only —
+# onnxruntime's CPU provider measured 160-325 ms per Hebrew sentence on the
+# DGX Spark (docs/evidence/2026-09-hebrew-tts-ab-spark.txt), so the image needs
+# no CUDA base and the service needs no GPU reservation.
+#
+# WEIGHTS ARE NOT IN THIS IMAGE, and nothing here fetches them. The engine
+# CODE (github.com/maxmelichov/BlueTTS) is MIT and is pinned below by commit;
+# its WEIGHTS repo declared no licence when this was written (2026-09-18), so
+# the operator downloads them deliberately and mounts the directory at
+# BLUETTS_ONNX_DIR (default /models/bluetts/onnx_models). The voice style JSONs
+# and config/tts.json ship inside the MIT code repo and are kept at /opt/bluetts.
+#
+# The Hebrew G2P (RenikudPlus) is fetched by the engine library itself on FIRST
+# use into the HuggingFace cache — mount that cache so it survives a recreate,
+# or point BLUETTS_RENIKUD_PATH at a local file. The sidecar's readiness waits
+# for it (see lobes/realtime/bluetts_server.py).
+FROM python:3.12-slim
+
+ARG MODEL_GEAR_VERSION
+ARG BLUETTS_REF=0e38dbf08ed53f85863d1eab092bd9572c53a503
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        libsndfile1 \
+        libgomp1 \
+        espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /usr/local/bin/uv
+
+# The engine, at a pinned commit, with ITS OWN uv.lock as the dependency set.
+# Not optional: an unpinned resolve picked renikud-plus 0.5.0, which asks the
+# G2P weights repo for a datastore.json that does not exist (404 at warm-up,
+# measured 2026-09-18); the lock holds the 0.3.0 every measurement used. Cloned (not `uv pip install git+...`) because
+# voices/ and config/ live beside the package, not inside it.
+RUN git clone https://github.com/maxmelichov/BlueTTS /opt/bluetts \
+    && git -C /opt/bluetts checkout --detach "${BLUETTS_REF}" \
+    && rm -rf /opt/bluetts/.git /opt/bluetts/training /opt/bluetts/assets \
+    && cd /opt/bluetts \
+    && uv export --frozen --no-dev --no-hashes --no-emit-project -o /tmp/bluetts-requirements.txt \
+    && uv pip install --system --no-cache -r /tmp/bluetts-requirements.txt \
+    && uv pip install --system --no-cache --no-deps /opt/bluetts \
+    && rm -f /tmp/bluetts-requirements.txt
+
+# Dev lane only (mirrors Dockerfile.chatterbox-ml): empty on release deployments.
+ARG LOBES_DEV_INDEX_URL=
+RUN if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        uv pip install --system --no-cache --no-deps \
+            --index-url "${LOBES_DEV_INDEX_URL}" "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && uv pip install --system --no-cache "lobes-cli[bluetts]==${MODEL_GEAR_VERSION}"
+
+EXPOSE 9000
+ENTRYPOINT ["python", "-m", "lobes.realtime.bluetts_server"]

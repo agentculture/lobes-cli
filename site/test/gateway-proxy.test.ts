@@ -85,6 +85,21 @@ describe("buildProxyConfig", () => {
     expect(Object.keys(config)).toContain("/v1/");
   });
 
+  it("declares no rewrite/pathRewrite/ignorePath — the connect query string (language, input_sample_rate, aec_mode, …) rides through untouched", () => {
+    // http-proxy forwards the incoming request's full `url` (path + query)
+    // to `target` verbatim UNLESS one of these options intervenes and
+    // rewrites it. Their absence here — not any code that copies a query
+    // string — is what guarantees a hebrew-realtime connect URL like
+    // `/v1/realtime?input_sample_rate=24000&aec_mode=none&language=he`
+    // reaches the gateway with `language=he` intact.
+    const config = buildProxyConfig({ gatewayUrl: "http://127.0.0.1:8000", apiKey: "k" });
+    for (const entry of Object.values(config)) {
+      expect(entry.rewrite).toBeUndefined();
+      expect((entry as Record<string, unknown>)["pathRewrite"]).toBeUndefined();
+      expect((entry as Record<string, unknown>)["ignorePath"]).toBeUndefined();
+    }
+  });
+
   it("wires BOTH the HTTP and the upgrade hook", () => {
     // Wiring only one is the silent half-failure: the preflight would
     // authenticate and the session would 401, or the reverse.

@@ -6,11 +6,11 @@ optionally triggers a server-side "think" step: history + a system prompt go
 out as one chat/completions request, and the assistant's reply text comes
 back to be spoken. This module owns the SHAPE of that round trip — the
 request body, the request's URL/headers, and how a response (success or
-failure) turns into either a reply string or a named exception. It is a pure,
-stdlib-only module (``dataclasses``, ``json``, ``typing`` only — never
-``httpx``, ``urllib``, or a socket) so it imports and is fully unit-tested
-without the ``[realtime]`` extra, exactly like its siblings
-:mod:`lobes.realtime._segmenter` (VAD state machine) and
+failure) turns into either a reply string, a distinct tool-call result, or a
+named exception. It is a pure, stdlib-only module (``dataclasses``, ``json``,
+``typing`` only — never ``httpx``, ``urllib``, or a socket) so it imports and
+is fully unit-tested without the ``[realtime]`` extra, exactly like its
+siblings :mod:`lobes.realtime._segmenter` (VAD state machine) and
 :mod:`lobes.realtime._settings` (env parsing). The actual HTTP call —
 opening a connection, awaiting a response, retrying on timeout — belongs to
 the route layer (``app.py``, task #151 t6), which is a thin, ``pragma: no
@@ -20,13 +20,46 @@ cover`` shell that calls into this module on both ends: build a
 
 Config values this module needs (model, base URL, API key, max_tokens,
 temperature, system prompt) are all **explicit parameters** — this module
-never imports :mod:`lobes.realtime._settings` or
-:mod:`lobes.realtime._session` and never reads ``os.environ`` itself. The
-caller (task t6, wiring the live :class:`~lobes.realtime._settings.Settings`
-and a :class:`~lobes.realtime._session.Session`'s history) resolves those
-values and passes them through. Conversation history arrives as a plain
+never imports :mod:`lobes.realtime._settings` and never reads ``os.environ``
+itself. The caller (task t6, wiring the live
+:class:`~lobes.realtime._settings.Settings` and a
+:class:`~lobes.realtime._session.Session`'s history) resolves those values
+and passes them through. Conversation history arrives as a plain
 ``list[dict]`` of ``{"role": ..., "content": ...}`` messages — this module
 places no other requirement on where that list came from.
+
+The one exception to "stdlib-only, no sibling imports" is
+:mod:`lobes.realtime._session` itself, for two narrow, `pure` reasons (task
+#151 t5): the canonical :data:`DEFAULT_SYSTEM_PROMPT` text (aliased, not
+duplicated — see "Default system prompt" below) and the FLAT-to-NESTED tool
+translators (:func:`~lobes.realtime._session.realtime_tools_to_chat_completions`,
+:func:`~lobes.realtime._session.realtime_tool_choice_to_chat_completions` —
+see "Tools" below). ``_session`` is itself stdlib-only (no ``httpx``, no
+socket), so this does not pull the ``[realtime]`` extra into this module's
+import graph; it stays fully unit-testable without it.
+
+Default system prompt — the session's copy wins
+--------------------------------------------------------------------------
+This module used to carry its own near-duplicate English prompt text, which
+had already drifted from :mod:`lobes.realtime._session`'s
+``DEFAULT_SYSTEM_PROMPT`` — the copy a live :class:`~lobes.realtime._session.Session`
+actually falls back to. :data:`DEFAULT_SYSTEM_PROMPT` here is now a plain
+alias of that name, not a second copy, so the two can never disagree again.
+
+Tools — FLAT Realtime shape in, NESTED chat-completions shape on the wire
+--------------------------------------------------------------------------
+:func:`build_turn_payload` accepts ``tools`` in the same FLAT
+``{"type": "function", "name", "description", "parameters"}`` shape
+:class:`~lobes.realtime._session.SessionConfig.tools` holds, and nests them
+via :func:`~lobes.realtime._session.realtime_tools_to_chat_completions`
+before they go on the wire — this module is not a second place that shape
+translation is encoded. "The session declared tools" means a non-empty
+``tools`` sequence; ``None`` (not declared) and ``()`` (declared empty) both
+leave the payload BYTE-IDENTICAL to a call with no ``tools=`` argument at
+all — no ``"tools"`` key, no ``"tool_choice"`` key either, even if
+``tool_choice`` was passed. A reply's ``tool_calls`` come back through
+:func:`parse_turn_response` as a distinct :class:`ToolCallResult` — never a
+string, never synthesized as if it were spoken text.
 
 The measured shape this formalizes lives in ``scripts/realtime-voice-loop.py``'s
 ``think()``: ``model="multimodal"`` (the Gemma 4 12B lane — measured ~1s to a
@@ -89,8 +122,12 @@ caller, not here.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
+
+from ._session import DEFAULT_SYSTEM_PROMPT as _SESSION_DEFAULT_SYSTEM_PROMPT
+from ._session import realtime_tool_choice_to_chat_completions, realtime_tools_to_chat_completions
 
 # --- defaults, mirroring scripts/realtime-voice-loop.py's think() ----------
 
@@ -99,12 +136,16 @@ from typing import NoReturn
 DEFAULT_MAX_TOKENS = 160
 DEFAULT_TEMPERATURE = 0.7
 
-DEFAULT_SYSTEM_PROMPT = (
-    "You are the voice of this machine — a DGX Spark running the lobes fleet. "
-    "You are being spoken to out loud and your reply is read back aloud by a "
-    "text-to-speech voice, so answer in one or two short spoken sentences. "
-    "No markdown, no lists, no code blocks, no emoji — just what you would say."
-)
+# Alias, not a second copy (task #151 t5): this module previously carried its
+# own near-duplicate English prompt text, which had already drifted from
+# :data:`lobes.realtime._session.DEFAULT_SYSTEM_PROMPT` (the one a live
+# Session actually falls back to — see that module's own docstring). The
+# session's copy wins; this name stays exported, unchanged in value, so
+# every existing caller/import of ``_turn.DEFAULT_SYSTEM_PROMPT`` (this
+# module's own defaults below, and ``tests/test_realtime_turn.py``) keeps
+# working without having to know the canonical text now lives one module
+# over.
+DEFAULT_SYSTEM_PROMPT = _SESSION_DEFAULT_SYSTEM_PROMPT
 
 _CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 
@@ -119,6 +160,9 @@ def build_turn_payload(
     model: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    tools: Sequence[Mapping[str, object]] | None = None,
+    tool_choice: str | Mapping[str, object] | None = None,
+    stream: bool = False,
 ) -> dict:
     """Assemble the ``/v1/chat/completions`` JSON body for one voice turn.
 
@@ -127,12 +171,43 @@ def build_turn_payload(
     never mutated (the session's history is the caller's to own; this
     function only reads it). No thinking trace: ``chat_template_kwargs``
     always forces ``enable_thinking: False`` — a spoken turn cannot afford
-    the latency of a reasoning trace nobody hears.
+    the latency of a reasoning trace nobody hears (measured honored by
+    ``associate`` with tools on 2026-09-18: tool calling and
+    ``enable_thinking: false`` are not in tension).
 
     ``model`` falsy (``""``, ``None``, or simply omitted) OMITS the
     ``"model"`` key entirely rather than sending an empty string — see the
     module docstring's "Model resolution" section for why, and what that
     means for the caller (the gateway default-routes).
+
+    Declared tools also carry ``"parallel_tool_calls": false`` — the session
+    tracks ONE outstanding call at a time, so asking for one is the honest
+    request. The key rides with ``"tools"`` and only with it: a payload that
+    declares no tools stays byte-identical to one built before this existed.
+
+    ``tools`` is the SAME FLAT Realtime shape
+    :class:`~lobes.realtime._session.SessionConfig.tools` holds
+    (``{"type": "function", "name", "description", "parameters"}``) — this
+    function nests it via
+    :func:`~lobes.realtime._session.realtime_tools_to_chat_completions`
+    before it goes in the payload, so no second place encodes that
+    translation. "Declared" means a non-empty sequence: ``None`` (not
+    declared) and ``()``/``[]`` (declared empty) are both treated as NOT
+    declared — the payload gets no ``"tools"`` key and no ``"tool_choice"``
+    key either, byte-identical to a call that never mentions tools at all,
+    even when a ``tool_choice`` argument was passed alongside them. When
+    tools ARE declared, ``tool_choice`` (if not ``None``) is nested via
+    :func:`~lobes.realtime._session.realtime_tool_choice_to_chat_completions`
+    and included too.
+
+    ``stream`` (approved deviation d7, sentence-level streaming) adds the
+    single ``"stream": true`` key and NOTHING else — no ``stream_options``,
+    which the served build's acceptance for this lane is unverified and which
+    buys nothing here (the bridge reports its own per-stage timings, not the
+    backend's usage block). ``stream=False`` — the default, and what
+    ``GENERATE_STREAM=false`` selects — leaves the payload byte-identical to
+    a call made before streaming existed, so the rollback is exact rather
+    than approximate.
     """
     payload: dict = {}
     if model:
@@ -141,6 +216,16 @@ def build_turn_payload(
     payload["max_tokens"] = max_tokens
     payload["temperature"] = temperature
     payload["chat_template_kwargs"] = {"enable_thinking": False}
+    if tools:
+        payload["tools"] = realtime_tools_to_chat_completions(tools)
+        # One call per model step is the session's bookkeeping contract (one
+        # OutstandingToolCall at a time), so the request says so rather than
+        # letting the backend ask for three and having two silently dropped.
+        payload["parallel_tool_calls"] = False
+        if tool_choice is not None:
+            payload["tool_choice"] = realtime_tool_choice_to_chat_completions(tool_choice)
+    if stream:
+        payload["stream"] = True
     return payload
 
 
@@ -187,6 +272,9 @@ def build_turn_request(
     model: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    tools: Sequence[Mapping[str, object]] | None = None,
+    tool_choice: str | Mapping[str, object] | None = None,
+    stream: bool = False,
 ) -> TurnRequest:
     """Convenience wrapper: the complete :class:`TurnRequest` in one call."""
     return TurnRequest(
@@ -198,6 +286,9 @@ def build_turn_request(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
+            tools=tools,
+            tool_choice=tool_choice,
+            stream=stream,
         ),
     )
 
@@ -241,11 +332,91 @@ class TurnResponseError(TurnRequestError):
     """Any other non-2xx or malformed ``/v1/chat/completions`` response —
     a different 404 (e.g. ``model_not_found``), a 5xx, or a body that is not
     valid JSON / not shaped like a chat/completions response.
+
+    ``hosted_by`` carries the gateway's own peer hint when the error body
+    declared one. The ``503 role_unverified`` shape (the mesh boot window,
+    ``lobes.gateway.server._role_unverified_body``) does exactly that, and
+    before this field a caller could only recover the pending peer's origin
+    by pattern-matching the gateway's English message text. It stays a plain
+    attribute on this generic type rather than a second
+    :class:`RoleInfeasibleError`-style subclass: ``role_unverified`` means
+    "not yet", which a caller handles like any other transient failure, while
+    ``role_infeasible``'s terminal "never" is the one that earns its own
+    type.
     """
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self, message: str, *, status_code: int | None = None, hosted_by: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.hosted_by = hosted_by
+
+
+# --- the tool-call result: a distinct type, never confusable with text -------
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """The generate backend asked the client to run a tool — never text to speak.
+
+    :func:`parse_turn_response` returns this INSTEAD of a ``str`` when
+    ``message.tool_calls`` is present in the reply — a separate dataclass, not
+    a string carrying some sentinel, so a caller cannot accidentally hand this
+    to a TTS stage and speak it: the two return shapes are structurally
+    distinguishable, e.g. ``isinstance(result, ToolCallResult)``.
+
+    ``call_id``, ``name`` and ``arguments`` are the FIRST tool call of the
+    reply, carried through byte-for-byte (``arguments`` stays the raw JSON
+    *string* the backend sent — this module never parses it, exactly like
+    :class:`~lobes.realtime._session.FunctionCallOutput` never parses a
+    client's tool result). A reply's bridge tracks one outstanding call at a
+    time, so only the first is surfaced this way; ``tool_call_count`` is the
+    number of tool calls the reply actually carried (``1`` for the common
+    case) and ``dropped_names`` names the calls beyond the first, so a caller
+    can log "the model asked for N things at once, and these were dropped"
+    without this module surfacing more than one.
+    """
+
+    call_id: str
+    name: str
+    arguments: str
+    tool_call_count: int = 1
+    dropped_names: tuple[str, ...] = ()
+
+
+def assistant_tool_call_message(result: ToolCallResult) -> dict:
+    """The ``{"role": "assistant", ...}`` history entry for a surfaced tool call.
+
+    Chat-completions shape: ``content`` is ``None`` (an assistant turn that
+    calls a tool carries no spoken text) and ``tool_calls`` holds exactly the
+    one call :class:`ToolCallResult` surfaced, with ``arguments`` passed
+    through as the same JSON string — never re-serialized, never
+    re-interpreted.
+    """
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": result.call_id,
+                "type": "function",
+                "function": {"name": result.name, "arguments": result.arguments},
+            }
+        ],
+    }
+
+
+def tool_result_message(call_id: str, content: str) -> dict:
+    """The ``{"role": "tool", ...}`` history entry for a tool's result.
+
+    ``call_id`` is the :class:`ToolCallResult`/``FunctionCallOutput`` handle
+    this result answers; ``content`` is the caller's result text verbatim —
+    this module has no opinion on its shape (a JSON string by convention,
+    same as :class:`~lobes.realtime._session.FunctionCallOutput.output`, but
+    never parsed here).
+    """
+    return {"role": "tool", "tool_call_id": call_id, "content": content}
 
 
 # --- response parsing + failure mapping --------------------------------------
@@ -264,8 +435,8 @@ def _error_object(data: dict | None) -> dict | None:
     return error if isinstance(error, dict) else None
 
 
-def parse_turn_response(status_code: int, body: bytes) -> str:
-    """Turn a ``/v1/chat/completions`` HTTP response into the assistant's reply text.
+def parse_turn_response(status_code: int, body: bytes) -> str | ToolCallResult:
+    """Turn a ``/v1/chat/completions`` HTTP response into a reply or a tool call.
 
     On any non-200 status: raises :class:`RoleInfeasibleError` when the body
     is the gateway's ``role_infeasible`` shape (status 404 AND the error
@@ -276,9 +447,18 @@ def parse_turn_response(status_code: int, body: bytes) -> str:
 
     On status 200: raises :class:`TurnResponseError` if the body is not
     valid JSON or is not shaped like a chat/completions response
-    (``choices[0].message`` missing, or ``content`` present but not a
-    string). A ``null``/absent ``content`` is NOT an error — it returns
-    ``""``, mirroring ``scripts/realtime-voice-loop.py``'s ``think()``
+    (``choices[0].message`` missing, ``content`` present but not a string, or
+    a malformed ``tool_calls``).
+
+    When ``message.tool_calls`` is present and non-empty, returns a
+    :class:`ToolCallResult` for the FIRST call — this is checked BEFORE
+    ``content`` is even looked at, so a reply that carries both (some
+    backends echo empty/partial text alongside a tool call) is never
+    mistaken for text to synthesize.
+
+    Otherwise (no ``tool_calls``): a ``null``/absent ``content`` is NOT an
+    error — it returns ``""``, mirroring
+    ``scripts/realtime-voice-loop.py``'s ``think()``
     (``(msg.get("content") or "").strip()``). Otherwise returns the reply
     text with surrounding whitespace stripped.
     """
@@ -291,7 +471,7 @@ def parse_turn_response(status_code: int, body: bytes) -> str:
         raise TurnResponseError(
             "generate backend returned a non-JSON response", status_code=status_code
         )
-    return _extract_reply_text(data)
+    return _extract_reply(data)
 
 
 def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
@@ -307,18 +487,21 @@ def _raise_for_error_status(status_code: int, data: dict | None) -> NoReturn:
     message = (error.get("message") if error else None) or (
         f"generate backend returned HTTP {status_code}"
     )
+    hosted_by = error.get("hosted_by") if error else None
+    hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
     # A 404 whose error object names role_infeasible means this box does not
     # host the lane — a different fact from "the backend broke", and the one
     # that must carry `hosted_by` so the caller can name the peer instead of
     # silently falling back to another lane.
     if status_code == 404 and "role_infeasible" in (code, kind):
-        hosted_by = error.get("hosted_by") if error else None
-        hosted_by = hosted_by if isinstance(hosted_by, str) and hosted_by else None
         raise RoleInfeasibleError(message, hosted_by=hosted_by)
-    raise TurnResponseError(message, status_code=status_code)
+    # Every OTHER shape keeps the hint too when the gateway sent one — a 503
+    # `role_unverified` names the mesh member that announced the lane, and
+    # that origin is a field here, not something to grep out of the message.
+    raise TurnResponseError(message, status_code=status_code, hosted_by=hosted_by)
 
 
-def _extract_reply_text(data: dict) -> str:
+def _extract_reply(data: dict) -> str | ToolCallResult:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
         raise TurnResponseError("generate response missing 'choices'")
@@ -326,9 +509,256 @@ def _extract_reply_text(data: dict) -> str:
     message = first.get("message") if isinstance(first, dict) else None
     if not isinstance(message, dict):
         raise TurnResponseError("generate response missing choices[0].message")
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        return _extract_tool_call(tool_calls)
     content = message.get("content")
     if content is None:
         return ""
     if not isinstance(content, str):
         raise TurnResponseError("generate response 'content' is not a string")
     return content.strip()
+
+
+def _extract_tool_call(tool_calls: object) -> ToolCallResult:
+    """The FIRST call of ``message.tool_calls``, as a :class:`ToolCallResult`.
+
+    Raises :class:`TurnResponseError` on any shape defect — a tool call this
+    module cannot name (missing ``id``/``function.name``, or a
+    non-string ``arguments``) is a malformed backend response, exactly like a
+    missing ``choices[0].message`` is; it is never silently dropped in favor
+    of falling through to the text path.
+    """
+    if not isinstance(tool_calls, list) or not tool_calls:
+        raise TurnResponseError("generate response 'tool_calls' is not a non-empty list")
+    first = tool_calls[0]
+    if not isinstance(first, dict):
+        raise TurnResponseError("generate response tool_calls[0] is not an object")
+    call_id = first.get("id")
+    if not isinstance(call_id, str) or not call_id:
+        raise TurnResponseError("generate response tool_calls[0] missing 'id'")
+    function = first.get("function")
+    if not isinstance(function, dict):
+        raise TurnResponseError("generate response tool_calls[0] missing 'function'")
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        raise TurnResponseError("generate response tool_calls[0].function missing 'name'")
+    arguments = function.get("arguments")
+    if not isinstance(arguments, str):
+        raise TurnResponseError(
+            "generate response tool_calls[0].function.arguments is not a string"
+        )
+    return ToolCallResult(
+        call_id=call_id,
+        name=name,
+        arguments=arguments,
+        tool_call_count=len(tool_calls),
+        dropped_names=_dropped_call_names(tool_calls[1:]),
+    )
+
+
+_UNNAMED_CALL = "<unnamed>"
+
+
+def _dropped_call_names(calls: Sequence[object]) -> tuple[str, ...]:
+    """The ``function.name`` of each call this module will not surface.
+
+    Only ever used for a log line, so a defect in a call that is being
+    dropped anyway is named ``<unnamed>`` rather than raised: refusing the
+    whole reply because the THIRD call the bridge cannot run is malformed
+    would be worse than answering the first one.
+    """
+    names: list[str] = []
+    for call in calls:
+        function = call.get("function") if isinstance(call, dict) else None
+        name = function.get("name") if isinstance(function, dict) else None
+        names.append(name if isinstance(name, str) and name else _UNNAMED_CALL)
+    return tuple(names)
+
+
+# --- the streamed response: the same result, arriving in pieces --------------
+
+# The SSE field this consumer reads, and the sentinel that closes a stream.
+_SSE_DATA_PREFIX = "data:"
+_SSE_DONE = "[DONE]"
+
+
+@dataclass(frozen=True)
+class StreamItem:
+    """One piece of assistant TEXT, released the moment it arrived.
+
+    Deliberately a wrapper rather than a bare ``str``: a stream also carries
+    tool-call fragments, usage blocks and keep-alives, and a caller that gets
+    a list of these knows that everything in it is speakable text and nothing
+    else. Later kinds (a reasoning trace, say) can join this type without
+    changing :meth:`StreamAccumulator.feed_line`'s signature.
+    """
+
+    text: str
+
+
+class StreamAccumulator:
+    """Consume ``chat.completion.chunk`` SSE lines; end with ONE result.
+
+    The streaming counterpart of :func:`parse_turn_response`, and
+    deliberately its twin: :meth:`result` returns the SAME two shapes with
+    the same precedence (a tool call wins over text; the first call is
+    surfaced with a count; a malformed reply raises
+    :class:`TurnResponseError`), so ``GENERATE_STREAM`` is a transport switch
+    and never a behaviour switch.
+
+    Pure and incremental — it holds no socket, decides nothing about
+    sentences (that is :mod:`lobes.realtime._sentences`) and never blocks.
+    One per generate call.
+
+    Text-then-tool-call
+    -------------------
+    Some backends emit a little text before deciding to call a tool. The
+    moment ANY ``tool_calls`` delta appears this accumulator stops releasing
+    text (:attr:`saw_tool_call`) and :meth:`result` answers with the tool
+    call: a reply the model abandoned must not be spoken as if it were the
+    answer. Text released BEFORE that point has already left this module —
+    cancelling whatever the bridge queued from it is the bridge's job, and it
+    does exactly that.
+
+    Non-200 responses are NOT streams. The route reads such a body whole and
+    hands it to the existing
+    :meth:`~lobes.realtime._conversation.ConversationBridge.on_generate_response`
+    error path, so ``role_infeasible``/429/503 surfacing is untouched by
+    streaming.
+    """
+
+    def __init__(self) -> None:
+        self._text: list[str] = []
+        self._calls: dict[int, dict[str, str]] = {}
+        self._saw_tool_call = False
+        self._done = False
+
+    # -- observation ------------------------------------------------------
+
+    @property
+    def saw_tool_call(self) -> bool:
+        """Has any ``tool_calls`` fragment arrived? Then text stops flowing."""
+        return self._saw_tool_call
+
+    @property
+    def done(self) -> bool:
+        """Did the backend send its ``[DONE]`` sentinel?"""
+        return self._done
+
+    @property
+    def text(self) -> str:
+        """Every text delta seen so far, concatenated and unstripped."""
+        return "".join(self._text)
+
+    # -- inputs -----------------------------------------------------------
+
+    def feed_line(self, line: str | bytes) -> list[StreamItem]:
+        """Consume ONE SSE line; return the text it released (often none).
+
+        Blank lines, ``:`` comments, non-``data:`` fields and the ``[DONE]``
+        sentinel all yield nothing. A ``data:`` line that is not a JSON
+        object raises :class:`TurnResponseError` immediately — the same named
+        failure a malformed non-streamed body raises, surfaced at the line
+        that broke rather than swallowed into a truncated reply.
+        """
+        text = line.decode("utf-8", "replace") if isinstance(line, bytes) else line
+        text = text.strip()
+        if not text or text.startswith(":"):
+            return []
+        if not text.startswith(_SSE_DATA_PREFIX):
+            return []  # `event:`/`id:`/`retry:` — not this consumer's business
+        payload = text[len(_SSE_DATA_PREFIX) :].strip()
+        if not payload:
+            return []
+        if payload == _SSE_DONE:
+            self._done = True
+            return []
+        data = _load_json_object(payload.encode("utf-8"))
+        if data is None:
+            raise TurnResponseError("generate stream sent a non-JSON chunk")
+        return self._consume_chunk(data)
+
+    def result(self) -> str | ToolCallResult:
+        """The finished reply: a tool call if one was seen, else the text."""
+        if self._saw_tool_call:
+            return self._tool_call_result()
+        return self.text.strip()
+
+    # -- internals --------------------------------------------------------
+
+    def _consume_chunk(self, data: dict) -> list[StreamItem]:
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return []  # a usage-only final chunk carries no choices at all
+        first = choices[0]
+        delta = first.get("delta") if isinstance(first, dict) else None
+        if not isinstance(delta, dict):
+            return []
+        tool_calls = delta.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            self._saw_tool_call = True
+            for fragment in tool_calls:
+                self._merge_tool_fragment(fragment)
+        content = delta.get("content")
+        if not isinstance(content, str) or not content or self._saw_tool_call:
+            return []
+        self._text.append(content)
+        return [StreamItem(text=content)]
+
+    def _merge_tool_fragment(self, fragment: object) -> None:
+        """Fold one ``tool_calls`` fragment into its index-keyed accumulator.
+
+        vLLM streams a call in pieces: the id and function name arrive once,
+        the arguments in as many fragments as the JSON takes. ``index`` is
+        what ties them together (and what keeps two parallel calls apart), so
+        a fragment with no index is attributed to call 0 — the only call a
+        single-call reply has.
+
+        An ABSENT ``arguments`` is normal (the first fragment usually carries
+        only id + name, and a no-argument tool never sends one at all); a
+        PRESENT but non-string one is malformed and raises
+        :class:`TurnResponseError`, exactly as
+        :func:`_extract_tool_call` does for the non-streamed reply. Ignoring
+        it would hand the client's tool whatever happened to accumulate.
+        """
+        if not isinstance(fragment, dict):
+            return
+        raw_index = fragment.get("index")
+        index = raw_index if isinstance(raw_index, int) else 0
+        call = self._calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+        call_id = fragment.get("id")
+        if isinstance(call_id, str) and call_id:
+            call["id"] = call_id
+        function = fragment.get("function")
+        if not isinstance(function, dict):
+            return
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            call["name"] = name
+        if "arguments" not in function:
+            return
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            raise TurnResponseError(
+                "generate stream tool call 'function.arguments' is not a string"
+            )
+        call["arguments"] += arguments
+
+    def _tool_call_result(self) -> ToolCallResult:
+        """The FIRST call by index, validated exactly like the non-streamed one."""
+        if not self._calls:
+            raise TurnResponseError("generate stream announced a tool call it never described")
+        index, *dropped = sorted(self._calls)
+        call = self._calls[index]
+        if not call["id"]:
+            raise TurnResponseError("generate stream tool call missing 'id'")
+        if not call["name"]:
+            raise TurnResponseError("generate stream tool call missing 'function.name'")
+        return ToolCallResult(
+            call_id=call["id"],
+            name=call["name"],
+            arguments=call["arguments"],
+            tool_call_count=len(self._calls),
+            dropped_names=tuple(self._calls[i]["name"] or _UNNAMED_CALL for i in dropped),
+        )

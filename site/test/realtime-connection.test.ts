@@ -13,7 +13,7 @@ import type {
   SocketLike,
 } from "../src/scripts/realtime-connection.ts";
 
-const SETTINGS: SessionSettings = { inputSampleRate: 24000, aecMode: "none" };
+const SETTINGS: SessionSettings = { inputSampleRate: 24000, aecMode: "none", language: "he" };
 
 /** A hand-driven stand-in for the browser's WebSocket. */
 class FakeSocket implements SocketLike {
@@ -73,7 +73,9 @@ const states = (notices: ConnectionNotice[]) =>
 describe("resolveSessionUrl", () => {
   it("resolves a path against the page origin and swaps http for ws", () => {
     const url = resolveSessionUrl("/v1/realtime", SETTINGS, "http://localhost:4321/dev-connection");
-    expect(url).toBe("ws://localhost:4321/v1/realtime?input_sample_rate=24000&aec_mode=none");
+    expect(url).toBe(
+      "ws://localhost:4321/v1/realtime?input_sample_rate=24000&aec_mode=none&language=he"
+    );
   });
 
   it("uses wss when the page is served over HTTPS (the mkcert flow)", () => {
@@ -86,11 +88,30 @@ describe("resolveSessionUrl", () => {
   it("carries the chosen sample rate and AEC mode as query params", () => {
     const url = resolveSessionUrl(
       "/v1/realtime",
-      { inputSampleRate: 16000, aecMode: "aec" },
+      { inputSampleRate: 16000, aecMode: "aec", language: "en" },
       "http://localhost:4321/",
     );
     expect(url).toContain("input_sample_rate=16000");
     expect(url).toContain("aec_mode=aec");
+    expect(url).toContain("language=en");
+  });
+
+  it("carries a free-text language code verbatim (parse_language is a shape check, not a registry)", () => {
+    const url = resolveSessionUrl(
+      "/v1/realtime",
+      { inputSampleRate: 24000, aecMode: "none", language: "pt-BR" },
+      "http://localhost:4321/",
+    );
+    expect(url).toContain("language=pt-BR");
+  });
+
+  it("omits the language param entirely when blank — the server's own default applies", () => {
+    const url = resolveSessionUrl(
+      "/v1/realtime",
+      { inputSampleRate: 24000, aecMode: "none", language: "" },
+      "http://localhost:4321/",
+    );
+    expect(url).not.toContain("language");
   });
 
   it("honours an absolute override without rewriting its origin", () => {
@@ -249,5 +270,19 @@ describe("probeGateway", () => {
     expect(probe.reachable).toBe(false);
     expect(probe.authorized).toBeNull();
     expect(probe.detail).toContain("npm run dev");
+  });
+});
+
+describe("the status line after session.created", () => {
+  it("stops saying it is waiting once the session exists", () => {
+    const { connection, sockets, notices } = harness();
+    connection.connect();
+    sockets[0].open();
+    sockets[0].message(JSON.stringify({ type: "session.created", session_id: "sess_abc" }));
+    const details = notices.filter((n) => n.kind === "state").map((n) => n.detail);
+    expect(details.at(-1)).toBe("session sess_abc ready");
+    expect(connection.state).toBe("open");
+    // the event itself still reaches subscribers, after the state notice or before — but once
+    expect(notices.filter((n) => n.kind === "event")).toHaveLength(1);
   });
 });

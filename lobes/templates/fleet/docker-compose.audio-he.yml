@@ -1,0 +1,231 @@
+# lobes FLEET — Hebrew realtime overlay (hebrew-realtime plan, issue #151
+# t8/t10).
+#
+# A THIRD docker-compose layer, on top of the base fleet AND the audio
+# overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.audio.yml \
+#     -f docker-compose.audio-he.yml up -d --build
+#
+# Compose merges a later file's `environment:` list onto the earlier ones BY
+# KEY — this file's `realtime:` block is therefore ADDITIVE/OVERRIDING, never
+# a full service redefinition: every key docker-compose.audio.yml already
+# declares for `realtime` (STT_URL, TTS_URL, OPENAI_BASE_URL, VAD_*, ...)
+# still applies unchanged unless repeated here.
+#
+# t8 wired only the `realtime` service's env — the language, the tool-wait
+# deadline, the voice-lane model default, and the two Hebrew vocalization/
+# debug knobs `tts_client.py`/`_vocalize.py` already read directly from
+# `os.environ` (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT).
+#
+# THIS TASK (t10) adds the Hebrew STT sidecar: the `stt` service's `build:`
+# block is overridden to `Dockerfile.whisper-stt` (an ivrit.ai Whisper
+# large-v3-turbo transformers server — see that Dockerfile's header for why
+# it reuses Dockerfile.parakeet's base image) instead of a full service
+# redefinition — `container_name`/`healthcheck`/`volumes`/`expose`/
+# `PARAKEET_PORT` all stay inherited unchanged from docker-compose.audio.yml
+# (same service name, same internal port, so the realtime bridge's
+# STT_URL=http://stt:${PARAKEET_PORT:-9002} needs no change). It also passes
+# STT_MODEL/STT_RUNTIME/STT_LANGUAGE through to the `gateway` service —
+# approved deviation d3 (hebrew-realtime plan, 2026-09-18) — so
+# `GET /capabilities` can name the engine actually served for the `stt` role
+# (lobes/roles.py's `_declared_audio_engine`, merged task t13) instead of
+# advertising the Parakeet default while a Whisper server actually answers.
+#
+# THIS TASK (t11) adds the Hebrew-capable TTS sidecar: the `chatterbox`
+# service's `build:` block is overridden to `Dockerfile.chatterbox-ml`
+# (Chatterbox MULTILINGUAL — approved deviation d5, operator 2026-09-18; see
+# that Dockerfile's header and lobes/realtime/chatterbox_multilingual_server.py's
+# module docstring for the full engine/diacritization/runaway-guard story)
+# instead of a full service redefinition — `container_name`/`volumes`/
+# `expose`/`CHATTERBOX_PORT`/`deploy`/`ipc` all stay inherited unchanged from
+# docker-compose.audio.yml (same service name, same internal port, so the
+# realtime bridge's TTS_URL=http://chatterbox:${CHATTERBOX_PORT:-9000} needs
+# no change); only `healthcheck.start_period` is raised (cold model load
+# measured ~120s, plus a mandatory warm-up synthesis before /ready reports
+# 200 — see that module's readiness_status()). It also passes
+# TTS_MODEL/TTS_RUNTIME/TTS_LANGUAGE through to the `gateway` service, the
+# same deviation-d3 precedent t10 set for STT_*, so `GET /capabilities` can
+# name the engine actually served for the `tts` role. TTS_MODEL keeps the
+# SAME value as the English default (`ResembleAI/chatterbox`) deliberately —
+# reading the installed package's `chatterbox.mtl_tts.REPO_ID` (2026-09-18)
+# shows the multilingual checkpoint files ship from the SAME HuggingFace
+# repo as the English ones; `TTS_RUNTIME=chatterbox-multilingual` is what
+# actually distinguishes the two in the advert. `realtime`'s Hebrew
+# vocalization knobs (PHONIKUD_MODEL_PATH, TTS_DEBUG_TEXT) were already
+# wired by t8/t9; this task adds the `realtime` service's own HF-cache mount
+# so it can reach the SAME mounted phonikud model file the `chatterbox`
+# sidecar reads (both processes need it: the bridge's own vocalize-before-
+# chunking hook, and this sidecar's TTS_DIACRITIZE=auto fallback path).
+#
+# docker-compose.audio.yml and env.audio.example (the English overlay) stay
+# BYTE-IDENTICAL across this change — a Hebrew deployment is opt-in, layered
+# on top, never a mutation of the English default.
+services:
+  # --- Hebrew STT: ivrit.ai Whisper large-v3-turbo (transformers), not
+  # Parakeet/NeMo. Only `build.dockerfile` and the STT_* environment differ
+  # from docker-compose.audio.yml's `stt` service — everything else
+  # (container_name, healthcheck, volumes, expose, PARAKEET_PORT) is
+  # inherited unchanged via compose's deep merge of mapping keys.
+  stt:
+    build:
+      dockerfile: Dockerfile.whisper-stt
+    environment:
+      # STT_MODEL: the Whisper checkpoint id, read by listen_server_whisper.py
+      # (MODEL_NAME) and by lobes/roles.py's GET /capabilities advertisement
+      # (via the gateway's own copy of this key, below).
+      - STT_MODEL=${STT_MODEL:-ivrit-ai/whisper-large-v3-turbo}
+      # STT_LANGUAGE: the session-default transcription language, read by
+      # listen_server_whisper.py's resolve_language() when the per-request
+      # `language` form field is absent. "he" for a Hebrew deployment.
+      - STT_LANGUAGE=${STT_LANGUAGE:-he}
+      # STT_MIN_AVG_LOGPROB: drop a transcript whose mean token log-probability
+      # is below this (Whisper's plain-text hallucinations on non-speech, e.g.
+      # 'תודה רבה'). Measured 2026-09-18: speech >= -0.12, hallucinations <= -0.58.
+      # `off` disables the gate.
+      - STT_MIN_AVG_LOGPROB=${STT_MIN_AVG_LOGPROB:--0.35}
+      # STT_RUNTIME: informational — names the serving stack for
+      # GET /capabilities; the container fixed on transformers, not a
+      # switchable knob.
+      - STT_RUNTIME=transformers
+
+  # --- Hebrew TTS: Chatterbox MULTILINGUAL (approved deviation d5), not the
+  # English-only ChatterboxTTS. Only `build.dockerfile` and the TTS_*
+  # environment differ from docker-compose.audio.yml's `chatterbox` service —
+  # everything else (container_name, volumes, expose, deploy, ipc,
+  # CHATTERBOX_HOST/CHATTERBOX_PORT) is inherited unchanged via compose's
+  # deep merge of mapping keys; only `healthcheck.start_period` is raised
+  # (compose deep-merges the healthcheck mapping too, so `test`/`interval`/
+  # `timeout`/`retries` stay the English overlay's values — only this one
+  # key differs).
+  chatterbox:
+    build:
+      dockerfile: Dockerfile.chatterbox-ml
+    environment:
+      # TTS_LANGUAGE: the server-side synthesis language (criterion 2) —
+      # read by chatterbox_multilingual_server.py's MlSettings, passed as
+      # ChatterboxMultilingualTTS.generate's language_id. "he" for a Hebrew
+      # deployment; UNSET on the English overlay (docker-compose.audio.yml
+      # never declares this key), so an operator who builds
+      # Dockerfile.chatterbox-ml WITHOUT this overlay still gets Hebrew (the
+      # server's own in-code default), never silent English behaviour.
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-he}
+      # TTS_DIACRITIZE: "auto" (default) lets the sidecar diacritize
+      # undiacritized Hebrew input itself (phonikud) and bypasses
+      # Chatterbox's own internal Hebrew diacritizer so exactly one
+      # authority ever vocalizes a request; "off" disables both. See
+      # chatterbox_multilingual_server.py's module docstring for the full
+      # decision table.
+      - TTS_DIACRITIZE=${TTS_DIACRITIZE:-auto}
+      # TTS_MAX_RETRIES: retries after a runaway synthesis (measured live:
+      # the same 8-word Hebrew sentence once produced 24.5s of audio with
+      # ~35 invented words — docs/evidence/2026-09-hebrew-tts-ab-spark.txt)
+      # before the sidecar truncates instead. 2 retries = up to 3 total
+      # generate() calls per request.
+      - TTS_MAX_RETRIES=${TTS_MAX_RETRIES:-2}
+      # TTS_TEMPERATURE: sampling temperature; 0.3 measured clearest and most
+      # duration-stable for Hebrew on this engine (Chatterbox's own default is 0.8).
+      - TTS_TEMPERATURE=${TTS_TEMPERATURE:-0.3}
+      # PHONIKUD_MODEL_PATH: SAME path/knob the `realtime` service reads
+      # below — this sidecar's own fallback diacritizer when
+      # TTS_DIACRITIZE=auto and the incoming text has no niqqud yet. Points
+      # at the same mounted HF-cache file on both containers.
+      - PHONIKUD_MODEL_PATH=${PHONIKUD_MODEL_PATH:-}
+    healthcheck:
+      # Cold multilingual model load ~120s (measured, docs/evidence/
+      # 2026-09-hebrew-tts-ab-spark.txt) PLUS a mandatory warm-up synthesis
+      # before /v1/health/ready reports 200 (criterion 4) — more generous
+      # than the English overlay's 120s start_period.
+      start_period: 300s
+
+  # --- gateway: advertise the Whisper AND Chatterbox-Multilingual engines
+  # actually served (deviation d3, extended from STT to TTS by this task) --
+  gateway:
+    environment:
+      - STT_MODEL=${STT_MODEL:-ivrit-ai/whisper-large-v3-turbo}
+      - STT_RUNTIME=${STT_RUNTIME:-transformers}
+      - STT_LANGUAGE=${STT_LANGUAGE:-he}
+      # TTS_MODEL keeps the SAME repo id as the English default
+      # (ResembleAI/chatterbox) — the installed package's
+      # chatterbox.mtl_tts.REPO_ID really is that same HuggingFace repo
+      # (confirmed 2026-09-18); TTS_RUNTIME is what actually distinguishes
+      # this deployment's engine in the advert.
+      - TTS_MODEL=${TTS_MODEL:-ResembleAI/chatterbox}
+      - TTS_RUNTIME=${TTS_RUNTIME:-chatterbox-multilingual}
+      - TTS_LANGUAGE=${TTS_LANGUAGE:-he}
+
+  realtime:
+    # The realtime bridge's own vocalize-before-chunking hook
+    # (lobes/realtime/_vocalize.py, task t9) needs to read the SAME
+    # phonikud model file PHONIKUD_MODEL_PATH (below) points at — mount the
+    # same HF-cache directory the `chatterbox`/`stt` sidecars already mount
+    # (docker-compose.audio.yml), which docker-compose.audio.yml's own
+    # `realtime` service does NOT declare (the bridge previously needed no
+    # filesystem access at all).
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      # The session-default STT/generate language (lobes/realtime/_settings.py
+      # Settings.language) — "he" selects the Hebrew default system prompt
+      # (DEFAULT_SYSTEM_PROMPT_HE) whenever DEFAULT_SYSTEM_PROMPT itself is
+      # left unset below.
+      - REALTIME_LANGUAGE=${REALTIME_LANGUAGE:-he}
+      # Tool-call round-trip deadline (ms) — read by _settings.py, consumed by
+      # a later task's floor wiring. 120000 (2 minutes) is more generous than
+      # the English deployment's in-code default (60000) because a tool call
+      # in this plan may itself cross a Hebrew STT/TTS hop.
+      - TOOL_WAIT_TIMEOUT_MS=${TOOL_WAIT_TIMEOUT_MS:-120000}
+      # Approved deviation d1 (hebrew-realtime plan, 2026-09-18): the Hebrew
+      # voice lane is Gemma 4 `senses` (alias `multimodal`), hosted LOCALLY —
+      # NOT `associate`, which the verbatim plan text names. `multimodal` is
+      # also the bridge's own hardcoded voice-lane default
+      # (lobes/realtime/_conversation.py's DEFAULT_VOICE_MODEL), so this line
+      # makes that choice explicit for the Hebrew deployment rather than
+      # relying on the empty-string fallback the English overlay uses.
+      - OPENAI_MODEL=${OPENAI_MODEL:-multimodal}
+      # Hebrew vocalization hook (already-merged tts_client.py/_vocalize.py,
+      # hebrew-realtime t9) — read directly via os.environ, not through
+      # _settings.py, so they are wired here rather than as Settings fields.
+      # PHONIKUD_MODEL_PATH: path to the phonikud diacritizer model; empty
+      # disables vocalization (TTS speaks undiacritized Hebrew text).
+      - PHONIKUD_MODEL_PATH=${PHONIKUD_MODEL_PATH:-}
+      # TTS_DEBUG_TEXT: truthy (1/true/yes) logs the vocalized text sent to
+      # TTS, for debugging Hebrew vocalization/gershayim handling; empty/off
+      # in normal operation.
+      - TTS_DEBUG_TEXT=${TTS_DEBUG_TEXT:-}
+      # GENERATE_STREAM: stream the generate call and speak it sentence by
+      # sentence (approved deviation d7, 2026-09-18) instead of waiting for
+      # the whole reply and then the whole synthesis. Default `true` — first
+      # audio then costs one short sentence's synthesis rather than the whole
+      # reply's (MEASURED before this change: 2.6s for a one-sentence reply,
+      # 7.3s for a longer one). Set `false` to fall back to the previous
+      # whole-reply path byte-for-byte. Wired HERE and not in
+      # docker-compose.audio.yml because the English overlay must stay
+      # byte-identical (criterion 2 of the Hebrew overlay).
+      - GENERATE_STREAM=${GENERATE_STREAM:-true}
+      # REPLY_FIRST_CLAUSE_MIN_CHARS: how long the reply's opening clause must
+      # be before a comma may end the FIRST spoken piece (default 24). Lower
+      # means earlier first audio and a shorter first piece.
+      - REPLY_FIRST_CLAUSE_MIN_CHARS=${REPLY_FIRST_CLAUSE_MIN_CHARS:-24}
+      # VAD_EAGER_MS: hidden speculation (approved deviation d9). At this much
+      # provisional silence the bridge starts STT -> generate -> TTS out of
+      # sight; resumed speech discards it without trace, a confirmed end of
+      # turn adopts it. 0 = OFF (default). Costs wasted compute on every
+      # mid-sentence pause. Inert unless below VAD_SILENCE_MS with
+      # GENERATE_STREAM on.
+      - VAD_EAGER_MS=${VAD_EAGER_MS:-0}
+      # VAD_MIN_LEVEL_PCT: ignore quiet voices (background talk, a TV). A chunk
+      # counts as speech only while the held PEAK input level is at least this
+      # % of full scale. 0 = OFF (default). Measured on a reSpeaker: direct
+      # speech peaks 15-55 %, the room floor 1-2 % — start at 3-5. Depends on
+      # the microphone's gain; tune per device.
+      - VAD_MIN_LEVEL_PCT=${VAD_MIN_LEVEL_PCT:-0}
+      # CONTINUATION_WINDOW_MS: continuation merge (deviation d9, layer B). An
+      # onset this soon after a silence commit is the speaker carrying on: the
+      # reply stops, the half-turn leaves history, and both halves are
+      # re-transcribed as ONE turn. This is what makes a short VAD_SILENCE_MS
+      # affordable. 0 = OFF (default).
+      - CONTINUATION_WINDOW_MS=${CONTINUATION_WINDOW_MS:-0}
+      # CONTINUATION_TOOL_HOLD_MS: with the merge on, a finished TOOL CALL is
+      # held this long after the commit (a call the client already has cannot
+      # be taken back; speech can, and is never held).
+      - CONTINUATION_TOOL_HOLD_MS=${CONTINUATION_TOOL_HOLD_MS:-500}

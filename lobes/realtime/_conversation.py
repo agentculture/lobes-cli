@@ -83,6 +83,58 @@ the single :attr:`~lobes.realtime._session.ErrorCode.INVALID_WIRE_EVENT`,
 with the wire reason named in the message text — the same trade the timeouts
 make, and the same one ``invalid_session_config`` has always made.
 
+Tools — one dispatch point, one outstanding call
+-------------------------------------------------
+:meth:`ConversationBridge.on_control_event` is the SINGLE place a non-audio
+client event is acted on. It handles exactly three: ``response.create`` (the
+opt-in above), ``session.update`` (declare/retract tools, tool_choice or the
+language mid-session) and ``conversation.item.create`` carrying a
+``function_call_output`` (a tool result). Everything else stays silently
+ignored, exactly as before.
+
+A tool turn is the ordinary turn with one extra leg. ``app.py`` drives it
+with the SAME four calls it already makes — the difference is only what they
+return:
+
+1. ``take_pending_response()`` → ``build_generate_request(turn_id)`` →
+   POST → :meth:`~ConversationBridge.on_generate_response`. When the reply
+   is a tool call rather than text, the bridge records it, the floor moves to
+   ``tool_wait``, and the client gets ONE
+   ``response.function_call_arguments.done``. Nothing is synthesized, so
+   :meth:`take_pending_synthesis` answers ``None`` — the route must not start
+   TTS. :attr:`~ConversationBridge.awaiting_tool_result` says so explicitly,
+   for a route that would rather ask than infer it from a ``None``.
+2. The client runs the tool and sends ``conversation.item.create``. The
+   bridge records the result in history and waits: NO generate goes out yet,
+   because the conversation surface is opt-in per response (the same rule
+   that makes an ears-only session possible at all).
+3. The client's next ``response.create`` releases the floor's tool wait and
+   sets a pending response for the SAME turn id, so the route's existing
+   poll — ``take_pending_response()`` → ``build_generate_request`` → POST —
+   issues the follow-up generate with the tool result folded into history.
+   No second ``response.created`` event is emitted: it is one response,
+   continued.
+
+Exactly ONE call may be outstanding at a time. A result that answers
+anything else is refused with a named ``invalid_wire_event`` error carrying
+one of three reason tokens — :data:`TOOL_OUTPUT_UNKNOWN_CALL_ID`,
+:data:`TOOL_OUTPUT_CALL_CLOSED`, :data:`TOOL_OUTPUT_DUPLICATE` — and history
+is left byte-identical, because a backend cannot be relied on to notice the
+mistake: PROBED 2026-09-18, ``associate`` repeats an orphan tool result back
+as fact rather than rejecting it.
+
+Whenever a turn holding an unanswered call ends — a barge-in, an expired
+tool wait, any other failure — the bridge appends a synthetic
+:data:`TOOL_CALL_CANCELLED_OUTPUT` tool message so the assistant's
+``tool_calls`` entry is never left dangling in history (a chat-completions
+backend rejects that shape outright), and the call id is remembered as
+CLOSED so a late result is named ``call_closed`` rather than mistaken for an
+orphan.
+
+Per-stage timings (``StageTimings``) are deliberately NOT computed here —
+that is a separate task's surface; this module only makes sure the tool wait
+is a stage the floor actually arms, so a timing hook has something to read.
+
 What the route still owns
 --------------------------
 Sockets, threads, HTTP, tasks and time. Concretely: ``app.py`` awaits the
@@ -98,36 +150,61 @@ synchronous loop and every guarantee in :mod:`._floor` is inert at runtime.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from ._floor import (
     DEFAULT_BARGE_IN_WINDOW_MS,
     DEFAULT_GENERATE_TIMEOUT_MS,
+    DEFAULT_TOOL_WAIT_TIMEOUT_MS,
     DEFAULT_TRANSCRIBE_TIMEOUT_MS,
     DEFAULT_TTS_TIMEOUT_MS,
     FailureReason,
     Floor,
     FloorState,
+    ReplySegment,
     ReplyText,
     ResponseDone,
     ResponseFailed,
     ResponseInterrupted,
     ResponseStarted,
+    ToolCallRequested,
     estimate_spoken_prefix,
 )
-from ._session import ErrorCode, ErrorEvent, Event, Session, event_to_dict
+from ._sentences import DEFAULT_EAGER_FIRST_MIN_CHARS, SentenceChunker
+from ._session import (
+    ErrorCode,
+    ErrorEvent,
+    Event,
+    FunctionCallOutputError,
+    Session,
+    SessionConfigError,
+    StageTimings,
+    event_to_dict,
+    parse_function_call_output,
+)
 from ._turn import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
     RoleInfeasibleError,
+    ToolCallResult,
     TurnRequest,
     TurnRequestError,
+    assistant_tool_call_message,
     build_turn_request,
     parse_turn_response,
+    tool_result_message,
 )
-from ._wire import DEFAULT_DELTA_CHUNK_BYTES, WireErrorCode, WireFormatError, encode_audio_chunk
+from ._wire import (
+    DEFAULT_DELTA_CHUNK_BYTES,
+    WireErrorCode,
+    WireFormatError,
+    encode_audio_chunk,
+    is_function_call_output,
+    is_session_update,
+)
 from .protocol import BYTES_PER_SAMPLE, TTS_SAMPLE_RATE, timestamp_ms
 
 # The client's opt-in. OpenAI-Realtime's own event name, adopted for its
@@ -167,8 +244,46 @@ FAILURE_ERROR_CODES: dict[FailureReason, ErrorCode] = {
     FailureReason.TTS_FAILED: ErrorCode.TTS_FAILED,
     FailureReason.TRANSCRIBE_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
     FailureReason.GENERATE_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
+    FailureReason.TOOL_WAIT_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
     FailureReason.TTS_TIMEOUT: ErrorCode.RESPONSE_TIMEOUT,
 }
+
+# Reason tokens for a tool result this session cannot attribute. They live in
+# the MESSAGE text, never as new ErrorCode/WireErrorCode members: one
+# enumerable list of client-visible codes is a contract (see
+# ErrorCode.INVALID_WIRE_EVENT's own docstring), so a new failure mode earns a
+# reason, not a code — the same trade FunctionCallOutputError already makes.
+TOOL_OUTPUT_UNKNOWN_CALL_ID = "unknown_call_id"
+TOOL_OUTPUT_CALL_CLOSED = "call_closed"
+TOOL_OUTPUT_DUPLICATE = "duplicate_output"
+
+_TOOL_OUTPUT_REJECTIONS = {
+    TOOL_OUTPUT_UNKNOWN_CALL_ID: "no tool call with call_id {call_id!r} is outstanding",
+    TOOL_OUTPUT_CALL_CLOSED: "the tool call {call_id!r} was closed before this result arrived",
+    TOOL_OUTPUT_DUPLICATE: "the tool call {call_id!r} was already answered",
+}
+
+# What a tool call that was abandoned before its result arrived records as its
+# result. Deliberately a fixed ENGLISH marker, not a translated one: it is
+# model-facing context, not a spoken or client-rendered string, and the
+# Hebrew voice lane's own replies come from the model, not from here.
+TOOL_CALL_CANCELLED_OUTPUT = "cancelled: the tool call was interrupted before a result arrived"
+
+# How many recently-closed call ids to remember, so a late result is named
+# `call_closed` rather than `unknown_call_id`. Bounded because a session is
+# long-lived and one id per tool call would otherwise grow without limit; a
+# result that arrives more than this many calls late is indistinguishable
+# from an orphan anyway, and both are refused.
+CLOSED_CALL_MEMORY = 16
+
+# What the message says when a retryable status carried no Retry-After. An
+# explicit "the gateway named no delay" beats omitting the field, which reads
+# as "nobody looked".
+RETRY_AFTER_UNSPECIFIED = "unspecified"
+
+# Statuses whose whole point is "come back later", so the absence of a
+# Retry-After is itself worth stating.
+RETRYABLE_GENERATE_STATUSES = (429, 503)
 
 WIRE_ERROR_CODES: dict[WireErrorCode, ErrorCode] = {
     WireErrorCode.INVALID_JSON: ErrorCode.INVALID_WIRE_EVENT,
@@ -217,6 +332,53 @@ def describe_role_infeasible(exc: RoleInfeasibleError) -> str:
     mistaken for "the call failed".
     """
     return f"{exc} (hosted_by={exc.hosted_by})" if exc.hosted_by else str(exc)
+
+
+def retry_after_from_headers(headers: Mapping[str, str] | None) -> str | None:
+    """The response's ``Retry-After`` value, matched case-insensitively.
+
+    ``None`` when there is no such header (or no headers at all) — the route
+    may or may not have them, and an absent hint is a fact worth reporting,
+    not a reason to fail.
+    """
+    if not headers:
+        return None
+    for key, value in headers.items():
+        if key.lower() == "retry-after":
+            text = str(value).strip()
+            return text or None
+    return None
+
+
+def describe_generate_http_failure(
+    message: str,
+    *,
+    status_code: int,
+    retry_after: str | None = None,
+    hosted_by: str | None = None,
+) -> str:
+    """Append the machine-readable half of a generate failure to *message*.
+
+    The gateway supplies its own prose for every shed and refusal
+    (``"<lane> is under pressure; retry shortly"``), so the numeric status,
+    the retry hint and the peer that actually hosts the lane are otherwise
+    nowhere on the wire — a client could only recover them by pattern-matching
+    English. This suffix carries them as ``key=value`` pairs instead, in the
+    same "the code cannot say it, so the text must" idiom
+    :func:`describe_failure` uses for the three timeouts.
+
+    ``hosted_by`` is omitted entirely when there is none, so a failure with no
+    declared peer never mentions the word — a caller can test for its
+    presence.
+    """
+    details = [f"status={status_code}"]
+    if retry_after is not None:
+        details.append(f"retry_after={retry_after}")
+    elif status_code in RETRYABLE_GENERATE_STATUSES:
+        details.append(f"retry_after={RETRY_AFTER_UNSPECIFIED}")
+    if hosted_by:
+        details.append(f"hosted_by={hosted_by}")
+    return f"{message} ({', '.join(details)})"
 
 
 def resolve_voice_model(configured: str | None) -> str:
@@ -292,6 +454,24 @@ def delivery_pause_ms(
 
 
 @dataclass(frozen=True)
+class OutstandingToolCall:
+    """The ONE tool call this session is waiting on, and whether it is answered.
+
+    ``answered`` is the difference between "the client is still running the
+    tool" (a second result would be a duplicate; the turn ending must write a
+    synthetic cancellation into history) and "the result is in history,
+    waiting for the ``response.create`` that releases the follow-up generate"
+    (a second result is still a duplicate, but nothing needs cancelling —
+    the real result is already recorded).
+    """
+
+    call_id: str
+    name: str
+    turn_id: int
+    answered: bool = False
+
+
+@dataclass(frozen=True)
 class GenerateConfig:
     """Where the voice lane's generate call goes, and how it is shaped.
 
@@ -310,6 +490,15 @@ class GenerateConfig:
     model: str | None = None
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
+    # Ask the backend to STREAM the reply (approved deviation d7). Lives here
+    # rather than as a bridge argument for the same reason as the other five:
+    # it is consumed by the one build_turn_request call and nothing else.
+    # ``False`` — what GENERATE_STREAM=false renders — leaves the request body
+    # byte-identical to a pre-streaming deployment.
+    stream: bool = False
+    # The streamed reply's first-clause threshold (REPLY_FIRST_CLAUSE_MIN_CHARS)
+    # — consumed only by this bridge's SentenceChunker.
+    first_clause_min_chars: int = DEFAULT_EAGER_FIRST_MIN_CHARS
 
 
 class ConversationBridge:
@@ -341,9 +530,12 @@ class ConversationBridge:
         barge_in_window_ms: int = DEFAULT_BARGE_IN_WINDOW_MS,
         transcribe_timeout_ms: int = DEFAULT_TRANSCRIBE_TIMEOUT_MS,
         generate_timeout_ms: int = DEFAULT_GENERATE_TIMEOUT_MS,
+        tool_wait_timeout_ms: int = DEFAULT_TOOL_WAIT_TIMEOUT_MS,
         tts_timeout_ms: int = DEFAULT_TTS_TIMEOUT_MS,
         chunk_bytes: int = DEFAULT_DELTA_CHUNK_BYTES,
         clock: Callable[[], int] = timestamp_ms,
+        continuation_window_ms: int = 0,
+        continuation_tool_hold_ms: int = 0,
     ) -> None:
         self.session = session
         self.floor = Floor(
@@ -355,6 +547,7 @@ class ConversationBridge:
             barge_in_window_ms=barge_in_window_ms,
             transcribe_timeout_ms=transcribe_timeout_ms,
             generate_timeout_ms=generate_timeout_ms,
+            tool_wait_timeout_ms=tool_wait_timeout_ms,
             tts_timeout_ms=tts_timeout_ms,
             chunk_bytes=chunk_bytes,
             # The OUTPUT rate — Chatterbox's 24 kHz, which protocol.py pins
@@ -366,6 +559,14 @@ class ConversationBridge:
             sample_rate=TTS_SAMPLE_RATE,
         )
         self._generate = generate
+        # Continuation merge (approved deviation d9, layer B). 0 = off.
+        self._clock = clock
+        self._continuation_window_ms = max(0, continuation_window_ms)
+        self._continuation_tool_hold_ms = max(0, continuation_tool_hold_ms)
+        self._commit_at_ms: int | None = None  # the last SILENCE commit, floor clock
+        self._commit_text: str | None = None  # the user entry that commit appended
+        self._taking_back = False
+        self._continuing = False  # the open turn IS a take-back's second half
 
         self._outbox: list[dict[str, object]] = []
         self.armed = False
@@ -376,6 +577,37 @@ class ConversationBridge:
         self._pending_item_id: str | None = None
         self._pending_response: int | None = None
         self._pending_synthesis: tuple[int, str] | None = None
+        # The STREAMING half (deviation d7): one chunker per reply, and an
+        # ORDERED queue of (turn_id, segment_index, text) the route's synth
+        # worker drains. A deque, not a single slot like _pending_synthesis,
+        # because segments pile up while an earlier one is being synthesized.
+        self._chunker = SentenceChunker(eager_first_min_chars=generate.first_clause_min_chars)
+        self._stream_turn_id: int | None = None
+        self._pending_segments: deque[tuple[int, int, str]] = deque()
+        self._tool_call: OutstandingToolCall | None = None
+        self._closed_call_ids: deque[str] = deque(maxlen=CLOSED_CALL_MEMORY)
+        self._timings_provider: Callable[[], StageTimings | None] | None = None
+
+    def set_timings_provider(self, provider: Callable[[], StageTimings | None] | None) -> None:
+        """Let the route attach the per-stage stopwatch it reads on ``response.done``.
+
+        The route owns TIME (see the module docstring), so it is the only
+        thing that can bracket a POST or a socket write; this is where the
+        result of that measuring reaches the wire. Optional and additive: a
+        bridge with no provider — every offline test, and any route that does
+        not measure — completes a response exactly as before, with no
+        ``timings`` key at all.
+
+        Called at ``ResponseDone``, so the provider sees the whole turn,
+        including both generate legs of a tool turn.
+        """
+        self._timings_provider = provider
+
+    def _response_timings(self) -> StageTimings | None:
+        """This response's measured stages, or ``None`` when nobody measured."""
+        if self._timings_provider is None:
+            return None
+        return self._timings_provider() or None
 
     # -- outbound ---------------------------------------------------------
 
@@ -397,27 +629,148 @@ class ConversationBridge:
     def on_control_event(self, payload: Mapping[str, object] | None) -> bool:
         """Consume one well-formed non-audio client event. ``True`` if acted on.
 
-        The route calls this for every ``IGNORED`` wire decision; only
-        ``response.create`` is acted on, and everything else stays ignored.
+        The route calls this for every ``IGNORED`` wire decision, and this is
+        the SINGLE dispatch point for the three events that mean something
+        here — ``response.create``, ``session.update``, and a
+        ``conversation.item.create`` carrying a ``function_call_output``.
+        Everything else stays silently ignored, exactly as before.
+
+        A ``session.update`` whose ``session`` patch names none of
+        :data:`~lobes.realtime._session.SUPPORTED_SESSION_UPDATE_FIELDS`
+        changed nothing, so it reports ``False`` and emits nothing: the echo
+        body would be empty, and an ack for a no-op is not a fact worth
+        putting on the wire. A patch this server cannot parse is a different
+        thing entirely — a named error, and ``True``.
         """
-        if not is_response_create(payload):
+        if is_response_create(payload):
+            self.arm()
+            return True
+        if is_session_update(payload):
+            return self._apply_session_update(payload or {})
+        if is_function_call_output(payload):
+            self.on_function_call_output(payload or {})
+            return True
+        return False
+
+    def _apply_session_update(self, payload: Mapping[str, object]) -> bool:
+        """Apply one ``session.update`` and answer it. ``True`` if it acted.
+
+        A malformed patch is the session's own named
+        ``invalid_session_config`` error and the session STAYS OPEN with its
+        previous config: a bad update is not a turn boundary and not a reason
+        to hang up.
+        """
+        try:
+            event = self.session.update_config(payload)
+        except SessionConfigError as exc:
+            self._push(exc.to_error_event(self.session.session_id))
+            return True
+        if not event.session:
             return False
-        self.arm()
+        self._push(event)
         return True
 
     def arm(self) -> None:
         """Opt this session into conversation. Idempotent.
 
-        If a transcript is already waiting unanswered — the client sent
-        ``response.create`` AFTER its turn was transcribed, the OpenAI-shaped
-        per-turn flow — it is answered now and cleared, so a second trigger
-        cannot answer the same turn twice.
+        If a tool result is waiting, this is what releases it: the floor
+        leaves ``tool_wait`` and the SAME turn gets a pending response, so the
+        route's ordinary poll issues the follow-up generate with the result
+        folded into history. While a tool call is still UNanswered the trigger
+        does nothing at all — the machine holds the floor, and a trigger that
+        arrives while it does has never started a second response.
+
+        Otherwise, if a transcript is already waiting unanswered — the client
+        sent ``response.create`` AFTER its turn was transcribed, the
+        OpenAI-shaped per-turn flow — it is answered now and cleared, so a
+        second trigger cannot answer the same turn twice.
         """
         self.armed = True
+        if self._resume_after_tool_result():
+            return
         text, item_id = self._pending_transcript, self._pending_item_id
         self._pending_transcript = self._pending_item_id = None
         if text:
             self._open_turn_for(text, item_id)
+
+    # -- inbound: tool results -------------------------------------------
+
+    @property
+    def awaiting_tool_result(self) -> bool:
+        """Is a tool call outstanding and still unanswered?
+
+        The route's "do NOT start TTS, and do not expect a synthesis" signal.
+        It could infer the same thing from ``take_pending_synthesis()``
+        answering ``None``, but that conflates "waiting on the client" with
+        "the turn failed", which are different things to log and to time.
+        """
+        return self._tool_call is not None and not self._tool_call.answered
+
+    @property
+    def outstanding_tool_call(self) -> OutstandingToolCall | None:
+        """The one call this session is waiting on, answered or not."""
+        return self._tool_call
+
+    def on_function_call_output(self, payload: Mapping[str, object]) -> bool:
+        """A client tool result. ``True`` when it was accepted into history.
+
+        Accepted ONLY for the single outstanding, unanswered call. An orphan,
+        a late result for a call the session already closed, and a duplicate
+        each produce a named ``invalid_wire_event`` error carrying its own
+        reason token, and leave history BYTE-IDENTICAL — nothing downstream
+        would catch the miss otherwise: PROBED 2026-09-18, ``associate``
+        repeats an orphan tool result back as fact.
+
+        An accepted result does NOT start the follow-up generate. It waits
+        for ``response.create``, which is what keeps every generate in this
+        module client-triggered.
+        """
+        try:
+            parsed = parse_function_call_output(payload)
+        except FunctionCallOutputError as exc:
+            self._push(self.session.fail_wire_event(str(exc)))
+            return False
+
+        call = self._tool_call
+        if call is None or call.call_id != parsed.call_id:
+            reason = (
+                TOOL_OUTPUT_CALL_CLOSED
+                if parsed.call_id in self._closed_call_ids
+                else TOOL_OUTPUT_UNKNOWN_CALL_ID
+            )
+            self._reject_tool_output(reason, parsed.call_id)
+            return False
+        if call.answered:
+            self._reject_tool_output(TOOL_OUTPUT_DUPLICATE, parsed.call_id)
+            return False
+
+        self._append_history_message(tool_result_message(parsed.call_id, parsed.output))
+        self._tool_call = replace(call, answered=True)
+        return True
+
+    def _reject_tool_output(self, reason: str, call_id: str) -> None:
+        detail = _TOOL_OUTPUT_REJECTIONS[reason].format(call_id=call_id)
+        self._push(self.session.fail_wire_event(f"{reason}: {detail}"))
+
+    def _resume_after_tool_result(self) -> bool:
+        """Release an answered tool wait. ``True`` if a call was outstanding.
+
+        Returning ``True`` for an UNanswered call is what makes a trigger
+        arriving mid-tool-wait a no-op rather than a second turn: the caller
+        stops here instead of falling through to the pending-transcript path.
+        """
+        call = self._tool_call
+        if call is None:
+            return False
+        if not call.answered:
+            return True
+        if self.floor.on_tool_result(turn_id=call.turn_id):
+            # Same turn, same response — the route's existing poll picks this
+            # up and issues the follow-up generate. No second
+            # `response.created`: it is one response, continued.
+            self._pending_response = self.floor.turn_id
+        self._close_outstanding_tool_call()
+        return True
 
     def on_wire_error(self, exc: WireFormatError) -> None:
         """A malformed client frame — the named error, never a silent drop."""
@@ -435,7 +788,7 @@ class ConversationBridge:
 
     # -- inbound: turn boundaries ----------------------------------------
 
-    def on_speech_started(self, at_ms: int | None = None) -> None:
+    def on_speech_started(self, at_ms: int | None = None) -> bool:
         """A VAD speech onset: a barge-in first (when armed), a boundary always.
 
         The floor runs BEFORE the boundary event so the session's own state
@@ -447,9 +800,73 @@ class ConversationBridge:
 
         *at_ms* goes to the wire only — never into the floor's clock domain.
         """
+        continuation = False
         if self.armed:
-            self.floor.on_speech_started()
+            continuation = self._take_back_early_commit()
+            if not continuation:
+                self.floor.on_speech_started()
+        self._continuing = continuation
+        self._commit_at_ms = self._commit_text = None
         self._push(self.session.begin_speech(at_ms=at_ms))
+        return continuation
+
+    def tool_call_hold_ms(self) -> int:
+        """How long the route must still HOLD a tool call before handing it over.
+
+        A spoken reply can be taken back (stop, forget, redo); a tool call the
+        client has received cannot — MEASURED live 2026-09-18: with a 500 ms
+        commit the model's tool call went out 180 ms after a mid-sentence
+        pause, the speaker resumed at 360 ms, and the turn could no longer be
+        merged. So while a continuation is still possible, the route sits on
+        a finished tool call until ``continuation_tool_hold_ms`` after the
+        commit; an onset in that time takes the turn back and the call is
+        never sent. Speech is never held. 0 whenever there is nothing to take
+        back: merge off, not a silence commit, or history already past the
+        half-turn (a tool turn's follow-up leg).
+        """
+        if not self._continuation_window_ms or self._commit_at_ms is None:
+            return 0
+        history = self.session.get_history()
+        if not history or history[-1] != {"role": "user", "content": self._commit_text}:
+            return 0
+        elapsed = self._clock() - self._commit_at_ms
+        return max(0, self._continuation_tool_hold_ms - elapsed)
+
+    def _take_back_early_commit(self) -> bool:
+        """Whether this onset CONTINUES the turn the machine just committed.
+
+        Layer B of approved deviation d9: with a short confirming silence the
+        machine sometimes answers a speaker who was only pausing. An onset
+        within ``continuation_window_ms`` of such a commit is the speaker
+        carrying on, so the reply is stopped at once — inside the barge-in
+        guard window too — and the half-turn is REMOVED from history: no user
+        entry, no heard-prefix assistant entry. The route then re-transcribes
+        both halves as one turn, which becomes an ordinary turn.
+
+        Refused (so the onset is an ordinary barge-in, or nothing) when the
+        feature is off, the commit was not a silence commit, the window has
+        passed, the reply already finished, a tool call already went out, or
+        history moved on past the half-turn's user entry.
+        """
+        if not self._continuation_window_ms or self._commit_at_ms is None:
+            return False
+        if self._commit_text is None:
+            return False
+        if self._clock() - self._commit_at_ms > self._continuation_window_ms:
+            return False
+        if not self.floor.machine_holds_floor or self.awaiting_tool_result:
+            return False
+        history = self.session.get_history()
+        if not history or history[-1] != {"role": "user", "content": self._commit_text}:
+            return False
+        self._taking_back = True
+        try:
+            if not self.floor.on_continuation_onset():
+                return False
+        finally:
+            self._taking_back = False
+        self.session.pop_history_if_last("user", self._commit_text)
+        return True
 
     def on_speech_stopped(self, at_ms: int | None = None, reason: str | None = None) -> None:
         """A committed turn: an interruption if the machine held the floor,
@@ -464,6 +881,15 @@ class ConversationBridge:
         session would (see :meth:`on_transcript`).
         """
         self._turn_open = self.armed and self.floor.on_turn_committed()
+        # Only a SILENCE commit can have been premature (layer B); a max_turn
+        # or teardown commit is never taken back.
+        # ONE take-back per utterance: a merged turn's commit is final. Found in
+        # a real browser (2026-09-18) — an echo right after each commit took the
+        # same sentence back again and again, and it was answered three times.
+        retakeable = self._turn_open and reason == "silence" and not self._continuing
+        self._commit_at_ms = self._clock() if retakeable else None
+        self._continuing = False
+        self._commit_text = None
         self._push(self.session.end_speech(at_ms=at_ms, reason=reason))
 
     def on_transcript(self, text: str) -> None:
@@ -487,6 +913,7 @@ class ConversationBridge:
         self.floor.on_transcript(text, turn_id=turn_id)
         if self.floor.state is FloorState.RESPONDING:
             self.session.append_history("user", text)
+            self._commit_text = text
 
     def on_transcription_failed(self, message: str) -> None:
         """The committed turn's Parakeet forward failed — never a silent drop.
@@ -553,23 +980,124 @@ class ConversationBridge:
             model=self._generate.model,
             max_tokens=self._generate.max_tokens,
             temperature=self._generate.temperature,
+            # The session's own declaration, passed straight through: `None`
+            # (never declared) and `()` (declared empty) both leave the
+            # payload byte-identical to a call that never mentions tools.
+            tools=self.session.config.tools,
+            tool_choice=self.session.config.tool_choice,
+            # The operator's GENERATE_STREAM, threaded through to the one
+            # payload key that changes the transport (deviation d7).
+            stream=self._generate.stream,
         )
 
-    def on_generate_response(self, status_code: int, body: bytes, *, turn_id: int) -> bool:
+    def build_speculative_request(self, transcript: str) -> TurnRequest | None:
+        """The generate call this turn WOULD make if it ended now with *transcript*.
+
+        Hidden speculation (approved deviation d9, :mod:`._speculation`): pure
+        and traceless — no history entry, no event, no floor transition. The
+        request is assembled exactly as :meth:`build_generate_request` will
+        assemble the real one once the commit has appended the transcript, so
+        the two are byte-identical when nothing changed in between; that
+        equality (:func:`~._speculation.can_adopt`) is the whole adoption rule.
+
+        ``None`` — do not speculate — for an unarmed session (ears-only must
+        stay ears-only), a non-streaming one (there is no stream to adopt), an
+        empty transcript, or any floor state other than LISTENING: a pause
+        while a reply is running or a tool result is outstanding belongs to a
+        barge-in, not to a fresh turn.
+        """
+        if not self.armed or not self._generate.stream or not transcript.strip():
+            return None
+        if self.floor.state is not FloorState.LISTENING or self.awaiting_tool_result:
+            return None
+        history = self.session.get_history() + [{"role": "user", "content": transcript}]
+        return build_turn_request(
+            history,
+            base_url=self._generate.base_url,
+            api_key=self._generate.api_key,
+            system_prompt=self.session.system_prompt,
+            model=self._generate.model,
+            max_tokens=self._generate.max_tokens,
+            temperature=self._generate.temperature,
+            tools=self.session.config.tools,
+            tool_choice=self.session.config.tool_choice,
+            stream=True,
+        )
+
+    def on_generate_response(
+        self,
+        status_code: int,
+        body: bytes,
+        *,
+        turn_id: int,
+        headers: Mapping[str, str] | None = None,
+    ) -> bool:
         """Hand the raw generate response back. ``True`` if the turn advanced.
 
         Every failure shape :mod:`._turn` names — a ``role_infeasible`` 404
         (with its ``hosted_by`` hint preserved), any other non-2xx, a
         malformed body — becomes a named error event, never a placeholder
-        reply and never a second attempt against a different lane.
+        reply and never a second attempt against a different lane. *headers*
+        is optional and used for exactly one thing: a retryable status's
+        ``Retry-After``, which has nowhere else to travel (see
+        :func:`describe_generate_http_failure`).
+
+        A reply carrying ``tool_calls`` is NOT text: it becomes one
+        ``response.function_call_arguments.done``, the floor waits, and
+        nothing is synthesized.
         """
         try:
-            text = parse_turn_response(status_code, body)
+            result = parse_turn_response(status_code, body)
         except RoleInfeasibleError as exc:
-            return self.fail_generate(describe_role_infeasible(exc), turn_id=turn_id)
+            message = describe_generate_http_failure(
+                describe_role_infeasible(exc),
+                status_code=status_code,
+                retry_after=retry_after_from_headers(headers),
+            )
+            return self.fail_generate(message, turn_id=turn_id)
         except TurnRequestError as exc:
-            return self.fail_generate(str(exc), turn_id=turn_id)
-        return self.floor.on_reply_text(text, turn_id=turn_id)
+            message = describe_generate_http_failure(
+                str(exc),
+                status_code=status_code,
+                retry_after=retry_after_from_headers(headers),
+                hosted_by=getattr(exc, "hosted_by", None),
+            )
+            return self.fail_generate(message, turn_id=turn_id)
+        if isinstance(result, ToolCallResult):
+            return self._request_tool_call(result, turn_id=turn_id)
+        return self.floor.on_reply_text(result, turn_id=turn_id)
+
+    def _request_tool_call(self, result: ToolCallResult, *, turn_id: int) -> bool:
+        """Record the model's tool call and hand it to the client.
+
+        The floor runs FIRST: a stale turn refuses the call, and then nothing
+        at all is recorded — history must not gain an assistant ``tool_calls``
+        entry for a turn whose result can never arrive.
+        """
+        if not self.floor.on_tool_call(
+            call_id=result.call_id,
+            name=result.name,
+            arguments=result.arguments,
+            turn_id=turn_id,
+        ):
+            return False
+        self._append_history_message(assistant_tool_call_message(result))
+        self._tool_call = OutstandingToolCall(
+            call_id=result.call_id, name=result.name, turn_id=self.floor.turn_id
+        )
+        if result.tool_call_count > 1:
+            # One outstanding call at a time is the bookkeeping contract, and
+            # the request already asked the backend for one
+            # (`parallel_tool_calls: false`). A backend that answered with
+            # several anyway has had the rest dropped — a WARNING, not an
+            # info, because a client that sees one call answered out of three
+            # has no other way to learn that happened.
+            self.session.log.warning(
+                "tool call surfaced 1 of %d requested calls; dropped %s",
+                result.tool_call_count,
+                ", ".join(result.dropped_names) or "the rest",
+            )
+        return True
 
     def fail_generate(self, message: str, *, turn_id: int, timed_out: bool = False) -> bool:
         """The generate call failed by name (unreachable, non-2xx, timed out)."""
@@ -577,18 +1105,127 @@ class ConversationBridge:
         return self.floor.fail_stage(reason, message, turn_id=turn_id)
 
     def take_pending_synthesis(self) -> tuple[int, str] | None:
-        """``(turn_id, reply_text)`` the route must now synthesize, or ``None``."""
+        """``(turn_id, reply_text)`` the route must now synthesize, or ``None``.
+
+        The NON-streaming surface, unchanged: one whole reply, taken once.
+        The streaming route drains :meth:`take_pending_segment` instead.
+        """
         pending, self._pending_synthesis = self._pending_synthesis, None
         return pending
 
-    def on_tts_audio(self, pcm: bytes, *, turn_id: int) -> bool:
+    # -- the streaming surface (approved deviation d7) --------------------
+
+    @property
+    def streaming_enabled(self) -> bool:
+        """Did the operator ask for streamed generation (``GENERATE_STREAM``)?
+
+        The route reads this to pick which of the two surfaces to drive. The
+        bridge itself supports both regardless — this is a wiring fact, not a
+        state machine mode.
+        """
+        return self._generate.stream
+
+    def response_in_progress(self, turn_id: int) -> bool:
+        """Is *turn_id*'s reply still being produced or spoken?
+
+        The delivery pump's loop condition. It lives here, not in the route,
+        for the usual reason: "which floor states mean audio may still be
+        coming" is a decision, and a route that guessed it wrong would either
+        spin forever or stop pumping mid-reply. A tool wait answers ``False``
+        — nothing will be delivered until the client comes back.
+        """
+        return turn_id == self.floor.turn_id and self.floor.state in (
+            FloorState.RESPONDING,
+            FloorState.SPEAKING,
+        )
+
+    def begin_generate_stream(self, turn_id: int) -> bool:
+        """Open a streamed generate for *turn_id*. ``True`` if it is live.
+
+        Resets the sentence chunker (the eager-first-sentence allowance is
+        per reply) and drops any segment left queued by an abandoned turn, so
+        a stale sentence can never be synthesized against a new one.
+        """
+        self._chunker.reset()
+        self._pending_segments.clear()
+        self._stream_turn_id = turn_id
+        return turn_id == self.floor.turn_id and self.floor.state is FloorState.RESPONDING
+
+    def on_generate_delta(self, text_delta: str, *, turn_id: int) -> bool:
+        """One streamed text delta. ``True`` if it was consumed.
+
+        Feeds the chunker and hands every COMPLETED sentence to the floor as
+        a non-final segment, queuing it for synthesis. Nothing is emitted on
+        the wire here: ``response.text.done`` still goes out exactly once, at
+        stream end, with the whole reply (see
+        :meth:`on_generate_stream_end`).
+        """
+        if turn_id != self._stream_turn_id or turn_id != self.floor.turn_id:
+            return False
+        for sentence in self._chunker.feed(text_delta):
+            self.floor.on_reply_segment(sentence, final=False, turn_id=turn_id)
+        return True
+
+    def on_generate_stream_end(self, result: str | ToolCallResult, *, turn_id: int) -> bool:
+        """The stream finished. ``True`` if the turn advanced.
+
+        A TEXT result flushes the chunker's remainder as the FINAL segment,
+        emits the single ``response.text.done`` with the full reply, and
+        records that full text as what history will carry once the reply is
+        delivered.
+
+        A TOOL CALL discards every segment already queued from a text prefix
+        — the model abandoned that text, so it must not be spoken — and then
+        takes exactly the non-streaming tool path.
+        """
+        if turn_id != self._stream_turn_id or turn_id != self.floor.turn_id:
+            return False
+        if isinstance(result, ToolCallResult):
+            return self._abandon_stream_for_tool_call(result, turn_id=turn_id)
+        tail = self._chunker.flush()
+        for sentence in tail[:-1]:
+            self.floor.on_reply_segment(sentence, final=False, turn_id=turn_id)
+        self._reply_text = result
+        if result.strip():
+            self._push(self.session.complete_response_text(result))
+        return self.floor.on_reply_segment(tail[-1] if tail else "", final=True, turn_id=turn_id)
+
+    def _abandon_stream_for_tool_call(self, result: ToolCallResult, *, turn_id: int) -> bool:
+        """Drop a spoken-text prefix and surface the tool call instead."""
+        self._pending_segments.clear()
+        self._reply_text = ""
+        self.floor.discard_reply_segments(turn_id=turn_id)
+        return self._request_tool_call(result, turn_id=turn_id)
+
+    def take_pending_segment(self) -> tuple[int, int, str] | None:
+        """``(turn_id, segment_index, text)`` to synthesize next, or ``None``.
+
+        In release order, one at a time, taken exactly once — the route's
+        synth worker calls this in a loop and answers each with
+        :meth:`on_tts_audio`. Order matters twice over: TTS runs serially
+        (``TTS_VOICE_CONCURRENCY`` is 1) and the floor delivers segments in
+        index order regardless.
+        """
+        if not self._pending_segments:
+            return None
+        return self._pending_segments.popleft()
+
+    @property
+    def pending_segments(self) -> int:
+        """How many segments are waiting to be synthesized (observation/tests)."""
+        return len(self._pending_segments)
+
+    def on_tts_audio(self, pcm: bytes, *, turn_id: int, segment_index: int = 0) -> bool:
         """The full-read synthesis returned; delivery can begin.
 
         Empty audio is a named TTS failure, not a silently completed reply —
         :func:`lobes.realtime.tts_client.synthesize` returns ``b""`` on a soft
         failure, and rendering that as "the machine spoke" would be a lie.
+
+        *segment_index* defaults to ``0`` — the only segment a non-streaming
+        reply has — so every pre-streaming caller is unchanged.
         """
-        return self.floor.on_audio_ready(pcm, turn_id=turn_id)
+        return self.floor.on_audio_ready(pcm, turn_id=turn_id, segment_index=segment_index)
 
     def fail_tts(self, message: str, *, turn_id: int, timed_out: bool = False) -> bool:
         """The TTS call failed by name."""
@@ -643,10 +1280,35 @@ class ConversationBridge:
             self._reply_text = event.text
             self._push(self.session.complete_response_text(event.text))
             self._pending_synthesis = (event.turn_id, event.text)
+        elif isinstance(event, ReplySegment):
+            # A PIECE of a streamed reply: queue it for synthesis and say
+            # nothing on the wire. `response.text.done` is emitted once, with
+            # the whole reply, by on_generate_stream_end — the wire contract
+            # does not change because the transport did.
+            self._pending_segments.append((event.turn_id, event.index, event.text))
+            # Length only, never the text — the same discipline _turn.py
+            # documents for a reply. This line is how an operator SEES
+            # streaming working in the bridge log: one per sentence, arriving
+            # while the generate call is still open.
+            self.session.log.info(
+                "reply segment %d released (%d chars, final=%s)",
+                event.index,
+                len(event.text),
+                event.final,
+            )
+        elif isinstance(event, ToolCallRequested):
+            self._push(
+                self.session.emit_function_call_arguments_done(
+                    call_id=event.call_id,
+                    name=event.name,
+                    arguments=event.arguments,
+                    item_id=self._item_id,
+                )
+            )
         elif isinstance(event, ResponseDone):
             self.session.append_history("assistant", self._reply_text)
             self._clear_turn()
-            self._push(self.session.complete_response())
+            self._push(self.session.complete_response(self._response_timings()))
         elif isinstance(event, ResponseInterrupted):
             self._record_interrupted_reply(event)
             self._clear_turn()
@@ -673,9 +1335,18 @@ class ConversationBridge:
         landed during synthesis — before a single byte existed, let alone
         went out.
         """
+        if self._taking_back:
+            return  # a continuation: the whole exchange is being redone
         if event.delivered_bytes <= 0:
             return
-        heard = estimate_spoken_prefix(event.reply_text, event.audio_end_ms, event.audio_total_ms)
+        # The floor computes the prefix ACROSS segments (a proportional
+        # estimate is only meaningful within one); `heard_text` is that
+        # answer, and for a single-segment reply it is byte-for-byte what
+        # estimate_spoken_prefix returns here. The fallback keeps a caller
+        # that constructs the event by hand working.
+        heard = event.heard_text or estimate_spoken_prefix(
+            event.reply_text, event.audio_end_ms, event.audio_total_ms
+        )
         if heard:
             self.session.append_history("assistant", heard)
 
@@ -690,9 +1361,52 @@ class ConversationBridge:
         return self.session.fail_response(FAILURE_ERROR_CODES[event.reason], message)
 
     def _clear_turn(self) -> None:
+        self._close_outstanding_tool_call()
         self._reply_text = ""
         self._pending_response = None
         self._pending_synthesis = None
+        self._pending_segments.clear()
+        self._stream_turn_id = None
+
+    def _close_outstanding_tool_call(self) -> None:
+        """Close the outstanding call, cancelling it in history if unanswered.
+
+        An assistant ``tool_calls`` entry with no matching ``tool`` entry is a
+        shape a chat-completions backend rejects outright, so a turn that ends
+        mid-wait — barge-in, expired tool wait, any other failure — writes a
+        synthetic :data:`TOOL_CALL_CANCELLED_OUTPUT` result rather than
+        leaving the pair dangling. An ALREADY-answered call needs none: the
+        real result is in history, and inventing a cancellation over it would
+        be a lie.
+
+        The id is remembered either way, so a result that arrives afterwards
+        is named ``call_closed`` — "you are too late", a different fact from
+        "I never asked for that".
+        """
+        call = self._tool_call
+        if call is None:
+            return
+        self._tool_call = None
+        self._closed_call_ids.append(call.call_id)
+        if not call.answered:
+            self._append_history_message(
+                tool_result_message(call.call_id, TOOL_CALL_CANCELLED_OUTPUT)
+            )
+
+    def _append_history_message(self, message: dict) -> None:
+        """Append one STRUCTURED chat message to the session's history.
+
+        :meth:`~lobes.realtime._session.Session.append_history` takes
+        ``(role, content)`` and can express neither an assistant turn carrying
+        ``tool_calls`` nor a ``tool`` turn carrying ``tool_call_id``. The
+        history list itself is the session's, and it is the list
+        ``get_history()`` hands the turn builder, so this reaches it directly
+        rather than keeping a second, parallel history here — two lists that
+        must interleave correctly is exactly the bug this module exists to not
+        have. A ``Session.append_message`` belongs in ``_session.py``; that
+        module is owned by the wire-contract task and frozen for this one.
+        """
+        self.session._history.append(message)
 
     def _on_audio_chunk(self, chunk: bytes) -> None:
         """One PCM16 chunk of the reply -> one ``response.audio.delta``.
@@ -711,10 +1425,20 @@ __all__ = [
     "WATCHDOG_INTERVAL_MS",
     "FAILURE_ERROR_CODES",
     "WIRE_ERROR_CODES",
+    "TOOL_OUTPUT_UNKNOWN_CALL_ID",
+    "TOOL_OUTPUT_CALL_CLOSED",
+    "TOOL_OUTPUT_DUPLICATE",
+    "TOOL_CALL_CANCELLED_OUTPUT",
+    "CLOSED_CALL_MEMORY",
+    "RETRY_AFTER_UNSPECIFIED",
+    "RETRYABLE_GENERATE_STATUSES",
     "describe_failure",
     "describe_wire_error",
     "describe_role_infeasible",
+    "describe_generate_http_failure",
+    "retry_after_from_headers",
     "resolve_voice_model",
     "is_response_create",
+    "OutstandingToolCall",
     "ConversationBridge",
 ]

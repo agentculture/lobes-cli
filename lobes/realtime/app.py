@@ -12,8 +12,9 @@ session bookkeeping), :mod:`lobes.realtime._pcm` (resample-decision +
 frame-alignment arithmetic for ``/v1/realtime``), :mod:`lobes.realtime._wire`
 (the base64 event codec), :mod:`lobes.realtime._floor` (who holds the
 conversational floor), :mod:`lobes.realtime._turn` (the generate call's
-shape), and :mod:`lobes.realtime._conversation` (the bridge that wires those
-five into one turn). The routes here are thin shells (``# pragma: no cover``)
+shape), :mod:`lobes.realtime._timings` (how per-stage milliseconds
+accumulate), and :mod:`lobes.realtime._conversation` (the bridge that wires
+those five into one turn). The routes here are thin shells (``# pragma: no cover``)
 that wire those modules to a real WebSocket, real Silero VAD, real scipy
 resampling, and real HTTP; the live stack is exercised by the curl/WS smoke
 tests documented in ``docs/realtime-pipeline.md``.
@@ -30,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from typing import Annotated
 
 import anyio
@@ -48,13 +50,19 @@ from ._conversation import (
     resolve_voice_model,
 )
 from ._pcm import needs_resample, resampled_frame_count, take_aligned_samples
-from ._segmenter import Segmenter, SpeechStarted, SpeechStopped
+from ._segmenter import Segmenter, SpeechPaused, SpeechResumed, SpeechStarted, SpeechStopped
+from ._sentences import SentenceChunker
 from ._session import Session, SessionConfigError, event_to_dict, parse_session_config
 from ._settings import VOICE_LANE, settings
+from ._speculation import LineBuffer, SegmentAudioCache, can_adopt
+from ._timings import FIRST_DELTA_STAGE, StageClock
+from ._turn import StreamAccumulator, ToolCallResult, TurnRequestError
 from ._wire import DEFAULT_DELTA_CHUNK_BYTES, InboundKind, decide_inbound_message
 from .audio_facade import (
     SpeechRequestError,
     aggregate_audio_ready,
+    build_stt_forward_fields,
+    build_stt_forward_files,
     parse_speech_request,
     pcm_to_container,
 )
@@ -128,24 +136,29 @@ async def speech(request: Request) -> Response:
 @app.post("/v1/audio/transcriptions")  # pragma: no cover
 async def transcriptions(
     file: Annotated[UploadFile, File()],
-    language: Annotated[str, Form()] = "en",
+    language: Annotated[str | None, Form()] = None,
     model: Annotated[str | None, Form()] = None,
 ) -> Response:
-    """OpenAI speech-to-text → forwards the upload to Parakeet (already OpenAI-shaped)."""
+    """OpenAI speech-to-text → forwards the upload to Parakeet (already OpenAI-shaped).
+
+    ``language`` is resolved by the same two-level rule the WebSocket lane
+    uses (:func:`~lobes.realtime.audio_facade.build_stt_forward_fields`): the
+    caller's own value, else ``REALTIME_LANGUAGE``, else ``en`` — so a Hebrew
+    deployment transcribes batch uploads in Hebrew too, and an unconfigured
+    one posts byte-for-byte what it always did.
+    """
     content = await file.read()
     url = settings.stt_url.rstrip("/") + "/v1/audio/transcriptions"
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 url,
-                data={"language": language},
-                files={
-                    "file": (
-                        file.filename or "audio.wav",
-                        content,
-                        file.content_type or "audio/wav",
-                    )
-                },
+                data=build_stt_forward_fields(language, settings.language),
+                files=build_stt_forward_files(
+                    content,
+                    file.filename or "audio.wav",
+                    file.content_type or "audio/wav",
+                ),
             )
     except httpx.HTTPError as exc:
         return _error(502, f"STT backend unreachable: {exc}")
@@ -189,7 +202,9 @@ class _STTForwardError(RuntimeError):
     """
 
 
-async def _forward_turn_to_stt(pcm16k: bytes) -> str:  # pragma: no cover
+async def _forward_turn_to_stt(
+    pcm16k: bytes, language: str | None = None
+) -> str:  # pragma: no cover
     """Forward one committed turn's 16 kHz PCM16 audio to Parakeet.
 
     Wraps the raw PCM in a WAV container (:func:`audio_facade.pcm_to_container`
@@ -198,6 +213,13 @@ async def _forward_turn_to_stt(pcm16k: bytes) -> str:  # pragma: no cover
     upload hit the identical backend contract. Raises :class:`_STTForwardError`
     on any failure instead of returning a sentinel, so a caller cannot
     forget to check for one.
+
+    *language* is the SESSION's negotiated language — the connect-URL/
+    ``session.update`` override if the client set one, ``REALTIME_LANGUAGE``
+    otherwise. Both halves of the multipart body come from
+    :mod:`~lobes.realtime.audio_facade`'s pure builders, which is what lets CI
+    prove the unconfigured case still posts ``{"language": "en"}`` verbatim
+    against a route it cannot import.
     """
     wav_bytes, _media_type = pcm_to_container(pcm16k, "wav", rate=VAD_SAMPLE_RATE)
     url = settings.stt_url.rstrip("/") + "/v1/audio/transcriptions"
@@ -205,8 +227,8 @@ async def _forward_turn_to_stt(pcm16k: bytes) -> str:  # pragma: no cover
         async with httpx.AsyncClient(timeout=_STT_FORWARD_TIMEOUT) as client:
             resp = await client.post(
                 url,
-                data={"language": "en"},
-                files={"file": ("turn.wav", wav_bytes, "audio/wav")},
+                data=build_stt_forward_fields(language, settings.language),
+                files=build_stt_forward_files(wav_bytes),
             )
     except httpx.HTTPError as exc:
         raise _STTForwardError(f"STT backend unreachable: {exc}") from exc
@@ -391,12 +413,16 @@ async def realtime(websocket: WebSocket) -> None:
             return  # the config was rejected; the named error is already sent
         session, input_rate = opened
         cancels = _ResponseCancels()
-        bridge = _build_bridge(session, cancels)
+        # ONE stopwatch per session, not per response: the earliest stage
+        # (stt) opens on the turn commit, long before the response task that
+        # runs the later ones exists.
+        clock = StageClock()
+        bridge = _build_bridge(session, cancels, clock)
         sender = _Sender(websocket, bridge)
         segmenter = await _arm_segmenter(websocket, session)
         if segmenter is None:
             return  # VAD is down; the named error is already sent
-        await _pump_session(websocket, bridge, sender, cancels, segmenter, input_rate, tasks)
+        await _pump_session(websocket, bridge, sender, cancels, segmenter, input_rate, tasks, clock)
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -424,7 +450,7 @@ async def realtime(websocket: WebSocket) -> None:
 
 
 def _build_bridge(  # pragma: no cover
-    session: Session, cancels: "_ResponseCancels"
+    session: Session, cancels: "_ResponseCancels", clock: StageClock
 ) -> ConversationBridge:
     """Construct this session's conversation bridge from the live settings.
 
@@ -432,13 +458,18 @@ def _build_bridge(  # pragma: no cover
     stdlib module — ``resolve_voice_model`` applies the voice lane's
     ``multimodal`` default policy (which ``_turn.py`` deliberately refuses to
     hardcode), ``DEFAULT_DELTA_CHUNK_BYTES`` is the wire codec's own delta
-    size (the single source of truth for outbound chunking), and the two
-    stage deadlines mirror this module's own forward timeouts so the floor
-    and the HTTP client can never disagree about how long is too long. The
-    TTS deadline is left at the floor's default (60s), which is
-    ``tts_client``'s own httpx read timeout.
+    size (the single source of truth for outbound chunking), and the three
+    stage deadlines mirror this module's own forward timeouts (and the
+    operator's ``TOOL_WAIT_TIMEOUT_MS``) so the floor and the HTTP client can
+    never disagree about how long is too long. The TTS deadline is left at
+    the floor's default (60s), which is ``tts_client``'s own httpx read
+    timeout.
+
+    The stopwatch is attached here too: the bridge reads it once, at
+    ``response.done``, so a turn's timings reach the wire without this module
+    deciding anything about what a stage IS.
     """
-    return ConversationBridge(
+    bridge = ConversationBridge(
         session,
         cancel_generate=cancels.generate,
         cancel_tts=cancels.tts,
@@ -446,12 +477,19 @@ def _build_bridge(  # pragma: no cover
             base_url=settings.openai_base_url,
             api_key=settings.openai_api_key,
             model=resolve_voice_model(settings.openai_model),
+            stream=settings.generate_stream,
+            first_clause_min_chars=settings.reply_first_clause_min_chars,
         ),
         barge_in_window_ms=settings.barge_in_window_ms,
+        continuation_window_ms=settings.continuation_window_ms,
+        continuation_tool_hold_ms=settings.continuation_tool_hold_ms,
         transcribe_timeout_ms=int(_STT_FORWARD_TIMEOUT * 1000),
         generate_timeout_ms=int(_GENERATE_FORWARD_TIMEOUT * 1000),
+        tool_wait_timeout_ms=settings.tool_wait_timeout_ms,
         chunk_bytes=DEFAULT_DELTA_CHUNK_BYTES,
     )
+    bridge.set_timings_provider(clock.snapshot)
+    return bridge
 
 
 class _ActiveResponse:  # pragma: no cover
@@ -476,9 +514,13 @@ class _ActiveResponse:  # pragma: no cover
         self.generate_task: asyncio.Task | None = None
         self.tts_task: asyncio.Task | None = None
         self.tts_cancel = asyncio.Event()
+        # The hidden speculation this response may adopt (deviation d9), if any.
+        self.speculation: _Speculation | None = None
 
     def cancel_generate(self) -> None:
         self.cancelled = True
+        if self.speculation is not None:
+            self.speculation.cancel()
         if self.generate_task is not None:
             self.generate_task.cancel()
 
@@ -542,6 +584,12 @@ class _SessionTasks:  # pragma: no cover
     def __init__(self) -> None:
         self.watchdog: asyncio.Task | None = None
         self.responses: set[asyncio.Task] = set()
+        self.speculation: _Speculation | None = None
+        # Continuation merge (deviation d9, layer B): the last committed
+        # turn's audio, and — once the bridge has taken that commit back — the
+        # audio the NEXT commit (and any speculation on it) must be prefixed with.
+        self.last_commit_audio = b""
+        self.continuation_audio = b""
 
     def ensure_watchdog(self, bridge: ConversationBridge, sender: _Sender) -> None:
         """Start the deadline watchdog once, when the session first arms.
@@ -552,11 +600,18 @@ class _SessionTasks:  # pragma: no cover
         if self.watchdog is None:
             self.watchdog = asyncio.create_task(_watchdog(bridge, sender))
 
+    def drop_speculation(self) -> None:
+        """Throw the hidden speculation away, without trace."""
+        if self.speculation is not None:
+            self.speculation.cancel()
+            self.speculation = None
+
     def track(self, task: asyncio.Task) -> None:
         self.responses.add(task)
         task.add_done_callback(self.responses.discard)
 
     async def cancel_all(self) -> None:
+        self.drop_speculation()
         pending = [task for task in (self.watchdog, *self.responses) if task is not None]
         for task in pending:
             task.cancel()
@@ -580,11 +635,370 @@ async def _watchdog(bridge: ConversationBridge, sender: _Sender) -> None:  # pra
             await sender.flush()
 
 
-async def _post_generate(request) -> tuple[int, bytes]:  # pragma: no cover
-    """The one HTTP call of the generate stage. Shape decided by ``_turn.py``."""
+async def _post_generate(request) -> tuple[int, bytes, dict[str, str]]:  # pragma: no cover
+    """The one HTTP call of the generate stage. Shape decided by ``_turn.py``.
+
+    The response HEADERS travel back with the body because a shed lane's
+    ``Retry-After`` lives nowhere else — the bridge is what turns it into the
+    client-visible message (see
+    :func:`lobes.realtime._conversation.describe_generate_http_failure`), and
+    it can only do that if the route hands them over.
+    """
     async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
         resp = await client.post(request.url, headers=request.headers, json=request.body)
-    return resp.status_code, resp.content
+    return resp.status_code, resp.content, dict(resp.headers)
+
+
+# How long the delivery pump sleeps when there is nothing to send YET. Under
+# streaming, "nothing right now" is the normal state between segments — the
+# next one is still synthesizing — so the pump idles instead of exiting. Far
+# below one 100ms delta, so a segment never waits on the poll.
+_DELIVERY_IDLE_POLL_S = 0.01
+
+
+class _SpeculativeStatus(Exception):  # pragma: no cover
+    """The speculative generate call answered non-200 — carried to the adopter
+    so the ordinary ``on_generate_response`` failure surfacing still runs."""
+
+    def __init__(self, status_code: int, body: bytes, headers: dict[str, str]) -> None:
+        super().__init__(f"speculative generate answered {status_code}")
+        self.failure = (status_code, body, headers)
+
+
+class _Speculation:  # pragma: no cover
+    """One hidden run of the pipeline on a provisional pause (deviation d9).
+
+    Touches NOTHING of the session: no bridge call that mutates, no event, no
+    history. It owns a transcript, the request it sent, the buffered generate
+    stream and a cache of pre-synthesized sentences; the real turn adopts them
+    or :meth:`cancel` makes them vanish. See :mod:`._speculation`.
+    """
+
+    def __init__(self) -> None:
+        self.transcript: str | None = None
+        self.transcript_ready = asyncio.Event()
+        self.request = None
+        self.lines = LineBuffer()
+        self.audio = SegmentAudioCache()
+        self.tts_cancel = asyncio.Event()
+        self.task: asyncio.Task | None = None
+        self.synth_task: asyncio.Task | None = None
+        self.started = time.monotonic()
+
+    def cancel(self) -> None:
+        self.tts_cancel.set()
+        for task in (self.task, self.synth_task):
+            if task is not None and not task.done():
+                task.cancel()
+        self.audio.cancel_pending()
+        if not self.lines.closed:
+            self.lines.close(error=asyncio.CancelledError())
+
+
+async def _speculative_transcribe(  # pragma: no cover
+    spec: _Speculation, audio: bytes, language: str | None
+) -> bool:
+    """Transcribe the snapshot out of sight. ``False`` means its STT failed.
+
+    ``transcript_ready`` is set in a ``finally`` whatever happens, so an
+    adopter waiting on it is never left hanging by a failed — or cancelled —
+    forward.
+    """
+    try:
+        spec.transcript = await _forward_turn_to_stt(audio, language)
+    except _STTForwardError:
+        return False
+    finally:
+        spec.transcript_ready.set()
+    return True
+
+
+async def _speculative_stream(  # pragma: no cover
+    spec: _Speculation, request, segments: asyncio.Queue
+) -> None:
+    """Buffer the hidden generate stream, chunking sentences onto *segments*.
+
+    Every line is both buffered (for the adopter to replay) and chunked into
+    sentences for the pre-synthesizer. A non-200 becomes
+    :class:`_SpeculativeStatus`, which the caller closes the line buffer with,
+    so the adopter surfaces it through the ordinary failure path.
+    """
+    chunker = SentenceChunker(eager_first_min_chars=settings.reply_first_clause_min_chars)
+    accumulator = StreamAccumulator()
+    async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
+        async with client.stream(
+            "POST", request.url, headers=request.headers, json=request.body
+        ) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                raise _SpeculativeStatus(response.status_code, body, dict(response.headers))
+            async for line in response.aiter_lines():
+                spec.lines.put(line)
+                for item in accumulator.feed_line(line):
+                    for sentence in chunker.feed(item.text):
+                        await segments.put(sentence)
+    if not accumulator.saw_tool_call:
+        for sentence in chunker.flush():
+            await segments.put(sentence)
+    await segments.put(None)
+
+
+async def _speculate(  # pragma: no cover
+    spec: _Speculation, bridge: ConversationBridge, audio: bytes
+) -> None:
+    """STT -> streamed generate -> synthesis, all out of sight."""
+    language = bridge.session.config.language
+    try:
+        if not await _speculative_transcribe(spec, audio, language):
+            return  # the real commit will transcribe (and name any failure) itself
+        request = bridge.build_speculative_request(spec.transcript or "")
+        if request is None:
+            return
+        spec.request = request
+        segments: asyncio.Queue = asyncio.Queue()
+        spec.synth_task = asyncio.create_task(_speculative_synth(spec, segments, language))
+        await _speculative_stream(spec, request, segments)
+        spec.lines.close()
+        log.info(
+            "session_id=%s speculation ready in %d ms",
+            bridge.session.session_id,
+            int((time.monotonic() - spec.started) * 1000),
+        )
+    except asyncio.CancelledError:
+        raise
+    # Surfaces in the adopter, or nowhere.
+    except Exception as exc:  # noqa: BLE001
+        if not spec.lines.closed:
+            spec.lines.close(error=exc)
+
+
+async def _speculative_synth(  # pragma: no cover
+    spec: _Speculation, segments: asyncio.Queue, language: str
+) -> None:
+    """Pre-synthesize sentences in order; a failure is just a cache miss."""
+    while True:
+        text = await segments.get()
+        if text is None:
+            return
+        slot = spec.audio.reserve(text)
+        if slot is None:
+            continue
+        try:
+            pcm = await synthesize(
+                text,
+                voice=settings.default_voice,
+                tts_url=settings.tts_url,
+                cancel_event=spec.tts_cancel,
+                lane=VOICE_LANE,
+                language=language,
+            )
+        except asyncio.CancelledError:
+            slot.cancel()
+            raise
+        except Exception as exc:  # noqa: BLE001
+            slot.set_exception(exc)
+            slot.exception()  # mark retrieved: a miss, never an "unretrieved" warning
+            continue
+        slot.set_result(pcm)
+
+
+def _start_speculation(  # pragma: no cover
+    tasks: _SessionTasks, bridge: ConversationBridge, audio: bytes
+) -> None:
+    tasks.drop_speculation()
+    if not settings.vad_eager_ms or bridge.build_speculative_request("probe") is None:
+        return  # off, unarmed, not streaming, or the floor is not listening
+    spec = _Speculation()
+    spec.task = asyncio.create_task(_speculate(spec, bridge, audio))
+    tasks.speculation = spec
+
+
+async def _replay_speculation(  # pragma: no cover
+    speculation: _Speculation,
+    accumulator: StreamAccumulator,
+    bridge: ConversationBridge,
+    turn_id: int,
+    queue: asyncio.Queue,
+) -> tuple[int, bytes, dict[str, str]] | None:
+    """Replay the hidden stream's buffered lines, then follow it live.
+
+    The same request was already sent at the provisional pause, so the adopter
+    reads its buffer instead of opening a second connection. A
+    :class:`_SpeculativeStatus` the buffer was closed with is returned as the
+    ordinary ``(status, body, headers)`` failure triple, so a speculated
+    non-200 surfaces byte-identically to a live one.
+    """
+    try:
+        async for line in speculation.lines:
+            for item in accumulator.feed_line(line):
+                bridge.on_generate_delta(item.text, turn_id=turn_id)
+            await _drain_segments(bridge, queue)
+    except _SpeculativeStatus as exc:
+        return exc.failure
+    return None
+
+
+async def _hold_tool_call(bridge: ConversationBridge, result) -> None:  # pragma: no cover
+    """Hold a completed TOOL CALL while the speaker may still be carrying on.
+
+    The one thing that cannot be taken back (deviation d9, layer B). An onset
+    during the hold cancels this task, and the call is never sent.
+    """
+    if not isinstance(result, ToolCallResult):
+        return
+    hold_ms = bridge.tool_call_hold_ms()
+    if hold_ms:
+        await asyncio.sleep(hold_ms / 1000)
+
+
+async def _stream_generate(  # pragma: no cover
+    request,
+    bridge: ConversationBridge,
+    sender: _Sender,
+    turn_id: int,
+    queue: asyncio.Queue,
+    speculation: _Speculation | None = None,
+) -> tuple[int, bytes, dict[str, str]] | None:
+    """Stream the generate call, feeding sentences out as they complete.
+
+    The streaming twin of :func:`_post_generate`, and the whole reason first
+    audio stops depending on reply length: every line goes straight into
+    :class:`~lobes.realtime._turn.StreamAccumulator`, every text delta into
+    the bridge, and every sentence the bridge's chunker completes onto
+    *queue* for the synth worker — while generation is still running.
+
+    A NON-200 response is not a stream: the body is read whole and returned
+    as ``(status, body, headers)`` for the existing
+    :meth:`~lobes.realtime._conversation.ConversationBridge.on_generate_response`
+    error path, so ``role_infeasible``/429/503 surfacing is byte-identical to
+    the non-streaming lane. ``None`` means the stream completed and the
+    bridge was told so.
+    """
+    accumulator = StreamAccumulator()
+    if speculation is not None:
+        # ADOPTED (deviation d9): the same request was already sent at the
+        # provisional pause. Replay what it has buffered, then follow it live.
+        failure = await _replay_speculation(speculation, accumulator, bridge, turn_id, queue)
+        if failure is not None:
+            return failure
+    else:
+        async with httpx.AsyncClient(timeout=_GENERATE_FORWARD_TIMEOUT) as client:
+            async with client.stream(
+                "POST", request.url, headers=request.headers, json=request.body
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    return response.status_code, body, dict(response.headers)
+                async for line in response.aiter_lines():
+                    for item in accumulator.feed_line(line):
+                        bridge.on_generate_delta(item.text, turn_id=turn_id)
+                    await _drain_segments(bridge, queue)
+    result = accumulator.result()
+    await _hold_tool_call(bridge, result)
+    bridge.on_generate_stream_end(result, turn_id=turn_id)
+    await _drain_segments(bridge, queue)
+    await sender.flush()
+    return None
+
+
+async def _drain_segments(  # pragma: no cover
+    bridge: ConversationBridge, queue: asyncio.Queue
+) -> None:
+    """Move every ready segment onto the synth worker's queue, in order."""
+    while True:
+        pending = bridge.take_pending_segment()
+        if pending is None:
+            return
+        await queue.put(pending)
+
+
+async def _synth_worker(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    active: _ActiveResponse,
+    queue: asyncio.Queue,
+    clock: StageClock,
+) -> None:
+    """Synthesize queued segments, one at a time, in order.
+
+    SEQUENTIAL by design, not by omission: ``TTS_VOICE_CONCURRENCY`` is 1 and
+    the floor delivers segments in index order anyway, so a parallel worker
+    would buy nothing and could starve segment N of the gate while N+1 holds
+    it. The ``awaiting_tool_result`` guard comes FIRST, before any
+    ``synthesize`` call, for the same reason the non-streaming path checks it:
+    a tool turn must never be spoken.
+    """
+    tts_timings: dict[str, int] = {}
+    while True:
+        item = await queue.get()
+        if item is None:
+            return
+        if bridge.awaiting_tool_result:
+            return  # the reply became a tool call; nothing here is speakable
+        turn_id, segment_index, text = item
+        clock.start("tts")
+        cached = None
+        if active.speculation is not None:
+            cached = await active.speculation.audio.get(text)
+        if cached is not None:
+            clock.stop("tts")
+            bridge.on_tts_audio(cached, turn_id=turn_id, segment_index=segment_index)
+            await sender.flush()
+            continue
+        try:
+            pcm = await synthesize(
+                text,
+                voice=settings.default_voice,
+                tts_url=settings.tts_url,
+                cancel_event=active.tts_cancel,
+                lane=VOICE_LANE,
+                language=bridge.session.config.language,
+                timings_out=tts_timings,
+            )
+        except httpx.TimeoutException as exc:
+            bridge.fail_tts(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+            await sender.flush()
+            return
+        clock.stop("tts")
+        phonikud_ms = tts_timings.get("phonikud")
+        if phonikud_ms is not None:
+            clock.record("phonikud", phonikud_ms)
+        # Empty audio is the floor's named tts_failed — never a silent segment.
+        bridge.on_tts_audio(pcm, turn_id=turn_id, segment_index=segment_index)
+        await sender.flush()
+
+
+async def _pump_delivery(  # pragma: no cover
+    bridge: ConversationBridge, sender: _Sender, turn_id: int, clock: StageClock
+) -> None:
+    """Paced audio-out for a STREAMED reply, across however many segments.
+
+    The non-streaming pump exits the moment ``deliver_next`` answers
+    ``False``; here that answer usually means "the next segment is still
+    synthesizing", so the loop idles instead and keeps going until the bridge
+    says the response is over (``response_in_progress`` — a floor decision,
+    not one this file makes). Pacing is the same
+    :func:`~lobes.realtime._conversation.delivery_pause_ms` the non-streaming
+    path uses, for the same reason: delivery must track the playhead, or
+    barge-in is inert.
+    """
+    started_ms = timestamp_ms()
+    chunks_sent = 0
+    while bridge.response_in_progress(turn_id):
+        if not bridge.deliver_next(turn_id=turn_id):
+            await asyncio.sleep(_DELIVERY_IDLE_POLL_S)
+            continue
+        await sender.flush()
+        clock.mark_first_delta()
+        chunks_sent += 1
+        pause_ms = delivery_pause_ms(
+            chunks_sent=chunks_sent,
+            chunk_bytes=DEFAULT_DELTA_CHUNK_BYTES,
+            sample_rate=TTS_SAMPLE_RATE,
+            elapsed_ms=timestamp_ms() - started_ms,
+        )
+        if pause_ms > 0:
+            await asyncio.sleep(pause_ms / 1000)
 
 
 def _start_pending_response(  # pragma: no cover
@@ -592,19 +1006,28 @@ def _start_pending_response(  # pragma: no cover
     sender: _Sender,
     cancels: _ResponseCancels,
     tasks: _SessionTasks,
+    clock: StageClock,
 ) -> None:
     """Launch a response task if the bridge says one is due.
 
     A background task, not an inline await, precisely so the receive loop
     keeps running while the machine thinks and speaks — that is what makes a
     barge-in possible at all.
+
+    A tool turn comes through here TWICE with the same turn id — once for the
+    model's tool call, once for the follow-up generate the client's second
+    ``response.create`` releases — and each leg gets its own
+    :class:`_ActiveResponse`, so the cancel hooks always point at the calls
+    actually in flight.
     """
     turn_id = bridge.take_pending_response()
     if turn_id is None:
         return
     active = _ActiveResponse(turn_id)
+    # Hand over whatever the pause started; the driver decides adoption.
+    active.speculation, tasks.speculation = tasks.speculation, None
     cancels.active = active
-    tasks.track(asyncio.create_task(_run_response(bridge, sender, cancels, active)))
+    tasks.track(asyncio.create_task(_run_response(bridge, sender, cancels, active, clock)))
 
 
 async def _run_response(  # pragma: no cover
@@ -612,10 +1035,11 @@ async def _run_response(  # pragma: no cover
     sender: _Sender,
     cancels: _ResponseCancels,
     active: _ActiveResponse,
+    clock: StageClock,
 ) -> None:
     """Run one response to completion, interruption, or a named failure."""
     try:
-        await _drive_response(bridge, sender, active)
+        await _drive_response(bridge, sender, active, clock)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -626,7 +1050,7 @@ async def _run_response(  # pragma: no cover
 
 
 async def _drive_response(  # pragma: no cover
-    bridge: ConversationBridge, sender: _Sender, active: _ActiveResponse
+    bridge: ConversationBridge, sender: _Sender, active: _ActiveResponse, clock: StageClock
 ) -> None:
     """generate -> TTS -> pumped audio-out, each stage handed back to the bridge.
 
@@ -634,11 +1058,27 @@ async def _drive_response(  # pragma: no cover
     socket between them, so the receive loop gets a turn and an interruption
     lands on the undelivered remainder instead of arriving after every byte
     is already gone.
+
+    A reply that is a TOOL CALL ends this coroutine early — nothing is
+    synthesized, the response is NOT completed, and the floor sits in its
+    ``tool_wait`` stage until the client's result arrives (or the watchdog's
+    ``tick`` expires the wait, which is the one thing that must keep running;
+    it is a session-level task and is untouched by this return). The
+    follow-up generate is the SAME turn coming back through
+    :func:`_start_pending_response` when ``response.create`` releases it.
+
+    ``GENERATE_STREAM`` (default on) routes to :func:`_drive_streamed_response`
+    instead; everything below this line is the whole-reply path that
+    ``GENERATE_STREAM=false`` selects, unchanged.
     """
+    if bridge.streaming_enabled:
+        await _drive_streamed_response(bridge, sender, active, clock)
+        return
     turn_id = active.turn_id
     request = bridge.build_generate_request(turn_id)
     if request is None:
         return  # the turn was interrupted or failed before we got here
+    clock.start("generate")
     active.generate_task = asyncio.create_task(_post_generate(request))
     # asyncio.wait(), not `await task`. Barge-in cancels the CHILD, and wait()
     # reports that as ``task.cancelled()`` rather than raising CancelledError
@@ -651,20 +1091,35 @@ async def _drive_response(  # pragma: no cover
     if active.generate_task.cancelled():
         return  # barge-in or teardown; the floor already emitted
     try:
-        status_code, body = active.generate_task.result()
+        status_code, body, headers = active.generate_task.result()
     except httpx.TimeoutException as exc:
         bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
         return
     except httpx.HTTPError as exc:
         bridge.fail_generate(f"generate backend unreachable: {exc}", turn_id=turn_id)
         return
-    bridge.on_generate_response(status_code, body, turn_id=turn_id)
+    bridge.on_generate_response(status_code, body, turn_id=turn_id, headers=headers)
+    clock.stop("generate")
     await sender.flush()
+
+    if bridge.awaiting_tool_result:
+        # The reply was a tool call: the client has the floor now. Do NOT
+        # synthesize and do NOT complete the response — the same turn comes
+        # back through _start_pending_response once the result and the next
+        # `response.create` arrive, and the follow-up generate accumulates
+        # into the SAME `generate` total.
+        clock.start("tool_wait")
+        return
 
     pending = bridge.take_pending_synthesis()
     if pending is None:
         return  # empty reply, stale turn, or a named failure — already emitted
     _, reply_text = pending
+    # phonikud runs INSIDE synthesize (the diacritizer is not reachable from
+    # here), so it reports its own elapsed milliseconds through this mapping
+    # rather than the route bracketing a call it cannot see.
+    tts_timings: dict[str, int] = {}
+    clock.start("tts")
     active.tts_task = asyncio.create_task(
         synthesize(
             reply_text,
@@ -672,6 +1127,8 @@ async def _drive_response(  # pragma: no cover
             tts_url=settings.tts_url,
             cancel_event=active.tts_cancel,
             lane=VOICE_LANE,
+            language=bridge.session.config.language,
+            timings_out=tts_timings,
         )
     )
     # Same shape as the generate stage above, for the same reason: a cancelled
@@ -686,6 +1143,12 @@ async def _drive_response(  # pragma: no cover
     except httpx.TimeoutException as exc:
         bridge.fail_tts(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
         return
+    clock.stop("tts")
+    phonikud_ms = tts_timings.get("phonikud")
+    if phonikud_ms is not None:
+        # Absent for every English reply — an unmeasured stage stays off the
+        # wire rather than reporting an honest-looking zero.
+        clock.record("phonikud", phonikud_ms)
     # No resample: Chatterbox's PCM16 is already the client's 24 kHz wire
     # rate, so these bytes reach the socket exactly as synthesize() returned
     # them, base64 and nothing else.
@@ -702,6 +1165,10 @@ async def _drive_response(  # pragma: no cover
     chunks_sent = 0
     while bridge.deliver_next(turn_id=turn_id):
         await sender.flush()
+        # Time-to-first-audio is measured at the first chunk that actually
+        # LEFT the server, not at the one that was queued — mark_first_delta
+        # ignores every later call itself.
+        clock.mark_first_delta()
         chunks_sent += 1
         pause_ms = delivery_pause_ms(
             chunks_sent=chunks_sent,
@@ -711,6 +1178,92 @@ async def _drive_response(  # pragma: no cover
         )
         if pause_ms > 0:
             await asyncio.sleep(pause_ms / 1000)
+
+
+async def _drive_streamed_response(  # pragma: no cover
+    bridge: ConversationBridge, sender: _Sender, active: _ActiveResponse, clock: StageClock
+) -> None:
+    """The streamed turn: generate, synthesize and deliver, all at once.
+
+    Three concurrent pieces, because that overlap IS the feature (approved
+    deviation d7): the stream task feeds sentences out as they complete, the
+    synth worker turns each into audio in order, and the delivery pump sends
+    the first segment's chunks while the second is still being written. First
+    audio then costs one short sentence's synthesis instead of the whole
+    reply's.
+
+    Cancellation stops all three. ``cancel_generate`` cancels the stream task
+    and ``cancel_tts`` the synth worker (both wired through
+    :class:`_ActiveResponse`), and the ``finally`` below cancels whatever the
+    floor did not, so a barge-in cannot leave a worker speaking into the next
+    turn.
+    """
+    turn_id = active.turn_id
+    request = bridge.build_generate_request(turn_id)
+    if request is None:
+        return  # the turn was interrupted or failed before we got here
+    bridge.begin_generate_stream(turn_id)
+    queue: asyncio.Queue = asyncio.Queue()
+    clock.start("generate")
+    spec = active.speculation
+    if spec is not None and not can_adopt(spec.request, request):
+        # Something changed between the pause and the commit (or the
+        # speculation never got as far as a request): the ordinary path.
+        spec.cancel()
+        spec = active.speculation = None
+    if spec is not None:
+        log.info("session_id=%s speculation ADOPTED", bridge.session.session_id)
+    active.generate_task = asyncio.create_task(
+        _stream_generate(request, bridge, sender, turn_id, queue, spec)
+    )
+    # The synth worker IS the TTS call as far as cancellation is concerned:
+    # the floor's cancel_tts hook must reach whatever synthesis is in flight.
+    active.tts_task = asyncio.create_task(_synth_worker(bridge, sender, active, queue, clock))
+    pump = asyncio.create_task(_pump_delivery(bridge, sender, turn_id, clock))
+    try:
+        # asyncio.wait(), not `await task` — the same distinction the
+        # non-streaming path documents: a cancelled CHILD is barge-in, our own
+        # cancellation is teardown, and collapsing both into one
+        # CancelledError is exactly the mistake that keeps a torn-down
+        # session running.
+        await asyncio.wait({active.generate_task})
+        if active.generate_task.cancelled():
+            return  # barge-in or teardown; the floor already emitted
+        try:
+            failure = active.generate_task.result()
+        except httpx.TimeoutException as exc:
+            bridge.fail_generate(f"{type(exc).__name__}: {exc}", turn_id=turn_id, timed_out=True)
+            return
+        except httpx.HTTPError as exc:
+            bridge.fail_generate(f"generate backend unreachable: {exc}", turn_id=turn_id)
+            return
+        except TurnRequestError as exc:
+            # A malformed chunk mid-stream: the named generate failure, never
+            # a half-spoken reply presented as a whole one.
+            bridge.fail_generate(f"generate stream failed: {exc}", turn_id=turn_id)
+            return
+        clock.stop("generate")
+        if failure is not None:
+            status_code, body, headers = failure
+            bridge.on_generate_response(status_code, body, turn_id=turn_id, headers=headers)
+            await sender.flush()
+            return
+        if bridge.awaiting_tool_result:
+            # The stream ended in a tool call: the client has the floor. Any
+            # text prefix was already discarded by the bridge.
+            clock.start("tool_wait")
+            return
+        await queue.put(None)  # no more segments are coming
+        await asyncio.wait({active.tts_task, pump})
+    finally:
+        # Whatever the floor did not already cancel — a failed generate leaves
+        # a worker blocked on an empty queue, and a barge-in leaves the pump.
+        for task in (active.tts_task, pump):
+            if task is not None and not task.done():
+                task.cancel()
+        if active.speculation is not None:
+            active.speculation.cancel()
+        await sender.flush()
 
 
 async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # pragma: no cover
@@ -729,6 +1282,10 @@ async def _open_session(websocket: WebSocket) -> tuple[Session, int] | None:  # 
             # The operator half of the system-prompt contract; a client's own
             # `system_prompt` connect-config key always overrides it.
             default_system_prompt=settings.default_system_prompt,
+            # The deployment's language (REALTIME_LANGUAGE); a client's own
+            # `language` connect-config key — or a later `session.update` —
+            # overrides it, exactly like the system prompt above.
+            default_language=settings.language,
         )
     except SessionConfigError as exc:
         await websocket.send_json(event_to_dict(exc.to_error_event(gen_session_id())))
@@ -761,6 +1318,8 @@ async def _arm_segmenter(  # pragma: no cover
         vad_silence_ms=settings.vad_silence_ms,
         vad_prefix_padding_ms=settings.vad_prefix_padding_ms,
         max_turn_ms=settings.vad_max_turn_ms,
+        eager_silence_ms=settings.vad_eager_ms or None,
+        min_level_pct=settings.vad_min_level_pct,
     )
 
 
@@ -779,7 +1338,11 @@ async def _to_pcm16k(aligned: bytes, input_rate: int) -> bytes:  # pragma: no co
 
 
 async def _emit_turn_events(  # pragma: no cover
-    bridge: ConversationBridge, sender: _Sender, events: list
+    bridge: ConversationBridge,
+    sender: _Sender,
+    events: list,
+    clock: StageClock,
+    tasks: _SessionTasks,
 ) -> None:
     """Relay the segmenter's boundaries, transcribing each committed turn.
 
@@ -795,25 +1358,115 @@ async def _emit_turn_events(  # pragma: no cover
     clock: they are audio-stream time, not wall-clock.
     """
     for event in events:
-        if isinstance(event, SpeechStarted):
-            bridge.on_speech_started(at_ms=event.at_ms)
+        if isinstance(event, SpeechPaused):
+            # NOT a boundary (deviation d9): nothing goes to the wire or the
+            # bridge. The turn stays open; work starts on a snapshot of it.
+            _start_speculation(tasks, bridge, tasks.continuation_audio + event.audio)
+        elif isinstance(event, SpeechResumed):
+            tasks.drop_speculation()
+        elif isinstance(event, SpeechStarted):
+            tasks.drop_speculation()
+            if bridge.on_speech_started(at_ms=event.at_ms):
+                # The bridge took the early commit back: this turn is the
+                # SAME utterance carrying on, so its audio starts with that
+                # commit's. The bridge decides; the route only carries bytes.
+                tasks.continuation_audio = tasks.last_commit_audio
+                log.info(
+                    "session_id=%s continuation: merging %d ms of the previous commit",
+                    bridge.session.session_id,
+                    len(tasks.continuation_audio) // (VAD_SAMPLE_RATE * BYTES_PER_SAMPLE // 1000),
+                )
+            else:
+                tasks.continuation_audio = b""
             await sender.flush()
         elif isinstance(event, SpeechStopped):
+            if event.reason != "silence":
+                tasks.drop_speculation()  # max_turn/closed: not the snapshot's turn
+            # The commit is where this turn's measurement starts: everything
+            # the client waits for (transcription, thinking, speaking) is
+            # downstream of it, and `first_delta` is the whole span.
+            clock.reset()
+            clock.start("stt")
+            clock.start(FIRST_DELTA_STAGE)
             bridge.on_speech_stopped(at_ms=event.at_ms, reason=event.reason)
             await sender.flush()
-            await _transcribe_turn(bridge, sender, event.audio)
+            audio = tasks.continuation_audio + event.audio
+            tasks.last_commit_audio, tasks.continuation_audio = audio, b""
+            await _transcribe_turn(bridge, sender, audio, clock, tasks)
 
 
 async def _transcribe_turn(  # pragma: no cover
-    bridge: ConversationBridge, sender: _Sender, audio: bytes
+    bridge: ConversationBridge,
+    sender: _Sender,
+    audio: bytes,
+    clock: StageClock,
+    tasks: _SessionTasks,
 ) -> None:
+    spec = tasks.speculation
+    if spec is not None:
+        # The committed audio is the speculation's snapshot plus trailing
+        # non-speech only, so its transcript IS this turn's transcript.
+        await spec.transcript_ready.wait()
+        if spec.transcript is None:
+            tasks.drop_speculation()  # its STT failed: the ordinary path names it
+            spec = None
     try:
-        text = await _forward_turn_to_stt(audio)
+        if spec is not None:
+            text = spec.transcript
+        else:
+            text = await _forward_turn_to_stt(audio, bridge.session.config.language)
     except _STTForwardError as exc:
         bridge.on_transcription_failed(str(exc))
     else:
         bridge.on_transcript(text)
+    clock.stop("stt")
     await sender.flush()
+
+
+def _tool_wait_ended(
+    was_awaiting_tool: bool, bridge: ConversationBridge
+) -> bool:  # pragma: no cover
+    """Did the control event just ACCEPT the outstanding tool result?
+
+    A REFUSED result leaves the call outstanding, so the wait ends here — not
+    at the ``response.create`` that releases the follow-up generate.
+    """
+    return was_awaiting_tool and not bridge.awaiting_tool_result
+
+
+async def _feed_audio(  # pragma: no cover
+    bridge: ConversationBridge,
+    sender: _Sender,
+    cancels: _ResponseCancels,
+    segmenter: Segmenter,
+    pending: bytearray,
+    input_rate: int,
+    tasks: _SessionTasks,
+    clock: StageClock,
+) -> bool:
+    """Segment whatever whole samples *pending* holds. ``False`` ends the session.
+
+    The only way out of a session from here is a VAD failure: ``_segmenter.py``
+    deliberately lets a raising VAD callable propagate (see its module
+    docstring), and translating that into the named ``vad_unavailable`` session
+    error is this route's job.
+    """
+    aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
+    if not aligned:
+        return True
+    pcm16k = await _to_pcm16k(aligned, input_rate)
+    try:
+        # torch inference, one call per 32 ms chunk — off the loop for the
+        # same reason as the resample above.
+        events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
+    except Exception as exc:
+        bridge.fail_vad(f"{type(exc).__name__}: {exc}")
+        await sender.flush()
+        return False
+    await _emit_turn_events(bridge, sender, events, clock, tasks)
+    _start_pending_response(bridge, sender, cancels, tasks, clock)
+    await sender.flush()
+    return True
 
 
 async def _pump_session(  # pragma: no cover
@@ -824,6 +1477,7 @@ async def _pump_session(  # pragma: no cover
     segmenter: Segmenter,
     input_rate: int,
     tasks: _SessionTasks,
+    clock: StageClock,
 ) -> None:
     """Receive audio until the client goes away, segmenting as it arrives.
 
@@ -846,10 +1500,14 @@ async def _pump_session(  # pragma: no cover
             return
         decision = decide_inbound_message(message)
         if decision.kind is InboundKind.IGNORED:
-            if bridge.on_control_event(decision.payload):
-                tasks.ensure_watchdog(bridge, sender)
-                await sender.flush()
-                _start_pending_response(bridge, sender, cancels, tasks)
+            was_awaiting_tool = bridge.awaiting_tool_result
+            if not bridge.on_control_event(decision.payload):
+                continue
+            tasks.ensure_watchdog(bridge, sender)
+            if _tool_wait_ended(was_awaiting_tool, bridge):
+                clock.stop("tool_wait")
+            await sender.flush()
+            _start_pending_response(bridge, sender, cancels, tasks, clock)
             continue
         if decision.kind is InboundKind.ERROR:
             bridge.on_wire_error(decision.error)
@@ -858,25 +1516,10 @@ async def _pump_session(  # pragma: no cover
         audio = decision.audio
 
         pending.extend(audio)
-        aligned = take_aligned_samples(pending, BYTES_PER_SAMPLE)
-        if not aligned:
-            continue
-        pcm16k = await _to_pcm16k(aligned, input_rate)
-
-        try:
-            # torch inference, one call per 32 ms chunk — off the loop for the
-            # same reason as the resample above.
-            events = await anyio.to_thread.run_sync(segmenter.feed, pcm16k)
-        except Exception as exc:
-            # _segmenter.py deliberately lets a raising VAD callable
-            # propagate (see its module docstring) — translating that into
-            # the named session error is this route's job.
-            bridge.fail_vad(f"{type(exc).__name__}: {exc}")
-            await sender.flush()
-            return
-        await _emit_turn_events(bridge, sender, events)
-        _start_pending_response(bridge, sender, cancels, tasks)
-        await sender.flush()
+        if not await _feed_audio(
+            bridge, sender, cancels, segmenter, pending, input_rate, tasks, clock
+        ):
+            return  # VAD is down; the named error is already sent
 
 
 def main() -> None:  # pragma: no cover - process entrypoint

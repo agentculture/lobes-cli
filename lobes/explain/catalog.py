@@ -1154,6 +1154,23 @@ landed under `docs/evidence/` yet (#108). Still unvalidated from #149 and not
 retired by this work: a real microphone (the runs used synthesized audio),
 the VAD-unavailable path, concurrent sessions, the max-turn cap.
 
+## Hebrew, tool calls, and the latency knobs (opt-in overlay)
+
+`lobes init --fleet --audio --audio-lang he` layers a Hebrew overlay on this
+one (ivrit.ai Whisper STT + Chatterbox Multilingual TTS; the English files are
+byte-identical without it). On the same session a client may now declare
+tools (`session.update`) and receive
+`response.function_call_arguments.done`; it runs the tool itself and answers
+with `conversation.item.create{function_call_output}` + `response.create` —
+lobes relays, it never executes a tool. Replies stream sentence by sentence
+(`GENERATE_STREAM`, default on, every language). Two off-by-default knobs cut
+the wait: `VAD_EAGER_MS` (hidden speculation during a pause, adopted only on a
+byte-identical request) and `CONTINUATION_WINDOW_MS` (an early commit is taken
+back when the speaker carries on). Measured live on the DGX Spark 2026-09-18
+from a hand-carried deployment (first audio 2.6 s -> 1-113 ms after the
+commit); the PACKAGED path is DECLARED/UNVALIDATED (#108). Client contract:
+`docs/contracts/realtime-tool-calling.md`; the rest: `docs/hebrew-realtime.md`.
+
 Audio POST routes and the `/v1/realtime` handshake are gated by the same
 opt-in `GATEWAY_API_KEY` bearer check — `lobes explain gateway`. Full
 topology, the session's event/config/teardown contract, runbooks, and

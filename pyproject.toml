@@ -1,6 +1,6 @@
 [project]
 name = "lobes-cli"
-version = "0.80.1"
+version = "0.81.0"
 description = "lobes — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "Apache-2.0"
@@ -36,6 +36,27 @@ realtime = [
 # wheel — plain `pip install chatterbox-tts` would pull CPU-only torch on
 # aarch64.  Only the FastAPI/uvicorn glue is installed via this extra.
 chatterbox = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
+# The Hebrew-capable Chatterbox Multilingual TTS sidecar (hebrew-realtime
+# plan, task t11; approved deviation d5) — the `chatterbox` service when
+# docker-compose.audio-he.yml overrides its build to Dockerfile.chatterbox-ml.
+# Same torch/chatterbox-tts story as `chatterbox` above (installed by the
+# Dockerfile's own cu128 recipe, not listed here); adds phonikud-onnx, the
+# CC BY 4.0 int8 ONNX Hebrew diacritizer already used by the realtime bridge
+# (lobes/realtime/_vocalize.py, task t9) — CPU-only (onnxruntime-gpu has no
+# official aarch64 wheel, per docs/specs/2026-09-18-hebrew-realtime.md).
+chatterbox-ml = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "phonikud-onnx>=1.0",
+]
+# The BlueTTS Hebrew voice sidecar (hebrew-realtime plan, approved deviation
+# d8) — templates/fleet/Dockerfile.bluetts. The engine itself (blue_onnx, MIT)
+# is installed by that Dockerfile from a pinned commit, not from PyPI (the PyPI
+# `blue-onnx` is a different, older line), so only the HTTP shell is listed.
+bluetts = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]
@@ -83,6 +104,11 @@ omit = [
     "lobes/realtime/__main__.py",
     "lobes/realtime/tts_client.py",
     "lobes/realtime/chatterbox_server.py",
+    # Hebrew Multilingual TTS sidecar (hebrew-realtime plan, task t11) — same
+    # fastapi-guarded-import shape as chatterbox_server.py above; its route
+    # bodies are pragma: no cover, its pure helpers are unit-tested directly
+    # (tests/test_chatterbox_multilingual_server.py).
+    "lobes/realtime/chatterbox_multilingual_server.py",
 ]
 
 [tool.coverage.report]
