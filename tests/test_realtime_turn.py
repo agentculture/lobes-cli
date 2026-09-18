@@ -19,12 +19,15 @@ from lobes.realtime._turn import (
     DEFAULT_SYSTEM_PROMPT,
     DEFAULT_TEMPERATURE,
     RoleInfeasibleError,
+    ToolCallResult,
     TurnRequest,
     TurnRequestError,
     TurnResponseError,
+    assistant_tool_call_message,
     build_turn_payload,
     build_turn_request,
     parse_turn_response,
+    tool_result_message,
     turn_endpoint_url,
     turn_request_headers,
 )
@@ -359,5 +362,284 @@ def test_module_exports_a_stable_public_surface() -> None:
         "TurnRequestError",
         "RoleInfeasibleError",
         "TurnResponseError",
+        "ToolCallResult",
+        "assistant_tool_call_message",
+        "tool_result_message",
     ):
         assert hasattr(turn_mod, name), f"missing expected export: {name}"
+
+
+# --- build_turn_payload with tools: acceptance criterion 1 (task #151 t5) --
+
+_FLAT_TOOL = {
+    "type": "function",
+    "name": "get_weather",
+    "description": "Look up the current weather.",
+    "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
+}
+
+
+class TestBuildTurnPayloadTools:
+    def test_no_tools_argument_is_byte_identical_to_no_tools_call(self) -> None:
+        with_arg = build_turn_payload([], model="multimodal")
+        without_arg = build_turn_payload([], model="multimodal", tools=None)
+        assert with_arg == without_arg
+        assert "tools" not in with_arg
+        assert "tool_choice" not in with_arg
+
+    def test_none_tools_omits_tools_and_tool_choice_keys(self) -> None:
+        payload = build_turn_payload([], model="multimodal", tools=None, tool_choice="auto")
+        assert "tools" not in payload
+        assert "tool_choice" not in payload
+
+    def test_empty_tuple_tools_omits_tools_and_tool_choice_keys(self) -> None:
+        payload = build_turn_payload([], model="multimodal", tools=(), tool_choice="auto")
+        assert "tools" not in payload
+        assert "tool_choice" not in payload
+
+    def test_declared_tools_are_nested_into_chat_completions_shape(self) -> None:
+        payload = build_turn_payload([], model="multimodal", tools=(_FLAT_TOOL,))
+        assert payload["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Look up the current weather.",
+                    "parameters": _FLAT_TOOL["parameters"],
+                },
+            }
+        ]
+
+    def test_declared_tools_with_no_tool_choice_omit_tool_choice_key(self) -> None:
+        payload = build_turn_payload([], model="multimodal", tools=(_FLAT_TOOL,))
+        assert "tool_choice" not in payload
+
+    def test_declared_tools_with_string_tool_choice_pass_through(self) -> None:
+        payload = build_turn_payload(
+            [], model="multimodal", tools=(_FLAT_TOOL,), tool_choice="required"
+        )
+        assert payload["tool_choice"] == "required"
+
+    def test_declared_tools_with_forced_tool_choice_are_nested(self) -> None:
+        payload = build_turn_payload(
+            [],
+            model="multimodal",
+            tools=(_FLAT_TOOL,),
+            tool_choice={"type": "function", "name": "get_weather"},
+        )
+        assert payload["tool_choice"] == {
+            "type": "function",
+            "function": {"name": "get_weather"},
+        }
+
+    def test_payload_with_tools_is_still_json_serializable(self) -> None:
+        payload = build_turn_payload(
+            [], model="multimodal", tools=(_FLAT_TOOL,), tool_choice="auto"
+        )
+        json.dumps(payload)  # must not raise
+
+    def test_enable_thinking_false_is_kept_alongside_declared_tools(self) -> None:
+        # Measured honored by associate with tools on 2026-09-18 (spec claim):
+        # declaring tools must not disturb the no-reasoning-trace default.
+        payload = build_turn_payload([], model="multimodal", tools=(_FLAT_TOOL,))
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+    def test_build_turn_request_forwards_tools_and_tool_choice(self) -> None:
+        req = build_turn_request(
+            [],
+            base_url="http://gateway:8000",
+            model="multimodal",
+            tools=(_FLAT_TOOL,),
+            tool_choice="auto",
+        )
+        assert req.body["tools"][0]["function"]["name"] == "get_weather"
+        assert req.body["tool_choice"] == "auto"
+
+
+# --- parse_turn_response with tool_calls: acceptance criterion 2 -----------
+
+
+def _tool_call_body(
+    call_id: str = "call_abc123",
+    name: str = "get_weather",
+    arguments: str = '{"city": "Tel Aviv"}',
+    content: str | None = None,
+    extra_calls: int = 0,
+) -> bytes:
+    tool_calls = [
+        {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+    ]
+    for i in range(extra_calls):
+        tool_calls.append(
+            {
+                "id": f"call_extra{i}",
+                "type": "function",
+                "function": {"name": "other_tool", "arguments": "{}"},
+            }
+        )
+    return json.dumps(
+        {
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": content,
+                        "tool_calls": tool_calls,
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    ).encode("utf-8")
+
+
+class TestParseTurnResponseToolCalls:
+    def test_tool_calls_returns_a_tool_call_result_not_a_string(self) -> None:
+        result = parse_turn_response(200, _tool_call_body())
+        assert isinstance(result, ToolCallResult)
+        assert not isinstance(result, str)
+
+    def test_tool_call_result_carries_call_id_name_and_arguments_verbatim(self) -> None:
+        result = parse_turn_response(
+            200,
+            _tool_call_body(call_id="call_xyz", name="get_weather", arguments='{"city": "Haifa"}'),
+        )
+        assert result.call_id == "call_xyz"
+        assert result.name == "get_weather"
+        assert result.arguments == '{"city": "Haifa"}'
+
+    def test_arguments_are_never_parsed_as_json_by_this_module(self) -> None:
+        # Malformed/partial JSON arguments must still come through untouched —
+        # this module never interprets them.
+        result = parse_turn_response(200, _tool_call_body(arguments="{not valid json"))
+        assert result.arguments == "{not valid json"
+
+    def test_only_the_first_tool_call_is_surfaced(self) -> None:
+        result = parse_turn_response(200, _tool_call_body(call_id="call_first", extra_calls=2))
+        assert result.call_id == "call_first"
+
+    def test_tool_call_count_reflects_how_many_the_reply_carried(self) -> None:
+        result = parse_turn_response(200, _tool_call_body(extra_calls=2))
+        assert result.tool_call_count == 3
+
+    def test_single_tool_call_count_defaults_to_one(self) -> None:
+        result = parse_turn_response(200, _tool_call_body())
+        assert result.tool_call_count == 1
+
+    def test_tool_calls_present_is_never_treated_as_text_even_with_content(self) -> None:
+        # Some backends echo partial/empty text alongside a tool call — this
+        # must never be synthesized as the spoken reply.
+        result = parse_turn_response(200, _tool_call_body(content="I'll check that for you"))
+        assert isinstance(result, ToolCallResult)
+
+    def test_empty_tool_calls_list_falls_through_to_text(self) -> None:
+        body = json.dumps(
+            {"choices": [{"message": {"role": "assistant", "content": "hi", "tool_calls": []}}]}
+        ).encode("utf-8")
+        assert parse_turn_response(200, body) == "hi"
+
+    def test_malformed_tool_call_missing_id_raises_turn_response_error(self) -> None:
+        body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {"type": "function", "function": {"name": "x", "arguments": "{}"}}
+                            ]
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        with pytest.raises(TurnResponseError):
+            parse_turn_response(200, body)
+
+    def test_malformed_tool_call_missing_function_raises_turn_response_error(self) -> None:
+        body = json.dumps({"choices": [{"message": {"tool_calls": [{"id": "call_1"}]}}]}).encode(
+            "utf-8"
+        )
+        with pytest.raises(TurnResponseError):
+            parse_turn_response(200, body)
+
+    def test_malformed_tool_call_non_string_arguments_raises_turn_response_error(self) -> None:
+        body = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {"id": "call_1", "function": {"name": "x", "arguments": 5}}
+                            ]
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        with pytest.raises(TurnResponseError):
+            parse_turn_response(200, body)
+
+
+# --- history helpers: assistant tool_calls + role:tool entries -------------
+
+
+class TestHistoryHelpers:
+    def test_assistant_tool_call_message_shape(self) -> None:
+        result = ToolCallResult(call_id="call_1", name="get_weather", arguments='{"city": "X"}')
+        entry = assistant_tool_call_message(result)
+        assert entry == {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": '{"city": "X"}'},
+                }
+            ],
+        }
+
+    def test_assistant_tool_call_message_is_json_serializable(self) -> None:
+        result = ToolCallResult(call_id="call_1", name="get_weather", arguments="{}")
+        json.dumps(assistant_tool_call_message(result))  # must not raise
+
+    def test_tool_result_message_shape(self) -> None:
+        entry = tool_result_message("call_1", '{"temp_c": 21}')
+        assert entry == {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "content": '{"temp_c": 21}',
+        }
+
+    def test_tool_result_message_is_json_serializable(self) -> None:
+        json.dumps(tool_result_message("call_1", "done"))  # must not raise
+
+    def test_history_round_trip_can_be_fed_back_into_build_turn_payload(self) -> None:
+        # The whole point: these entries slot straight into the next turn's
+        # history without build_turn_payload needing any tool-specific
+        # handling of history items themselves.
+        result = ToolCallResult(call_id="call_1", name="get_weather", arguments='{"city": "X"}')
+        history = [
+            {"role": "user", "content": "what's the weather in X?"},
+            assistant_tool_call_message(result),
+            tool_result_message("call_1", '{"temp_c": 21}'),
+        ]
+        payload = build_turn_payload(history, model="multimodal")
+        assert payload["messages"][1:] == history
+        json.dumps(payload)  # must not raise
+
+
+# --- DEFAULT_SYSTEM_PROMPT aligned with _session's copy ---------------------
+
+
+def test_default_system_prompt_is_the_session_default_system_prompt() -> None:
+    # Task #151 t5: the dead English copy is gone; this is now an alias, not
+    # a second source of truth, so the two can never disagree.
+    from lobes.realtime._session import DEFAULT_SYSTEM_PROMPT as SESSION_DEFAULT_SYSTEM_PROMPT
+
+    assert DEFAULT_SYSTEM_PROMPT is SESSION_DEFAULT_SYSTEM_PROMPT
