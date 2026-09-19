@@ -541,9 +541,10 @@ class MeshRoutes:
         replaced the view when EVERY probe returned, and a paused peer held
         it for the whole probe timeout). Members already probed carry their
         verified / reason / ready data forward unchanged — unless their
-        announcement's fingerprints changed since that probe, in which case
-        they return to pending — so a refresh never demotes a lane that is
-        still what it was verified as. No holder (unit-test wiring) is a no-op.
+        announcement's probe identity (fingerprint, model, context) changed
+        since that probe, in which case they return to pending — so a
+        refresh never demotes a lane that is still what it was verified as.
+        No holder (unit-test wiring) is a no-op.
         """
         holder = self._holder
         if holder is None:
@@ -628,10 +629,10 @@ class MeshRoutes:
 
     @staticmethod
     def _announcement_fingerprints(ann: "Announcement | None") -> dict:
-        """The per-role fingerprints of *ann* — the part a probe verifies."""
+        """What a probe of *ann* is valid against (:func:`_probe_identity`)."""
         if ann is None:
             return {}
-        return {role: info.fingerprint for role, info in ann.roles.items()}
+        return _probe_identity(ann)
 
     def _needs_immediate_verify(
         self, origin: str, previous: "Announcement | None", current: "Announcement"
@@ -1388,12 +1389,27 @@ def _prune_dropped_announcements(
 
         for origin in tick_result.dropped_origins:
             routes._announcements.pop(origin, None)
+        # Qodo on #282: carry every SURVIVOR's probe results forward. A bare
+        # rebuild reset all of them to unprobed on any single expiry, so every
+        # mesh role answered 503 role_unverified and lost its peer-sourced
+        # context/model until the next verification pass happened to run.
+        view = holder.current()
+        prev = getattr(view, "snapshot", None)
+        verified, reasons, ready, contexts, models = _carry_forward_probe_results(
+            prev, routes._announcements
+        )
         snap = build_snapshot(
             routes.roster,
             announcements=routes._announcements,
+            verified_roles=verified,
+            unverified_reasons=reasons,
+            ready_roles=ready,
             discovered_roles=routes._discovered_roles,  # noqa: SLF001
+            role_contexts=contexts,
+            role_models=models,
         )
-        holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
+        peer_states = getattr(view, "peer_states", None) or {}
+        holder.replace(MeshRoutingView(snapshot=snap, peer_states=peer_states))
     except Exception:  # nosec B110 — best-effort: drop refresh never blocks
         pass
 
@@ -2066,9 +2082,18 @@ def _log_pending_members(
             )
 
 
-def _role_fingerprints(ann: Announcement) -> dict[str, object]:
-    """The ``role -> fingerprint`` map a probe result is only valid against."""
-    return {role: info.fingerprint for role, info in ann.roles.items()}
+def _probe_identity(ann: Announcement) -> dict[str, object]:
+    """The per-role identity a probe result is only valid against.
+
+    The fingerprint, plus the announced ``model`` and ``context``. The
+    fingerprint alone misses a checkpoint swap behind a STABLE served name
+    (Qodo on #282). Since the probe now records the model a lane advertised,
+    that result must be re-taken when the announced model changes, or the
+    carried result keeps publishing the old one and no re-probe is ever
+    scheduled. The one definition backs all three comparisons: the
+    immediate-verify trigger, the refresh carry-forward, and the mid-pass drop.
+    """
+    return {role: (info.fingerprint, info.model, info.context) for role, info in ann.roles.items()}
 
 
 def _probe_result_still_current(
@@ -2077,12 +2102,12 @@ def _probe_result_still_current(
     current_anns: Mapping[str, "Announcement"],
 ) -> bool:
     """Does a probe result taken against ``prev_anns[origin]`` still describe
-    ``current_anns[origin]``?  False when the fingerprints changed (the
+    ``current_anns[origin]``?  False when the probe identity changed (the
     refresh-path twin of :func:`_drop_results_for_changed_announcements`)."""
     before = prev_anns.get(origin)
     now = current_anns.get(origin)
     if before is not None and now is not None:
-        return _role_fingerprints(before) == _role_fingerprints(now)
+        return _probe_identity(before) == _probe_identity(now)
     return before is now
 
 
@@ -2101,7 +2126,7 @@ def _carry_forward_probe_results(
     Every PROBED member of *prev* whose announcement is unchanged carries its
     verified / reason / ready / context data forward; ``ready`` is recorded
     even when empty because it is the "probed" trace (t1).  A member whose
-    announcement's fingerprints changed since its probe is left out on
+    announcement's probe identity changed since its probe is left out on
     purpose — it returns to pending until the verify-now pass the change
     already scheduled re-probes it.
     """
@@ -2151,16 +2176,17 @@ def _drop_results_for_changed_announcements(
     until the next pass.  That pass is already scheduled: a fingerprint change
     is exactly what ``_needs_immediate_verify`` sets the verify-now event for.
 
-    Comparison is per-role FINGERPRINT, not object identity: a member
-    re-announcing the same lanes every heartbeat stores a fresh object each
-    time, and identity would make it permanently unverifiable.
+    Comparison is per-role :func:`_probe_identity` (fingerprint, model,
+    context), not object identity: a member re-announcing the same lanes
+    every heartbeat stores a fresh object each time, and identity would make
+    it permanently unverifiable.
     """
     with routes._lock:  # noqa: SLF001
         changed = [
             origin
             for _mname, origin, ann in members_to_verify
             if (current := routes._announcements.get(origin)) is None  # noqa: SLF001
-            or _role_fingerprints(current) != _role_fingerprints(ann)
+            or _probe_identity(current) != _probe_identity(ann)
         ]
     for origin in changed:
         verified_by_origin.pop(origin, None)

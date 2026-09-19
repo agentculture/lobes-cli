@@ -9,6 +9,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Mesh `/capabilities`: a role a member reaches only through the mesh now advertises the serving peer's own `model` id, not the member's own `.env` value, using the same probe and the same agree-or-leave pool rule that `context` already used. Live 2026-09-19: after the Spark's senses lane moved to Gemma 4 26B-A4B, the Thor and Orin kept advertising it as the retired 12B. `MemberInfo.role_model` / `model_for`, `build_snapshot(role_models=...)`; the verification probe returns the model map alongside the context map, and every refresh / drop-stale path carries it.
+- Mesh: a probe result is now valid against the announced `model` and `context` as well as the fingerprint (`_probe_identity`), for the immediate-verify trigger, the refresh carry-forward and the mid-pass drop. A checkpoint swap behind a stable served name used to keep the old probe result, and with it the old model, with no re-probe ever scheduled.
+- Mesh: when one member expires, the rebuilt snapshot carries every survivor's probe results forward. It used to reset them all to unprobed, so every mesh role answered 503 `role_unverified` and lost its peer-sourced context/model until the next verification pass.
 
 ## [0.81.2] - 2026-09-19
 
