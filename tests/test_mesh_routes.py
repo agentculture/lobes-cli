@@ -2171,7 +2171,7 @@ class TestProbeIgnoresProxiedEntries:
         )
         try:
             ann = _peer_ann("peer", origin)
-            _origin, verified, ready, reason, contexts = _probe_member_capabilities(
+            _origin, verified, ready, reason, contexts, models = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert "associate" in verified
@@ -2180,6 +2180,7 @@ class TestProbeIgnoresProxiedEntries:
             # Qodo thread 2: a proxied entry is a relay, so its context is
             # never captured either.
             assert "worker" not in contexts
+            assert "worker" not in models
         finally:
             srv.shutdown()
 
@@ -2200,10 +2201,31 @@ class TestProbeIgnoresProxiedEntries:
         )
         try:
             ann = _peer_ann("peer", origin)
-            _o, _v, _r, _reason, contexts = _probe_member_capabilities(
+            _o, _v, _r, _reason, contexts, _m = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert contexts == {"associate": 262144}
+        finally:
+            srv.shutdown()
+
+    def test_the_probe_captures_each_lanes_advertised_model(self) -> None:
+        """A proxied entry must name the SERVING lane's model, so the probe
+        records it next to the context — non-empty strings only."""
+        from lobes.gateway._mesh_routes import _probe_member_capabilities
+
+        fp = {"served_id": "m", "quantization": "q", "max_model_len": 1, "runtime": "vllm"}
+        srv, origin = self._serve(
+            {
+                "senses": {"ready": True, "fingerprint": fp, "model": "g/26b"},
+                "hand": {"ready": True, "fingerprint": fp, "model": ""},
+                "muse": {"ready": True, "fingerprint": fp},
+                "reranker": {"ready": True, "fingerprint": fp, "model": 7},
+            }
+        )
+        try:
+            ann = _peer_ann("peer", origin)
+            *_rest, models = _probe_member_capabilities(("peer", origin, ann), None, 2.0)
+            assert models == {"senses": "g/26b"}
         finally:
             srv.shutdown()
 
@@ -2234,7 +2256,7 @@ class TestProbeIgnoresProxiedEntries:
                     )
                 },
             )
-            _o, verified, ready, _r, _c = _probe_member_capabilities(
+            _o, verified, ready, _r, _c, _m = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert verified == frozenset()
@@ -2326,6 +2348,7 @@ class TestRoutingViewRefreshesOnIngest:
                     verified_roles={"http://thor:8000": frozenset({"associate"})},
                     ready_roles={"http://thor:8000": frozenset({"associate"})},
                     role_contexts={"http://thor:8000": {"associate": 262144}},
+                    role_models={"http://thor:8000": {"associate": "n/lightning"}},
                 ),
                 peer_states={},
             )
@@ -2337,6 +2360,7 @@ class TestRoutingViewRefreshesOnIngest:
         by = {x.name: x for x in holder.current().snapshot.members}
         assert by["thor"].context_for("associate") == 262144
         assert by["orin"].role_context == ()
+        assert by["thor"].model_for("associate") == "n/lightning"
 
 
 class TestRefreshDropsResultsForAChangedAnnouncement:

@@ -555,7 +555,9 @@ class MeshRoutes:
         except Exception:  # nosec B110 — a duck-typed holder never breaks ingest
             return
         prev = getattr(view, "snapshot", None)
-        verified, reasons, ready, contexts = _carry_forward_probe_results(prev, self._announcements)
+        verified, reasons, ready, contexts, models = _carry_forward_probe_results(
+            prev, self._announcements
+        )
         snap = build_snapshot(
             self.roster,
             announcements=self._announcements,
@@ -564,6 +566,7 @@ class MeshRoutes:
             ready_roles=ready,
             discovered_roles=self._discovered_roles,
             role_contexts=contexts,
+            role_models=models,
         )
         peer_states = getattr(view, "peer_states", None) or {}
         holder.replace(MeshRoutingView(snapshot=snap, peer_states=peer_states))
@@ -1869,10 +1872,15 @@ def _collect_members_to_verify(routes: "MeshRoutes") -> list[tuple[str, str, Ann
 
 def _probe_member_capabilities(
     member_data: tuple[str, str, Announcement], key: str | None, probe_timeout: float
-) -> tuple[str, frozenset[str], frozenset[str], str | None, dict[str, int]]:
+) -> tuple[str, frozenset[str], frozenset[str], str | None, dict[str, int], dict[str, str]]:
     """Probe one member's /capabilities and verify roles.
 
-    Returns ``(origin, verified_roles, ready_roles, reason, role_context)``.
+    Returns ``(origin, verified_roles, ready_roles, reason, role_context,
+    role_model)``. ``role_model`` is the ``{role: model}`` id the peer
+    advertised for its own lanes (non-empty strings only), captured for the
+    same reason as the context: a proxied entry must name the SERVING lane's
+    model, not this box's env-derived one (live 2026-09-19, when the Spark's
+    senses moved to a 26B and the Thor and Orin kept advertising the 12B).
     ``role_context`` (Qodo thread 2) is the ``{role: context}`` window the
     peer advertised for its OWN (non-proxied) lanes — ints only, so a missing
     or non-integer context simply leaves the role out rather than publishing a
@@ -1896,7 +1904,7 @@ def _probe_member_capabilities(
             key,
         )
         if status != 200:
-            return origin, frozenset(), frozenset(), f"HTTP {status}", {}
+            return origin, frozenset(), frozenset(), f"HTTP {status}", {}, {}
 
         payload = json.loads(body)
         # Finding 8 (review #252): GET /capabilities returns the role
@@ -1912,6 +1920,7 @@ def _probe_member_capabilities(
         # Build the probed_roles dict per the verify_member_roles signature.
         probed_roles: dict[str, dict] = {}
         role_context: dict[str, int] = {}
+        role_model: dict[str, str] = {}
         for role_name, role_entry in roles_data.items():
             if not isinstance(role_entry, dict):
                 continue
@@ -1929,6 +1938,9 @@ def _probe_member_capabilities(
             context = role_entry.get("context")
             if isinstance(context, int) and not isinstance(context, bool):
                 role_context[role_name] = context
+            model = role_entry.get("model")
+            if isinstance(model, str) and model:
+                role_model[role_name] = model
             role_fp = role_entry.get("fingerprint")
             probed_roles[role_name] = {
                 "fingerprint": role_fp,
@@ -1941,10 +1953,10 @@ def _probe_member_capabilities(
             role for role, entry in probed_roles.items() if entry.get("ready") is True
         )
         reason = None if verified else "no announced role verified against /capabilities"
-        return origin, verified, ready, reason, role_context
+        return origin, verified, ready, reason, role_context, role_model
 
     except Exception as exc:  # nosec B110 — best-effort: probe never blocks
-        return origin, frozenset(), frozenset(), type(exc).__name__, {}
+        return origin, frozenset(), frozenset(), type(exc).__name__, {}, {}
 
 
 def _run_verification_probes(
@@ -1957,6 +1969,7 @@ def _run_verification_probes(
     dict[str, str | None],
     dict[str, frozenset[str]],
     dict[str, dict[str, int]],
+    dict[str, dict[str, str]],
 ]:
     """Probe every member's /capabilities in parallel and collect results.
 
@@ -1973,7 +1986,8 @@ def _run_verification_probes(
 
     Qodo thread 2: and a FOURTH mapping, per-origin ``{role: context}`` as the
     peer advertised it, so a proxied entry can publish the serving lane's
-    window rather than this box's own.
+    window rather than this box's own. A FIFTH, per-origin ``{role: model}``,
+    does the same for the advertised model id.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -1981,6 +1995,7 @@ def _run_verification_probes(
     reason_by_origin: dict[str, str | None] = {}
     ready_by_origin: dict[str, frozenset[str]] = {}
     context_by_origin: dict[str, dict[str, int]] = {}
+    model_by_origin: dict[str, dict[str, str]] = {}
 
     max_workers = min(8, len(members_to_verify))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -1991,22 +2006,26 @@ def _run_verification_probes(
         for fut in as_completed(futures):
             mname, origin, _ann = futures[fut]
             try:
-                origin, verified, ready, reason, contexts = fut.result(timeout=probe_timeout)
+                origin, verified, ready, reason, contexts, models = fut.result(
+                    timeout=probe_timeout
+                )
             except Exception as exc:  # nosec B110 — best-effort: drop failed probes
                 verified, ready, reason = frozenset(), frozenset(), type(exc).__name__
-                contexts = {}
+                contexts, models = {}, {}
             if verified:
                 verified_by_origin[origin] = verified
             reason_by_origin[origin] = reason
             ready_by_origin[origin] = ready
             if contexts:
                 context_by_origin[origin] = contexts
+            if models:
+                model_by_origin[origin] = models
             if reason is not None and verify_log is not None:
                 line = verify_log.record(origin, "GET", _CAPABILITIES_PATH, reason)
                 if line is not None:
                     sys.stderr.write(f"[gateway] mesh verify {mname}: {line}\n")
 
-    return verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin
+    return verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin, model_by_origin
 
 
 def _log_pending_members(
@@ -2075,6 +2094,7 @@ def _carry_forward_probe_results(
     dict[str, str],
     dict[str, frozenset[str]],
     dict[str, dict[str, int]],
+    dict[str, dict[str, str]],
 ]:
     """The per-origin probe maps to hand ``build_snapshot`` on a refresh.
 
@@ -2089,8 +2109,9 @@ def _carry_forward_probe_results(
     reasons: dict[str, str] = {}
     ready: dict[str, frozenset[str]] = {}
     contexts: dict[str, dict[str, int]] = {}
+    models: dict[str, dict[str, str]] = {}
     if prev is None:
-        return verified, reasons, ready, contexts
+        return verified, reasons, ready, contexts, models
     prev_anns = dict(prev.announcements)
     for m in prev.members:
         if not m.probed or not _probe_result_still_current(m.origin, prev_anns, current_anns):
@@ -2102,7 +2123,9 @@ def _carry_forward_probe_results(
             reasons[m.origin] = m.unverified_reason
         if m.role_context:
             contexts[m.origin] = dict(m.role_context)
-    return verified, reasons, ready, contexts
+        if m.role_model:
+            models[m.origin] = dict(m.role_model)
+    return verified, reasons, ready, contexts, models
 
 
 def _drop_results_for_changed_announcements(
@@ -2112,6 +2135,7 @@ def _drop_results_for_changed_announcements(
     reason_by_origin: dict[str, str | None],
     ready_by_origin: dict[str, frozenset[str]],
     context_by_origin: dict[str, dict[str, int]],
+    model_by_origin: dict[str, dict[str, str]],
 ) -> None:
     """Discard probe results whose announcement changed mid-pass (Qodo thread 3).
 
@@ -2143,6 +2167,7 @@ def _drop_results_for_changed_announcements(
         reason_by_origin.pop(origin, None)
         ready_by_origin.pop(origin, None)
         context_by_origin.pop(origin, None)
+        model_by_origin.pop(origin, None)
 
 
 def verify_members(
@@ -2180,7 +2205,7 @@ def verify_members(
 
     _log_pending_members(routes, holder, members_to_verify)
 
-    verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin = (
+    verified_by_origin, reason_by_origin, ready_by_origin, context_by_origin, model_by_origin = (
         _run_verification_probes(members_to_verify, key, probe_timeout, routes._verify_log)
     )
 
@@ -2193,6 +2218,7 @@ def verify_members(
         reason_by_origin,
         ready_by_origin,
         context_by_origin,
+        model_by_origin,
     )
 
     # Build the verified_roles mapping for build_snapshot.
@@ -2204,6 +2230,7 @@ def verify_members(
         ready_roles=ready_by_origin,
         discovered_roles=routes._discovered_roles,  # noqa: SLF001
         role_contexts=context_by_origin,
+        role_models=model_by_origin,
     )
     holder.replace(MeshRoutingView(snapshot=snap, peer_states={}))
 

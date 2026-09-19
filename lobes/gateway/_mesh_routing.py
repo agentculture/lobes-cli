@@ -86,6 +86,12 @@ class MemberInfo:
         :meth:`context_for` is the reader.  Qodo thread 2: without this the
         proxied ``/capabilities`` entry kept this box's own local or
         env-derived context for a role it does not host.
+    role_model:
+        ``(role, model)`` pairs from the same probe — the model id the
+        SERVING lane advertised, sorted by role name like ``role_context``.
+        :meth:`model_for` is the reader. Without it a proxied entry kept
+        this box's own env-derived model id (live 2026-09-19: the Thor and
+        Orin advertised the Spark's senses as the retired 12B).
     """
 
     name: str
@@ -99,12 +105,20 @@ class MemberInfo:
     probed: bool = False
     ready_roles: tuple[str, ...] = ()
     role_context: tuple[tuple[str, int], ...] = ()
+    role_model: tuple[tuple[str, str], ...] = ()
 
     def context_for(self, role: str) -> int | None:
         """The context this member's probe advertised for *role*, or ``None``."""
         for name, context in self.role_context:
             if name == role:
                 return context
+        return None
+
+    def model_for(self, role: str) -> str | None:
+        """The model id this member's probe advertised for *role*, or ``None``."""
+        for name, model in self.role_model:
+            if name == role:
+                return model
         return None
 
 
@@ -369,6 +383,8 @@ def build_snapshot(
     # An origin absent here (or a role absent from its map) simply gets
     # nothing, and the entry keeps whatever context it already carried.
     role_contexts: Mapping[str, Mapping[str, int]] | None = None,
+    # The same, for the model id each lane advertised: origin -> {role: model}.
+    role_models: Mapping[str, Mapping[str, str]] | None = None,
 ) -> RoutingSnapshot:
     """Build a :class:`RoutingSnapshot` from *roster* + probe data.
 
@@ -408,6 +424,7 @@ def build_snapshot(
     reason_map: dict[str, str] = {} if unverified_reasons is None else dict(unverified_reasons)
     ready_map: dict[str, frozenset[str]] = {} if ready_roles is None else dict(ready_roles)
     context_map: dict[str, Mapping[str, int]] = {} if role_contexts is None else dict(role_contexts)
+    model_map: dict[str, Mapping[str, str]] = {} if role_models is None else dict(role_models)
 
     # Collect the set of known origins from the roster so we can prune stale data.
     roster_origins: set[str] = set()
@@ -441,6 +458,7 @@ def build_snapshot(
                 probed=(origin in ver_map or origin in reason_map or origin in ready_map),
                 ready_roles=tuple(sorted(ready_map.get(origin, frozenset()))),
                 role_context=tuple(sorted(context_map.get(origin, {}).items())),
+                role_model=tuple(sorted(model_map.get(origin, {}).items())),
             )
         )
 

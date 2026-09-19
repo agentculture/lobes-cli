@@ -1194,6 +1194,28 @@ class TestRoleContext:
         assert a.members[0].role_context == ()
         assert a.members[0].context_for("cortex") is None
 
+    def test_role_model_is_threaded_from_the_probe_map(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        snap = build_snapshot(
+            roster,
+            announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)},
+            verified_roles={ORIGIN_A: frozenset(["cortex"])},
+            role_models={ORIGIN_A: {"senses": "g/26b", "cortex": "q/27b"}},
+        )
+        member = snap.members[0]
+        assert member.role_model == (("cortex", "q/27b"), ("senses", "g/26b"))
+        assert member.model_for("senses") == "g/26b"
+        assert member.model_for("muse") is None
+
+    def test_role_model_defaults_to_empty_and_is_byte_identical(self):
+        roster = _FakeRoster([("alpha", ORIGIN_A, 1.0)])
+        a = build_snapshot(roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)})
+        b = build_snapshot(
+            roster, announcements={ORIGIN_A: _ann("alpha", ORIGIN_A)}, role_models=None
+        )
+        assert a.members == b.members
+        assert a.members[0].role_model == ()
+
     def test_role_context_alone_does_not_mark_a_member_probed(self):
         """``probed`` stays the verified/reason/ready sentinel — adding a
         context map must not silently retire a member from the boot window."""

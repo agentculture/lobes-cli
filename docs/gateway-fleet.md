@@ -704,6 +704,13 @@ today. See
 [`docs/colleague-stack.md#a-third-role-state-proxied`](colleague-stack.md#a-third-role-state-proxied)
 for the full JSON shape.
 
+`context` and `model` for such a role come from the same probe: the window and
+the model id the serving peer advertised for its own lane (`model` since
+0.81.3; before that a member advertised its own `.env`'s model id for a lane
+it does not host, e.g. the retired 12B for a Spark serving a 26B on
+2026-09-19). A pooled role publishes each one only when every named member
+agrees; otherwise the member's local value stays.
+
 **A role a member lacks is auto-wired to the mesh, not left to referral.**
 Where the retired peer family required an operator to type
 retired peer-origin/peer-proxy/peer-api-key keys by hand for each

@@ -1527,7 +1527,9 @@ the role is auto-wired to a peer; `ready` is that peer's own per-role
 heartbeat stale); `hosted_by` names the peer's origin ONLY when the role has
 exactly one plain (agreeing-fingerprint) origin — a `members` list of
 origins takes its place, with `hosted_by` omitted, when the role is pooled
-across more than one. With no mesh configured, `/capabilities` stays
+across more than one. `context` and `model` are the serving peer's own
+advertised values from the same probe (a pool publishes each only when every
+member agrees). With no mesh configured, `/capabilities` stays
 byte-identical to today.
 
 ## The consumer-only shape
