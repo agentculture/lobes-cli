@@ -1770,22 +1770,41 @@ def _peer_role_context(member: object, role: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def _apply_peer_context(entry: dict, role: str, members: "list") -> None:
-    """Overwrite ``entry['context']`` with the serving lane's window (thread 2).
+def _peer_role_model(member: object, role: str) -> str | None:
+    """The model id *member*'s ``/capabilities`` probe advertised for *role*.
 
-    Publishes a number only when EVERY member named in the answer advertised
-    one and they all agree — the pooled case has no single honest window
-    otherwise, and picking the first member's would be the same first-match
-    guess the ``ready`` bit was already criticised for. A disagreement, a
-    missing advert, or an empty member list leaves the entry untouched, so the
-    existing local/env-derived fallback survives unchanged.
+    Duck-typed like :func:`_peer_role_context`: a member without
+    ``model_for`` contributes nothing.
+    """
+    reader = getattr(member, "model_for", None)
+    if reader is None:
+        return None
+    value = reader(role)
+    return value if isinstance(value, str) and value else None
+
+
+def _apply_peer_context(entry: dict, role: str, members: "list") -> None:
+    """Overwrite ``entry['context']`` and ``entry['model']`` with the serving lane's (thread 2).
+
+    Each field is published only when EVERY member named in the answer
+    advertised one and they all agree. The pooled case has no single honest
+    value otherwise, and picking the first member's would be the same
+    first-match guess the ``ready`` bit was already criticised for. A
+    disagreement, a missing advert, or an empty member list leaves that field
+    untouched, so the existing local/env-derived fallback survives unchanged.
+    The two fields are decided independently.
     """
     if not members:
         return
     contexts = [_peer_role_context(m, role) for m in members]
-    if any(c is None for c in contexts) or len(set(contexts)) != 1:
-        return
-    entry["context"] = contexts[0]
+    if not any(c is None for c in contexts) and len(set(contexts)) == 1:
+        entry["context"] = contexts[0]
+    # The model id follows the same agree-or-leave rule. Only `context` was
+    # overlaid at first, so after the Spark's senses moved to a 26B the Thor
+    # and Orin kept advertising their own env's 12B (live 2026-09-19).
+    models = [_peer_role_model(m, role) for m in members]
+    if not any(m is None for m in models) and len(set(models)) == 1:
+        entry["model"] = models[0]
 
 
 def _annotate_plain_member(

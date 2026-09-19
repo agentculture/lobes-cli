@@ -984,3 +984,67 @@ def test_mesh_disabled_payload_with_a_context_is_byte_identical():
 
     expected = json.dumps(_proxied_payload())
     assert json.dumps(annotate_mesh_naming(json.loads(expected), None)) == expected
+
+
+# ---------------------------------------------------------------------------
+# The same rule for `model`: a proxied entry names the SERVING lane's model,
+# not this box's own env-derived one (live 2026-09-19: the Thor and Orin
+# advertised the Spark's senses as the retired 12B after the Spark moved to
+# the 26B, because only `context` was overlaid).
+# ---------------------------------------------------------------------------
+
+
+def _members_with_models(*models, role="cortex"):
+    fp = _fp(quantization="NVFP4")
+    origins = [f"http://{c}" for c in "ab"[: len(models)]]
+    roster = _FakeRoster([(f"name{o[-1].upper()}", o, 1.0) for o in origins])
+    anns = {
+        o: _ann(f"name{o[-1].upper()}", o, {role: _role(role, fingerprint=fp)}) for o in origins
+    }
+    return build_snapshot(
+        roster,
+        announcements=anns,
+        verified_roles={o: frozenset({role}) for o in origins},
+        ready_roles={o: frozenset({role}) for o in origins},
+        role_models={o: {role: m} for o, m in zip(origins, models) if m is not None},
+    )
+
+
+def test_a_single_hosting_member_overwrites_the_local_model():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _members_with_models("vendor/new-26b")
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["model"] == "vendor/new-26b"
+    assert entry["hosted_by"] == "http://a"
+
+
+def test_a_member_that_advertised_no_model_leaves_the_local_value():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _members_with_models(None)
+    assert annotate_mesh_naming(_proxied_payload(), snap)["cortex"]["model"] == "m"
+
+
+def test_a_pool_publishes_the_model_its_members_agree_on():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _members_with_models("vendor/x", "vendor/x")
+    entry = annotate_mesh_naming(_proxied_payload(), snap)["cortex"]
+    assert entry["members"] == ["nameA", "nameB"]
+    assert entry["model"] == "vendor/x"
+
+
+def test_a_pool_whose_members_disagree_leaves_the_model_untouched():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _members_with_models("vendor/x", "vendor/y")
+    assert annotate_mesh_naming(_proxied_payload(), snap)["cortex"]["model"] == "m"
+
+
+def test_a_locally_hosted_role_never_takes_a_peers_model():
+    from lobes.roles import annotate_mesh_naming
+
+    snap = _members_with_models("vendor/new-26b")
+    payload = {"cortex": {"model": "m", "loaded": True, "feasible": True, "ready": True}}
+    assert annotate_mesh_naming(payload, snap)["cortex"]["model"] == "m"

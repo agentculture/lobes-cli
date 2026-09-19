@@ -2171,7 +2171,7 @@ class TestProbeIgnoresProxiedEntries:
         )
         try:
             ann = _peer_ann("peer", origin)
-            _origin, verified, ready, reason, contexts = _probe_member_capabilities(
+            _origin, verified, ready, reason, contexts, models = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert "associate" in verified
@@ -2180,6 +2180,7 @@ class TestProbeIgnoresProxiedEntries:
             # Qodo thread 2: a proxied entry is a relay, so its context is
             # never captured either.
             assert "worker" not in contexts
+            assert "worker" not in models
         finally:
             srv.shutdown()
 
@@ -2200,10 +2201,31 @@ class TestProbeIgnoresProxiedEntries:
         )
         try:
             ann = _peer_ann("peer", origin)
-            _o, _v, _r, _reason, contexts = _probe_member_capabilities(
+            _o, _v, _r, _reason, contexts, _m = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert contexts == {"associate": 262144}
+        finally:
+            srv.shutdown()
+
+    def test_the_probe_captures_each_lanes_advertised_model(self) -> None:
+        """A proxied entry must name the SERVING lane's model, so the probe
+        records it next to the context — non-empty strings only."""
+        from lobes.gateway._mesh_routes import _probe_member_capabilities
+
+        fp = {"served_id": "m", "quantization": "q", "max_model_len": 1, "runtime": "vllm"}
+        srv, origin = self._serve(
+            {
+                "senses": {"ready": True, "fingerprint": fp, "model": "g/26b"},
+                "hand": {"ready": True, "fingerprint": fp, "model": ""},
+                "muse": {"ready": True, "fingerprint": fp},
+                "reranker": {"ready": True, "fingerprint": fp, "model": 7},
+            }
+        )
+        try:
+            ann = _peer_ann("peer", origin)
+            *_rest, models = _probe_member_capabilities(("peer", origin, ann), None, 2.0)
+            assert models == {"senses": "g/26b"}
         finally:
             srv.shutdown()
 
@@ -2234,7 +2256,7 @@ class TestProbeIgnoresProxiedEntries:
                     )
                 },
             )
-            _o, verified, ready, _r, _c = _probe_member_capabilities(
+            _o, verified, ready, _r, _c, _m = _probe_member_capabilities(
                 ("peer", origin, ann), None, 2.0
             )
             assert verified == frozenset()
@@ -2326,6 +2348,7 @@ class TestRoutingViewRefreshesOnIngest:
                     verified_roles={"http://thor:8000": frozenset({"associate"})},
                     ready_roles={"http://thor:8000": frozenset({"associate"})},
                     role_contexts={"http://thor:8000": {"associate": 262144}},
+                    role_models={"http://thor:8000": {"associate": "n/lightning"}},
                 ),
                 peer_states={},
             )
@@ -2337,6 +2360,7 @@ class TestRoutingViewRefreshesOnIngest:
         by = {x.name: x for x in holder.current().snapshot.members}
         assert by["thor"].context_for("associate") == 262144
         assert by["orin"].role_context == ()
+        assert by["thor"].model_for("associate") == "n/lightning"
 
 
 class TestRefreshDropsResultsForAChangedAnnouncement:
@@ -2402,3 +2426,85 @@ class TestRefreshDropsResultsForAChangedAnnouncement:
         m = {x.name: x for x in holder.current().snapshot.members}["thor"]
         assert m.probed is True
         assert m.verified_roles == ("associate",)
+
+    def test_a_model_only_change_makes_the_member_pending_again(self) -> None:
+        """Qodo on #282: a lane can swap checkpoints behind a STABLE served
+        name, so the fingerprint alone misses it. The announced model is part
+        of what a probe result is valid against, or the carried result keeps
+        advertising the old model with no re-probe ever scheduled."""
+        import dataclasses
+
+        from lobes.gateway._mesh_routing import MeshRoutingView, SnapshotHolder, build_snapshot
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        holder = SnapshotHolder(routes.roster)
+        routes._holder = holder
+        routes.roster.announce("thor", "http://thor:8000", 1.0)
+        before = _peer_ann("thor", "http://thor:8000", served="alias")
+        routes._announcements["http://thor:8000"] = before
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                    role_models={"http://thor:8000": {"associate": "vendor/old"}},
+                ),
+                peer_states={},
+            )
+        )
+        swapped = dataclasses.replace(
+            before,
+            roles={"associate": dataclasses.replace(before.roles["associate"], model="vendor/new")},
+        )
+        assert swapped.roles["associate"].fingerprint == before.roles["associate"].fingerprint
+        reply = json.dumps({"announcement": json.loads(encode(swapped))}).encode()
+        assert routes.ingest_reply_announcement(reply)
+        m = {x.name: x for x in holder.current().snapshot.members}["thor"]
+        assert m.probed is False
+        assert m.model_for("associate") is None
+        assert routes._verify_now_event.is_set()
+
+
+class TestPruneKeepsSurvivorsProbeResults:
+    """Qodo on #282: one member expiring must not wipe every SURVIVOR's probe
+    results (verified set, readiness, context, model) until the next pass."""
+
+    def test_a_dropped_member_leaves_the_survivors_probed(self) -> None:
+        from lobes.gateway._mesh_roster import TickResult
+        from lobes.gateway._mesh_routes import _prune_dropped_announcements
+        from lobes.gateway._mesh_routing import MeshRoutingView, SnapshotHolder, build_snapshot
+
+        routes, _ = build_mesh_routes(env=_mesh_key_env())
+        holder = SnapshotHolder(routes.roster)
+        routes._holder = holder
+        for name in ("thor", "orin"):
+            origin = f"http://{name}:8000"
+            routes.roster.announce(name, origin, 1.0)
+            routes._announcements[origin] = _peer_ann(name, origin)
+        holder.replace(
+            MeshRoutingView(
+                snapshot=build_snapshot(
+                    routes.roster,
+                    announcements=routes._announcements,
+                    verified_roles={"http://thor:8000": frozenset({"associate"})},
+                    ready_roles={"http://thor:8000": frozenset({"associate"})},
+                    role_contexts={"http://thor:8000": {"associate": 262144}},
+                    role_models={"http://thor:8000": {"associate": "vendor/x"}},
+                ),
+                peer_states={},
+            )
+        )
+        routes.roster._roster.pop("orin")  # the tick removed it
+        _prune_dropped_announcements(
+            routes, TickResult(dropped=1, dropped_origins=("http://orin:8000",)), holder
+        )
+        by = {x.name: x for x in holder.current().snapshot.members}
+        assert "orin" not in by
+        thor = by["thor"]
+        assert thor.probed is True
+        assert thor.verified_roles == ("associate",)
+        assert thor.ready_roles == ("associate",)
+        assert thor.context_for("associate") == 262144
+        assert thor.model_for("associate") == "vendor/x"
