@@ -1,0 +1,42 @@
+{
+  "plan_slug": "flash-next-worker-on-thor",
+  "schema_version": 2,
+  "created": "2026-09-23T08:39:55Z",
+  "updated": "2026-09-23T09:18:06Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "reboot the Thor mid-spike (between t6 attempt 1 and t6 attempt 2): restarts every prod-* container, breaking boundary c23/h11 (prod uptime unbroken) and resetting the c29/c36 abort-rule prod baseline; the sampler is re-baselined after the reboot",
+      "task_ref": "t6",
+      "reason": "t6 attempt 1 at 0.93/262144 refused by vLLM's startup check: 46.77/122.82 GiB free; ~50 GiB of unified memory stayed 'used' after the lobes lanes stopped with no owner visible (not anon/cache/slab, no process, nvmap 0K) \u2014 likely driver-held; no context step-down (c24) can fit 98.5 GiB of weights into 46.77 GiB. Operator chose: open agentculture/nvsh#49 (memory-ownership diagnostic, Thor as example), then reboot and boot. Fresh prod pg_dumpall taken in t1.",
+      "affects": [
+        "c23",
+        "h11",
+        "c29",
+        "t8"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t6 attempt 3 adds profiling/activation limits to the page's command: --max-num-batched-tokens 2048 and --limit-mm-per-prompt {image:{count:1,width:1024,height:1024},video:{count:1,num_frames:16,width:512,height:512}} (caps the dummy encoder item that sized the 16384-token encoder budget), and stops the GNOME desktop (gdm) for the spike window; model, drafter (MTP n=3) and every page flag unchanged; another reboot first",
+      "task_ref": "t6",
+      "reason": "attempt 2 (post-reboot) loaded all weights + drafter ('Model loading took 98.93 GiB') then died 'CUDA driver error: out of memory' in determine_available_memory's dummy forward with ~4.9 GiB available; the 262144->131072->65536 context rule (c24) cannot help a pre-KV profiling OOM. A failed CUDA process also leaves its memory held until reboot (12.4 GiB available after exit; nvsh#49). Operator chose option 1.",
+      "affects": [
+        "c24",
+        "t6",
+        "t7"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

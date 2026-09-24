@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.81.4] - 2026-09-23
+
+### Added
+
+- Evidence transcript docs/evidence/2026-09-23-spike-flash-next-worker-thor.txt: local-inference-lab/Qwen3.8-Flash-Next-NVFP4 loads fully resident on the Thor (98.93 GiB incl. MTP drafter) from the published jetson-ai-lab image but OOMs in vLLM profiling beside the prod stack at util 0.93; incumbent worker restored. Plus the devague spec, plan and deviation records for the spike.
+
 ## [0.81.3] - 2026-09-19
 
 ### Fixed
