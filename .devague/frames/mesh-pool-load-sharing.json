@@ -1,0 +1,650 @@
+{
+  "slug": "mesh-pool-load-sharing",
+  "title": "mesh pool load sharing",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-10-06T15:26:03Z",
+  "updated": "2026-10-06T15:41:04Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every verified mesh member of a role is addressable by name from ANY mesh gateway: `model=cortex-spark2` always lands on spark2's engine and `cortex-spark` on spark's, never balanced \u2014 while plain `cortex` stays the pool",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "A member-named request is never re-balanced: the destination receives it with the hop marker and serves it locally",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "offline test: forward cortex-spark2 from a fake spark gateway; assert X-Lobes-Mesh-Member hop header on the outbound request and that the destination's _pool_selection returns sole-ready",
+      "revisions": [
+        {
+          "text": "A cortex request entering any mesh gateway is placed on the least-loaded of spark and spark2 \u2014 a mesh-pooled role spreads load across every verified, fingerprint-agreeing replica instead of pinning to the local box or the alphabetically-first peer",
+          "kind": "announcement",
+          "reason": "user chose option 2 (per-member addressing) over fixing pooling first, 2026-10-06"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "kind": "assumption",
+      "text": "ROOT CAUSE 1: no ReplicaCache exists for any mesh pool. build_replica_caches (lobes/gateway/server.py:5814) returns {} when table.replica_origins is empty, which every real deployment has been since t14 deleted <PREFIX>_PEER_ORIGINS parsing (comment at server.py:5653-5657).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "ROOT CAUSE 2: mesh candidates carry no load. _merge_mesh_candidates (server.py:2121) synthesizes every mesh peer with running=0, waiting=0, weight=8, calibrated=True; _maybe_synth_local_candidate (server.py:2157) synthesizes the local lane with running=0 too. Load is never observed for either side.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "assumption",
+      "text": "ROOT CAUSE 3: with every wait at 0, select_replica's _rank_key (lobes/gateway/_selection.py: wait, not-local, origin) sends everything to the local lane on a hosting box (reason local-idle) and to the lexically-smallest origin (http://spark...) on a non-hosting box, never spark2.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "ROOT CAUSE 4: in-flight dispatch accounting (ReplicaCache.begin_dispatch/end_dispatch, _replicas.py:895-950) is reached via caches.get(backend) (server.py:5898, 5934). With no cache there is no accounting, so even a burst through ONE gateway is not spread.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "When the mesh is enabled, the gateway builds a ReplicaCache for each hosted or mesh-pooled generate backend whose peer set is that role's mesh plain_origins (verified + fingerprint-agreeing, from compute_role_placement). The cache probes peer GET /status, which publishes running/waiting (server.py:3876-3889) and sits outside the /v1 auth gate (server.py:4720), so no new credential is needed.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Once a cache exists, _local_backend_fingerprint (server.py:4063) returns a LIVE local fingerprint instead of None, and compute_role_placement uses it as the reference. spark's compose hardcodes --speculative-config while spark2's comes from env (memory: spark-cortex-pooled-senses-dropped; the 2026-08-25 replica-pool transcript recorded speculative_config: unknown on both). Will the live fingerprints still agree, or will spark2 be demoted to cortex-spark2 and leave the pool, so the fix silently produces a pool of one?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "ReplicaCache gains a runtime peer-set update (e.g. set_peers) that adds/drops origins as the mesh roster changes while keeping probed state and in-flight tokens for origins that persist. Today the peer tuple is frozen in __init__ (_replicas.py:719).",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "When the roster drops a member mid-burst, what happens to its outstanding in-flight tokens and its in-progress peer probe thread pass? Is dropping the state immediately correct, or should it age out via INFLIGHT_MAX_AGE?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "_pool_selection stops appending a zero-load synthetic copy of an origin the cache already reports. The synthetic candidate stays only as the fallback for a member announced but not yet probed. Otherwise the fake 0-load duplicate always outranks the real probed one.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Offline test: a mesh-enabled host with a local cortex lane and one plain mesh peer; with the local lane loaded and the peer idle, a request is placed on the peer (reason peer-less-loaded); a burst through one gateway alternates via in-flight accounting.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "Live acceptance on spark + spark2 (+ a non-hosting member, Thor or Orin): a concurrent cortex burst through each gateway lands on BOTH engines, measured by each engine's vllm:request_success_total delta, not by gateway headers alone. Transcript under docs/evidence/.",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "The selection policy in lobes/gateway/_selection.py is not changed. It was validated live on real load inputs in #199 t10 (docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt); the bug is its inputs, not its ranking.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Selection policy file is not modified",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "git diff main -- lobes/gateway/_selection.py is empty at PR time",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "The single-hop rule stays: a request arriving with the hop marker is served locally or refused, never re-selected (_pool_selection's _arriving_hop_marker branch).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Single-hop rule still holds for member lanes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test: a hop-marked arrival naming a PEER's member lane returns the 508 proxy-loop body (existing server.py:3256 branch), never a second forward",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "hand is never pooled or proxied (NEVER_PROXIED_BACKENDS) and GET /v1/realtime is never mesh-forwarded; the new cache wiring must not change either.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "No new peer env keys are parsed",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h15",
+          "text": "hand stays unproxied and /v1/realtime stays un-forwarded",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "existing NEVER_PROXIED_BACKENDS tests and realtime mesh tests pass unmodified",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "non_goal",
+      "text": "No revival of the retired operator-typed <PREFIX>_PEER_ORIGINS / _PEER_API_KEYS family (retired in code at t14, see CLAUDE.md Retired section). The mesh roster is the only candidate source.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "No new peer env keys are parsed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "grep the diff for _PEER_ORIGIN; none added to lobes/gateway/_config.py",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "non_goal",
+      "text": "No throughput-gain claim for heterogeneous pairs: the peer-only pool on Spark+Thor measured 51% slower at 4 concurrent (docs/evidence/2026-08-30-accept-peer-only-pool-orin.txt). The claim is scoped to identical replicas, which spark and spark2 are (same util 0.58 / 262144 / DSpark lane).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "audience",
+      "text": "Operators and clients (Qwen Code first) that want to pick a specific box for a role, and the mesh gateways that must route that choice.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "Qwen Code can address each box with a distinct model id from one provider baseUrl",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "after rollout, ~/.qwen/settings.json has cortex-spark and cortex-spark2 entries both at http://localhost:8001/v1; qwen -m each answers",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "before_state",
+      "text": "A member is addressable by name only when its fingerprint DISAGREES (find_suffixed_lane walks placement.suffixed only, lobes/gateway/_mesh_routing.py:857). spark and spark2 agree, so neither has a name; today the only way to pick spark2 is pointing the client at spark2's own gateway with spark2's own key (Option 1, set up and verified 2026-10-06: qwen -m main moved spark2's request_success_total 2181->2184).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "The before-state is measured, not recalled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "cite this session's Option 1 check (spark2 request_success_total 2180->2181 via curl, 2181->2184 via qwen -m main) and today's live pinning observation in memory mesh-pool-never-spreads-load",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "after_state",
+      "text": "From any mesh gateway, `{role}-{member}` resolves for every verified member of that role, agreeing or not; the box's OWN name is served by its local lane with no forward. One base URL and one key in Qwen Code reach every box.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "Every verified member of a role resolves by name on every mesh gateway, including the box's own name",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "offline test matrix over {hosting box, non-hosting box} x {self name, agreeing peer, disagreeing peer, unknown member}",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "why_it_matters",
+      "text": "A caller can pin work to a box (warm cache, isolation, A/B) without per-box URLs and keys, and the pin survives a future pooling fix because a forward carries the hop marker and the destination serves a marked arrival locally (sole-ready, server.py _pool_selection).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "The pin survives a pooling fix",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test enables a populated replica pool on the destination and asserts a hop-marked member-lane arrival is still served locally",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "find_suffixed_lane (or a sibling member-lane resolver) matches `{role}-{member}` for EVERY verified member of the role, not only fingerprint-disagreeing ones; the forward path at server.py:3253-3300 is reused unchanged (served_name rewritten to the destination's backend name, join-key signed, X-Lobes-Proxied-By + mesh markers).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "Agreeing members resolve by name and the outbound body carries the destination's backend name, not the alias",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "unit test on find_suffixed_lane/member resolver + server forward test asserting body model == primary and Authorization == join key",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "`{role}-{self}` (self = this box's LOBES_MESH_NAME) on a box that hosts the role is served by the local lane: no pool selection, no forward, X-Lobes-Served-By set. On a box that does not host the role it 404s role_infeasible, never forwards to some other member.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Self-name is served locally with no outbound connection; a non-hosting box 404s role_infeasible for its own name",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test with an injected open_upstream that fails if called; assert 200 + X-Lobes-Served-By; separate test asserts 404 role_infeasible",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "/capabilities gains an additive per-role `member_lanes` list naming every addressable `{role}-{member}` (self included when hosted); `suffixed_lanes` keeps its meaning (disagreeing members only). With mesh disabled the payload stays byte-identical.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "member_lanes is additive and absent with mesh disabled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "golden/byte-identity test on /capabilities with mesh disabled; mesh-enabled test lists cortex-spark and cortex-spark2",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "Plain-role routing, pool candidate selection (_pool_selection, _selection.py) and the fingerprint plain/suffixed split are unchanged; a member lane never joins or leaves the plain pool.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "No plain-pool behaviour changes",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "existing tests/test_gateway_pool*.py, test_gateway_selection.py and test_mesh_routing*.py pass unmodified",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "hand gets no peer member lanes (NEVER_PROXIED_BACKENDS) and stt/tts//v1/realtime get none; only roles the mesh already forwards gain peer names.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "hand-<peer>, stt-<peer>, tts-<peer> never resolve to a peer",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test: model=hand-spark2 on spark returns model_not_found/role_infeasible and opens no upstream",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "non_goal",
+      "text": "Member suffixes on tier aliases (`main-spark2`, `hard-spark2`) and on raw checkpoint ids are not added; only Colleague role names take a member suffix.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "success_signal",
+      "text": "Live on spark+spark2 (+Thor as a non-hosting gateway): 10 requests with model=cortex-spark2 through spark's gateway raise spark2's vllm:request_success_total by 10 and spark's by 0; the mirror (cortex-spark through spark2's gateway, and cortex-spark locally on spark) holds; `qwen -m cortex-spark2` answers via localhost:8001. Transcript under docs/evidence/.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "Measured by engine counters on both boxes, not by gateway headers",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "script reads vllm:request_success_total inside each model-gear-vllm-primary before/after each 10-request batch; commit transcript to docs/evidence/2026-10-XX-accept-mesh-member-lanes.txt",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "Per-member names appear in both GET /v1/models and /capabilities member_lanes.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "decision",
+      "text": "An announced-but-unprobed member's `{role}-{member}` answers 503 role_unverified + Retry-After, not 404.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "decision",
+      "text": "The plain-pool load-sharing fix (c6-c10) is out of this spec, parked as follow-up v3.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "GET /v1/models lists every addressable `{role}-{member}` id (self included when hosted) alongside the existing entries; with mesh disabled the listing is byte-identical.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "/v1/models lists cortex-spark and cortex-spark2 on a mesh member and is byte-identical with mesh disabled",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test list_models_payload with a two-member snapshot + byte-identity test with mesh_snapshot=None",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "`{role}-{member}` for a member that announced the role but is not yet probed returns 503 role_unverified with Retry-After: 5, error.hosted_by and the X-Lobes-Mesh-Member/-Unverified headers, reusing the plain-role boot-window body.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "An unprobed member's name gets 503 role_unverified, never 404 or a forward",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test with MemberInfo.probed=False: assert 503, Retry-After: 5, hosted_by, and that open_upstream is not called",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Neither Spark declares PRIMARY_MAX_ACTIVE, so both rank at the neutral capacity (raw queue depth). Fine for identical replicas, but a calibrated knee (lobes calibrate) would let is_full forward on saturation instead of queueing. Calibration is a follow-up, not this fix.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Probed load is up to one refresh interval (5 s) stale for traffic entering the OTHER gateway; only this gateway's own dispatches are counted first-hand. Whether that staleness matters for agentic multi-turn load on spark/spark2 is unmeasured.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Fix the plain-pool load sharing (root causes c2-c5: no ReplicaCache for mesh pools, synthetic zero-load candidates). Optional follow-up to this spec; the scoped requirements c6-c10 move there.",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "lobes/gateway/server.py build_replica_caches (5814-5880)",
+      "finding": "Cache construction is gated on table.replica_origins, which nothing populates since t14; mesh-enabled boxes therefore run with caches={} and no probe threads",
+      "seeds": [
+        "c2",
+        "c6"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/gateway/server.py _merge_mesh_candidates / _maybe_synth_local_candidate / _pool_selection (2121-2275)",
+      "finding": "Mesh and local candidates are synthesized with frozen zero load; mesh candidates are appended even if a cache already holds that origin",
+      "seeds": [
+        "c3",
+        "c8"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/gateway/_selection.py select_replica / _rank_key",
+      "finding": "Ranking is correct for real inputs; with all waits equal it resolves local-first then origin-ascending, which is exactly the observed pinning",
+      "seeds": [
+        "c4",
+        "c11"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/gateway/_replicas.py ReplicaCache (685-1474)",
+      "finding": "Load probing, in-flight reconciliation and capacity resolution all exist and were live-validated in #199; the peer tuple is frozen at __init__, so it cannot follow a dynamic roster",
+      "seeds": [
+        "c5",
+        "c7",
+        "q2"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/gateway/server.py /status handler (3870-3890, 4720-4745)",
+      "finding": "/status publishes per-backend running/waiting and is outside the /v1 auth gate, so mesh peers can be probed without the mesh key",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/gateway/server.py _local_backend_fingerprint (4063)",
+      "finding": "Returns None with no cache; a live cache turns it into the placement reference, which can reclassify a peer as divergent",
+      "seeds": [
+        "q1"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "memory: mesh-pool-never-spreads-load (measured 2026-10-06)",
+      "finding": "Live: hosting box always local-idle at 8 concurrent with max_num_seqs=2; Thor sent a whole burst to spark, none to spark2; verify via vllm:request_success_total deltas",
+      "seeds": [
+        "c4",
+        "c10"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "docs/evidence 2026-08-25 replica-pool + 2026-08-30 peer-only-pool transcripts",
+      "finding": "The env pool spread load on real probes (validated); heterogeneous pairs lose throughput, so claims stay scoped to identical replicas",
+      "seeds": [
+        "c11",
+        "c15"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "CLAUDE.md Retired peer family + NEVER_PROXIED_BACKENDS",
+      "finding": "Env peer family is retired in code; hand and /v1/realtime are never mesh-forwarded",
+      "seeds": [
+        "c13",
+        "c14"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "_pool_selection hop-marker branch",
+      "finding": "Single-hop arrivals are sole-ready locally; unaffected by giving candidates real load",
+      "seeds": [
+        "c12"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}
