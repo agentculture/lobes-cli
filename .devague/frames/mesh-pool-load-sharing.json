@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-06T15:26:03Z",
-  "updated": "2026-10-06T15:41:04Z",
+  "updated": "2026-10-06T15:49:22Z",
   "claims": [
     {
       "id": "c1",
@@ -196,7 +196,7 @@
     {
       "id": "c13",
       "kind": "boundary",
-      "text": "hand is never pooled or proxied (NEVER_PROXIED_BACKENDS) and GET /v1/realtime is never mesh-forwarded; the new cache wiring must not change either.",
+      "text": "Member lanes exist only for mesh-forwardable, model-addressable roles: innereye (MESH_UNFORWARDABLE_ROLES, lobes/roles.py:259) and /v1/realtime get none; stt/tts are reached via /v1/audio/* not model ids, so get no member lane. hand IS mesh-forwarded today (NEVER_PROXIED_BACKENDS = frozenset(), lobes/gateway/_config.py:207) and gets member lanes like any other role.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -209,14 +209,26 @@
         {
           "id": "h15",
           "text": "hand stays unproxied and /v1/realtime stays un-forwarded",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h19",
+          "text": "innereye-<member> and member names for stt/tts never forward; hand-<member> forwards like cortex",
           "status": "confirmed",
           "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "existing NEVER_PROXIED_BACKENDS tests and realtime mesh tests pass unmodified",
-      "revisions": []
+      "instruction": "test: model=innereye-spark2 opens no upstream; model=hand-spark2 forwards to spark2 with served_name=hand backend",
+      "revisions": [
+        {
+          "text": "hand is never pooled or proxied (NEVER_PROXIED_BACKENDS) and GET /v1/realtime is never mesh-forwarded; the new cache wiring must not change either.",
+          "kind": "boundary",
+          "reason": "challenge pass / unstated-assumptions lens: the original premise (hand never proxied) came from stale CLAUDE.md text; live roster shows spark2 announcing hand plain"
+        }
+      ]
     },
     {
       "id": "c14",
@@ -404,21 +416,33 @@
     {
       "id": "c24",
       "kind": "boundary",
-      "text": "hand gets no peer member lanes (NEVER_PROXIED_BACKENDS) and stt/tts//v1/realtime get none; only roles the mesh already forwards gain peer names.",
+      "text": "A role a member announced private gets no member lane anywhere (Announcement.public() strips it before verified_roles), and an innereye-<member> name never resolves to a peer.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h10",
           "text": "hand-<peer>, stt-<peer>, tts-<peer> never resolve to a peer",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h20",
+          "text": "A private-announced role yields no member lane",
           "status": "confirmed",
           "instruction": ""
         }
       ],
       "hard_questions": [],
       "links": [],
-      "instruction": "test: model=hand-spark2 on spark returns model_not_found/role_infeasible and opens no upstream",
-      "revisions": []
+      "instruction": "test with Announcement.public() stripping cortex: cortex-<member> 404s and member_lanes omits it",
+      "revisions": [
+        {
+          "text": "hand gets no peer member lanes (NEVER_PROXIED_BACKENDS) and stt/tts//v1/realtime get none; only roles the mesh already forwards gain peer names.",
+          "kind": "boundary",
+          "reason": "challenge pass: c24's hand premise was false (see c13 amend); the private-role exclusion is the real boundary"
+        }
+      ]
     },
     {
       "id": "c25",
@@ -524,6 +548,63 @@
       "links": [],
       "instruction": "test with MemberInfo.probed=False: assert 503, Retry-After: 5, hosted_by, and that open_upstream is not called",
       "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "The self lane (`{role}-{self}`) applies THIS box's pressure policy exactly like the plain role (429 server_busy + Retry-After when shed) and never forwards to a peer under pressure \u2014 a pin is a pin. Source: handle_post pressure branch (server.py:3116-3160).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "A pressured box sheds its own self-lane request with 429 and dials nothing",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test with pressure=busy and a mesh peer present: model=cortex-<self> returns 429 server_busy, open_upstream not called",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "A hop-marked arrival naming this box's OWN member lane is served locally, not answered with the 508 proxy-loop body the peer-lane branch (server.py:3256) returns, because no second forward happens.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "A hop-marked self-lane arrival is served locally (200), not 508",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "test: hop marker + model=cortex-<self> on a hosting box returns 200 from the local lane",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "assumption",
+      "text": "A member name resolves only on a gateway running the new code: spark2/Thor/Orin gateways on today's image keep returning 404 model_not_found for an agreeing member's name (probed live 2026-10-06 on spark: cortex-spark2 and cortex-spark both 404). The Qwen Code use case needs only spark's gateway re-imaged; the c26 Thor leg needs Thor's too.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "Rollout order is explicit",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "plan task: re-image spark's gateway first (Qwen use case), then Thor/spark2/Orin before the c26 cross-box legs; record versions in the evidence transcript",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -549,6 +630,24 @@
       "id": "v3",
       "text": "Fix the plain-pool load sharing (root causes c2-c5: no ReplicaCache for mesh pools, synthetic zero-load candidates). Optional follow-up to this spec; the scoped requirements c6-c10 move there.",
       "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Clients pinned to `cortex-spark2` break if a member is renamed (LOBES_MESH_NAME is operator-typed) or the gateway is rolled back to a pre-feature image \u2014 both answer 404. No alias/rename path is planned.",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "lobes capabilities CLI renderer and any third-party /capabilities consumer were NOT read in this pass; member_lanes is additive and assumed tolerated, unverified.",
+      "kind": "unknown_nonblocking",
       "claim_id": null,
       "resolved": false,
       "resolution": "",
@@ -630,7 +729,7 @@
     {
       "id": "s9",
       "surface": "CLAUDE.md Retired peer family + NEVER_PROXIED_BACKENDS",
-      "finding": "Env peer family is retired in code; hand and /v1/realtime are never mesh-forwarded",
+      "finding": "Env peer family is retired in code. CORRECTED by the challenge pass (s11): hand IS mesh-forwarded (NEVER_PROXIED_BACKENDS is empty); only innereye and /v1/realtime are never mesh-forwarded.",
       "seeds": [
         "c13",
         "c14"
@@ -643,6 +742,70 @@
       "seeds": [
         "c12"
       ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / unstated-assumptions lens: lobes/gateway/_config.py:207 + lobes/roles.py:259 + live /mesh/roster",
+      "finding": "hand is mesh-forwarded (NEVER_PROXIED_BACKENDS empty; spark2 announces hand plain); the only unforwardable role is innereye. Corrected c13/c24.",
+      "seeds": [
+        "c13",
+        "c24"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / adjacent-systems lens: live /mesh/roster on spark",
+      "finding": "spark is not in its own roster (members: thor, orin, spark2), so the self lane must key on LOBES_MESH_NAME, not the snapshot",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / failure-modes lens: handle_post pressure + hop-marker branches (server.py:3116-3160, 3256)",
+      "finding": "self lane needs the local pressure shed and must not 508 on a hop-marked arrival",
+      "seeds": [
+        "c32",
+        "c33"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / cheap-probe lens: spark gateway, 2026-10-06",
+      "finding": "cortex-spark2 and cortex-spark both 404 model_not_found today; confirms before-state and that un-upgraded gateways will keep 404ing",
+      "seeds": [
+        "c34"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / operations + reversibility lens: LOBES_MESH_NAME, gateway re-image path",
+      "finding": "renames and rollbacks silently break pinned clients; parked v4, no mitigation in scope",
+      "seeds": []
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / security lens: suffixed forward path (server.py:3253-3300)",
+      "finding": "clean: caller bearer is stripped and the forward is signed with the join key; member names are already exposed in X-Lobes-Mesh-Member headers, so listing them in /v1/models discloses nothing new to a key holder",
+      "seeds": []
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / naming-collision lens: SUPPORTED_MODELS + ROLES",
+      "finding": "clean: no catalog id starts with a role name plus hyphen; no role name is a prefix of another; hand LoRA uses ':' not '-'",
+      "seeds": []
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / concurrency lens",
+      "finding": "clean: resolution is a pure read of the immutable RoutingSnapshot per request; residual risk only if a member is dropped between resolve and forward (existing forward error path applies)",
+      "seeds": []
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / unexamined: lobes capabilities CLI renderer, colleague/qwen clients' model-list parsing",
+      "finding": "not read this pass; parked v5",
+      "seeds": []
     }
   ],
   "lapses": [],

@@ -37,21 +37,28 @@
 - `{role}-{member}` for a member that announced the role but is not yet probed returns 503 `role_unverified` with Retry-After: 5, error.`hosted_by` and the X-Lobes-Mesh-Member/-Unverified headers, reusing the plain-role boot-window body.
   - instruction: test with MemberInfo.probed=False: assert 503, Retry-After: 5, `hosted_by`, and that `open_upstream` is not called
   - honesty: An unprobed member's name gets 503 `role_unverified`, never 404 or a forward
+- The self lane (`{role}-{self}`) applies THIS box's pressure policy exactly like the plain role (429 `server_busy` + Retry-After when shed) and never forwards to a peer under pressure — a pin is a pin. Source: `handle_post` pressure branch (server.py:3116-3160).
+  - instruction: test with pressure=busy and a mesh peer present: model=cortex-<self> returns 429 `server_busy`, `open_upstream` not called
+  - honesty: A pressured box sheds its own self-lane request with 429 and dials nothing
+- A hop-marked arrival naming this box's OWN member lane is served locally, not answered with the 508 proxy-loop body the peer-lane branch (server.py:3256) returns, because no second forward happens.
+  - instruction: test: hop marker + model=cortex-<self> on a hosting box returns 200 from the local lane
+  - honesty: A hop-marked self-lane arrival is served locally (200), not 508
 
 ## Honesty conditions
 
 - A member-named request is never re-balanced: the destination receives it with the hop marker and serves it locally
 - Selection policy file is not modified
 - Single-hop rule still holds for member lanes
-- hand stays unproxied and /v1/realtime stays un-forwarded
+- innereye-<member> and member names for stt/tts never forward; hand-<member> forwards like cortex
 - No new peer env keys are parsed
 - Qwen Code can address each box with a distinct model id from one provider baseUrl
 - The before-state is measured, not recalled
 - Every verified member of a role resolves by name on every mesh gateway, including the box's own name
 - The pin survives a pooling fix
 - No plain-pool behaviour changes
-- hand-<peer>, stt-<peer>, tts-<peer> never resolve to a peer
+- A private-announced role yields no member lane
 - Measured by engine counters on both boxes, not by gateway headers
+- Rollout order is explicit
 
 ## Success signals
 
@@ -64,12 +71,12 @@
   - instruction: git diff main -- lobes/gateway/`_selection.py` is empty at PR time
 - The single-hop rule stays: a request arriving with the hop marker is served locally or refused, never re-selected (`_pool_selection`'s `_arriving_hop_marker` branch).
   - instruction: test: a hop-marked arrival naming a PEER's member lane returns the 508 proxy-loop body (existing server.py:3256 branch), never a second forward
-- hand is never pooled or proxied (`NEVER_PROXIED_BACKENDS`) and GET /v1/realtime is never mesh-forwarded; the new cache wiring must not change either.
-  - instruction: existing `NEVER_PROXIED_BACKENDS` tests and realtime mesh tests pass unmodified
+- Member lanes exist only for mesh-forwardable, model-addressable roles: innereye (`MESH_UNFORWARDABLE_ROLES`, lobes/roles.py:259) and /v1/realtime get none; stt/tts are reached via /v1/audio/\* not model ids, so get no member lane. hand IS mesh-forwarded today (`NEVER_PROXIED_BACKENDS` = frozenset(), lobes/gateway/`_config.py`:207) and gets member lanes like any other role.
+  - instruction: test: model=innereye-spark2 opens no upstream; model=hand-spark2 forwards to spark2 with `served_name`=hand backend
 - Plain-role routing, pool candidate selection (`_pool_selection`, `_selection.py`) and the fingerprint plain/suffixed split are unchanged; a member lane never joins or leaves the plain pool.
   - instruction: existing tests/`test_gateway_pool`\*.py, `test_gateway_selection.py` and `test_mesh_routing`\*.py pass unmodified
-- hand gets no peer member lanes (`NEVER_PROXIED_BACKENDS`) and stt/tts//v1/realtime get none; only roles the mesh already forwards gain peer names.
-  - instruction: test: model=hand-spark2 on spark returns `model_not_found`/`role_infeasible` and opens no upstream
+- A role a member announced private gets no member lane anywhere (Announcement.public() strips it before `verified_roles`), and an innereye-<member> name never resolves to a peer.
+  - instruction: test with Announcement.public() stripping cortex: cortex-<member> 404s and `member_lanes` omits it
 
 ## Non-goals
 
@@ -84,6 +91,8 @@
 - ROOT CAUSE 2: mesh candidates carry no load. `_merge_mesh_candidates` (server.py:2121) synthesizes every mesh peer with running=0, waiting=0, weight=8, calibrated=True; `_maybe_synth_local_candidate` (server.py:2157) synthesizes the local lane with running=0 too. Load is never observed for either side.
 - ROOT CAUSE 3: with every wait at 0, `select_replica`'s `_rank_key` (lobes/gateway/`_selection.py`: wait, not-local, origin) sends everything to the local lane on a hosting box (reason local-idle) and to the lexically-smallest origin (<http://spark>...) on a non-hosting box, never spark2.
 - ROOT CAUSE 4: in-flight dispatch accounting (ReplicaCache.`begin_dispatch`/`end_dispatch`, `_replicas.py`:895-950) is reached via caches.get(backend) (server.py:5898, 5934). With no cache there is no accounting, so even a burst through ONE gateway is not spread.
+- A member name resolves only on a gateway running the new code: spark2/Thor/Orin gateways on today's image keep returning 404 `model_not_found` for an agreeing member's name (probed live 2026-10-06 on spark: cortex-spark2 and cortex-spark both 404). The Qwen Code use case needs only spark's gateway re-imaged; the c26 Thor leg needs Thor's too.
+  - instruction: plan task: re-image spark's gateway first (Qwen use case), then Thor/spark2/Orin before the c26 cross-box legs; record versions in the evidence transcript
 
 ## Scope exploration
 
@@ -103,10 +112,23 @@
   - seeds: `c4`, `c10` (rejected)
 - `s8` — `docs/evidence 2026-08-25 replica-pool + 2026-08-30 peer-only-pool transcripts`: The env pool spread load on real probes (validated); heterogeneous pairs lose throughput, so claims stay scoped to identical replicas
   - seeds: `c11`, `c15`
-- `s9` — `CLAUDE.md Retired peer family + NEVER_PROXIED_BACKENDS`: Env peer family is retired in code; hand and /v1/realtime are never mesh-forwarded
+- `s9` — `CLAUDE.md Retired peer family + NEVER_PROXIED_BACKENDS`: Env peer family is retired in code. CORRECTED by the challenge pass (s11): hand IS mesh-forwarded (`NEVER_PROXIED_BACKENDS` is empty); only innereye and /v1/realtime are never mesh-forwarded.
   - seeds: `c13`, `c14`
 - `s10` — `_pool_selection hop-marker branch`: Single-hop arrivals are sole-ready locally; unaffected by giving candidates real load
   - seeds: `c12`
+- `s11` — `challenge pass / unstated-assumptions lens: lobes/gateway/_config.py:207 + lobes/roles.py:259 + live /mesh/roster`: hand is mesh-forwarded (`NEVER_PROXIED_BACKENDS` empty; spark2 announces hand plain); the only unforwardable role is innereye. Corrected c13/c24.
+  - seeds: `c13`, `c24`
+- `s12` — `challenge pass / adjacent-systems lens: live /mesh/roster on spark`: spark is not in its own roster (members: thor, orin, spark2), so the self lane must key on `LOBES_MESH_NAME`, not the snapshot
+  - seeds: `c21`
+- `s13` — `challenge pass / failure-modes lens: handle_post pressure + hop-marker branches (server.py:3116-3160, 3256)`: self lane needs the local pressure shed and must not 508 on a hop-marked arrival
+  - seeds: `c32`, `c33`
+- `s14` — `challenge pass / cheap-probe lens: spark gateway, 2026-10-06`: cortex-spark2 and cortex-spark both 404 `model_not_found` today; confirms before-state and that un-upgraded gateways will keep 404ing
+  - seeds: `c34`
+- `s15` — `challenge pass / operations + reversibility lens: LOBES_MESH_NAME, gateway re-image path`: renames and rollbacks silently break pinned clients; parked v4, no mitigation in scope
+- `s16` — `challenge pass / security lens: suffixed forward path (server.py:3253-3300)`: clean: caller bearer is stripped and the forward is signed with the join key; member names are already exposed in X-Lobes-Mesh-Member headers, so listing them in /v1/models discloses nothing new to a key holder
+- `s17` — `challenge pass / naming-collision lens: SUPPORTED_MODELS + ROLES`: clean: no catalog id starts with a role name plus hyphen; no role name is a prefix of another; hand LoRA uses ':' not '-'
+- `s18` — `challenge pass / concurrency lens`: clean: resolution is a pure read of the immutable RoutingSnapshot per request; residual risk only if a member is dropped between resolve and forward (existing forward error path applies)
+- `s19` — `challenge pass / unexamined: lobes capabilities CLI renderer, colleague/qwen clients' model-list parsing`: not read this pass; parked v5
 
 ## Decisions
 
@@ -118,4 +140,6 @@
 
 - [unknown_nonblocking] Neither Spark declares `PRIMARY_MAX_ACTIVE`, so both rank at the neutral capacity (raw queue depth). Fine for identical replicas, but a calibrated knee (lobes calibrate) would let `is_full` forward on saturation instead of queueing. Calibration is a follow-up, not this fix.
 - [unknown_nonblocking] Probed load is up to one refresh interval (5 s) stale for traffic entering the OTHER gateway; only this gateway's own dispatches are counted first-hand. Whether that staleness matters for agentic multi-turn load on spark/spark2 is unmeasured.
+- [unknown_nonblocking] Clients pinned to `cortex-spark2` break if a member is renamed (`LOBES_MESH_NAME` is operator-typed) or the gateway is rolled back to a pre-feature image — both answer 404. No alias/rename path is planned.
+- [unknown_nonblocking] lobes capabilities CLI renderer and any third-party /capabilities consumer were NOT read in this pass; `member_lanes` is additive and assumed tolerated, unverified.
 - [follow_up] Fix the plain-pool load sharing (root causes c2-c5: no ReplicaCache for mesh pools, synthetic zero-load candidates). Optional follow-up to this spec; the scoped requirements c6-c10 move there.
