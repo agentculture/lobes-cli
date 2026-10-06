@@ -1500,6 +1500,23 @@ single hop (`X-Lobes-Proxied` arriving twice refuses `508 proxy_loop`) and
 carries `X-Lobes-Mesh-Member: <name>`. A role can be announced `private` to
 stay off the mesh's auto-wiring entirely.
 
+## Member lanes: `{role}-{member}` (VALIDATED for cortex, 2026-10-06)
+
+Every verified member that serves a role is addressable by name as
+`model={role}-{member}` (e.g. `cortex-spark2`) — agreeing members as well as
+disagreeing ones. A peer's name forwards exactly once to that member, which
+serves it locally and never re-balances it. This box's OWN name is served by
+its local lane (429 `server_busy` under pressure, like the plain role) and
+never forwarded. A member announced but not yet probed answers `503
+role_unverified` + `Retry-After: 5`; an unknown member 404s
+`model_not_found`. `stt`/`tts`/`innereye` take no member suffix, `GET
+/v1/realtime` is never forwarded, and a role announced `private` has no
+lanes. `GET /v1/models` lists every routable lane id and `GET /capabilities`
+carries a per-role `member_lanes` list. Plain `cortex` does NOT yet spread
+load across members (a parked follow-up). VALIDATED live for cortex on
+spark/spark2/Thor (docs/evidence/2026-10-06-accept-mesh-member-lanes.txt); the pressure
+429, the pending 503 and non-cortex lanes are unit-tested only.
+
 ## The boot-window status (MEASURED 2026-09-12)
 
 A member the roster has announced but never yet probed carries

@@ -89,7 +89,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 
 from lobes.catalog import SUPPORTED_MODELS, SupportedModel
@@ -1896,6 +1896,8 @@ def annotate_mesh_naming(
     mesh_snapshot: "object | None",
     *,
     local_fingerprints: Mapping[str, ReplicaState] | None = None,
+    self_name: str = "",
+    hosted_roles: "Collection[str]" = (),
 ) -> dict[str, dict]:
     """Add the additive per-role ``member``/``suffixed_lanes`` keys (t8, #237).
 
@@ -1919,11 +1921,18 @@ def annotate_mesh_naming(
     :func:`~lobes.gateway._mesh_routing.compute_role_placement` compares
     every mesh member against. Omitted (the common local-fingerprint-less
     case) simply falls back to the peers-agree-with-each-other rule.
+
+    ``self_name`` / ``hosted_roles`` are optional knobs for the ``member_lanes``
+    annotation (mesh-pool-load-sharing, t3): ``self_name`` is the operator's
+    mesh name (typically ``LOBES_MESH_NAME``); ``hosted_roles`` is the set
+    of role names that this box hosts locally.  When ``self_name`` is non-empty
+    and the role is in ``hosted_roles``, the self lane appears in the returned
+    list.
     """
     if mesh_snapshot is None:
         return payload
 
-    from lobes.gateway._mesh_routing import compute_role_placement
+    from lobes.gateway._mesh_routing import compute_role_placement, member_lanes
 
     local_fingerprints = local_fingerprints or {}
     for role, entry in payload.items():
@@ -1936,6 +1945,22 @@ def annotate_mesh_naming(
         # Name the member only when THIS box does not itself serve the
         # plain pool answer — a locally-hosted role stays self-served.
         _annotate_plain_member(entry, placement, local_fp, mesh_snapshot)
+        # member_lanes (mesh-pool-load-sharing, t3): every routable
+        # "{role}-{member}" name — this box's own lane included when it
+        # hosts the role, so a hosting box publishes its pin targets too.
+        if role not in {"stt", "tts", "innereye"}:
+            names = sorted(
+                lane.name
+                for lane in member_lanes(
+                    mesh_snapshot,
+                    role,
+                    self_name=self_name,
+                    self_hosts=role in hosted_roles,
+                )
+                if not lane.pending
+            )
+            if names:
+                entry["member_lanes"] = names
     return payload
 
 

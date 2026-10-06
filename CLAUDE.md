@@ -497,10 +497,10 @@ responsibility later is contract-compatible while REMOVING one is a break;
 granting it once adapters exist is issue #180).
 
 Three things follow from it being cheap (~2.4 GiB bf16): it is **hosted by
-every built-in shape** including the mesh-lobe ones, it is **never proxied**
-(deliberately absent from all three peer channels — `NEVER_PROXIED_BACKENDS`
-names that absence so a symmetry-minded refactor must delete a constant to
-break it), and it is the **pressure-policy servable floor**. It also
+every built-in shape** including the mesh-lobe ones, it is **mesh-forwarded
+like any other role** (the operator-typed peer channels never carried it, and `NEVER_PROXIED_BACKENDS` is
+now an empty frozenset — nothing is exempt but `innereye` and `GET
+/v1/realtime`), and it is the **pressure-policy servable floor**. It also
 **replaced `Qwen/Qwen3.5-4B` as the `minor`/`cheap` tier**; the 4B stays in the
 catalog as a plain candidate (cite-don't-delete), still selectable via `lobes
 switch`, but no tier resolves to it.
@@ -818,6 +818,17 @@ is a fleet-wide restart**, not a per-pair credential swap — see
 `docs/secret-rotation.md#mesh-join-key`. See
 `docs/gateway-fleet.md#the-mesh-brain-join-opt-in-every-member-is-the-brain`,
 `docs/deployment-shapes.md`, and `lobes explain mesh`.
+
+**Member lanes (mesh-pool-load-sharing).** Every verified member of a role is
+also addressable as `model={role}-{member}` (e.g. `cortex-spark2`), agreeing
+and disagreeing members alike (`lobes/gateway/_mesh_routing.py`
+`member_lanes()`). A peer's name forwards exactly once and is served locally
+there; this box's own name is served locally under the plain role's pressure
+policy; a pending member is 503 `role_unverified`; `stt`/`tts`/`innereye` and
+private roles get none. Plain `cortex` still does not spread load (parked).
+VALIDATED live for `cortex` on spark/spark2/Thor, 2026-10-06
+(`docs/evidence/2026-10-06-accept-mesh-member-lanes.txt`); the pressure 429, pending 503 and
+non-cortex lanes are unit-tested only.
 
 > **Boot window and mesh-sourced advert (PR #254, 0.77.0) — MEASURED
 > 2026-09-12** (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`,

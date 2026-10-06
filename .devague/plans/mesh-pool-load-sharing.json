@@ -1,0 +1,411 @@
+{
+  "slug": "mesh-pool-load-sharing",
+  "title": "mesh pool load sharing",
+  "frame_slug": "mesh-pool-load-sharing",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-10-06T15:51:51Z",
+  "updated": "2026-10-06T15:53:27Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every verified mesh member of a role is addressable by name from ANY mesh gateway: `model=cortex-spark2` always lands on spark2's engine and `cortex-spark` on spark's, never balanced \u2014 while plain `cortex` stays the pool",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "A member-named request is never re-balanced: the destination receives it with the hop marker and serves it locally",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "The selection policy in lobes/gateway/_selection.py is not changed. It was validated live on real load inputs in #199 t10 (docs/evidence/2026-08-25-accept-cortex-replica-pool-spark-thor.txt); the bug is its inputs, not its ranking.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "Selection policy file is not modified",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "boundary",
+      "text": "The single-hop rule stays: a request arriving with the hop marker is served locally or refused, never re-selected (_pool_selection's _arriving_hop_marker branch).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "Single-hop rule still holds for member lanes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "Member lanes exist only for mesh-forwardable, model-addressable roles: innereye (MESH_UNFORWARDABLE_ROLES, lobes/roles.py:259) and /v1/realtime get none; stt/tts are reached via /v1/audio/* not model ids, so get no member lane. hand IS mesh-forwarded today (NEVER_PROXIED_BACKENDS = frozenset(), lobes/gateway/_config.py:207) and gets member lanes like any other role.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "innereye-<member> and member names for stt/tts never forward; hand-<member> forwards like cortex",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "audience",
+      "text": "Operators and clients (Qwen Code first) that want to pick a specific box for a role, and the mesh gateways that must route that choice.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "Qwen Code can address each box with a distinct model id from one provider baseUrl",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "before_state",
+      "text": "A member is addressable by name only when its fingerprint DISAGREES (find_suffixed_lane walks placement.suffixed only, lobes/gateway/_mesh_routing.py:857). spark and spark2 agree, so neither has a name; today the only way to pick spark2 is pointing the client at spark2's own gateway with spark2's own key (Option 1, set up and verified 2026-10-06: qwen -m main moved spark2's request_success_total 2181->2184).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "The before-state is measured, not recalled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "after_state",
+      "text": "From any mesh gateway, `{role}-{member}` resolves for every verified member of that role, agreeing or not; the box's OWN name is served by its local lane with no forward. One base URL and one key in Qwen Code reach every box.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "Every verified member of a role resolves by name on every mesh gateway, including the box's own name",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "why_it_matters",
+      "text": "A caller can pin work to a box (warm cache, isolation, A/B) without per-box URLs and keys, and the pin survives a future pooling fix because a forward carries the hop marker and the destination serves a marked arrival locally (sole-ready, server.py _pool_selection).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "The pin survives a pooling fix",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "find_suffixed_lane (or a sibling member-lane resolver) matches `{role}-{member}` for EVERY verified member of the role, not only fingerprint-disagreeing ones; the forward path at server.py:3253-3300 is reused unchanged (served_name rewritten to the destination's backend name, join-key signed, X-Lobes-Proxied-By + mesh markers).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Agreeing members resolve by name and the outbound body carries the destination's backend name, not the alias",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "`{role}-{self}` (self = this box's LOBES_MESH_NAME) on a box that hosts the role is served by the local lane: no pool selection, no forward, X-Lobes-Served-By set. On a box that does not host the role it 404s role_infeasible, never forwards to some other member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Self-name is served locally with no outbound connection; a non-hosting box 404s role_infeasible for its own name",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "/capabilities gains an additive per-role `member_lanes` list naming every addressable `{role}-{member}` (self included when hosted); `suffixed_lanes` keeps its meaning (disagreeing members only). With mesh disabled the payload stays byte-identical.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "member_lanes is additive and absent with mesh disabled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "Plain-role routing, pool candidate selection (_pool_selection, _selection.py) and the fingerprint plain/suffixed split are unchanged; a member lane never joins or leaves the plain pool.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "No plain-pool behaviour changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "boundary",
+      "text": "A role a member announced private gets no member lane anywhere (Announcement.public() strips it before verified_roles), and an innereye-<member> name never resolves to a peer.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "A private-announced role yields no member lane",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "success_signal",
+      "text": "Live on spark+spark2 (+Thor as a non-hosting gateway): 10 requests with model=cortex-spark2 through spark's gateway raise spark2's vllm:request_success_total by 10 and spark's by 0; the mirror (cortex-spark through spark2's gateway, and cortex-spark locally on spark) holds; `qwen -m cortex-spark2` answers via localhost:8001. Transcript under docs/evidence/.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "Measured by engine counters on both boxes, not by gateway headers",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "GET /v1/models lists every addressable `{role}-{member}` id (self included when hosted) alongside the existing entries; with mesh disabled the listing is byte-identical.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "/v1/models lists cortex-spark and cortex-spark2 on a mesh member and is byte-identical with mesh disabled",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "`{role}-{member}` for a member that announced the role but is not yet probed returns 503 role_unverified with Retry-After: 5, error.hosted_by and the X-Lobes-Mesh-Member/-Unverified headers, reusing the plain-role boot-window body.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "An unprobed member's name gets 503 role_unverified, never 404 or a forward",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "The self lane (`{role}-{self}`) applies THIS box's pressure policy exactly like the plain role (429 server_busy + Retry-After when shed) and never forwards to a peer under pressure \u2014 a pin is a pin. Source: handle_post pressure branch (server.py:3116-3160).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "A pressured box sheds its own self-lane request with 429 and dials nothing",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "A hop-marked arrival naming this box's OWN member lane is served locally, not answered with the 508 proxy-loop body the peer-lane branch (server.py:3256) returns, because no second forward happens.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "A hop-marked self-lane arrival is served locally (200), not 508",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Member-lane resolver in lobes/gateway/_mesh_routing.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_mesh_member_lanes.py: member_lanes(snapshot, role, self_name=..., self_hosts=...) returns one MemberLane(name='{role}-{member}', role, member, origin, is_self, pending) per verified member of the role, AGREEING AND DISAGREEING alike, plus is_self for self_name when self_hosts, plus pending=True for members whose probed is False and who announce the role",
+        "find_member_lane(snapshot, requested, roles, self_name=..., hosted_roles=...) resolves cortex-spark2 (agreeing peer), cortex-thor (disagreeing peer, same result as today's find_suffixed_lane), cortex-<self> (is_self), and returns None for an unknown member, for innereye-<member> (MESH_UNFORWARDABLE_ROLES) and for a role the member announced private",
+        "hand-<member> resolves like cortex (NEVER_PROXIED_BACKENDS is empty); find_suffixed_lane and compute_role_placement are unchanged and their existing tests pass unmodified"
+      ],
+      "deps": [],
+      "covers": [
+        "c20",
+        "h6",
+        "c13",
+        "h19",
+        "c24",
+        "h20"
+      ],
+      "instruction": "Add MemberLane + member_lanes + find_member_lane beside SuffixedLane/find_suffixed_lane (~line 645-880); reuse suffixed_lane_name for the name format and _pending_origins_for_role for pending. Do NOT touch compute_role_placement or the plain/suffixed split. Pure functions over RoutingSnapshot, no I/O. Self is NOT in the roster (live 2026-10-06), so self comes only from the self_name argument."
+    },
+    {
+      "id": "t2",
+      "summary": "/v1/models accepts extra member-lane ids in lobes/gateway/_routing.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_routing_models_member_lanes.py: list_models_payload(..., member_lane_ids=('cortex-spark','cortex-spark2')) appends one OpenAI model object per id (object='model', owned_by matching the existing convention), de-duplicated against ids already listed",
+        "with member_lane_ids omitted or empty the payload is byte-identical to today's (golden comparison)"
+      ],
+      "deps": [],
+      "covers": [
+        "c30",
+        "h17"
+      ],
+      "instruction": "list_models_payload is at lobes/gateway/_routing.py:617. Add a keyword-only member_lane_ids: Sequence[str] = () parameter; no other behaviour change. Do not touch server.py \u2014 the caller is wired in the dispatch task."
+    },
+    {
+      "id": "t3",
+      "summary": "/capabilities member_lanes in lobes/roles.py annotate_mesh_naming",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_capabilities_member_lanes.py: with a mesh snapshot holding spark2 (agreeing) and self_name=spark hosting cortex, the cortex entry carries member_lanes == ['cortex-spark','cortex-spark2'] (sorted); suffixed_lanes keeps today's meaning (disagreeing only)",
+        "mesh_snapshot=None leaves the payload byte-identical; roles with no addressable member get no member_lanes key"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c22",
+        "h8"
+      ],
+      "instruction": "annotate_mesh_naming is at lobes/roles.py ~1905. Call t1's member_lanes; self_name comes from a new optional parameter (the caller passes LOBES_MESH_NAME). Additive key only."
+    },
+    {
+      "id": "t4",
+      "summary": "Member-lane dispatch + /v1/models wiring in lobes/gateway/server.py",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_gateway_member_lanes.py: model=cortex-spark2 on a fake spark gateway forwards once to spark2's origin with body model rewritten to the backend name, Authorization = join key, hop marker set, X-Lobes-Proxied-By + X-Lobes-Mesh-Member on the answer; the destination's _pool_selection for a hop-marked arrival returns sole-ready even with a populated replica pool",
+        "model=cortex-<self> on a hosting box is served by the local lane with an open_upstream that fails if a peer is dialed; X-Lobes-Served-By set; under pressure it returns 429 server_busy and dials nothing; with a hop marker it is still served locally (200, not 508); on a non-hosting box it returns 404 role_infeasible",
+        "a pending (unprobed) member's name returns 503 role_unverified, Retry-After: 5, error.hosted_by and X-Lobes-Mesh-Member/-Unverified headers, no upstream; a hop-marked arrival naming a PEER lane still returns the existing 508 proxy-loop body",
+        "GET /v1/models on a mesh member lists every member lane id from t1; with mesh disabled /v1/models and the POST surface are byte-identical (existing tests pass unmodified)"
+      ],
+      "deps": [
+        "t1",
+        "t2"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c18",
+        "h4",
+        "c19",
+        "h5",
+        "c21",
+        "h7",
+        "c31",
+        "h18",
+        "c32",
+        "h21",
+        "c33",
+        "h22",
+        "c12",
+        "h13"
+      ],
+      "instruction": "Replace the find_suffixed_lane call at server.py:3253 with t1's find_member_lane, keeping the existing peer-forward body (served_name=ROLE_BACKEND, join_key, rewrite=True) for non-self lanes. For is_self: fall through to the normal local backend path with the requested model rewritten to the plain role, so the existing pressure branch applies, but skip _pool_selection (call order_backends for the owned backend directly). Reuse _role_unverified_body for pending. Self name = _build_mesh_config().name. Wire member_lane_ids into _get_v1_models (~5174) via t2's parameter."
+    },
+    {
+      "id": "t5",
+      "summary": "Docs, CLAUDE.md hand correction, explain text, version bump",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/gateway-fleet.md mesh section documents {role}-{member} member lanes (self, agreeing, disagreeing, pending 503, pressure 429, exclusions innereye + /v1/realtime + private roles); lobes explain mesh mentions them; CLAUDE.md's hand paragraph no longer claims hand is never proxied",
+        "git diff main -- lobes/gateway/_selection.py is empty; uv run pytest -n auto passes with tests/test_gateway_pool*.py, test_gateway_selection.py and test_mesh_routing*.py unmodified; no _PEER_ORIGIN key added to lobes/gateway/_config.py; black/isort/flake8/bandit and afi cli doctor --strict clean",
+        "version bumped minor via .claude/skills/version-bump/scripts/bump.py with a CHANGELOG entry (uv.lock re-pin committed)"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c11",
+        "h12",
+        "c23",
+        "h9"
+      ],
+      "instruction": "bump.py reads a changelog JSON on stdin with lowercase keys (added/changed/fixed). Keep CLAUDE.md edits minimal: fix the hand sentence and add one paragraph on member lanes under the mesh-brain join section."
+    },
+    {
+      "id": "t6",
+      "summary": "Live rollout + acceptance transcript on spark, spark2, Thor; switch Qwen Code to member lanes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "spark's gateway re-imaged first, then spark2, Thor, Orin; each box's gateway version recorded in the transcript",
+        "docs/evidence/<date>-accept-mesh-member-lanes.txt: 10 x model=cortex-spark2 via spark's gateway raises spark2's vllm:request_success_total by 10 and spark's by 0; mirror legs (cortex-spark via spark2's gateway, cortex-spark locally on spark, cortex-spark2 via Thor's gateway) hold; before-state cites the 2026-10-06 404 probe and Option 1 counters",
+        "~/.qwen/settings.json (backed up first) has cortex-spark and cortex-spark2 entries at http://localhost:8001/v1; qwen -m each answers and moves the right engine counter; the interim direct spark2 entry (id main) is removed"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c26",
+        "h11",
+        "c16",
+        "h2",
+        "c17",
+        "h3"
+      ],
+      "instruction": "Use the lobes-deploy skill's lobes-compose.sh; never run compose in lobes/templates/. Read memories peer-gateway-repin-dev-index-trap and lobes-up-gateway-drops-audio-overlay before re-imaging. Count engine metrics inside each model-gear-vllm-primary container, not via gateway headers."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "If the live fingerprints of spark and spark2 ever diverge, plain cortex stops pooling them but member lanes keep working; the transcript should note the current placement (plain vs suffixed) for context",
+      "kind": "unknown_nonblocking",
+      "task_id": null,
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}

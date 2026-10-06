@@ -1,0 +1,239 @@
+ACCEPTANCE — mesh member lanes: any box's role is addressable as {role}-{member}
+Date: 2026-10-06
+PR: agentculture/lobes-cli#292 (feat/mesh-member-lanes, 0.82.0)
+Spec / plan: docs/specs/2026-10-06-mesh-pool-load-sharing.md, docs/plans/2026-10-06-mesh-pool-load-sharing.md (task t6)
+Boxes (one mesh, all four gateways re-imaged):
+  spark   DGX Spark GB10   gateway :8001  hosts cortex (unsloth/Qwen3.8-27B-NVFP4, util 0.58, 262144, DSpark)
+  spark2  DGX Spark GB10   gateway :8000  hosts cortex (identical lane), hand, embedder, reranker
+  thor    Jetson AGX Thor  gateway :8000  hosts worker; does NOT host cortex (non-hosting front)
+  orin    Jetson AGX Orin  gateway :8000  hosts associate/embedder/reranker; re-imaged, not exercised as a front
+Success signal (spec c26): 10 x model=cortex-spark2 through spark's gateway raises spark2's
+vllm:request_success_total by 10 and spark's by 0; the mirror legs hold; `qwen -m cortex-spark2`
+answers via localhost:8001. Measured on ENGINE counters (each box's model-gear-vllm-primary
+/metrics), never on gateway headers alone.
+
+RESULT: PASS on 0.82.0.dev605, after deviation d1 (two bugs found by run 1, fixed on the PR).
+
+================================================================================
+1. Before state
+================================================================================
+* spark gateway 0.81.0, spark2 0.81.3, thor 0.81.1, orin 0.81.1.
+* Probe on spark's gateway, same day, pre-feature: model=cortex-spark2 -> 404 model_not_found;
+  model=cortex-spark -> 404 model_not_found.
+* The only way to reach spark2's cortex from Qwen Code was a second provider pointed straight at
+  spark2's gateway with spark2's own key (interim "Option 1"): curl -> spark2 engine 2180 -> 2181;
+  `qwen -m main` -> 2181 -> 2184.
+* Placement context (plan risk r1): spark and spark2 announce AGREEING cortex fingerprints, so plain
+  `cortex` is one pool — `suffixed_lanes` absent on every front, both members PLAIN.
+
+================================================================================
+2. Rollout
+================================================================================
+Per box: back up ~/.lobes/.env (.env.bak-<ts>-pre-member-lanes, then .env.bak-<ts>-pre-dev605),
+set MODEL_GEAR_VERSION=<dev wheel>, set GATEWAY_PIP_EXTRA_INDEX_URL=https://test.pypi.org/simple/,
+rebuild + recreate ONLY the gateway (`up -d --no-deps gateway`; spark via the lobes-deploy skill's
+lobes-compose.sh, chain yml+audio+shape+override; others with the chain from the container's
+compose label, `env -u GATEWAY_API_KEY`). Order: spark2 -> thor -> orin -> spark (spark last so
+Qwen Code sessions streaming through it were not cut; one session that started in the gap may
+have lost an in-flight request at the 18:45 recreate). AUDIO_URL verified unchanged on spark
+(http://realtime:8080) and orin. Mesh roster re-formed on spark: thor, orin, spark2 all probed.
+
+  run 1: 0.82.0.dev603 (PR head b4fe439) on all four
+  run 2: 0.82.0.dev605 (PR head 19e1ad9 = d1 fix 6fe606f + /v1/models readiness fix) on all four
+
+================================================================================
+3. Run 1 — 0.82.0.dev603 — FAILED (raw)
+================================================================================
+  date_utc: 2026-10-06T17:46:28Z
+  gateway localhost:8001 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway spark2.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway thor.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway orin.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  qwen sessions running at start: 2
+  === leg: A cortex-spark2 via spark gateway
+  gateway: http://localhost:8001   model: cortex-spark2   requests: 10
+  http codes:    404 404 404 404 404 404 404 404 404 404
+  mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
+  spark  engine request_success_total: 251 -> 251  (delta 0)
+  spark2 engine request_success_total: 2184 -> 2184  (delta 0)
+  === leg: B cortex-spark via spark gateway (self lane)
+  gateway: http://localhost:8001   model: cortex-spark   requests: 10
+  http codes:    200 200 000 200 200 200 200 200 200 200
+  mesh member:   spark spark  spark spark spark spark spark spark spark
+  spark  engine request_success_total: 252 -> 273  (delta 21)
+  spark2 engine request_success_total: 2184 -> 2184  (delta 0)
+  === leg: C cortex-spark via spark2 gateway
+  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    404 404 404 404 404 404 404 404 404 404
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 273 -> 273  (delta 0)
+  spark2 engine request_success_total: 2184 -> 2184  (delta 0)
+  === leg: D cortex-spark2 via spark2 gateway (self lane)
+  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
+  spark  engine request_success_total: 273 -> 273  (delta 0)
+  spark2 engine request_success_total: 2184 -> 2194  (delta 10)
+  === leg: E cortex-spark2 via Thor gateway (non-hosting)
+  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  http codes:    508 508 508 508 508 508 508 508 508 508
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 273 -> 273  (delta 0)
+  spark2 engine request_success_total: 2194 -> 2194  (delta 0)
+  === leg: F cortex-spark via Thor gateway (non-hosting)
+  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 273 -> 294  (delta 21)
+  spark2 engine request_success_total: 2194 -> 2194  (delta 0)
+  === leg: G context: PLAIN cortex via spark gateway (pool, unfixed)
+  gateway: http://localhost:8001   model: cortex   requests: 10
+  http codes:    000 200 200 200 200 200 200 200 200 200
+  mesh member:    spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 294 -> 313  (delta 19)
+  spark2 engine request_success_total: 2194 -> 2194  (delta 0)
+  qwen sessions running at end: 2
+
+Diagnosis (full responses captured):
+  A  via spark -> forwarded to spark2 -> 404 {"message": "The model `primary` does not exist."}
+     The forward rewrote `model` to the BACKEND name ("primary"), which no gateway accepts as a
+     model id. Spec c20 had copied that convention from the pre-existing suffixed-lane path
+     (review #252 "Finding 1"), and the t4 unit test asserted it — so the disagreeing-member
+     lanes (`cortex-thor` style) had the same latent bug.
+  E  via thor -> 508 proxy_loop, X-Lobes-Route-Reason: peer-less-loaded, Proxied-By: spark.
+     On the non-hosting Thor, _peer_only_forward ran BEFORE the member-lane branch;
+     infeasible_owner("cortex-spark2") falls back to the default model, so the name was
+     pool-forwarded as plain cortex (to spark, origin tie-break), and spark correctly refused a
+     hop-marked request naming a PEER lane.
+  F  passed by accident: the same wrong pool path happened to pick spark.
+  Also seen: spark's /v1/models listed `reranker-spark` although no reranker container runs on
+  spark (#92 — listed must imply reachable).
+
+Deviation d1 (approved by the operator, recorded via `devague deviate`, task t4, affects c20/h6):
+  * forward the destination's announced served_id (role name fallback), never the backend name;
+  * resolve member lanes FIRST in handle_post, before _peer_only_forward.
+Plus (19e1ad9): /v1/models lists a member lane only if it can answer — self lane needs its
+backend ready in the readiness snapshot, a peer lane needs the role in the peer's ready_roles.
+Spot check after re-image (single requests): C/E/F all 200, route-reason mesh-forwarded.
+
+================================================================================
+4. Discovery on 0.82.0.dev605
+================================================================================
+spark /v1/models member ids: cortex-spark, cortex-spark2, worker-thor, hand-spark2,
+  embedder-orin, embedder-spark2, embedder-thor, reranker-orin, reranker-spark2, reranker-thor
+  (reranker-spark gone — the readiness fix, live)
+GET /capabilities -> cortex.member_lanes == ["cortex-spark", "cortex-spark2"] on spark, spark2
+  and thor (run 1 image; unchanged by run 2's fixes).
+
+================================================================================
+5. Run 2 — 0.82.0.dev605 — PASS (raw)
+================================================================================
+  date_utc: 2026-10-06T18:46:06Z
+  gateway localhost:8001 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway spark2.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway thor.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway orin.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  qwen sessions running at start: 0
+  === leg: A cortex-spark2 via spark gateway
+  gateway: http://localhost:8001   model: cortex-spark2   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
+  spark  engine request_success_total: 363 -> 363  (delta 0)
+  spark2 engine request_success_total: 2195 -> 2205  (delta 10)
+  === leg: B cortex-spark via spark gateway (self lane)
+  gateway: http://localhost:8001   model: cortex-spark   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 363 -> 373  (delta 10)
+  spark2 engine request_success_total: 2205 -> 2205  (delta 0)
+  === leg: C cortex-spark via spark2 gateway
+  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    200 000 000 000 000 200 200 000 200 200
+  mesh member:   spark     spark spark  spark spark
+  spark  engine request_success_total: 373 -> 391  (delta 18)
+  spark2 engine request_success_total: 2205 -> 2205  (delta 0)
+  === leg: D cortex-spark2 via spark2 gateway (self lane)
+  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
+  spark  engine request_success_total: 391 -> 391  (delta 0)
+  spark2 engine request_success_total: 2205 -> 2215  (delta 10)
+  === leg: E cortex-spark2 via Thor gateway (non-hosting)
+  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
+  spark  engine request_success_total: 391 -> 391  (delta 0)
+  spark2 engine request_success_total: 2215 -> 2225  (delta 10)
+  === leg: F cortex-spark via Thor gateway (non-hosting)
+  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    200 000 200 200 200 200 200 000 200 200
+  mesh member:   spark  spark spark spark spark spark  spark spark
+  spark  engine request_success_total: 391 -> 409  (delta 18)
+  spark2 engine request_success_total: 2225 -> 2225  (delta 0)
+  === leg: G context: PLAIN cortex via spark gateway (pool, unfixed)
+  gateway: http://localhost:8001   model: cortex   requests: 10
+  http codes:    200 200 200 200 200 200 200 000 000 200
+  mesh member:   spark spark spark spark spark spark spark   spark
+  spark  engine request_success_total: 409 -> 427  (delta 18)
+  spark2 engine request_success_total: 2225 -> 2225  (delta 0)
+  qwen sessions running at end: 2
+
+C, F and G — the legs bound for SPARK's engine — show client timeouts (000 = curl's 120 s cap),
+while every leg bound for spark2 is 10/10. Not routing: in every one of those legs spark2 stayed
++0 and every answered request came from spark. Cause, from spark's engine log over the window:
+  Engine 000: ... Running: 2 reqs, Waiting: 1-2 reqs ...  (steady, 25-40 tok/s generation)
+spark's cortex runs max_num_seqs=2 and two long generations from concurrent Qwen Code sessions
+held both slots, so the 16-token test requests queued past 120 s (they still completed on the
+engine afterwards, hence +18 = 10 of ours + ~8 of theirs). Re-run with a patient client:
+
+  date_utc: 2026-10-06T19:21:55Z  (re-run of spark-bound legs with a 600 s client timeout)
+  qwen sessions running at start: 2
+  spark engine at start: vllm:num_requests_running{engine="0",model_name="unsloth/Qwen3.8-27B-NVFP4"}=2.0 vllm:num_requests_waiting{engine="0",model_name="unsloth/Qwen3.8-27B-NVFP4"}=0.0 
+  === leg: C2 cortex-spark via spark2 gateway (600s client)
+  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 427 -> 443  (delta 16)
+  spark2 engine request_success_total: 2225 -> 2225  (delta 0)
+  === leg: F2 cortex-spark via Thor gateway (600s client)
+  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  http codes:    200 200 200 200 200 200 200 200 200 200
+  mesh member:   spark spark spark spark spark spark spark spark spark spark
+  spark  engine request_success_total: 443 -> 453  (delta 10)
+  spark2 engine request_success_total: 2225 -> 2225  (delta 0)
+  qwen sessions running at end: 0
+
+(C2's +16 includes 6 from the two concurrent Qwen sessions running at its start; F2, with those
+sessions ending, is exact: +10 / +0.)
+
+================================================================================
+6. Qwen Code end to end (localhost:8001 = spark's gateway, one key)
+================================================================================
+~/.qwen/settings.json (backed up first): providers cortex-spark and cortex-spark2, both
+baseUrl http://localhost:8001/v1; the interim direct-to-spark2 entry and its stored key removed.
+  qwen -m cortex-spark2 -> 'pong'   spark 453->453 (+0)   spark2 2225->2228 (+3)
+  qwen -m cortex-spark  -> 'pong'   spark 453->457 (+4)   spark2 2228->2228 (+0)
+(one Qwen prompt makes several model calls; no other Qwen session was running.)
+
+================================================================================
+7. Summary against the spec
+================================================================================
+  c26 success signal              PASS  A: spark2 +10, spark +0 (10/10 200)
+  mirror legs                     PASS  B (spark self) +10/+0 · C2 (spark2 -> spark) 10/10, spark2 +0
+                                        · D (spark2 self) +0/+10 · E (thor -> spark2) +0/+10
+                                        · F2 (thor -> spark) +10/+0
+  pin survives a pooled destination  PASS  every forward arrives hop-marked; the destination serves
+                                        it locally (no leg ever touched the other engine)
+  /v1/models + /capabilities      PASS  member ids listed; phantom reranker-spark removed
+  qwen -m cortex-spark2           PASS
+
+NOT exercised live here (unit-tested only): pressure 429 on a self lane, 503 role_unverified for an
+unprobed member, the 508 for a hop-marked peer lane (seen only as run 1's accidental path), Orin as
+a front, hand-/worker-/embedder- member lanes as request targets.
+
+Context leg G (plain `cortex` via spark's gateway, both runs): 100% on spark, spark2 +0 — the
+parked plain-pool load-sharing bug (spec root causes c2-c5, park v3) is unchanged by this PR.
+
+Follow-up after merge: every gateway runs 0.82.0.dev605 with GATEWAY_PIP_EXTRA_INDEX_URL pointed
+at TestPyPI. Once 0.82.0 is on PyPI, re-pin MODEL_GEAR_VERSION=0.82.0 AND comment the TestPyPI
+line out (with it set, Dockerfile.gateway installs from TestPyPI only, where releases do not exist).

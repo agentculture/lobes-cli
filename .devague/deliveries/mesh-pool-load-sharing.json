@@ -1,0 +1,370 @@
+{
+  "plan_slug": "mesh-pool-load-sharing",
+  "schema_version": 2,
+  "created": "2026-10-06T18:03:02Z",
+  "updated": "2026-10-06T20:55:03Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Cross-box member-lane forwards rewrite the outbound model to the destination's announced served_id (fallback: role name) instead of the backend name, and member lanes resolve BEFORE _peer_only_forward",
+      "task_ref": "t4",
+      "reason": "t6 live run 2026-10-06 on 0.82.0.dev603: (1) cortex-spark2 via spark and cortex-spark via spark2 forwarded but the destination answered 404 model_not_found for 'primary' (no gateway accepts a backend name; c20 copied the review-#252 convention); (2) cortex-spark2 via Thor (non-hosting) was pool-forwarded by _peer_only_forward because infeasible_owner falls back to the default model for an unknown id, so spark refused the hop-marked peer lane with 508. Self lanes (B, D) passed. Operator approved fixing both on PR #292.",
+      "affects": [
+        "c20",
+        "h6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": null,
+      "seq": 1
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "docs/evidence/2026-10-06-accept-mesh-member-lanes.txt leg A (run 2)",
+      "behavior_text": "engine request_success_total: spark2 +10, spark +0, 10/10 HTTP 200",
+      "contract_text": "10 x cortex-spark2 via spark raises spark2 by 10 and spark by 0",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live run on 4 gateways at 0.82.0.dev605; engine counters, not headers",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T18:46:06Z",
+        "commit": "19e1ad9"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 2
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "docs/evidence/2026-10-06-accept-mesh-member-lanes.txt legs A,B,C2,D,E,F2",
+      "behavior_text": "each leg moved only the named engine (+10 / +0); C/F first-pass timeouts were queueing behind concurrent load, re-run 10/10",
+      "contract_text": "{role}-{member} always lands on that member, never balanced",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live run, 6 legs x 10 requests, engine counters",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T18:46:06Z",
+        "commit": "19e1ad9"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "docs/evidence/2026-10-06-accept-mesh-member-lanes.txt section 6",
+      "behavior_text": "qwen -m cortex-spark2: spark2 +3 spark +0; qwen -m cortex-spark: spark +4 spark2 +0",
+      "contract_text": "Qwen Code reaches each box from one base URL",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "operator-side qwen CLI run against the live gateway",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T18:46:06Z",
+        "commit": "19e1ad9"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_agreeing_peer_name_forwards_once_to_that_member; tests/test_gateway_member_lanes.py::test_peer_lane_forwards_the_destinations_announced_served_id; tests/test_mesh_member_lanes.py::test_agreeing_and_disagreeing_members_both_get_lanes",
+      "behavior_text": "single forward to the member origin, join key, hop marker, model = announced served_id (role name fallback)",
+      "contract_text": "agreeing and disagreeing members alike resolve; forward reused",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_self_name_is_served_locally_even_with_a_pool_peer; tests/test_gateway_member_lanes.py::test_self_name_on_a_box_that_does_not_host_the_role_is_role_infeasible",
+      "behavior_text": "local dial only with a pool peer present; 404 role_infeasible when not hosted",
+      "contract_text": "self name served locally, never forwarded",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_capabilities_lists_self_and_peer_member_lanes_on_a_hosting_box; tests/test_capabilities_member_lanes.py::test_AC1_agreeing_self_hosting_member_lanes; ::test_AC4_snapshot_none_byte_identical",
+      "behavior_text": "member_lanes == [cortex-spark, cortex-spark2]; absent with mesh off",
+      "contract_text": "additive per-role member_lanes",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_v1_models_handler_lists_member_lanes; tests/test_gateway_member_lanes.py::test_member_lane_ids_skip_a_self_lane_whose_local_backend_is_not_ready; tests/test_routing_models_member_lanes.py::test_golden_matches_current_payload",
+      "behavior_text": "ids appended after existing entries; not-ready self/peer lanes omitted; byte-identical with none",
+      "contract_text": "member ids listed in /v1/models",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_unprobed_member_name_is_503_role_unverified",
+      "behavior_text": "503, Retry-After 5, hosted_by, unverified header, no dial",
+      "contract_text": "503 role_unverified for a pending member",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_self_name_under_pressure_sheds_429_and_dials_nothing",
+      "behavior_text": "429 server_busy, zero dials with a pool peer present",
+      "contract_text": "a pin is a pin under pressure",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_hop_marked_self_name_is_served_locally_not_508",
+      "behavior_text": "200 from the local lane",
+      "contract_text": "hop-marked self arrival served locally",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_hop_marked_arrival_naming_a_peer_lane_is_a_proxy_loop",
+      "behavior_text": "508 proxy_loop, zero dials",
+      "contract_text": "single-hop rule holds for member lanes",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_unforwardable_and_audio_member_names_never_dial_a_peer[innereye-spark2,stt-spark2,tts-spark2]; tests/test_gateway_member_lanes.py::test_hand_peer_name_forwards_like_cortex",
+      "behavior_text": "404 with no peer dial; hand-spark2 forwards once",
+      "contract_text": "member lanes only for forwardable model-addressed roles",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_mesh_member_lanes.py::test_find_unknown_member_and_absent_role_return_none",
+      "behavior_text": "a member WITHOUT the role yields no lane",
+      "contract_text": "private-announced role gets no member lane",
+      "evidence_type": "automated",
+      "strength": "coverage",
+      "strength_basis": "proxy only: the test covers a member lacking the role, not an actual private announcement stripped by Announcement.public(); fidelity gap reported by the t1 subagent",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_gateway_member_lanes.py::test_destination_serves_hop_marked_arrival_locally_even_when_pooled",
+      "behavior_text": "armed pool of 2; hop-marked placement is local sole-ready",
+      "contract_text": "the pin survives a future pooling fix",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "dedicated feature test (repo has no behavioral marker/folder) ran green at the named commit; full suite 6096 passed",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o15",
+      "test_ref": "git diff main -- lobes/gateway/_selection.py tests/test_gateway_pool*.py tests/test_gateway_selection.py tests/test_mesh_routing*.py (empty); full suite",
+      "behavior_text": "empty diff; 6096 passed",
+      "contract_text": "plain-pool routing unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "diff + suite at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-06T20:53:12Z",
+        "commit": "54de8e7"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "A cross-box member-lane forward sends the destination's announced served_id (role name fallback), not the backend name the plan's c20 specified ('primary' 404s on every gateway)",
+      "caused_by": [
+        "d1",
+        "c20"
+      ],
+      "evidence_refs": [
+        "e4",
+        "e1"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "Member lanes resolve first in handle_post, before _peer_only_forward, so a non-hosting box (Thor) pins a member name instead of pool-forwarding it as the plain role",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e2"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "GET /v1/models lists a member lane only when it can answer: the self lane needs its backend ready, a peer lane needs the role in the peer's probed ready_roles",
+      "caused_by": [
+        "c30"
+      ],
+      "evidence_refs": [
+        "e7"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "removed",
+      "behavior_text": "stt-/tts-/innereye- names no longer forward a chat request to a peer (the pre-existing suffixed-lane path could, rewriting model to e.g. 'stt'); they now 404",
+      "caused_by": [
+        "c13"
+      ],
+      "evidence_refs": [
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}

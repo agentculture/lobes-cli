@@ -670,6 +670,10 @@ def test_locally_hosted_role_gets_no_mesh_hosted_by_or_ready_override():
     payload = {"cortex": {"model": "m", "loaded": True, "feasible": True, "ready": False}}
     entry = annotate_mesh_naming(payload, snap)["cortex"]
 
+    # The additive member_lanes listing (mesh-pool-load-sharing t3) is the
+    # only key a hosted role gains: never hosted_by, never a ready override.
+    lanes = entry.pop("member_lanes", [])
+    assert all(name.startswith("cortex-") for name in lanes)
     assert entry == {"model": "m", "loaded": True, "feasible": True, "ready": False}
 
 
