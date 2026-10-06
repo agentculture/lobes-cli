@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.83.0] - 2026-10-07
+
+### Added
+
+- lobes-deploy skill: a step-by-step 'serve innereye (ComfyUI) with its web UI on the network' recipe (three .env keys, `lobes up innereye`, `lobes up gateway`, verify), pointed at from QWEN.md and docs/comfyui-innereye.md, so an agent can do it without exploring the code.
+- `lobes up innereye` prints which of its two exposures is still unwired: the gateway (`INNEREYE_BASE_URL`) and the web UI (`INNEREYE_UI_PORT`).
+
+### Changed
+
+- `lobes up <opt-in role>` without its compose profile now names the .env edit first (and, for innereye, `INNEREYE_BASE_URL`), and warns that a re-scaffold overwrites hand-kept files.
+- `lobes up --help` lists `innereye`; `--build` help says ComfyUI is built locally too.
+
+### Fixed
+
+- `lobes up gateway` now keeps `docker-compose.audio.yml` in its -f chain when it is scaffolded, so a recreated gateway no longer loses `AUDIO_URL` (and with it /v1/audio/* and /v1/realtime).
+- lobes-compose.sh accepts `--profile X` anywhere and moves it before the compose subcommand, instead of compose failing with 'unknown flag: --profile'.
+
 ## [0.82.0] - 2026-10-06
 
 ### Added

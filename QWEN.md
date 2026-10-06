@@ -19,3 +19,8 @@ For any "it's on docker, fix it / rebuild it / make it reachable" request, use
 the `lobes-deploy` skill (`.qwen/skills/lobes-deploy`) and its wrapper
 `scripts/lobes-compose.sh`. The full procedure and why it exists are in
 `docs/operating-a-deployment.md`.
+
+**Serving innereye (ComfyUI) or its web UI** has a step-by-step recipe in
+that skill ("Recipe: serve innereye"). Follow it as written: three `.env`
+keys, `lobes up innereye --apply`, `lobes up gateway --apply`, then verify.
+It needs no code reading or subagent.

@@ -44,13 +44,66 @@ broken deployment.
    the template.
 3. **Back up** every deployment file you touch:
    `cp FILE FILE.bak-$(date +%Y%m%d-%H%M%S)-<why>`.
-4. **Run compose only through** `scripts/lobes-compose.sh`. It uses the
+4. **Start or stop one role with `lobes up <role> [--down] --apply`** (this
+   includes `innereye` and `gateway`). For any other compose action, run
+   compose only through `scripts/lobes-compose.sh`. It uses the
    deployment dir and its full `-f` chain, refuses the template folder, and is
    dry-run until `--apply`. Target ONE service with `up -d --no-deps <svc>`.
 5. **Verify through the gateway**, not just `docker ps`: the gateway must
    resolve the service (`docker exec model-gear-gateway getent hosts <svc>`)
    and a real request must succeed.
 6. **Then** carry the template side as a PR (template + test + version bump).
+
+## Recipe: serve innereye (ComfyUI) with its web UI on the network
+
+Follow these steps in order. You don't need to read any code first. Run
+commands from the repo root.
+
+1. **Back up `.env`** (on this box it is `~/.lobes/.env`):
+   `cp ~/.lobes/.env ~/.lobes/.env.bak-$(date +%Y%m%d-%H%M%S)-innereye`
+2. **Set three keys in `.env`.** Edit the existing line if the key is already
+   there. Don't add a second copy, and don't add `INNEREYE_FEASIBLE`, which is
+   not needed:
+
+   ```text
+   COMPOSE_PROFILES=innereye              # comma-append if it already lists others
+   INNEREYE_BASE_URL=http://comfyui:8188  # the gateway routes /v1/render only with this
+   INNEREYE_UI_PORT=0.0.0.0:8188          # web UI on every interface; 8188 alone = loopback only
+   ```
+
+   ComfyUI has **no login**. With `0.0.0.0` anyone on the network can use the
+   GPU and read every past prompt and output. Use this only when the operator
+   asks for network access.
+3. **Start it:** `lobes up innereye --apply`. Add `--build` only if
+   `Dockerfile.comfyui` changed. The command prints `>> innereye …` hints for
+   anything still missing.
+4. **Recreate the gateway** so it reads the new keys:
+   `lobes up gateway --apply`. On a lobes older than 0.83.0, use
+   `scripts/lobes-compose.sh --apply up -d --no-deps gateway` instead, because
+   the old `lobes up gateway` drops the audio overlay.
+5. **Verify** all three:
+
+   ```bash
+   docker ps --filter name=model-gear-comfyui --format '{{.Status}} {{.Ports}}'
+   #   want: Up … (healthy) 0.0.0.0:8188->8188/tcp
+   for ip in $(hostname -I); do curl -s -o /dev/null -m 3 -w "$ip %{http_code}\n" http://$ip:8188/; done
+   #   want: 200 on the LAN and tailnet addresses (Docker's 172.x bridges don't matter)
+   curl -s localhost:8001/capabilities | python3 -c 'import json,sys; r=json.load(sys.stdin)["innereye"]; print(r["feasible"], r["ready"])'
+   #   want: True True   (8001 = this box's gateway port, VLLM_PORT in .env)
+   ```
+
+**If the port is missing from `docker ps`:** the compose files don't read
+`INNEREYE_UI_PORT`. Check with
+`grep -n INNEREYE_UI_PORT ~/.lobes/docker-compose.{override,shape}.yml`. On a
+box whose compose files are rendered, not hand-kept, re-render with
+`lobes init --shape <its shape> --apply`. On a hand-kept box (each file's
+header says so), stop and ask. Don't add `ports:` to a template.
+
+**Memory:** a FLUX render peaks around 32 GiB. If `cortex` runs on the same
+box, check `free -g` before the first render. Tell the operator if
+`available` is under about 35 GiB. Don't stop cortex on your own.
+
+To turn it off: `lobes up innereye --down --apply`.
 
 Never `docker rm -f` a container you did not create, and never add a `ports:`
 key to a packaged template to fix one box. The full reasoning, the ComfyUI

@@ -116,12 +116,25 @@ def test_up_gateway_build_re_images_only_the_gateway(tmp_path, capsys) -> None:
     assert payload["build"] is True
 
 
-def test_up_gateway_never_pulls_in_the_audio_overlay(tmp_path, capsys) -> None:
-    """The gateway FRONTS the audio lanes over HTTP; it does not declare them,
-    so a gateway restart must not reach into the overlay."""
+def test_up_gateway_keeps_the_audio_overlay_when_scaffolded(tmp_path, capsys) -> None:
+    """The audio overlay ADDS ``AUDIO_URL`` to the gateway service. Recreating
+    the gateway without it silently drops /v1/audio/* and /v1/realtime, so the
+    overlay rides along whenever it is scaffolded. --no-deps still keeps the
+    audio services themselves out of it."""
     _scaffold_fleet_audio(tmp_path)
     assert main(["up", "gateway", "--compose-dir", str(tmp_path), "--json"]) == 0
-    assert "docker-compose.audio.yml" not in json.loads(capsys.readouterr().out)["command"]
+    payload = json.loads(capsys.readouterr().out)
+    assert "-f docker-compose.audio.yml" in payload["command"]
+    assert payload["command"].endswith("up -d --no-deps gateway")
+    assert payload["services"] == ["gateway"]
+
+
+def test_up_gateway_without_audio_overlay_needs_none(tmp_path, capsys) -> None:
+    """A deployment with no audio overlay restarts its gateway exactly as before,
+    and is never refused for lacking one."""
+    _scaffold_fleet(tmp_path)
+    assert main(["up", "gateway", "--compose-dir", str(tmp_path), "--json"]) == 0
+    assert "audio" not in json.loads(capsys.readouterr().out)["command"]
 
 
 def test_up_gateway_down_stops_only_the_gateway(tmp_path, capsys) -> None:

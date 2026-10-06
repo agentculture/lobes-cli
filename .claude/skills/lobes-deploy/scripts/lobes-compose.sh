@@ -56,6 +56,20 @@ esac
 # The deployment's own -f chain, from the CLI (one line per argv element).
 mapfile -t files < <(lobes fleet files --compose-dir "$dir")
 
+# `--profile X` is a GLOBAL compose option: after the subcommand
+# (`up -d --profile innereye comfyui`) compose rejects it with "unknown flag".
+# Accept it anywhere and move it to the front.
+profiles=()
+rest=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile) profiles+=(--profile "${2:?--profile needs a name}"); shift 2 ;;
+    --profile=*) profiles+=(--profile "${1#*=}"); shift ;;
+    *) rest+=("$1"); shift ;;
+  esac
+done
+set -- "${profiles[@]}" "${rest[@]}"
+
 # First non-option word decides read-only vs mutating. Compose's global options
 # that take a value (`--profile innereye`) must not be mistaken for it.
 sub=""

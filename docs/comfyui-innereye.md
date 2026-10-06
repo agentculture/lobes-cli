@@ -393,6 +393,15 @@ distinction worth stating because ComfyUI's own `/` and `/system_stats`
 answer 200 earlier, during the loading window, and would falsely advertise
 `ready: true` if used instead.
 
+## Turning it on for a live box
+
+The exact steps are the "Recipe: serve innereye" section of the
+[`lobes-deploy` skill](../.claude/skills/lobes-deploy/SKILL.md). In short:
+set `COMPOSE_PROFILES=innereye`, `INNEREYE_BASE_URL=http://comfyui:8188` and,
+for network access to the UI, `INNEREYE_UI_PORT=0.0.0.0:8188` in `.env`. Then
+run `lobes up innereye --apply` and `lobes up gateway --apply`. `lobes up
+innereye` prints a hint for any of the gateway or UI keys that is still unset.
+
 ## Rebuilding the image on a live box
 
 The image needs a **C compiler at runtime**, not only at build time. Triton

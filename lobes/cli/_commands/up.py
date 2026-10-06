@@ -134,6 +134,42 @@ GATEWAY_TARGET = GATEWAY_SERVICE
 TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK, GATEWAY_TARGET)
 
 
+# The .env keys behind innereye's two exposures. The gateway routes /v1/render
+# only when INNEREYE_BASE_URL is set; the web UI is published only when
+# INNEREYE_UI_PORT is (a bare port binds loopback; ``0.0.0.0:8188`` is the
+# whole network). See docs/comfyui-innereye.md.
+_INNEREYE_URL_KEY = "INNEREYE_BASE_URL"
+_INNEREYE_URL = "http://comfyui:8188"
+_INNEREYE_UI_KEY = "INNEREYE_UI_PORT"
+
+
+def _innereye_hints(deploy_dir: Path) -> list[str]:
+    """What else ``lobes up innereye`` needs for its two exposures to work.
+
+    Starting the ``comfyui`` container is not the whole job: the gateway has to
+    be told where it is, and the web UI has to be published. Say which of the
+    two is missing instead of leaving the operator to find out.
+    """
+    env = _env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE)
+    hints = []
+    if not (env.get(_INNEREYE_URL_KEY) or "").strip():
+        hints.append(
+            f"gateway: {_INNEREYE_URL_KEY} is not set in .env, so /v1/render is "
+            f"refused. Add {_INNEREYE_URL_KEY}={_INNEREYE_URL}, then "
+            "'lobes up gateway --apply'."
+        )
+    ui = (env.get(_INNEREYE_UI_KEY) or "").strip()
+    if not ui:
+        hints.append(
+            f"web UI: not published ({_INNEREYE_UI_KEY} unset). "
+            f"{_INNEREYE_UI_KEY}=0.0.0.0:8188 publishes it to the network "
+            "(ComfyUI has no login)."
+        )
+    else:
+        hints.append(f"web UI: {_INNEREYE_UI_KEY}={ui} (port 8188 on that address)")
+    return hints
+
+
 def _resolve(target: str) -> tuple[list[str], bool]:
     """``(services, needs_audio)`` for a target; raise USER_ERROR for an unknown one.
 
@@ -143,8 +179,11 @@ def _resolve(target: str) -> tuple[list[str], bool]:
     if target == COLLEAGUE_STACK:
         return [ROLE_SERVICE[r] for r in DEFAULT_HOSTED_ROLES], True
     if target == GATEWAY_TARGET:
-        # The gateway lives in the BASE fleet file and fronts the audio lanes over
-        # HTTP rather than declaring them, so it never pulls in the audio overlay.
+        # The gateway lives in the BASE fleet file, but the audio overlay also
+        # ADDS to it (``AUDIO_URL``, which routes /v1/audio/* and /v1/realtime).
+        # cmd_up therefore carries the overlay whenever it is scaffolded, so a
+        # recreated gateway keeps its audio routes. --no-deps keeps the audio
+        # services themselves untouched.
         return [GATEWAY_SERVICE], False
     if target in ROLE_SERVICE:
         return [ROLE_SERVICE[target]], target in _AUDIO_ROLES
@@ -171,6 +210,13 @@ def _hosting_shapes_for(role: str) -> tuple[str, ...]:
     )
 
 
+def _activation_extra(target: str) -> str:
+    """The extra .env key an opt-in role needs beyond its compose profile."""
+    if target == "innereye":
+        return f" and set {_INNEREYE_URL_KEY}={_INNEREYE_URL}"
+    return ""
+
+
 def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
     """Raise USER_ERROR when an opt-in core role's compose profile isn't active.
 
@@ -188,8 +234,11 @@ def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
     if hosting_shapes:
         example_shape = hosting_shapes[0]
         remediation = (
-            f"re-scaffold with a {target}-hosting shape "
-            f"('lobes init --shape {example_shape} --apply'), then retry"
+            f"add '{target}' to COMPOSE_PROFILES in .env (comma-separated, back "
+            f"the file up first){_activation_extra(target)}, then retry; or "
+            f"re-scaffold with a {target}-hosting shape ('lobes init --shape "
+            f"{example_shape} --apply' -- never on a box with hand-kept compose "
+            "files, which it overwrites)"
         )
     else:
         # No built-in shape hosts this role today (a future opt-in core role
@@ -331,6 +380,8 @@ def cmd_up(args: argparse.Namespace) -> int:
     deploy_dir = _runtime_ops.deployment_dir(args)
 
     _audio_overlay_required(deploy_dir, target, needs_audio)
+    if target == GATEWAY_TARGET and _compose.audio_overlay_present(deploy_dir):
+        needs_audio = True
 
     # An opt-in core role (muse) needs its compose profile activated by a
     # hosting shape — name the real fix instead of compose's "no such service".
@@ -368,6 +419,7 @@ def cmd_up(args: argparse.Namespace) -> int:
             "Re-run with --apply to execute."
         )
         emit_result(payload if json_mode else text, json_mode=json_mode)
+        _emit_innereye_hints(deploy_dir, target, action)
         return 0
 
     verb_word = "stopping" if action == "stop" else "starting"
@@ -399,7 +451,14 @@ def cmd_up(args: argparse.Namespace) -> int:
     }
     done = "started" if action == "up" else "stopped"
     emit_result(result if json_mode else f">> {target} {done} in {deploy_dir}", json_mode=json_mode)
+    _emit_innereye_hints(deploy_dir, target, action)
     return 0
+
+
+def _emit_innereye_hints(deploy_dir: Path, target: str, action: str) -> None:
+    if target == "innereye" and action == "up":
+        for hint in _innereye_hints(deploy_dir):
+            emit_diagnostic(f">> innereye {hint}")
 
 
 def register(sub: argparse._SubParsersAction) -> None:
@@ -412,7 +471,7 @@ def register(sub: argparse._SubParsersAction) -> None:
         "role",
         metavar="ROLE",
         help="cortex | senses | muse | worker | associate | hand | embedder | "
-        "reranker | stt | tts | colleague-stack | gateway.",
+        "reranker | stt | tts | innereye | colleague-stack | gateway.",
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--apply", action="store_true", help="Actually run docker compose.")
@@ -426,8 +485,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--build",
         action="store_true",
         help="Rebuild the target's image before starting it (up only). Only the "
-        "gateway is built from a local Dockerfile — use this to re-image it at a "
-        "new MODEL_GEAR_VERSION without touching the lobes behind it (#222).",
+        "gateway and innereye (ComfyUI) are built from local Dockerfiles — use "
+        "this to re-image the gateway at a new MODEL_GEAR_VERSION without "
+        "touching the lobes behind it (#222), or after changing "
+        "Dockerfile.comfyui.",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_up)
