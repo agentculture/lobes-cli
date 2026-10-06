@@ -96,6 +96,7 @@ from lobes.gateway._mesh_routes import require_self_origin as _require_self_orig
 from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._mesh_routing import (
     MESH_MEMBER_HEADER,
+    MemberLane,
     MeshRoutingView,
     RolePlacement,
     RoutingSnapshot,
@@ -103,7 +104,7 @@ from lobes.gateway._mesh_routing import (
     as_routing_snapshot,
     build_snapshot,
     compute_role_placement,
-    find_suffixed_lane,
+    find_member_lane,
     mesh_markers,
 )
 from lobes.gateway._mesh_wire import Announcement
@@ -926,6 +927,239 @@ def _role_unverified_response(
         + markers
         + [(MESH_MEMBER_HEADER, member_name)],
         body=_role_unverified_body(requested, backend_name, origin),
+    )
+
+
+# --- member lanes (mesh-pool-load-sharing, t4) --------------------------------
+#
+# "{role}-{member}" pins a request to ONE mesh member. Roles reached by path
+# rather than by `model` (the stt/tts audio lanes) and roles the mesh never
+# forwards (innereye) take no member suffix at all, so such a name falls
+# through to the ordinary unknown-model 404 instead of reaching a peer.
+_MEMBER_LANE_EXCLUDED_ROLES = frozenset({"stt", "tts", "innereye"})
+MEMBER_LANE_ROUTE_REASON = "member-lane"
+
+
+def _member_lane_roles() -> tuple[str, ...]:
+    from lobes.roles import ROLES
+
+    return tuple(r for r in ROLES if r not in _MEMBER_LANE_EXCLUDED_ROLES)
+
+
+def _mesh_self_name() -> str:
+    """This box's declared ``LOBES_MESH_NAME``, or ``""`` when mesh is off."""
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        return ""
+    return (mesh_cfg.enabled and mesh_cfg.name) or ""
+
+
+def _hosted_roles(table: RoutingTable) -> frozenset[str]:
+    """Roles whose backend is wired AND feasible on this box."""
+    from lobes.roles import BACKEND_ROLE
+
+    return frozenset(
+        BACKEND_ROLE.get(b.name, b.name) for b in table.backends if b.name not in table.infeasible
+    )
+
+
+def member_lane_ids(
+    table: RoutingTable, mesh_snapshot: "RoutingSnapshot | None"
+) -> tuple[str, ...]:
+    """Every ROUTABLE ``{role}-{member}`` id, for ``GET /v1/models``.
+
+    A pending (not-yet-probed) member is left out — a listed id must reach a
+    live engine (#92); it answers 503 ``role_unverified`` until probed. With
+    the mesh disabled this is ``()`` so the listing stays byte-identical.
+    """
+    if mesh_snapshot is None:
+        return ()
+    from lobes.gateway._mesh_routing import member_lanes
+
+    self_name = _mesh_self_name()
+    hosted = _hosted_roles(table)
+    return tuple(
+        lane.name
+        for role in _member_lane_roles()
+        for lane in member_lanes(
+            mesh_snapshot, role, self_name=self_name, self_hosts=role in hosted
+        )
+        if not lane.pending
+    )
+
+
+def _member_lane_response(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    requested: str,
+    mesh_snapshot: "RoutingSnapshot",
+    pressure: dict[str, float] | None,
+    override: bool,
+    dispatch_counter: "DispatchCounter | None",
+) -> GatewayResponse | None:
+    """The pinned answer for a ``{role}-{member}`` request, or ``None``.
+
+    ``None`` means *requested* names no member lane, and the caller carries on
+    with ordinary resolution (so an unknown name still 404s
+    ``model_not_found`` exactly as before).
+    """
+    from lobes.roles import ROLE_BACKEND
+
+    self_name = _mesh_self_name()
+    roles = _member_lane_roles()
+    lane = find_member_lane(
+        mesh_snapshot,
+        requested,
+        roles,
+        self_name=self_name,
+        hosted_roles=_hosted_roles(table),
+    )
+    if lane is None:
+        return _unhosted_self_lane(requested, self_name, roles)
+    backend_name = ROLE_BACKEND.get(lane.role, lane.role)
+    if lane.is_self:
+        return _serve_self_lane(
+            table,
+            cfg,
+            path,
+            req_headers,
+            body,
+            open_upstream,
+            lane=lane,
+            pressure=pressure,
+            override=override,
+            dispatch_counter=dispatch_counter,
+        )
+    if lane.pending:
+        placement = RolePlacement(
+            role=lane.role, plain_origins=(), suffixed=(), pending_origins=(lane.origin,)
+        )
+        return _role_unverified_response(
+            mesh_snapshot, lane.role, placement, requested, backend_name
+        )
+    return _forward_member_lane(
+        cfg, path, req_headers, body, open_upstream, lane, backend_name, mesh_snapshot
+    )
+
+
+def _unhosted_self_lane(
+    requested: str, self_name: str, roles: Collection[str]
+) -> GatewayResponse | None:
+    """404 ``role_infeasible`` for this box's own name on a role it does not
+    host — never a forward to some OTHER member, and never a misleading
+    ``model_not_found`` for a name that is part of the mesh contract."""
+    from lobes.roles import ROLE_BACKEND
+
+    if not self_name:
+        return None
+    for role in roles:
+        if requested == f"{role}-{self_name}":
+            return GatewayResponse(
+                status=404,
+                headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+                body=_role_infeasible_body(requested, ROLE_BACKEND.get(role, role)),
+            )
+    return None
+
+
+def _serve_self_lane(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    lane: "MemberLane",
+    pressure: dict[str, float] | None,
+    override: bool,
+    dispatch_counter: "DispatchCounter | None",
+) -> GatewayResponse:
+    """Serve this box's OWN member lane on its local engine.
+
+    The request is re-resolved as the PLAIN role with the mesh and every
+    replica pool switched off, so it takes exactly the plain role's local
+    path — the same pressure shed (429), the same owner-down 503 — but can
+    never be placed on, or forwarded to, a peer: a pin is a pin (c32). A
+    hop-marked arrival is fine here too, since nothing is forwarded (c33).
+    """
+    served = handle_post(
+        table,
+        cfg,
+        path,
+        req_headers,
+        rewrite_model(body, lane.role),
+        open_upstream,
+        pressure=pressure,
+        override=override,
+        dispatch_counter=dispatch_counter,
+    )
+    markers = [
+        (SERVED_BY_HEADER, table.self_origin or _SELF_ORIGIN_FALLBACK),
+        (ROUTE_REASON_HEADER, MEMBER_LANE_ROUTE_REASON),
+        (MESH_MEMBER_HEADER, lane.member),
+    ]
+    served.headers = markers + list(served.headers)
+    return served
+
+
+def _forward_member_lane(
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    lane: "MemberLane",
+    backend_name: str,
+    mesh_snapshot: "RoutingSnapshot",
+) -> GatewayResponse:
+    """Forward a PEER's member lane exactly once (the t8 / #237 path).
+
+    Single hop: an arrival that already crossed one proxy is refused with the
+    508 loop body rather than forwarded again (c12). The destination receives
+    the hop marker and its plain backend name — never this box's alias — so
+    it serves the request locally instead of re-placing it (c1/c19).
+    """
+    arriving = _arriving_hop_marker(req_headers)
+    if arriving is not None:
+        target = _ForwardTarget(name=lane.role, origin=lane.origin, served_name=lane.name)
+        return GatewayResponse(
+            status=_PROXY_LOOP_STATUS,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_proxy_loop_body(arriving, target),
+        )
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        mesh_cfg = None
+    join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+    # Finding 1 (review #252): the outbound `model` is the destination's own
+    # backend name; the member-lane alias stays this box's routing metadata.
+    target = _ForwardTarget(
+        name=lane.role, origin=lane.origin, served_name=backend_name, api_key=join_key
+    )
+    return _proxy_to_peer(
+        cfg,
+        target,
+        path,
+        req_headers,
+        body,
+        open_upstream,
+        rewrite=True,
+        extra_response_headers=(
+            [(PROXIED_BY_HEADER, lane.origin)]
+            + mesh_markers(mesh_snapshot, lane.role, chosen_origin=lane.origin)
+            + [
+                (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                (MESH_MEMBER_HEADER, lane.member),
+            ]
+        ),
     )
 
 
@@ -3242,67 +3476,29 @@ def handle_post(
     # for infeasible roles.  This is a no-op when mesh_snapshot is None,
     # preserving the pre-mesh behaviour byte-for-byte.
     if mesh_snapshot is not None:
-        from lobes.roles import BACKEND_ROLE, ROLE_BACKEND, ROLES
+        from lobes.roles import BACKEND_ROLE
 
-        # Suffixed-lane direct addressing (t8, issue #237): "{role}-{member}"
-        # always resolves straight to that member's origin, independent of
-        # whether the plain role name is currently placeable at all — a
-        # caller that already knows which member it wants is never blocked
-        # by a fingerprint disagreement among the others.
+        # Member-lane direct addressing (mesh-pool-load-sharing, t4;
+        # generalises the t8 / #237 suffixed lanes): "{role}-{member}"
+        # pins the request to ONE member — a peer's name forwards exactly
+        # once, this box's own name is served locally — independent of
+        # whether the plain role name is placeable or pooled at all.
         if requested:
-            lane = find_suffixed_lane(mesh_snapshot, requested, ROLES)
-            if lane is not None:
-                arriving = _arriving_hop_marker(req_headers)
-                if arriving is not None:
-                    target = _ForwardTarget(
-                        name=lane.role, origin=lane.origin, served_name=requested
-                    )
-                    return GatewayResponse(
-                        status=_PROXY_LOOP_STATUS,
-                        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-                        body=_proxy_loop_body(arriving, target),
-                    )
-                try:
-                    mesh_cfg = _build_mesh_config()
-                except MeshConfigError:
-                    mesh_cfg = None
-                join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
-                # Finding 1 (review #252): `requested` is the GATEWAY-ONLY
-                # suffixed alias ("cortex-thor") this box minted for direct
-                # addressing — the destination member never declared that
-                # name as one it serves, so rewriting the outbound body's
-                # `model` to it (via `rewrite=True` below) sent the
-                # destination a model id it does not recognise. Resolve to
-                # the destination's canonical backend name instead — the
-                # exact convention the plain (non-suffixed) mesh forward a
-                # few lines below already uses (`served_name=owned_backend`)
-                # — so both mesh-forward paths hand every destination a name
-                # it actually serves. The suffixed name is kept only for THIS
-                # box's own routing/response metadata (MESH_MEMBER_HEADER
-                # below still names the member unambiguously).
-                target = _ForwardTarget(
-                    name=lane.role,
-                    origin=lane.origin,
-                    served_name=ROLE_BACKEND.get(lane.role, lane.role),
-                    api_key=join_key,
-                )
-                return _proxy_to_peer(
-                    cfg,
-                    target,
-                    path,
-                    req_headers,
-                    body,
-                    open_upstream,
-                    rewrite=True,
-                    extra_response_headers=(
-                        [(PROXIED_BY_HEADER, lane.origin)]
-                        + mesh_markers(mesh_snapshot, lane.role, chosen_origin=lane.origin)
-                        + [
-                            (ROUTE_REASON_HEADER, "mesh-forwarded"),
-                            (MESH_MEMBER_HEADER, lane.member),
-                        ]
-                    ),
-                )
+            pinned = _member_lane_response(
+                table,
+                cfg,
+                path,
+                req_headers,
+                body,
+                open_upstream,
+                requested=requested,
+                mesh_snapshot=mesh_snapshot,
+                pressure=pressure,
+                override=override,
+                dispatch_counter=dispatch_counter,
+            )
+            if pinned is not None:
+                return pinned
 
         # Resolve the model to its owning backend name using infeasible_owner
         # (which reuses resolve_model internally and handles role aliases like
