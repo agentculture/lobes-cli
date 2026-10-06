@@ -16,8 +16,8 @@ Edit the Owner/Model columns before approving gate 2 — the default Model is a 
 | Task | Owner | Model |
 | --- | --- | --- |
 | `t1` | subagent (worktree) | sonnet |
-| `t2` | ask-colleague write | colleague (local vLLM cortex) |
-| `t3` | ask-colleague write | colleague (local vLLM cortex) |
+| `t2` | Qwen Code headless (`qwen -m cortex --approval-mode yolo`), worktree | cortex on spark (user-directed swap from colleague) |
+| `t3` | Qwen Code headless (`qwen -m cortex --approval-mode yolo`), worktree | cortex on spark (user-directed swap from colleague) |
 | `t4` | main agent, in-house | opus |
 | `t5` | subagent (worktree) | sonnet |
 | `t6` | main agent, in-house (live boxes) | opus |
