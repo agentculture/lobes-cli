@@ -1,0 +1,25 @@
+{
+  "plan_slug": "mesh-pool-load-sharing",
+  "schema_version": 2,
+  "created": "2026-10-06T18:03:02Z",
+  "updated": "2026-10-06T18:03:08Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Cross-box member-lane forwards rewrite the outbound model to the destination's announced served_id (fallback: role name) instead of the backend name, and member lanes resolve BEFORE _peer_only_forward",
+      "task_ref": "t4",
+      "reason": "t6 live run 2026-10-06 on 0.82.0.dev603: (1) cortex-spark2 via spark and cortex-spark via spark2 forwarded but the destination answered 404 model_not_found for 'primary' (no gateway accepts a backend name; c20 copied the review-#252 convention); (2) cortex-spark2 via Thor (non-hosting) was pool-forwarded by _peer_only_forward because infeasible_owner falls back to the default model for an unknown id, so spark refused the hop-marked peer lane with 508. Self lanes (B, D) passed. Operator approved fixing both on PR #292.",
+      "affects": [
+        "c20",
+        "h6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": null,
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

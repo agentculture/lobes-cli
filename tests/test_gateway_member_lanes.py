@@ -91,7 +91,10 @@ def test_agreeing_peer_name_forwards_once_to_that_member(mesh_env):
     assert len(rec.calls) == 1
     call = rec.calls[0]
     assert call["base_url"].rstrip("/") == SPARK2
-    assert call["body"]["model"] == "primary"  # destination's backend name, never the alias
+    # d1: a model id the DESTINATION accepts. With no announced served_id the
+    # role name is used ("primary", the backend name, is unknown to every
+    # gateway — measured live 2026-10-06: the destination answered 404).
+    assert call["body"]["model"] == "cortex"
     auth = [v for k, v in call["headers"] if k.lower() == "authorization"]
     assert auth == [f"Bearer {JOIN_KEY}"]
     assert any(k == S.PROXIED_HEADER for k, _ in call["headers"])  # single-hop marker
@@ -310,3 +313,30 @@ def test_capabilities_has_no_member_lanes_with_mesh_disabled(monkeypatch):
     table, cfg = build_config({})
     payload = S.capabilities_payload(table, cfg, {})
     assert "member_lanes" not in json.dumps(payload)
+
+
+# --- d1 (t6 live findings): outbound model + non-hosting box ------------------
+
+
+def test_peer_lane_forwards_the_destinations_announced_served_id(mesh_env):
+    table, cfg = build_config({})
+    rec = _Recorder()
+    snap = _two_member_snapshot(_fp(served_id="org/Model-A"), _fp(served_id="org/Model-B"))
+    resp = _post(table, cfg, "cortex-nameB", rec, snap=snap)
+    assert resp.status == 200
+    assert [c["base_url"].rstrip("/") for c in rec.calls] == ["http://b"]
+    assert rec.calls[0]["body"]["model"] == "org/Model-B"
+
+
+def test_non_hosting_box_pins_a_peer_lane_instead_of_pooling_it(mesh_env):
+    """Live Thor bug: _peer_only_forward resolved `cortex-nameB` to the default
+    model and pool-forwarded it (to nameA), which then refused it with 508."""
+    table, cfg = build_config({"PRIMARY_FEASIBLE": "false"})
+    rec = _Recorder()
+    snap = _two_member_snapshot(_fp(), _fp())  # agreeing → a real plain pool
+    for target, origin in (("cortex-nameA", "http://a"), ("cortex-nameB", "http://b")):
+        rec.calls.clear()
+        resp = _post(table, cfg, target, rec, snap=snap)
+        assert resp.status == 200, target
+        assert [c["base_url"].rstrip("/") for c in rec.calls] == [origin], target
+        assert _hdr(resp, S.ROUTE_REASON_HEADER)[-1] == "mesh-forwarded"

@@ -757,8 +757,12 @@ disagreeing ones; the older `{role}-{machine-name}` lanes for a disagreeing
 member are a subset of it and keep their meaning. Behaviour:
 
 - **A peer's name** forwards the request exactly once, signed with the join
-  key and hop-marked, with the outbound `model` rewritten to the backend's
-  own name. The destination serves it locally and never re-balances it.
+  key and hop-marked, with the outbound `model` rewritten to the
+  destination's own announced served id (the role name when it announced
+  none) — never the backend name (`primary`), which no gateway accepts as a
+  model id. The destination serves it locally and never re-balances it. A box
+  that does not host the role resolves member lanes before its own pool, so
+  it pins rather than pools them.
 - **This box's own name** (`LOBES_MESH_NAME`) is served by the local lane and
   never forwarded, under the plain role's pressure policy (`429
   server_busy` + `Retry-After`). On a box that does not host the role, its own
