@@ -56,32 +56,29 @@ broken deployment.
 
 ## Recipe: serve innereye (ComfyUI) with its web UI on the network
 
-Follow these steps in order. You don't need to read any code first. Run
-commands from the repo root.
+Follow these steps in order. You don't need to read any code or `.env` first.
+The `lobes` CLI does the swap. Don't do it by hand.
 
-1. **Back up `.env`** (on this box it is `~/.lobes/.env`):
-   `cp ~/.lobes/.env ~/.lobes/.env.bak-$(date +%Y%m%d-%H%M%S)-innereye`
-2. **Set three keys in `.env`.** Edit the existing line if the key is already
-   there. Don't add a second copy, and don't add `INNEREYE_FEASIBLE`, which is
-   not needed:
+On the DGX Spark, `innereye` and `cortex` **can't run together**. They share
+one unified memory pool, and the card profile declares them exclusive. Turning
+innereye on therefore turns cortex off on this box. `model=cortex` keeps
+working because the mesh serves it from another member.
 
-   ```text
-   COMPOSE_PROFILES=innereye              # comma-append if it already lists others
-   INNEREYE_BASE_URL=http://comfyui:8188  # the gateway routes /v1/render only with this
-   INNEREYE_UI_PORT=0.0.0.0:8188          # web UI on every interface; 8188 alone = loopback only
-   ```
-
-   ComfyUI has **no login**. With `0.0.0.0` anyone on the network can use the
-   GPU and read every past prompt and output. Use this only when the operator
-   asks for network access.
-3. **Start it:** `lobes up innereye --apply`. Add `--build` only if
-   `Dockerfile.comfyui` changed. The command prints `>> innereye …` hints for
-   anything still missing.
-4. **Recreate the gateway** so it reads the new keys:
-   `lobes up gateway --apply`. On a lobes older than 0.83.0, use
-   `scripts/lobes-compose.sh --apply up -d --no-deps gateway` instead, because
-   the old `lobes up gateway` drops the audio overlay.
-5. **Verify** all three:
+1. **Web UI on the network:** `grep '^INNEREYE_UI_PORT' ~/.lobes/.env` must
+   show `INNEREYE_UI_PORT=0.0.0.0:8188`. If it doesn't, back up `.env` and
+   set it. A bare `8188` binds loopback only. ComfyUI has **no login**:
+   anyone on the network can use the GPU and read every past prompt and
+   output, so set this only when the operator asks for network access.
+2. **Look at the plan:** `lobes up innereye --replace`. It's a dry run that
+   lists every step: stop cortex, the `.env` keys it writes (it backs the
+   file up first), start `comfyui`, recreate the gateway, and a memory line.
+3. **Do it:** `lobes up innereye --replace --apply`.
+   - When nothing has to stop, it refuses `--replace`. Use
+     `lobes up innereye --apply`.
+   - **`not enough memory`:** stop and tell the operator what it printed.
+     After a `--replace` it has already restarted cortex, so nothing changed.
+     Pass `--override-memory` only if the operator says so.
+4. **Verify:**
 
    ```bash
    docker ps --filter name=model-gear-comfyui --format '{{.Status}} {{.Ports}}'
@@ -92,18 +89,15 @@ commands from the repo root.
    #   want: True True   (8001 = this box's gateway port, VLLM_PORT in .env)
    ```
 
+**Switch back to cortex:** `lobes up cortex --replace --apply`. Cortex needs a
+few minutes to load before it reports ready.
+
 **If the port is missing from `docker ps`:** the compose files don't read
 `INNEREYE_UI_PORT`. Check with
 `grep -n INNEREYE_UI_PORT ~/.lobes/docker-compose.{override,shape}.yml`. On a
 box whose compose files are rendered, not hand-kept, re-render with
 `lobes init --shape <its shape> --apply`. On a hand-kept box (each file's
 header says so), stop and ask. Don't add `ports:` to a template.
-
-**Memory:** a FLUX render peaks around 32 GiB. If `cortex` runs on the same
-box, check `free -g` before the first render. Tell the operator if
-`available` is under about 35 GiB. Don't stop cortex on your own.
-
-To turn it off: `lobes up innereye --down --apply`.
 
 Never `docker rm -f` a container you did not create, and never add a `ports:`
 key to a packaged template to fix one box. The full reasoning, the ComfyUI

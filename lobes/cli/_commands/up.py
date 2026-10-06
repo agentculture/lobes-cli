@@ -67,7 +67,7 @@ import argparse
 from pathlib import Path
 
 from lobes import roles
-from lobes.cli import _runtime_ops
+from lobes.cli import _role_swap, _runtime_ops
 from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
@@ -143,14 +143,15 @@ _INNEREYE_URL = "http://comfyui:8188"
 _INNEREYE_UI_KEY = "INNEREYE_UI_PORT"
 
 
-def _innereye_hints(deploy_dir: Path) -> list[str]:
+def _innereye_hints(deploy_dir: Path, env: dict[str, str] | None = None) -> list[str]:
     """What else ``lobes up innereye`` needs for its two exposures to work.
 
     Starting the ``comfyui`` container is not the whole job: the gateway has to
     be told where it is, and the web UI has to be published. Say which of the
     two is missing instead of leaving the operator to find out.
     """
-    env = _env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE)
+    if env is None:
+        env = _env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE)
     hints = []
     if not (env.get(_INNEREYE_URL_KEY) or "").strip():
         hints.append(
@@ -383,9 +384,13 @@ def cmd_up(args: argparse.Namespace) -> int:
     if target == GATEWAY_TARGET and _compose.audio_overlay_present(deploy_dir):
         needs_audio = True
 
+    swap = _plan_swap(args, deploy_dir, target, action)
+
     # An opt-in core role (muse) needs its compose profile activated by a
     # hosting shape — name the real fix instead of compose's "no such service".
-    _opt_in_core_activated(deploy_dir, target)
+    # A --replace swap writes that activation itself, so it skips the check.
+    if not swap.replace:
+        _opt_in_core_activated(deploy_dir, target)
 
     # A role the deployment shape drops must not start here — name the shape
     # instead of letting compose fail with "no such service" (t4b overlay).
@@ -401,6 +406,22 @@ def cmd_up(args: argparse.Namespace) -> int:
     build = _resolve_build(args, action)
     argv = _compose.compose_service_argv(action, compose_files, services, build=build)
     command = " ".join(argv)
+    if swap.replace:
+        swap.compose_files = _compose_file_args(
+            False,
+            shape_present,
+            _compose.local_override_present(deploy_dir),
+            _compose.gpu_overlay_present(deploy_dir),
+            _compose.audio_he_overlay_present(deploy_dir),
+        )
+        swap.gateway_files = _compose_file_args(
+            _compose.audio_overlay_present(deploy_dir),
+            shape_present,
+            _compose.local_override_present(deploy_dir),
+            _compose.gpu_overlay_present(deploy_dir),
+            _compose.audio_he_overlay_present(deploy_dir),
+        )
+        return _run_swap(args, deploy_dir, target, services, argv, swap, json_mode)
 
     if not args.apply:
         payload = {
@@ -455,9 +476,194 @@ def cmd_up(args: argparse.Namespace) -> int:
     return 0
 
 
-def _emit_innereye_hints(deploy_dir: Path, target: str, action: str) -> None:
+class _Swap:
+    """What ``--replace`` / the exclusivity guard / the memory gate decided."""
+
+    def __init__(self) -> None:
+        self.replace = False
+        self.excl = _role_swap.Exclusivity()
+        self.running: list[str] = []
+        self.memory: _role_swap.MemoryVerdict | None = None
+        self.check_memory = False
+        self.env: dict[str, str] = {}
+        self.compose_files: list[str] = []
+        self.gateway_files: list[str] = []
+
+
+def _container_running(service: str) -> bool:
+    return _compose.container_status(_role_swap.container_for(service)) == "running"
+
+
+def _plan_swap(args: argparse.Namespace, deploy_dir: Path, target: str, action: str) -> _Swap:
+    """Apply the card's exclusive-role guard and the memory gate to ``target``.
+
+    Refuses (USER_ERROR) when an exclusive rival is running and ``--replace``
+    was not given, and when memory is short and ``--override-memory`` was not
+    given. Under ``--replace`` with a running rival the memory verdict is only
+    final after the rival stops, so it is deferred to :func:`_run_swap`.
+    """
+    swap = _Swap()
+    swap.replace = bool(getattr(args, "replace", False))
+    override_memory = bool(getattr(args, "override_memory", False))
+    if swap.replace and action == "stop":
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--replace has no meaning with --down",
+            remediation="to switch back, start the other role: 'lobes up <role> --replace --apply'",
+        )
+    if action != "up" or target not in ROLE_SERVICE:
+        if swap.replace:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR,
+                message=f"--replace applies to a role, not '{target}'",
+                remediation="name the role to switch to, e.g. 'lobes up innereye --replace'",
+            )
+        return swap
+    env_path = Path(deploy_dir) / _compose.ENV_FILE
+    swap.env = _env.read_env_file(env_path) if env_path.is_file() else {}
+    swap.excl = _role_swap.exclusivity(swap.env, Path(deploy_dir), target)
+    swap.running = [r for r in swap.excl.rivals if _container_running(ROLE_SERVICE[r])]
+    if swap.replace and not swap.excl.rivals:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"--replace: the '{swap.excl.profile or 'unset'}' card profile declares "
+                f"no role exclusive with '{target}', so there is nothing to replace"
+            ),
+            remediation=f"drop --replace: 'lobes up {target} --apply'",
+        )
+    if swap.running and not swap.replace:
+        names = ", ".join(swap.running)
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=(
+                f"'{target}' can't run beside {names} on this card "
+                f"({swap.excl.profile}: {swap.excl.reason})"
+            ),
+            remediation=(
+                f"'lobes up {target} --replace --apply' stops {names}, hands it to "
+                "the mesh and starts "
+                f"{target}; run it without --apply first to see the plan"
+            ),
+        )
+    swap.check_memory = not override_memory and not _container_running(ROLE_SERVICE[target])
+    if swap.check_memory:
+        swap.memory = _role_swap.memory_verdict(swap.env, Path(deploy_dir), target)
+        if not swap.memory.ok and not swap.running:
+            raise _memory_error(target, swap.memory)
+    return swap
+
+
+def _memory_error(
+    target: str, verdict: _role_swap.MemoryVerdict, extra: str = ""
+) -> ModelGearError:
+    return ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=f"not enough memory to start '{target}': {verdict.describe()}{extra}",
+        remediation=(
+            "free memory first (stop a lane with 'lobes up <role> --down --apply'), "
+            "or pass --override-memory to start it anyway"
+        ),
+    )
+
+
+def _with_profile(argv: list[str], role: str) -> list[str]:
+    """A profile-gated role's service is invisible to compose without its profile."""
+    if role not in OPT_IN_CORE_ROLES:
+        return argv
+    return argv[:2] + ["--profile", role] + argv[2:]
+
+
+def _run_swap(
+    args: argparse.Namespace,
+    deploy_dir: Path,
+    target: str,
+    services: list[str],
+    argv: list[str],
+    swap: _Swap,
+    json_mode: bool,
+) -> int:
+    """``lobes up <role> --replace``: stop rivals, gate memory, rewrite .env,
+    start the role, recreate the gateway. Dry-run prints exactly that plan."""
+    env_path = Path(deploy_dir) / _compose.ENV_FILE
+    changes = _role_swap.env_changes(swap.env, target, swap.excl.rivals)
+    stops = [
+        _with_profile(
+            _compose.compose_service_argv("stop", swap.compose_files, [ROLE_SERVICE[r]]), r
+        )
+        for r in swap.running
+    ]
+    gateway = _compose.compose_service_argv("up", swap.gateway_files, [GATEWAY_SERVICE])
+    if swap.memory is None:
+        memory_line = "memory: not checked (--override-memory, or already running)"
+    elif swap.running:
+        memory_line = f"{swap.memory.describe()} now; re-checked after the stop"
+    else:
+        memory_line = swap.memory.describe()
+    steps = [" ".join(a) for a in stops]
+    steps.append(memory_line)
+    steps += [f".env: {k}={v}" for k, v in changes.items()]
+    steps.append(" ".join(argv))
+    if changes:
+        steps.append(" ".join(gateway))
+    payload = {
+        "target": target,
+        "replace": swap.running,
+        "env_changes": changes,
+        "memory": memory_line,
+        "steps": steps,
+        "deployment_dir": str(deploy_dir),
+    }
+    if not args.apply:
+        payload["dry_run"] = True
+        text = (
+            f"DRY RUN — switch {deploy_dir} to {target}:\n"
+            + "\n".join(f"  {i}. {step}" for i, step in enumerate(steps, 1))
+            + "\nRe-run with --apply to execute."
+        )
+        emit_result(payload if json_mode else text, json_mode=json_mode)
+        _emit_innereye_hints(deploy_dir, target, "up", {**swap.env, **changes})
+        return 0
+
+    for rival, stop in zip(swap.running, stops):
+        emit_diagnostic(f">> stopping {rival} ({ROLE_SERVICE[rival]})")
+        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, stop), " ".join(stop))
+    if swap.check_memory and swap.running:
+        verdict = _role_swap.wait_for_memory(swap.env, Path(deploy_dir), target)
+        emit_diagnostic(f">> {verdict.describe()}")
+        if not verdict.ok:
+            for rival in swap.running:
+                restart = _with_profile(
+                    _compose.compose_service_argv("up", swap.compose_files, [ROLE_SERVICE[rival]]),
+                    rival,
+                )
+                emit_diagnostic(f">> restarting {rival}: not switching")
+                _compose.run_compose(deploy_dir, restart)
+            raise _memory_error(target, verdict, f"; restarted {', '.join(swap.running)}")
+    if changes:
+        backup = _role_swap.backup_env(env_path, f"switch-to-{target}")
+        emit_diagnostic(f">> .env backed up to {backup.name}")
+        _role_swap.write_env(env_path, changes)
+    emit_diagnostic(f">> starting {target} ({', '.join(services)})")
+    _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
+    _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), " ".join(argv))
+    if changes:
+        emit_diagnostic(">> recreating the gateway so it reads the new .env")
+        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, gateway), " ".join(gateway))
+    trigger_reannounce(_runtime_ops.resolve_port(args, env_path), _env.read_env_file(env_path))
+    payload["started"] = True
+    emit_result(
+        payload if json_mode else f">> switched to {target} in {deploy_dir}", json_mode=json_mode
+    )
+    _emit_innereye_hints(deploy_dir, target, "up")
+    return 0
+
+
+def _emit_innereye_hints(
+    deploy_dir: Path, target: str, action: str, env: dict[str, str] | None = None
+) -> None:
     if target == "innereye" and action == "up":
-        for hint in _innereye_hints(deploy_dir):
+        for hint in _innereye_hints(deploy_dir, env):
             emit_diagnostic(f">> innereye {hint}")
 
 
@@ -489,6 +695,20 @@ def register(sub: argparse._SubParsersAction) -> None:
         "this to re-image the gateway at a new MODEL_GEAR_VERSION without "
         "touching the lobes behind it (#222), or after changing "
         "Dockerfile.comfyui.",
+    )
+    p.add_argument(
+        "--replace",
+        action="store_true",
+        help="Switch to ROLE when the card declares it can't run beside a running "
+        "role (the Spark: cortex and innereye). Stops that role, marks it "
+        "infeasible in .env so the mesh serves it, activates ROLE, starts it and "
+        "recreates the gateway. .env is backed up first.",
+    )
+    p.add_argument(
+        "--override-memory",
+        action="store_true",
+        help="Start ROLE even when MemAvailable is below what it needs (the card's "
+        "declared_peak_gib, else its *_GPU_MEM_UTIL share of MemTotal).",
     )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_up)

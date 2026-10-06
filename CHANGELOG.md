@@ -8,7 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- lobes-deploy skill: a step-by-step 'serve innereye (ComfyUI) with its web UI on the network' recipe (three .env keys, `lobes up innereye`, `lobes up gateway`, verify), pointed at from QWEN.md and docs/comfyui-innereye.md, so an agent can do it without exploring the code.
+- `lobes up <role> --replace` switches a box between roles its card declares exclusive (the Spark: `cortex` and `innereye`, one unified memory pool). It stops the running rival, backs up `.env`, marks the rival `*_FEASIBLE=false` so the mesh serves it, activates the role (`COMPOSE_PROFILES`, base URL, `*_FEASIBLE=true`), starts it and recreates the gateway. Without `--replace`, `lobes up` refuses to start a role beside its running rival.
+- `lobes up` memory gate: refuses to start a role when `MemAvailable` is below its card `declared_peak_gib` (else its `*_GPU_MEM_UTIL` share of `MemTotal`). Under `--replace` the check runs after the rival stops, and a shortfall restarts the rival with `.env` untouched. `--override-memory` skips it.
+- lobes-deploy skill: a step-by-step 'serve innereye (ComfyUI) with its web UI on the network' recipe (`lobes up innereye --replace`, then verify), pointed at from QWEN.md and docs/comfyui-innereye.md, so an agent can do it without exploring the code.
 - `lobes up innereye` prints which of its two exposures is still unwired: the gateway (`INNEREYE_BASE_URL`) and the web UI (`INNEREYE_UI_PORT`).
 
 ### Changed

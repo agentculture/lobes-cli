@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 
+from lobes.cli import _role_swap
 from lobes.cli._commands import capabilities as _capabilities
 from lobes.runtime import _compose, _detect, _health
 
@@ -37,6 +38,9 @@ def offline_runtime(monkeypatch, tmp_path):
     # reason /health is neutralised above, so the whole suite is deterministic
     # regardless of what is (or isn't) actually listening on the guessed port.
     monkeypatch.setattr(_capabilities, "_fetch_gateway_capabilities", lambda *a, **k: None)
+    # `lobes up`'s memory gate reads the host's /proc/meminfo; an unreadable
+    # file means "not checked", so no test depends on this machine's free memory.
+    monkeypatch.setattr(_role_swap, "MEMINFO", tmp_path / "no-meminfo")
     # No deployment scaffolded by default: point the home at an empty tmp dir.
     monkeypatch.delenv("LOBES_DIR", raising=False)
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var

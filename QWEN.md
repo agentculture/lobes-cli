@@ -21,6 +21,6 @@ the `lobes-deploy` skill (`.qwen/skills/lobes-deploy`) and its wrapper
 `docs/operating-a-deployment.md`.
 
 **Serving innereye (ComfyUI) or its web UI** has a step-by-step recipe in
-that skill ("Recipe: serve innereye"). Follow it as written: three `.env`
-keys, `lobes up innereye --apply`, `lobes up gateway --apply`, then verify.
-It needs no code reading or subagent.
+that skill ("Recipe: serve innereye"). Follow it as written:
+`lobes up innereye --replace` to see the plan, then `--apply`. It needs no
+code reading or subagent. On the Spark it stops cortex, by design.
