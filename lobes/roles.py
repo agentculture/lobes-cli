@@ -1945,22 +1945,22 @@ def annotate_mesh_naming(
         # Name the member only when THIS box does not itself serve the
         # plain pool answer — a locally-hosted role stays self-served.
         _annotate_plain_member(entry, placement, local_fp, mesh_snapshot)
-        # member_lanes annotation — every non-excluded, non-local role.
+        # member_lanes (mesh-pool-load-sharing, t3): every routable
+        # "{role}-{member}" name — this box's own lane included when it
+        # hosts the role, so a hosting box publishes its pin targets too.
         if role not in {"stt", "tts", "innereye"}:
-            served_locally = bool(entry.get("loaded")) or local_fp is not None
-            if not served_locally:
-                names = sorted(
-                    lane.name
-                    for lane in member_lanes(
-                        mesh_snapshot,
-                        role,
-                        self_name=self_name,
-                        self_hosts=role in hosted_roles,
-                    )
-                    if not lane.pending
+            names = sorted(
+                lane.name
+                for lane in member_lanes(
+                    mesh_snapshot,
+                    role,
+                    self_name=self_name,
+                    self_hosts=role in hosted_roles,
                 )
-                if names:
-                    entry["member_lanes"] = names
+                if not lane.pending
+            )
+            if names:
+                entry["member_lanes"] = names
     return payload
 
 

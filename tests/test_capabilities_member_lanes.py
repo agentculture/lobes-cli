@@ -130,7 +130,7 @@ def test_AC1_agreeing_self_hosting_member_lanes():
     suffixed_lanes does NOT gain entries (both agree — no disagreement).
     """
     snap = _agreeing_snapshot(["spark", "spark2"])
-    payload = {"cortex": {"model": "x", "loaded": False, "feasible": False, "ready": True}}
+    payload = {"cortex": {"model": "x", "loaded": True, "feasible": True, "ready": True}}
     entry = annotate_mesh_naming(payload, snap, self_name="spark", hosted_roles={"cortex"})[
         "cortex"
     ]
