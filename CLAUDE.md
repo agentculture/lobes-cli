@@ -826,7 +826,9 @@ and disagreeing members alike (`lobes/gateway/_mesh_routing.py`
 there; this box's own name is served locally under the plain role's pressure
 policy; a pending member is 503 `role_unverified`; `stt`/`tts`/`innereye` and
 private roles get none. Plain `cortex` still does not spread load (parked).
-DECLARED/UNVALIDATED (#108) until its acceptance transcript lands.
+VALIDATED live for `cortex` on spark/spark2/Thor, 2026-10-06
+(`docs/evidence/2026-10-06-accept-mesh-member-lanes.txt`); the pressure 429, pending 503 and
+non-cortex lanes are unit-tested only.
 
 > **Boot window and mesh-sourced advert (PR #254, 0.77.0) — MEASURED
 > 2026-09-12** (`docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt`,

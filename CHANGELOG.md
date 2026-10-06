@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Member lanes docs: every verified mesh member of a role is addressable as {role}-{member} (docs/gateway-fleet.md, lobes explain mesh, CLAUDE.md); documented as DECLARED/UNVALIDATED until the live acceptance lands
+- Member lanes docs: every verified mesh member of a role is addressable as {role}-{member} (docs/gateway-fleet.md, lobes explain mesh, CLAUDE.md); validated live for cortex across spark, spark2 and the Thor (docs/evidence/2026-10-06-accept-mesh-member-lanes.txt)
 
 ### Changed
 

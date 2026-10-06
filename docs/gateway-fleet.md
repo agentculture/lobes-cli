@@ -788,8 +788,12 @@ member are a subset of it and keep their meaning. Behaviour:
 across members: mesh-only pools build no replica cache, so the hosting box
 keeps everything local. Fixing that is a parked follow-up; member lanes let a
 caller choose a member explicitly in the meantime. **Status:**
-DECLARED/UNVALIDATED (#108) — unit-tested only, until
-`docs/evidence/…-accept-mesh-member-lanes.txt` lands.
+VALIDATED live for `cortex` across spark, spark2 and the Thor, 2026-10-06
+(`docs/evidence/2026-10-06-accept-mesh-member-lanes.txt`): engine counters
+moved only on the named box from every front. The live run also found and
+fixed two bugs in the forward (deviation d1). Still unit-tested only: the
+self-lane pressure 429, the pending-member 503, and member lanes for roles
+other than `cortex`.
 
 > **Implementation status.** The code-level removal of the retired
 > `<PREFIX>_PEER_*` family is done (t14): `lobes.gateway._config.build_config`
