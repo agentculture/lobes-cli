@@ -243,3 +243,53 @@ def test_mesh_disabled_member_names_are_unknown_as_before(monkeypatch):
     assert resp.status == 404
     assert json.loads(resp.body)["error"]["type"] == "model_not_found"
     assert rec.calls == []
+
+
+# --- GET /v1/models lists the routable member lanes (c30/h17) ----------------
+
+
+def test_member_lane_ids_lists_self_and_verified_peers_only(mesh_env):
+    table, _cfg = build_config({})
+    snap = _snap(
+        _member("spark2", SPARK2, verified=("cortex", "stt")),
+        _member("thor", "http://thor:8000", verified=(), announced=("cortex",), probed=False),
+    )
+    ids = S.member_lane_ids(table, snap)
+    assert "cortex-spark" in ids and "cortex-spark2" in ids
+    assert "cortex-thor" not in ids  # pending: 503 until probed, so never advertised
+    assert not any(i.startswith(("stt-", "tts-", "innereye-")) for i in ids)
+
+
+def test_member_lane_ids_empty_with_mesh_disabled():
+    table, _cfg = build_config({})
+    assert S.member_lane_ids(table, None) == ()
+
+
+def test_v1_models_handler_lists_member_lanes(mesh_env):
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from lobes.gateway._mesh_routing import MeshRoutingView
+
+    table, cfg = build_config({})
+    snap = _snap(_member("spark2", SPARK2))
+
+    class _Holder:
+        def current(self):
+            return MeshRoutingView(snapshot=snap, peer_states={})
+
+    httpd = ThreadingHTTPServer(
+        ("127.0.0.1", 0), S._make_handler(table, cfg, mesh_snapshot_holder=_Holder())
+    )
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{httpd.server_address[1]}/v1/models"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            ids = [m["id"] for m in json.loads(resp.read())["data"]]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+    assert ids[-2:] == ["cortex-spark", "cortex-spark2"]

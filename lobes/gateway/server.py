@@ -5441,6 +5441,10 @@ class _Handler(BaseHTTPRequestHandler):
                 # declared peer is down but whose second replica is up is
                 # usable, and must therefore be listed.
                 pooled=pooled_names,
+                # Member lanes (mesh-pool-load-sharing, t4): every routable
+                # "{role}-{member}" this box answers — () with mesh disabled,
+                # so the listing stays byte-identical there.
+                member_lane_ids=member_lane_ids(self.table, as_routing_snapshot(mesh_snapshot)),
             ),
         )
 
