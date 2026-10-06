@@ -16,7 +16,7 @@ Public API
 from __future__ import annotations
 
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -879,6 +879,100 @@ def find_suffixed_lane(
             snapshot, role, local_fingerprint=local_fingerprints.get(role)
         )
         for lane in placement.suffixed:
+            if lane.name == requested:
+                return lane
+    return None
+
+
+@dataclass(frozen=True)
+class MemberLane:
+    """One member's lane of a role, addressable as ``{role}-{member}``.
+
+    Unlike :class:`SuffixedLane` this covers agreeing members too, plus this
+    box's own lane (``is_self``, empty ``origin`` — it never forwards).
+    ``pending`` marks a member that announces the role but whose first probe
+    has not landed (not yet routable).
+    """
+
+    name: str  # "{role}-{member}"
+    role: str
+    member: str
+    origin: str  # "" for the self lane
+    is_self: bool = False
+    pending: bool = False
+
+
+def _peer_member_lanes(snapshot: RoutingSnapshot, role: str, skip_member: str) -> list[MemberLane]:
+    """Verified and pending peer lanes of *role*, sorted by member name."""
+    lanes = []
+    for m in snapshot.members:
+        if m.name == skip_member:
+            continue
+        if role in m.verified_roles:
+            pending = False
+        elif not m.probed and role in m.announced_roles:
+            pending = True
+        else:
+            continue
+        lanes.append(
+            MemberLane(
+                name=suffixed_lane_name(role, m.name),
+                role=role,
+                member=m.name,
+                origin=m.origin,
+                pending=pending,
+            )
+        )
+    lanes.sort(key=lambda lane: lane.member)
+    return lanes
+
+
+def member_lanes(
+    snapshot: RoutingSnapshot | None,
+    role: str,
+    *,
+    self_name: str = "",
+    self_hosts: bool = False,
+) -> tuple[MemberLane, ...]:
+    """Every addressable lane of *role*: self first, then peers by name.
+
+    Self is not in the roster, so the self lane comes only from *self_name*.
+    A peer whose name equals *self_name* is skipped (self wins). Roles in
+    ``MESH_UNFORWARDABLE_ROLES`` get no peer lanes. Pure; no I/O.
+    """
+    from lobes.roles import MESH_UNFORWARDABLE_ROLES
+
+    lanes: list[MemberLane] = []
+    if self_name and self_hosts:
+        lanes.append(
+            MemberLane(
+                name=suffixed_lane_name(role, self_name),
+                role=role,
+                member=self_name,
+                origin="",
+                is_self=True,
+            )
+        )
+    if snapshot is not None and role not in MESH_UNFORWARDABLE_ROLES:
+        lanes.extend(_peer_member_lanes(snapshot, role, self_name))
+    return tuple(lanes)
+
+
+def find_member_lane(
+    snapshot: RoutingSnapshot | None,
+    requested: str,
+    roles: "tuple[str, ...] | list[str]",
+    *,
+    self_name: str = "",
+    hosted_roles: "Collection[str]" = (),
+) -> MemberLane | None:
+    """Resolve ``"{role}-{member}"`` to a :class:`MemberLane`, else ``None``."""
+    for role in roles:
+        if not requested.startswith(role + "-"):
+            continue
+        for lane in member_lanes(
+            snapshot, role, self_name=self_name, self_hosts=role in hosted_roles
+        ):
             if lane.name == requested:
                 return lane
     return None
