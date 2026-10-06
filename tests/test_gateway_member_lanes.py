@@ -293,3 +293,20 @@ def test_v1_models_handler_lists_member_lanes(mesh_env):
         httpd.server_close()
         thread.join(timeout=5)
     assert ids[-2:] == ["cortex-spark", "cortex-spark2"]
+
+
+# --- GET /capabilities lists this box's own lane beside its peers (c22/h8) ---
+
+
+def test_capabilities_lists_self_and_peer_member_lanes_on_a_hosting_box(mesh_env):
+    table, cfg = build_config({})
+    payload = S.capabilities_payload(table, cfg, {}, mesh_snapshot=_snap(_member("spark2", SPARK2)))
+    cortex = payload["cortex"] if "cortex" in payload else payload["roles"]["cortex"]
+    assert cortex["member_lanes"] == ["cortex-spark", "cortex-spark2"]
+
+
+def test_capabilities_has_no_member_lanes_with_mesh_disabled(monkeypatch):
+    monkeypatch.delenv("LOBES_MESH_KEY", raising=False)
+    table, cfg = build_config({})
+    payload = S.capabilities_payload(table, cfg, {})
+    assert "member_lanes" not in json.dumps(payload)

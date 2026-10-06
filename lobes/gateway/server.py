@@ -4447,7 +4447,13 @@ def capabilities_payload(
         for role in ROLES
     }
     return annotate_mesh_naming(
-        payload, as_routing_snapshot(mesh_snapshot), local_fingerprints=local_fingerprints
+        payload,
+        as_routing_snapshot(mesh_snapshot),
+        local_fingerprints=local_fingerprints,
+        # Member lanes (mesh-pool-load-sharing, t4): this box's own
+        # "{role}-{self}" is listed for every role it hosts.
+        self_name=_mesh_self_name(),
+        hosted_roles=_hosted_roles(table),
     )
 
 
