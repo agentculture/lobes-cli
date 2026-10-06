@@ -748,6 +748,45 @@ this file has hit before).
 **Rotating the join key is a fleet-wide restart**, not a per-pair credential
 swap — see [`docs/secret-rotation.md`](secret-rotation.md#mesh-join-key).
 
+**Member lanes: every member of a role is addressable as `{role}-{member}`.**
+Beyond the plain role (`model=cortex`), every verified mesh member that
+serves a role is exposed under `model={role}-{member}` — for example
+`model=cortex-spark2` pins a request to the member named `spark2` in
+`LOBES_MESH_NAME`. This covers agreeing-fingerprint members as well as
+disagreeing ones; the older `{role}-{machine-name}` lanes for a disagreeing
+member are a subset of it and keep their meaning. Behaviour:
+
+- **A peer's name** forwards the request exactly once, signed with the join
+  key and hop-marked, with the outbound `model` rewritten to the backend's
+  own name. The destination serves it locally and never re-balances it.
+- **This box's own name** (`LOBES_MESH_NAME`) is served by the local lane and
+  never forwarded, under the plain role's pressure policy (`429
+  server_busy` + `Retry-After`). On a box that does not host the role, its own
+  name is `404 role_infeasible`. A hop-marked arrival naming this box's own
+  lane is served locally; one naming a peer lane gets the `508 proxy_loop`
+  refusal.
+- **A member announced but not yet probed** answers `503 role_unverified`
+  with `Retry-After: 5`, as in the boot window above.
+- **Unknown member** is `404 model_not_found`.
+- **Exclusions:** `stt`/`tts` are reached by `/v1/audio/*`, not a model id,
+  and `innereye` is unforwardable (`MESH_UNFORWARDABLE_ROLES`), so none takes
+  a member suffix (`404 model_not_found`); `GET /v1/realtime` is never
+  forwarded; a role announced `private` is stripped before verification and
+  gets no lanes. `hand` is mesh-forwarded like any other role
+  (`NEVER_PROXIED_BACKENDS` is empty) and gets lanes.
+- **Discovery:** `GET /v1/models` lists every routable member-lane id
+  (pending members excluded); `GET /capabilities` carries an additive
+  per-role `member_lanes` list (this box included when it hosts the role;
+  pending members excluded). With the mesh disabled, behaviour is
+  byte-identical to before.
+
+**What this does not do.** Plain `model=cortex` still does not spread load
+across members: mesh-only pools build no replica cache, so the hosting box
+keeps everything local. Fixing that is a parked follow-up; member lanes let a
+caller choose a member explicitly in the meantime. **Status:**
+DECLARED/UNVALIDATED (#108) — unit-tested only, until
+`docs/evidence/…-accept-mesh-member-lanes.txt` lands.
+
 > **Implementation status.** The code-level removal of the retired
 > `<PREFIX>_PEER_*` family is done (t14): `lobes.gateway._config.build_config`
 > no longer parses any of the singular or plural peer-origin, peer-proxy, or

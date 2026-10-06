@@ -285,10 +285,9 @@ That has three consequences worth stating plainly:
 
 - It is **default-hosted by every built-in shape**, including the mesh-lobe
   shapes that drop a heavy lobe. A caller always has a local generate lane.
-- It is **never proxied**. `hand` is deliberately absent from the peer
-  origin/proxy/key channels (`NEVER_PROXIED_BACKENDS`): referral exists so a
-  box that *cannot* host a lobe can still reach it, and that situation does not
-  arise here.
+- It is **mesh-forwarded like any other role**. `hand` was never part of the
+  retired per-role peer channels, and `NEVER_PROXIED_BACKENDS` is now empty,
+  so the mesh forwards it (and gives it `hand-{member}` lanes).
 - It is the **servable floor**. Under pressure `cortex`/`senses`/`worker`/`muse`
   all shed with 429; `hand` is served regardless.
 

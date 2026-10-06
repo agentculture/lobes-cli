@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.82.0] - 2026-10-06
+
+### Added
+
+- Member lanes docs: every verified mesh member of a role is addressable as {role}-{member} (docs/gateway-fleet.md, lobes explain mesh, CLAUDE.md); documented as DECLARED/UNVALIDATED until the live acceptance lands
+
+### Changed
+
+- CLAUDE.md and docs/colleague-stack.md no longer claim hand is never proxied: the mesh forwards hand like any role and NEVER_PROXIED_BACKENDS is empty
+
+### Fixed
+
+- stt-, tts- and innereye- member names no longer forward a chat request to a peer (the old suffixed-lane path could); they answer 404 model_not_found
+
 ## [0.81.3] - 2026-09-19
 
 ### Fixed
