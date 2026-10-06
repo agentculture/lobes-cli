@@ -1,0 +1,970 @@
+{
+  "slug": "flash-next-worker-on-thor",
+  "title": "flash-next worker on thor",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-09-23T03:48:56Z",
+  "updated": "2026-09-23T04:09:19Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "A measured spike boots local-inference-lab/Qwen3.8-Flash-Next-NVFP4 @ada4da32 fully resident (no NVMe PLE mmap) on the Jetson AGX Thor from the digest-pinned official jetson-ai-lab image, benchmarked against a same-day baseline of the incumbent worker, and lands an evidence transcript the operator uses to call GO/NO-GO on re-pointing model=worker",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "every number in the transcript was measured on the physical Thor in this run \u2014 none quoted from jetson-ai-lab, NemoClaw-Thor, or the checkpoint card (#108)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "the transcript lands at docs/evidence/2026-09-XX-spike-flash-next-worker-thor.txt and carries: image digest, checkpoint revision, full serve argv, boot-log weights/KV-pool lines, incumbent + candidate benchmark tables, probe results, rollback confirmation",
+      "revisions": [
+        {
+          "text": "The Thor's worker lane serves local-inference-lab/Qwen3.8-Flash-Next-NVFP4 (125B/6B-active MoE, multimodal) fully resident in unified memory from the official jetson-ai-lab image \u2014 no NVMe PLE mmap \u2014 replacing nvidia/Qwen3.6-35B-A3B-NVFP4 behind model=worker",
+          "kind": "announcement",
+          "reason": "operator chose spike-first (c16) and measure-then-decide (c15)"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "kind": "requirement",
+      "text": "the Flash-Next checkpoint fits RESIDENT in the Thor's unified memory \u2014 no VLLM_PLE_MMAP / NVMe paging of the n-gram table (operator instruction, this session)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the container env carries no VLLM_PLE_MMAP* variable and decode shows no sustained NVMe reads \u2014 the table is resident, not paged",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "verify in the boot log: no VLLM_PLE_MMAP* env in the container (docker inspect), and the PLE quant method logged is the NVFP4 embedding path; during decode, iostat on nvme0n1 shows no sustained read traffic",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "assumption",
+      "text": "the checkpoint is local-inference-lab/Qwen3.8-Flash-Next-NVFP4 (98.6 GiB, 34-36 shards) \u2014 NOT RadixArk/Qwen3.8-Flash-Next-NVFP4 (126.0 GiB) that docs/experiments/qwen3.8-flash-next-nvfp4-thor-reference.md covers; the ~27 GiB saving is its NVFP4 PLE table (config ple_embedding_dtype=nvfp4) vs RadixArk's FP8 PLE shards, which is what makes a resident fit plausible",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "Which revision do we serve? The image's /opt/qwen38-mtp-model symlinks were grafted at build (2026-09-10) against snapshot ada4da32 (PTQ export, 34 shards model-000NN-of-00034); HF HEAD since 2026-09-16 is b13380df/7c4f1bc1, a QAD-distilled re-export with 36 shards (-of-00036) whose manifest says full_model_serving: not run. The page's command pulls HEAD unpinned, so the baked MTP draft points at files that never download. Options: (a) --revision ada4da32 (matches the image, PTQ quality); (b) HEAD QAD + re-graft the draft dir (a thin derived image or a bind-mounted draft config/index); (c) HEAD QAD with MTP off.",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "operator 2026-09-23: pin PTQ revision ada4da32a583a78aa47299f45a70603c950490b8 (matches the image's baked MTP draft); QAD HEAD is a later, separate change"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "the served image is the published ghcr.io/nvidia-ai-iot/vllm:qwen3.8-next-jetson-thor pulled by digest sha256:512bf772c7ef221df1a66ab9c95546d77daeba6ba61723692852e6eb0cae7526 (stock vLLM nightly 385dce36 + /opt/qwen38-thor.patch + baked MTP draft at /opt/qwen38-mtp-model), launched by hand for the spike and recorded in the transcript (docs/image-ledger.md only on GO) \u2014 no local 3-layer NemoClaw build",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the image that ran is the pinned digest: docker inspect of the running container's .Image resolves to the manifest sha256:512bf772c7ef221df1a66ab9c95546d77daeba6ba61723692852e6eb0cae7526, not a moved tag",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "pull by digest: docker pull ghcr.io/nvidia-ai-iot/vllm@sha256:512bf772c7ef221df1a66ab9c95546d77daeba6ba61723692852e6eb0cae7526; record RepoDigests in the transcript",
+      "revisions": [
+        {
+          "text": "the served image is the published ghcr.io/nvidia-ai-iot/vllm:qwen3.8-next-jetson-thor pinned by digest sha256:512bf772c7ef221df1a66ab9c95546d77daeba6ba61723692852e6eb0cae7526 (stock vLLM nightly 385dce36 + /opt/qwen38-thor.patch + baked MTP draft at /opt/qwen38-mtp-model), set via the existing WORKER_IMAGE override and recorded in docs/image-ledger.md \u2014 no local 3-layer NemoClaw build",
+          "kind": "requirement",
+          "reason": "spike is a hand launch (c16/c26), not a WORKER_IMAGE render"
+        }
+      ]
+    },
+    {
+      "id": "c5",
+      "kind": "non_goal",
+      "text": "no lobes-lane code in this spec: the WORKER_HF_OVERRIDES / WORKER_MAMBA_SSM_CACHE_DTYPE compose slots (worker lane lacks both; primary has --hf-overrides at docker-compose.yml:245, associate has --mamba-ssm-cache-dtype at :1745) are deferred to a post-GO follow-up spec",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "the worker compose lane gains two default-absent slots the recipe needs and the lane cannot express today: --mamba-ssm-cache-dtype (WORKER_MAMBA_SSM_CACHE_DTYPE, mirroring ASSOCIATE_MAMBA_SSM_CACHE_DTYPE) and --hf-overrides (WORKER_HF_OVERRIDES, mirroring PRIMARY_HF_OVERRIDES's quoting); unset renders a byte-identical argv; the existing WORKER_IMAGE/SPECULATIVE_CONFIG/TOOL_CALL_PARSER/REASONING_PARSER/MAX_NUM_SEQS/GPU_MEM_UTIL slots cover the rest",
+          "kind": "requirement",
+          "reason": "spike-first decision c16"
+        }
+      ]
+    },
+    {
+      "id": "c6",
+      "kind": "non_goal",
+      "text": "no new shape in this spec: a solo worker shape for the Thor (0.93 cannot co-reside with thor-worker's embedder+reranker+audio) is deferred to the post-GO follow-up; thor-worker.toml stays the deployed + rollback shape",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "a SOLO worker shape for the Thor (e.g. thor-flash-worker; hosts = [worker] only, gateway stays) since the recipe's 0.93 util cannot co-reside with thor-worker's embedder+reranker (0.06 each) or audio; thor-worker.toml stays in-tree unchanged as the rollback shape",
+          "kind": "requirement",
+          "reason": "spike-first decision c16"
+        }
+      ]
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "memory at util 0.93 is the recipe's claim, not a measurement here: 0.93 x 122 GiB ~ 113.5 GiB budget vs ~98.5 GiB of tensors (export tensor_bytes 105,798,973,864) leaves ~15 GiB for KV, MTP draft, activations and CUDA graphs; every other lobes lane on the Thor is stopped to fund it (c27) while the non-lobes prod stack (~0.66 GiB resident) stays up; the boot log's KV pool is authoritative, and a refusal is handled by stepping context down at fixed util (c24)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "the transcript quotes the boot log's own 'Available KV cache memory' / KV-pool token lines and the host's free -g at steady state \u2014 the 15 GiB figure is replaced by the measured one",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "memory at util 0.93 is the recipe's claim, not a measurement here: 0.93 x 122 GiB ~ 113.5 GiB budget vs ~98.5 GiB of tensors (export tensor_bytes 105,798,973,864) leaves ~15 GiB for KV, MTP draft, activations and CUDA graphs; the non-lobes prod stack (~0.66 GiB resident) stays up; the boot log's KV capacity is authoritative and a refused 0.93 falls back to a lower measured util, per the Thor's refused-hypothesis precedents",
+          "kind": "assumption",
+          "reason": "operator decisions c24 + c27"
+        }
+      ]
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "the spike follows docs/model-switch-playbook.md: benchmark the incumbent worker on today's engine first with the same harness used later for the candidate, pre-download the pinned checkpoint and image while the incumbent still serves, back up ~/.lobes (.env + compose files) before stopping anything, then probe text/thinking/tools/image/video and write the evidence transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "incumbent and candidate were benchmarked by the same script with the same prompts, max_tokens, temperature and thinking setting, on the same day on the same box",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "use scripts/stream-measure.py (or lobes benchmark) against each lane directly; store the invocation verbatim in the transcript; backups at ~/.lobes/*.bak-2026-09-XX-flash-next",
+      "revisions": [
+        {
+          "text": "the swap follows docs/model-switch-playbook.md: benchmark the incumbent worker on today's engine first (baseline 196.56 tok/s code probe / 91.52 tok/s at 9,020 tokens, docs/nvidia-qwen3.6-35b-a3b-nvfp4.md), pre-download the 98.6 GiB weights while the incumbent still serves, write the rollback (.env/.bak + deployments/jetson-agx-thor__thor-worker lock) before stopping, then re-probe text/vision/video/thinking/tools and write an evidence transcript",
+          "kind": "requirement",
+          "reason": "spike-first; incumbent numbers must be same-day, not the 2026-09-10 doc figures"
+        }
+      ]
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "the mesh sees the spike: model=worker is offline for EVERY mesh member (Spark, Orin, gateway-only; LOBES_MESH_SEEDS names Spark and Orin) from the incumbent lane's stop until a worker lane is healthy again; any lane that comes back under a different served id or max_model_len changes the Thor's fingerprint (lobes/gateway/_replicas.py DISQUALIFYING_FIELDS: served_id, quantization, max_model_len, runtime), which each member must re-verify before routing",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "the transcript records the outage window (incumbent stop time -> first 200 for model=worker via the Spark) and the Spark's roster/verification state after the spike",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "the mesh sees the swap: the Thor's worker fingerprint served_id changes, so the Spark (which proxies model=worker to the Thor, docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt) must re-verify it; model=worker is offline mesh-wide from lane stop until the new lane is healthy (a 98.6 GiB cold load + compile), and every raw-id pin of nvidia/Qwen3.6-35B-A3B-NVFP4 (scripts/stream-measure.py:10, goldens, cross-repo hardcoders per playbook \u00a72) is re-audited",
+          "kind": "requirement",
+          "reason": "raw-id pin re-audit moves to the post-GO follow-up (v6)"
+        },
+        {
+          "text": "the mesh sees the spike: model=worker is offline mesh-wide from the incumbent lane's stop until a worker lane is healthy again (the Spark proxies model=worker to the Thor, docs/evidence/2026-09-11-accept-worker-proxy-spark-thor.txt); any lane that comes back under a different served id changes the Thor's fingerprint served_id (lobes/gateway/_replicas.py DISQUALIFYING_FIELDS), which the Spark must re-verify before routing",
+          "kind": "requirement",
+          "reason": "challenge pass / overlooked-actors lens: Thor LOBES_MESH_SEEDS"
+        }
+      ]
+    },
+    {
+      "id": "c10",
+      "kind": "boundary",
+      "text": "the worker role contract in lobes/roles.py does not change: Flash-Next is multimodal (image+video) and a coder, matching #244's widened contract (forbidden only final_decision/security_decision); image/video evidence status drops to DECLARED/UNMEASURED (#108) until probed on this lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "lobes/roles.py ROLE_RESPONSIBILITIES/ROLE_FORBIDDEN for worker are byte-identical before and after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "boundary",
+      "text": "associate is untouched: Lightning carries its own role_hint=associate, so re-pointing worker's catalog default does not drag the Orin's associate lane (the #244 regression lobes/roles.py:148-200 documents)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "no Orin/associate lane is touched and lobes/catalog.py is unchanged by the spike",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "non_goal",
+      "text": "no new Colleague role, no catalog entry and no deletion in this spec; if GO, the follow-up adds Flash-Next as a role_hint=worker catalog entry and demotes nvidia/Qwen3.6-35B-A3B-NVFP4 to a candidate (cite-don't-delete)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "no new Colleague role and no deletion: Flash-Next becomes a catalog entry with role_hint=worker; nvidia/Qwen3.6-35B-A3B-NVFP4 stays in the catalog as a demoted candidate (cite-don't-delete), and thor-worker.toml + its goldens stay as the rollback shape",
+          "kind": "non_goal",
+          "reason": "spike-first decision c16"
+        }
+      ]
+    },
+    {
+      "id": "c13",
+      "kind": "non_goal",
+      "text": "the NemoClaw-Thor RadixArk recipe (3-layer local build, VLLM_PLE_MMAP, fused GDN overlay) is not pursued here; docs/experiments/qwen3.8-flash-next-nvfp4-thor-reference.md stays a reference and gains, at most, a pointer to this route",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "decision",
+      "text": "revision pinned to ada4da32 (PTQ export matching the image's baked MTP draft) via --revision / --tokenizer-revision; QAD HEAD is out of this scope (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "decision",
+      "text": "no tok/s gate: the spike records decode/TTFT/MTP acceptance and probes as an evidence transcript; GO/NO-GO is a later operator decision (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "decision",
+      "text": "the first step is a hand-launched spike of the official command on the Thor with the lobes stack stopped, not a lobes-lane code change; WORKER_* slots, the solo shape and the catalog entry land only after a GO (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "served-model-name is the raw HF id local-inference-lab/Qwen3.8-Flash-Next-NVFP4, the fleet convention (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "audience",
+      "text": "the lobes operator deciding whether Flash-Next replaces the Thor's worker, and the mesh peers (the Spark's gateway, Qwen Code / colleague callers of model=worker) whose seat it would take",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "the operator named the GO/NO-GO as theirs (c15); the Spark proxies model=worker to the Thor per the 2026-09-11 evidence",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "before_state",
+      "text": "the Thor serves worker as nvidia/Qwen3.6-35B-A3B-NVFP4 (196.6 tok/s code probe, 262144, util 0.45, DFlash k=12); Flash-Next exists here only as a reference doc for the 126 GiB RadixArk checkpoint that needs NVMe PLE mmap and a 3-layer local image build, never booted on any fleet box",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "matches the live Thor .env read 2026-09-23 (WORKER_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4, util 0.45, 262144) and docs/experiments/qwen3.8-flash-next-nvfp4-thor-reference.md's reference-only status",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "after_state",
+      "text": "an evidence transcript records whether the 98.6 GiB checkpoint boots resident at util 0.93 and at which max-model-len (262144, else 131072, else 65536), its KV pool, decode tok/s / TTFT / MTP acceptance beside the incumbent's same-day numbers, and pass/fail on text, thinking, tool-call, image and video probes via model=worker; afterwards the Thor is restored to the incumbent thor-worker lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "the transcript contains each listed item or states explicitly why it is missing (e.g. a boot refusal) \u2014 no silently dropped probe",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "an evidence transcript records whether the 98.6 GiB checkpoint boots resident at util 0.93 (or the highest util that boots), its KV pool, decode tok/s / TTFT / MTP acceptance beside the incumbent's same-day numbers, and pass/fail on text, thinking, tool-call, image and video probes; the Thor is left in the state the operator chose",
+          "kind": "after_state",
+          "reason": "operator decisions c24 + c25 + c26"
+        }
+      ]
+    },
+    {
+      "id": "c21",
+      "kind": "why_it_matters",
+      "text": "a 125B/6B-active multimodal worker is a much larger doer than the 35B-A3B; the published image + resident NVFP4 PLE removes both blockers the 2026-09-13 decision cited (local build, NVMe paging), so the remaining question is purely measured cost (speed, memory headroom) \u2014 which only a boot answers",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "both 2026-09-13 blockers are gone for THIS checkpoint: the image is published (ghcr digest) and the PLE table is resident NVFP4 (config ple_embedding_dtype=nvfp4 + qwen38-thor.patch's packed GPU PLE method)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "success_signal",
+      "text": "the spike ends with a transcript under docs/evidence/ containing >= 3 measured decode runs for BOTH incumbent and candidate, the boot-log KV-pool token count, and a pass/fail line for each of 5 probes (text known-answer, thinking, tool call, image vs negative control, video) \u2014 and model=worker answers 200 through the Spark after the spike ends",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "the 5 probes each ran against the candidate lane and each has a literal PASS/FAIL line; the image probe used a negative control (e.g. solid-colour PNGs naming the wrong colour must fail)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "the spike changes no file under lobes/ or tests/ and no packaged template; on the Thor it touches only the lobes lanes (stopped/restarted) and ~/.lobes backups \u2014 the prod-* culture-nodes/postgres/minio containers keep running throughout",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "git status in lobes-cli shows no change under lobes/ or tests/ from the spike, and docker ps on the Thor shows the prod-* containers' uptime unbroken across the spike window",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "decision",
+      "text": "on a boot refusal the spike keeps util 0.93 and steps max-model-len 262144 -> 131072 -> 65536, recording every refused value; if 65536 is refused too it stops and reports to the operator (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "after measuring, the Thor is restored to the incumbent thor-worker lane (nvidia/Qwen3.6-35B-A3B-NVFP4) pending the GO/NO-GO (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "decision",
+      "text": "the spike lane runs behind the Thor's gateway: attached to the lobes compose network with network alias vllm-worker, .env WORKER_SERVED_NAME temporarily set to the raw id (backed up and restored), so model=worker is probed through the Thor gateway and through the Spark proxy (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "every other lobes lane on the Thor (embedder, reranker, audio stt/tts) may be dropped to fund the Flash-Next lane \u2014 for the spike window, and as the intended hosting if GO; the gateway stays up (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "the Thor gateway reads WORKER_SERVED_NAME / WORKER_MAX_MODEL_LEN / WORKER_QUANTIZATION / WORKER_SPECULATIVE_CONFIG / parsers from its PROCESS env (docker inspect model-gear-gateway), so the spike recreates the gateway after the .env edit and again after the restore \u2014 with env -u GATEWAY_API_KEY on the ssh session (Thor ~/.bashrc exports it) \u2014 and WORKER_MAX_MODEL_LEN in .env tracks whatever context actually booted (c24), else /capabilities advertises a stale window",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "after each recreate, GET /capabilities on the Thor gateway shows worker model = the lane actually running and context = its booted max-model-len",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "the spike has a memory abort rule protecting the co-resident prod stack: prod-postgres-1 runs with no memory limit and oom_score_adj 0 on a box with overcommit 0 and a 59.6 GiB swapfile; util 0.93 leaves ~8.6 GiB of 122.8 GiB for OS + prod + gateway + page cache; if MemAvailable stays below 4 GiB, swap use grows past 20 GiB, dmesg logs an OOM kill, or any prod-* container restarts, the spike container is stopped at once and the incumbent restored",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "the transcript carries free -g / swap / dmesg OOM lines sampled through boot and benchmarks, and prod-* container StartedAt timestamps unchanged before vs after",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "Are the 4 GiB MemAvailable / 20 GiB swap-growth thresholds the right abort lines for this box, and is a fresh prod-backup-1 dump required before the boot?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "operator 2026-09-23: thresholds stand (MemAvailable < 4 GiB sustained, swap growth > 20 GiB, any OOM kill, any prod-* restart => abort + restore); take a fresh prod postgres dump before the boot"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "the spike container runs WITHOUT --rm (the page's command uses --rm, which would destroy the boot log that is the KV-pool evidence); its full docker logs are saved to the transcript's working dir before removal",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "the saved log contains the weights-loaded line and the KV-cache/pool lines quoted in the transcript",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "boundary",
+      "text": "the spike container publishes no host port and does not use --network host (the page's command does): it joins only the lobes_default network with alias vllm-worker, so every request reaches it through the Thor gateway's auth gate, never unauthenticated over the tailnet",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "docker inspect of the spike container shows NetworkMode=lobes_default and empty PortBindings; ss -ltn on the Thor shows no listener on :8000 from it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "the spike container mounts /home/thor/.cache/huggingface at exactly /root/.cache/huggingface with HF_HOME=/root/.cache/huggingface (the image's /opt/qwen38-mtp-model symlinks hard-code that path + snapshots/ada4da32a583a78aa47299f45a70603c950490b8), passes the FULL 40-char revision sha, and does NOT load ~/.lobes/.env as an env-file \u2014 the lobes .env injects VLLM_GDN_DECODE_KERNEL=triton (a cortex sm_110 workaround) into every lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "docker inspect of the spike container shows no VLLM_GDN_DECODE_KERNEL and no VLLM_PLE_* env, and the boot log shows the MTP draft loading from /opt/qwen38-mtp-model without a missing-file error",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "benchmarks call scripts/stream-measure.py with the model id passed explicitly (argv[2]; its default is hard-coded to nvidia/Qwen3.6-35B-A3B-NVFP4) and the transcript notes any foreign request the gateway logged during each benchmark window \u2014 worker runs max_num_seqs=1, so one mesh caller (Spark proxy, Qwen Code) queues ahead and skews TTFT",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "the gateway log for each benchmark window shows only the benchmark's own requests, or the affected runs are marked and repeated",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "the 98.6 GiB pre-download runs memory-capped (docker --memory or systemd-run MemoryMax) with HF_HUB_DISABLE_XET=1 while the incumbent serves, pinned to the full ada4da32 sha; disk after download + image is checked to stay >= 50 GiB free (196 GiB free today)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "incumbent worker uptime and prod-* uptime are unbroken across the download, and df -h / after it is recorded",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "restore is verified, not assumed: after the rollback ~/.lobes/.env and every compose file are byte-identical (sha256) to the pre-spike backups, docker ps shows the incumbent vllm-worker + embed + rerank (+ audio if it was up) healthy, and the Thor gateway's /capabilities advertises nvidia/Qwen3.6-35B-A3B-NVFP4 at 262144",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "the transcript's last section lists the sha256 pairs and the post-restore /capabilities worker entry",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "decision",
+      "text": "memory abort rule for the spike: MemAvailable below 4 GiB sustained, swap growth over 20 GiB, any logged OOM kill, or any prod-* container restart stops the spike container and restores the incumbent; a fresh prod postgres dump is taken before the Flash-Next boot (operator, 2026-09-23)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "whether util 0.93 boots on THIS Thor with the prod-* stack resident and ~15 GiB of non-weight headroom \u2014 only the boot log's KV pool answers it; fallback util unknown until measured",
+      "kind": "unknown_blocking",
+      "claim_id": "c7",
+      "resolved": true,
+      "resolution": "the spike itself answers it from the boot log's KV pool; on refusal, step context down 262144 -> 131072 -> 65536 at fixed util 0.93, then stop and report (decision c24)",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "vision/video on sm_110 through the official image: declared by config (vision_config, video_token_id) and by the jetson-ai-lab page, unmeasured here",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c10",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "decode tok/s, TTFT and MTP acceptance for this checkpoint+image on the Thor: no measurement exists for local-inference-lab's checkpoint on any Thor; the page publishes none",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c8",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "qwen3_xml vs the fleet's qwen3_coder tool parser: the page uses qwen3_xml; whether strict tool calling / the qwen3_coder_thinking plugin (cortex-only today) applies to this lane is unexplored",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c4",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v5",
+      "text": "the -latest tag equals the pinned digest today; if NVIDIA republishes it with a re-grafted draft for QAD, option (b) of q1 may become a digest bump rather than a derived image",
+      "kind": "follow_up",
+      "claim_id": "c4",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v6",
+      "text": "post-GO lobes-lane integration: WORKER_HF_OVERRIDES + WORKER_MAMBA_SSM_CACHE_DTYPE slots, a solo Thor worker shape, a catalog entry, goldens (tests/goldens/shapes/thor-worker__*.env), docs (nvidia-qwen3.6-35b-a3b-nvfp4.md, colleague-stack.md, CLAUDE.md, lobes/explain/catalog.py), a deployment-lock re-capture",
+      "kind": "follow_up",
+      "claim_id": "c1",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v7",
+      "text": "post-GO integration hazard: the fleet .env's VLLM_GDN_DECODE_KERNEL=triton (thor.toml cortex workaround) would leak into a Flash-Next worker lane via env_file; the integration must scope or unset it and measure which GDN decode kernel the official image wants",
+      "kind": "follow_up",
+      "claim_id": "c5",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v8",
+      "text": "whether each mesh member re-verifies the Thor's changed worker fingerprint promptly (announce/heartbeat 60 s x 3) or serves 503 role_unverified / 404 for longer \u2014 unprobed; observe during the spike",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c9",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v9",
+      "text": "thermal and power behaviour of a ~114 GiB resident 125B MoE under sustained decode on the Thor at MAXN \u2014 unmeasured",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c7",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "operator instruction (this session)",
+      "finding": "Thor worker may be dropped and re-pointed to Qwen3.8 Flash-Next per jetson-ai-lab.com/models/qwen3-8-flash-next; fit directly in memory, not SSD mmap",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "HF API local-inference-lab/Qwen3.8-Flash-Next-NVFP4 vs RadixArk/... (read 2026-09-23)",
+      "finding": "local-inference-lab HEAD 7c4f1bc1 = 98.62 GiB/50 files; RadixArk @7b719225 = 125.96 GiB/419 files; text_config.ple_embedding_dtype=nvfp4; quant_method modelopt MIXED_PRECISION (NVFP4 routed experts W4A4 static, MXFP8 attention/shared experts, NVFP4 PLE weight-only); vision_config + video_token_id present; 262144 native",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "jetson-ai-lab.com/models/qwen3-8-flash-next page (serve command JSON, thor_t5000::vLLM)",
+      "finding": "only module supported by the vLLM engine is thor_t5000; command: ghcr.io/nvidia-ai-iot/vllm:qwen3.8-next-jetson-thor local-inference-lab/Qwen3.8-Flash-Next-NVFP4 --gpu-memory-utilization 0.93 --max-num-seqs 1 --mamba-ssm-cache-dtype bfloat16 --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_xml --hf-overrides {architectures:[Qwen4ExpForConditionalGeneration],model_type:qwen4_exp} --speculative-config {method:mtp,num_speculative_tokens:3,model:/opt/qwen38-mtp-model}; no --max-model-len (defaults to 262144); no PLE env",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "ghcr.io registry: nvidia-ai-iot/vllm:qwen3.8-next-jetson-thor manifest + config blob + patch layer",
+      "finding": "digest sha256:512bf772..., arm64, 40 layers / 9.01 GiB compressed, created 2026-09-10; base vllm/vllm-openai:nightly-385dce36; ENV VLLM_DISABLED_KERNELS=FlashInferCutlassMxfp8LinearKernel; ENTRYPOINT [vllm serve]; qwen38-thor.patch (156 lines) adds Qwen4ExpPLENVFP4EmbeddingMethod ('Packed GPU PLE table') in vllm/models/qwen4_exp/nvidia/ple_layer.py and an sm_110 capability gate in qsa_indexer.py; -latest tag has the same digest",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "lobes/templates/fleet/docker-compose.yml vllm-worker (image line ~1370, command ~1529-1550) + lobes/profiles/render.py:123-129",
+      "finding": "WORKER_IMAGE override exists; command slots are a closed set (MODEL, SERVED_NAME, QUANTIZATION, MAX_MODEL_LEN, GPU_MEM_UTIL, KV_CACHE_DTYPE, ATTENTION_BACKEND, MOE_BACKEND, LOAD_FORMAT, MAX_NUM_SEQS, MAX_NUM_BATCHED_TOKENS, CHUNKED_PREFILL, ASYNC_SCHEDULING, PREFIX_CACHING, SPECULATIVE_CONFIG, TOOL_CALL_PARSER, REASONING_PARSER); no hf-overrides or mamba-ssm-cache-dtype slot on worker (primary has --hf-overrides at :245, associate has --mamba-ssm-cache-dtype at :1745); render.py maps hf_overrides->HF_OVERRIDES; template's default WORKER_MODEL is still stale Lightning",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "Thor: docker inspect model-gear-vllm-worker (read-only, 2026-09-23)",
+      "finding": "deployed worker entrypoint is [bash /usr/local/bin/mg-logwrap] with Cmd 'vllm serve ...', so the official image's own ENTRYPOINT [vllm serve] is overridden and does not double up",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/profiles/builtin_shapes/thor-worker.toml + lobes/profiles/builtin/thor.toml",
+      "finding": "thor-worker hosts [worker, hand, embedder, reranker, stt, tts]; worker override util 0.45 / 262144 / fp8 KV / max_num_seqs 1 / DFlash k=12 (z-lab/Qwen3.6-35B-A3B-DFlash); thor.toml: hand feasible=false (sm_110 defect), embedder/reranker 0.06 each; goldens tests/goldens/shapes/thor-worker__{thor,spark}.env pin WORKER_MODEL",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "Thor host (ssh thor@thor: free -g, docker stats, df -h, docker ps; read-only 2026-09-23)",
+      "finding": "122 GiB total, 30 GiB available with worker at 13.2 GiB rss; prod-* culture-nodes/postgres/minio resident ~0.66 GiB; / has 196 GiB free (enough for 98.6 GiB weights + 9 GiB compressed image), 105.9 GB reclaimable images; no Flash-Next snapshot cached, no nemoclaw image; .env MODEL_GEAR_VERSION=0.81.1, WORKER_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4, COMPOSE_PROFILES=worker, LOBES_MESH_NAME=thor; R38.2.2, driver 580, CUDA 13.0",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "docs/model-switch-playbook.md + docs/nvidia-qwen3.6-35b-a3b-nvfp4.md + deployments/jetson-agx-thor__thor-worker/",
+      "finding": "playbook \u00a71/\u00a77: incumbent baseline is unrecoverable after the swap, so benchmark first; \u00a73: update the SERVED_NAME in .env or the gateway rewrites to a dead id; \u00a79: rollback recipe before the swap; the thor-worker lock (captured 2026-09-11) is the pre-designated rollback artifact; lobes benchmark / lobes measure / scripts/stream-measure.py exist to re-baseline",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "lobes/gateway/_mesh_wire.py:65-69 + _replicas.py:196,298-410 + _mesh_routing.py:206-265",
+      "finding": "Fingerprint carries served_id/served_name among DISQUALIFYING_FIELDS; pooling requires identical fingerprints; a changed id is re-probed, not silently kept",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "lobes/roles.py:404-420,520 (ROLE_RESPONSIBILITIES/ROLE_FORBIDDEN worker)",
+      "finding": "worker responsibilities include repo_action, image_understanding, video_understanding; forbidden = (final_decision, security_decision); widened by #244 because the checkpoint gained a ViT",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "lobes/roles.py:148-200 (associate/worker served-name + role_hint history)",
+      "finding": "issue #244 t1 once dragged associate's default along with worker's; the catalog now gives Lightning role_hint=associate so a worker re-point is isolated",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "lobes/catalog.py:70-130,1029-1114 (SupportedModel + current worker entry)",
+      "finding": "SupportedModel has hf_overrides, moe_backend, speculative_config, hf_revision fields but no image or extra-env field; current worker entry role_hint=worker, modelopt, MTP n2 default (shape overrides with DFlash); docs/colleague-stack.md: a checkpoint swap is a catalog change, a new role is effectively irreversible",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "docs/experiments/qwen3.8-flash-next-nvfp4-thor-reference.md (2026-09-13, reference-only)",
+      "finding": "RadixArk 126 GiB fits only by NVMe-mmapping the FP8 PLE table at util 0.90; author's 34.98 tok/s MTP=3 unreproduced; decision then: record, don't run, because the Thor must stop serving worker",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "HF API local-inference-lab/Qwen3.8-Flash-Next-NVFP4 commits + revision ada4da32 vs 7c4f1bc1 + image history RUN snapshot_download",
+      "finding": "image build resolved revision=model_info(model).sha at 2026-09-10 = ada4da32 (PTQ, 34 shards, arch Qwen3_8FlashNextForConditionalGeneration) and symlinked /opt/qwen38-mtp-model/<shard> -> hub cache snapshots/<that rev>/<shard>; 2026-09-16 commit b13380df 'Publish ... quantization-aware distilled checkpoint' replaced it (36 shards, MTP tensors in model-00034-of-00036); export-manifest.validation.full_model_serving = 'not run'",
+      "seeds": [
+        "q1"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "operator instruction (this session, mid-/think)",
+      "finding": "'we can drop other lanes for it' \u2014 the Thor's embedder/reranker/audio lanes may be stopped to fund the Flash-Next worker; the prod-* non-lobes stack is not a lobes lane and stays",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / adjacent-systems lens: Thor model-gear-gateway container env + lobes/gateway/_config.py:920, server.py:1087, _replicas.py:196-201",
+      "finding": "gateway carries WORKER_* in process env; mesh DISQUALIFYING_FIELDS = served_id, quantization, max_model_len, runtime \u2014 the spike changes served_id and possibly max_model_len, so the advert and fingerprint go stale unless the gateway is recreated",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / failure-mode + data-loss lens: Thor docker inspect prod-postgres-1, /proc/sys/vm/overcommit_memory, swapon --show",
+      "finding": "postgres:17-alpine prod data, HostConfig.Memory=0, OomScoreAdj=0, restart unless-stopped; overcommit_memory=0, swappiness 60, 59.6 GiB file swap with 7.1 GiB used; prod-backup-1 running",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / observability lens: jetson-ai-lab serve command (sudo docker run -it --rm --pull always ...)",
+      "finding": "--rm + --pull always: logs vanish on exit and the tag can move; the spike pins the digest (c4) and keeps the container until logs are saved",
+      "seeds": [
+        "c30"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / security lens: Thor docker inspect model-gear-vllm-worker networks (lobes_default aliases [model-gear-vllm-worker vllm-worker])",
+      "finding": "the incumbent lane has no host port, reachable only via the gateway on lobes_default; the page's --network host would expose an unauthenticated vLLM on every Thor interface",
+      "seeds": [
+        "c31"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / hidden-dependency lens: Thor docker inspect model-gear-vllm-worker env + image history RUN snapshot_download",
+      "finding": "every lobes lane gets the whole .env as env (worker shows VLLM_GDN_DECODE_KERNEL=triton, VLLM_MODEL=unsloth/Qwen3.8-27B-NVFP4 etc.); the image's draft links resolve only under /root/.cache/huggingface/hub/models--local-inference-lab--Qwen3.8-Flash-Next-NVFP4/snapshots/<full sha>/",
+      "seeds": [
+        "c32"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / concurrency lens: scripts/stream-measure.py:10 + thor .env WORKER_MAX_NUM_SEQS=1",
+      "finding": "the harness defaults MODEL to the incumbent id; with one sequence slot, any live mesh caller during a run contaminates it",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / operations lens: memory orin-uncapped-process-oom-kills-associate + Thor df -h",
+      "finding": "an uncapped hf-xet download OOM-killed a serving engine on the Orin 2026-09-13; the Thor has swap and 30 GiB available today but runs the incumbent + prod during the download",
+      "seeds": [
+        "c34"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / reversibility lens: Thor ~/.lobes listing (docker-compose.yml.bak-* precedents) + HF cache (incumbent + z-lab DFlash drafter cached)",
+      "finding": "the incumbent's weights and DFlash drafter stay cached so restore is a restart, not a download; prior backups use docker-compose.yml.bak-<tag> naming; there is no lobes CLI on the Thor, so restore is compose via ssh",
+      "seeds": [
+        "c35"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "challenge pass / overlooked-actors lens: Thor .env LOBES_MESH_SEEDS (spark:8001, orin:8000)",
+      "finding": "the outage and fingerprint change reach the Orin and any gateway-only member too, not only the Spark",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "challenge pass / security lens (clean): local-inference-lab ada4da32 file list",
+      "finding": "no .py files in the checkpoint, so no remote code executes; the page's command omits --trust-remote-code and the spike keeps it omitted \u2014 clean; residual: the image itself is third-party-published (nvidia-ai-iot), trusted by digest only",
+      "seeds": []
+    },
+    {
+      "id": "s27",
+      "surface": "challenge pass / unexamined: Spark + Orin gateways' live reaction to a Thor fingerprint change; thermal behaviour under a 114 GiB resident load; prod-* peak memory",
+      "finding": "not probed in this pass \u2014 the Spark/Orin rosters were not queried, no thermal or prod workload profile was read; these surface only during the spike itself",
+      "seeds": []
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

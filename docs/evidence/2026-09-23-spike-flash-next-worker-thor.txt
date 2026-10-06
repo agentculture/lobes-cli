@@ -1,0 +1,242 @@
+# local-inference-lab/Qwen3.8-Flash-Next-NVFP4 as `worker` on the Jetson AGX Thor — LIVE SPIKE, 2026-09-23
+#
+# Spec:  docs/specs/2026-09-23-flash-next-worker-on-thor.md
+# Plan:  docs/plans/2026-09-23-flash-next-worker-on-thor.md (t1-t9)
+#
+# SUMMARY FOR THE OPERATOR'S GO/NO-GO (this transcript does NOT make that call):
+#
+# The checkpoint LOADS FULLY RESIDENT from the published jetson-ai-lab image:
+# "Model loading took 98.93 GiB" (target + embedded MTP drafter), with no
+# VLLM_PLE_* env and no NVMe paging path in the image's vLLM. It did NOT reach
+# serving on this Thor at the page's settings (util 0.93): attempt 2 died in
+# vLLM's startup memory profiling with "CUDA driver error: out of memory",
+# about 20 GiB of headroom beside the co-resident prod stack, desktop and OS.
+# No candidate benchmark or probe ran, so there are NO Flash-Next throughput,
+# TTFT, MTP-acceptance or modality numbers here. A third attempt with
+# profiling-only limits (deviation d2) is staged but was NOT run: the operator
+# chose to restore the incumbent after a reboot hung and needed a power cycle.
+# Two platform findings came out of the run: a crashed CUDA process leaves its
+# memory held until reboot (agentculture/nvsh#49), and a mesh peer can hold a
+# rebooted member pending forever (agentculture/lobes-cli#285).
+
+## 0. Conditions
+
+Box:         Jetson AGX Thor, 122.82 GiB visible to CUDA, L4T R38.2.2, kernel
+             6.8.12-tegra, NVIDIA Open Kernel Module (build 2025-09-25), MAXN.
+Co-resident: the culture-nodes prod stack (prod-postgres-1, -api-1, -worker-1,
+             -scheduler-1, -notifier-1, -minio-1, -backup-1) and the GNOME
+             desktop. The prod stack was never stopped deliberately; the
+             reboots in section 5 restarted it (deviation d1).
+Deployment:  ~/.lobes, compose project `lobes`, chain docker-compose.yml +
+             docker-compose.shape.yml + docker-compose.override.yml, shape
+             thor-worker, COMPOSE_PROFILES=worker, gateway 0.81.1.
+Auth:        every compose call ran as `env -u GATEWAY_API_KEY docker compose ...`.
+Image:       ghcr.io/nvidia-ai-iot/vllm@sha256:512bf772c7ef221df1a66ab9c95546d77daeba6ba61723692852e6eb0cae7526
+             (tag qwen3.8-next-jetson-thor; pulled by digest; RepoDigests and
+             Id both equal that digest; 9,678,404,073 bytes unpacked).
+             Engine string from the boot log: v0.28.1rc1.dev580+g385dce36b.
+Checkpoint:  local-inference-lab/Qwen3.8-Flash-Next-NVFP4 @
+             ada4da32a583a78aa47299f45a70603c950490b8 (the PTQ export the
+             image's baked /opt/qwen38-mtp-model links were built against),
+             35/35 shards, 0 incomplete blobs, 99G on disk. vLLM resolved
+             .../snapshots/ada4da32a583a78aa47299f45a70603c950490b8.
+
+## 1. Pre-flight (t1) — 07:22 local
+
+Backups:     .env, docker-compose.yml, docker-compose.override.yml,
+             docker-compose.shape.yml -> *.bak-2026-09-23-flash-next
+             sha256 .env                        11fcffd7eebb1d460267df50ce6b2cf9d3f011898c35c75eac2e66eda5a3ed27
+             sha256 docker-compose.yml          68476d8edd4887d0b58b03ab70d90659351a5a2363c6bd627254996b5cc2f821
+             sha256 docker-compose.override.yml 5790199e383336380b6931e0e1918aed1435c3dc114f7e92aff32c4a9d643b93
+             sha256 docker-compose.shape.yml    c490e64f3dfe649151769bf0056c7c805447a54c215189543ef001b70ea22fea
+Prod dump:   pg_dumpall via docker exec prod-postgres-1, rc=0, 284,305,789
+             bytes, 55 CREATE TABLE, ends "PostgreSQL database cluster dump
+             complete"; kept on the Thor outside the container.
+Memory:      used 94,821 MiB / available 30,950 MiB (worker 0.45 + embed 0.06
+             + rerank 0.06 lanes up); swap 7.1 GiB used; 0 OOM kills; / 196G free.
+Advert:      Thor /capabilities worker = nvidia/Qwen3.6-35B-A3B-NVFP4, 262144,
+             ready, loaded.
+Mesh:        Spark roster: thor verified, roles [worker, embedder-thor,
+             reranker-thor]. Orin roster: same. Members seen: thor, orin,
+             spark2 (from the Spark).
+Repo:        lobes-cli HEAD 81328c7; sha256 lobes/roles.py 48b52126...,
+             lobes/catalog.py b8d4b2cd... (unchanged by this spike).
+
+## 2. Downloads (t2)
+
+Checkpoint download ran in a throwaway container capped at --memory 4g with
+HF_HUB_DISABLE_XET=1, unauthenticated. It finished at an unobserved time
+between 07:24 and 08:39 (only the first minute's rate, ~20 MiB/s, was
+sampled). A second pass, authenticated (HF_TOKEN passed by env name, never in
+argv) with xet enabled and --memory 8g, found every file present and exited
+DL_DONE with no transfer. After download and pull: / 67G free (>= 50 GiB
+floor held). Incumbent vllm-worker and every prod-* StartedAt unchanged.
+
+## 3. Incumbent baseline (t3) — same day, before the cut-over
+
+Harness: an unmodified copy of scripts/stream-measure.py's stream(), driven by a
+wrapper adding 3 deep runs; temperature 0, thinking off; run from a throwaway
+container on lobes_default straight at http://vllm-worker:8000.
+
+    invocation: docker run --rm --network lobes_default -v ~/flash-next-spike/harness:/h:ro \
+      python:3.12-slim python /h/bench.py http://vllm-worker:8000/v1/chat/completions nvidia/Qwen3.6-35B-A3B-NVFP4
+
+    run                         TTFT ms   decode tok/s   completion tokens
+    code-256 run1                 216.3        184.54            116
+    code-256 run2                 204.3        204.22            109
+    code-256 run3                 200.5        202.69            109
+    deep 9,020-token run1        2569.2         73.00             23
+    deep 9,020-token run2        2541.9         97.69             19
+    deep 9,020-token run3        2508.9         96.06             19
+
+Deep-run decode figures rest on ~20 tokens and are noisy; TTFT is the
+meaningful deep number. No prefix-cache effect showed (TTFT flat across the
+three identical deep prompts). Foreign traffic check: 0 worker requests
+through the gateway in the window; the lane logged exactly the benchmark's 7.
+
+## 4. Probe script (t4) — dry run against the incumbent
+
+    PASS  text known-answer            'Paris'
+    PASS  thinking separated           reasoning=596 chars content='391'
+    PASS  structured tool call         get_weather({"city": "Paris"}) content=''
+    PASS  image (3 colours, neg ctrl)  red->'red' blue->'blue' green->'green'
+    PASS  video (2 colours, neg ctrl)  blue->'Blue' red->'red'
+    SUMMARY 5/5 PASS
+
+The same script was never run against Flash-Next (it never served).
+
+## 5. Cut-over and boot attempts (t5, t6)
+
+t5, 11:29:03: `compose stop` vllm-worker, vllm-embed, vllm-rerank; .env diff
+vs backup = one line (WORKER_SERVED_NAME=local-inference-lab/Qwen3.8-Flash-Next-NVFP4;
+WORKER_MAX_MODEL_LEN was already 262144); gateway recreated, healthy; prod-*
+untouched. model=worker offline mesh-wide from 11:29:03.
+
+Spike container (all attempts): name flash-next-spike, image by digest,
+NetworkMode lobes_default, alias vllm-worker, PortBindings {}, AutoRemove
+false, no --env-file, HF cache at /root/.cache/huggingface, HF_HOME set,
+HF_HUB_OFFLINE=1; env carried no VLLM_PLE_* and no VLLM_GDN_DECODE_KERNEL
+(image ENV adds only VLLM_DISABLED_KERNELS=FlashInferCutlassMxfp8LinearKernel).
+Args = the jetson-ai-lab Thor command (--gpu-memory-utilization 0.93
+--max-num-seqs 1 --mamba-ssm-cache-dtype bfloat16 --reasoning-parser qwen3
+--enable-auto-tool-choice --tool-call-parser qwen3_xml --hf-overrides
+{architectures:[Qwen4ExpForConditionalGeneration],model_type:qwen4_exp}
+--speculative-config {method:mtp,num_speculative_tokens:3,model:/opt/qwen38-mtp-model})
+plus --revision/--tokenizer-revision ada4da32..., --served-model-name
+(raw id) and --max-model-len 262144.
+
+### Attempt 1 — 11:29:45, REFUSED at startup
+
+    ValueError: Free memory on device cuda:0 (46.77/122.82 GiB) on startup is less
+    than desired GPU memory utilization (0.93, 114.23 GiB).
+
+With every lobes lane stopped, `free` showed used 74,641 MiB / available
+51,131 MiB while AnonPages was 1.7 GiB and slab 2.6 GiB: about 70 GiB of
+"used" with no owner (no process, nvmap clients 0K, nvidia-smi lists no
+compute app). A context step-down (decision c24) cannot help a startup
+free-memory check. Filed agentculture/nvsh#49. Deviation d1 (operator):
+reboot. Sampler over this attempt: 63 samples, available 51,170 -> 47,575 MiB,
+swap 1,802 MiB flat, 0 OOM kills, max 63.7 C.
+
+The first reboot command did not run (the `pkill -f` used to stop the sampler
+matched its own ssh session). A second, via `systemd-run --on-active=5`,
+rebooted at 11:41; boot 11:42:01; used 4,251 MiB / available 121,521 MiB.
+
+### Attempt 2 — 11:42:51, LOADED, then OOM in profiling
+
+    Resolved architecture: Qwen4ExpMTP
+    max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings
+    Checkpoint size: 98.57 GiB. Available RAM: 15.00 GiB.    (at shard load start)
+    Loading weights took 136.35 seconds                      (target)
+    Your GPU does not have native support for FP4 computation ... Marlin kernel
+    Using 'MARLIN' NvFp4 MoE backend
+    Loading weights took 62.27 seconds                       (MTP drafter, second 35-shard pass)
+    Model loading took 98.93 GiB memory and 212.320168 seconds
+    Encoder cache will be initialized with a budget of 16384 tokens, and profiled
+      with 1 image items of the maximum feature size.
+    ... determine_available_memory -> model forward -> hyperconnection.mix -> linear
+    RuntimeError: CUDA driver error: out of memory             (08:50:10 UTC)
+
+Reading: the weights and the drafter fit resident (98.93 GiB for target plus
+drafter against a 98.57 GiB checkpoint, so the drafter costs well under
+1 GiB). What did not fit is the pre-KV profiling pass (a 2,048-token dummy
+forward plus the vision-encoder profile at maximum image size) in the ~20 GiB
+left beside OS, desktop and prod stack. Context length plays no part at this
+stage. The weight load itself is file read -> GPU copy; nothing stays
+file-backed afterwards.
+
+Sampler over attempt 2 (207 samples, 2,112 s incl. post-crash): available
+121,590 MiB at start, minimum 4,508 MiB, swap max 1,711 MiB (baseline 0),
+0 OOM kills, max 80.1 C (a single sample; otherwise 60-65 C). The abort rule
+(< 4 GiB sustained 60 s, swap +20 GiB, OOM kill, prod-* restart) never fired;
+the engine failed first.
+
+After the crash, with no CUDA process alive: used 113,366 MiB / available
+12,405 MiB, AnonPages 0.9 GiB. The held-memory effect reproduced from one
+crashed process (added to nvsh#49).
+
+### Attempt 3 — staged, NOT run
+
+Deviation d2 (operator): the same command plus --max-num-batched-tokens 2048
+and --limit-mm-per-prompt {"image":{"count":1,"width":1024,"height":1024},
+"video":{"count":1,"num_frames":16,"width":512,"height":512}} (caps the dummy
+encoder item used for profiling), with the GNOME display-manager stopped. The
+reboot before it (systemd-run, 12:18:07) hung in shutdown: the previous
+boot's journal ends at 12:18:18 mid session-teardown with no journald stop
+and no GPU/driver error; the box stayed offline until an operator power cycle
+(boot 12:36:53; no intermediate boots in `journalctl --list-boots`, so not a
+reboot loop). The operator then chose to restore the incumbent rather than
+run attempt 3. ~/flash-next-spike/boot.sh on the Thor holds the d2 form.
+
+## 6. Restore (t8) — 12:48:40
+
+.env and the three compose files restored from the backups; sha256 of all
+four equal the t1 values above. Started vllm-worker, vllm-embed, vllm-rerank
+(`up -d --no-deps` each), recreated the gateway. All four healthy at 12:57:28.
+
+    Thor /capabilities worker: nvidia/Qwen3.6-35B-A3B-NVFP4, context 262144, ready, loaded
+    model=worker via the Spark: 404 at 12:57:38-12:58:08 (re-verify), 200 at 12:58:20,
+                                model nvidia/Qwen3.6-35B-A3B-NVFP4, answer "Paris"
+    Spark roster: thor verified, [worker, embedder-thor, reranker-thor]
+
+Orin: still held the Thor as `not_yet_probed` with roles [] after the restore,
+heartbeats arriving (last_seen_age ~3 s); model=worker via the Orin answered
+503 role_unverified. Its gateway log last mentions the Thor at 09:38:21 UTC
+(a boot-time probe TimeoutError). Filed agentculture/lobes-cli#285. On
+operator approval, `docker restart` of the Orin gateway at 14:42:21: thor
+verified with [worker, embedder-thor, reranker-thor] at 14:43:01, model=worker
+via the Orin 200 (nvidia/Qwen3.6-35B-A3B-NVFP4, "Paris").
+
+Outage for model=worker: 11:29:03 -> 12:58:20 through the Thor and the Spark;
+11:29:03 -> 14:43:01 through the Orin. Embedder/reranker on the Thor were
+down for the same Thor window.
+
+Deviations from the plan's boundaries, as recorded (d1): every prod-* container
+went through two stop/start cycles (the 11:41 reboot, and the 12:18 reboot
+that hung and was completed by the 12:37 power cycle), so the "prod-*
+StartedAt unchanged" check (c23/h11) does not hold for this run;
+prod-postgres-1 was healthy after each start. The repo
+check does hold: nothing under lobes/ or tests/ changed.
+
+## 7. What is and is not established
+
+Established (measured here):
+  - the image + pinned checkpoint load fully resident on a Thor: 98.93 GiB
+    target + MTP drafter, no NVMe paging configuration (spec c2);
+  - vLLM on this image uses Marlin weight-only FP4 for dense and MoE on this
+    GPU ("does not have native support for FP4 computation");
+  - at util 0.93 and the page's profiling defaults, the engine OOMs in
+    profiling on a Thor carrying this prod stack + desktop;
+  - a crashed CUDA process leaves its memory held until reboot on this
+    driver, and a reboot from that state hung once in shutdown.
+
+NOT established (not measured in this run):
+  - any Flash-Next decode tok/s, TTFT, KV pool size or MTP acceptance;
+  - any Flash-Next probe result (text, thinking, tool call, image, video);
+  - whether attempt 3's profiling limits (d2) fit;
+  - whether the NVMe stays idle during decode (h2's iostat half), since no
+    decode ran.
+
+External claims, kept separate: the jetson-ai-lab page publishes the serve
+command only, with no throughput figure; the checkpoint card's GPQA/AA-LCR
+scores are the publisher's; neither was checked here.
