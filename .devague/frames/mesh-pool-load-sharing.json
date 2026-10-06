@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-06T15:26:03Z",
-  "updated": "2026-10-06T15:49:22Z",
+  "updated": "2026-10-06T20:55:15Z",
   "claims": [
     {
       "id": "c1",
@@ -808,6 +808,187 @@
       "seeds": []
     }
   ],
-  "lapses": [],
-  "obligations": []
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "grader-unverified",
+      "what": "t4's unit test asserted the forwarded body's model == 'primary' \u2014 it encoded the spec's wrong premise, so a green test certified a forward that 404s live",
+      "skipped_check": "checking that the destination accepts the rewritten model id",
+      "refs": [
+        "c20 / tests/test_gateway_member_lanes.py"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "control-absent",
+      "what": "t4 part 2 (/v1/models wiring) was implemented before its tests, breaking the TDD order the plan asked for",
+      "skipped_check": "write the failing test first",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "c24 (private roles get no lane) is backed only by a proxy test of a member lacking the role; no test builds a real private announcement",
+      "skipped_check": "a test through Announcement.public()",
+      "refs": [
+        "c24 / e13"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "assumption-for-measurement",
+      "what": "The challenge pass accepted c20's 'reuse the forward path unchanged' from a code read without a cross-box probe; a single live request would have shown the 404 before planning",
+      "skipped_check": "a cheap live cross-box probe of the existing suffixed-lane forward",
+      "refs": [
+        "challenge pass / c20"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c26",
+      "seam": "cross-box member-lane forward, live",
+      "behavior": "10 x cortex-spark2 via spark's gateway moves only spark2's engine counter",
+      "source_text": "Live on spark+spark2 (+Thor as a non-hosting gateway): 10 requests with model=cortex-spark2 through spark's gateway raise spark2's vllm:request_success_total by 10 and spark's by 0; the mirror (cortex-spark through spark2's gateway, and cortex-spark locally on spark) holds; `qwen -m cortex-spark2` answers via localhost:8001. Transcript under docs/evidence/.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c1",
+      "seam": "pinning from every front, live",
+      "behavior": "a member name lands only on that member's engine from any gateway, never balanced",
+      "source_text": "Every verified mesh member of a role is addressable by name from ANY mesh gateway: `model=cortex-spark2` always lands on spark2's engine and `cortex-spark` on spark's, never balanced \u2014 while plain `cortex` stays the pool",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c16",
+      "seam": "Qwen Code end to end",
+      "behavior": "qwen -m cortex-spark2 / cortex-spark answer via localhost:8001 and touch only their engine",
+      "source_text": "Operators and clients (Qwen Code first) that want to pick a specific box for a role, and the mesh gateways that must route that choice.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c20",
+      "seam": "member-lane resolution + forward",
+      "behavior": "every verified member resolves by name; a peer lane forwards once with an id the destination accepts",
+      "source_text": "find_suffixed_lane (or a sibling member-lane resolver) matches `{role}-{member}` for EVERY verified member of the role, not only fingerprint-disagreeing ones; the forward path at server.py:3253-3300 is reused unchanged (served_name rewritten to the destination's backend name, join-key signed, X-Lobes-Proxied-By + mesh markers).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c21",
+      "seam": "self lane",
+      "behavior": "this box's own name is served locally; non-hosting box 404s role_infeasible",
+      "source_text": "`{role}-{self}` (self = this box's LOBES_MESH_NAME) on a box that hosts the role is served by the local lane: no pool selection, no forward, X-Lobes-Served-By set. On a box that does not host the role it 404s role_infeasible, never forwards to some other member.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c22",
+      "seam": "/capabilities member_lanes",
+      "behavior": "hosted role lists self + peers; mesh disabled byte-identical",
+      "source_text": "/capabilities gains an additive per-role `member_lanes` list naming every addressable `{role}-{member}` (self included when hosted); `suffixed_lanes` keeps its meaning (disagreeing members only). With mesh disabled the payload stays byte-identical.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c30",
+      "seam": "/v1/models member ids",
+      "behavior": "routable member ids listed; only lanes that can answer",
+      "source_text": "GET /v1/models lists every addressable `{role}-{member}` id (self included when hosted) alongside the existing entries; with mesh disabled the listing is byte-identical.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c31",
+      "seam": "boot window",
+      "behavior": "unprobed member's name answers 503 role_unverified",
+      "source_text": "`{role}-{member}` for a member that announced the role but is not yet probed returns 503 role_unverified with Retry-After: 5, error.hosted_by and the X-Lobes-Mesh-Member/-Unverified headers, reusing the plain-role boot-window body.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c32",
+      "seam": "self lane under pressure",
+      "behavior": "429 server_busy, never forwarded",
+      "source_text": "The self lane (`{role}-{self}`) applies THIS box's pressure policy exactly like the plain role (429 server_busy + Retry-After when shed) and never forwards to a peer under pressure \u2014 a pin is a pin. Source: handle_post pressure branch (server.py:3116-3160).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c33",
+      "seam": "hop-marked self lane",
+      "behavior": "served locally, not 508",
+      "source_text": "A hop-marked arrival naming this box's OWN member lane is served locally, not answered with the 508 proxy-loop body the peer-lane branch (server.py:3256) returns, because no second forward happens.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c12",
+      "seam": "single hop",
+      "behavior": "hop-marked peer-lane arrival gets 508, never a second forward",
+      "source_text": "The single-hop rule stays: a request arriving with the hop marker is served locally or refused, never re-selected (_pool_selection's _arriving_hop_marker branch).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c13",
+      "seam": "exclusions",
+      "behavior": "innereye/stt/tts names never reach a peer; hand forwards",
+      "source_text": "Member lanes exist only for mesh-forwardable, model-addressable roles: innereye (MESH_UNFORWARDABLE_ROLES, lobes/roles.py:259) and /v1/realtime get none; stt/tts are reached via /v1/audio/* not model ids, so get no member lane. hand IS mesh-forwarded today (NEVER_PROXIED_BACKENDS = frozenset(), lobes/gateway/_config.py:207) and gets member lanes like any other role.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c24",
+      "seam": "private roles",
+      "behavior": "a role announced private yields no member lane",
+      "source_text": "A role a member announced private gets no member lane anywhere (Announcement.public() strips it before verified_roles), and an innereye-<member> name never resolves to a peer.",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c19",
+      "seam": "pin survives pooling",
+      "behavior": "destination serves a hop-marked arrival locally even with an armed pool",
+      "source_text": "A caller can pin work to a box (warm cache, isolation, A/B) without per-box URLs and keys, and the pin survives a future pooling fix because a forward carries the hop marker and the destination serves a marked arrival locally (sole-ready, server.py _pool_selection).",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c23",
+      "seam": "no plain-pool change",
+      "behavior": "selection policy and pool/selection/mesh-routing suites untouched and green",
+      "source_text": "Plain-role routing, pool candidate selection (_pool_selection, _selection.py) and the fingerprint plain/suffixed split are unchanged; a member lane never joins or leaves the plain pool.",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }
