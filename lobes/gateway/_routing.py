@@ -8,7 +8,7 @@ module that touches ``http.client`` / sockets.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
@@ -621,6 +621,7 @@ def list_models_payload(
     loaded_adapters: Mapping[str, frozenset[str]] | None = None,
     *,
     pooled: "frozenset[str]" = frozenset(),
+    member_lane_ids: Sequence[str] = (),
 ) -> dict:
     """OpenAI ``/v1/models`` shape listing the fleet's served models.
 
@@ -676,6 +677,15 @@ def list_models_payload(
     ``loaded_adapters`` (the default) advertises NO adapters, which is the
     honest answer for a caller holding no live evidence and keeps every
     pre-adapter caller byte-identical.
+
+    **Member lanes** (task t2): ``member_lane_ids`` is a sequence of OpenAI
+    model ids the caller verified belong to a member lane — e.g. the
+    ``name`` of the ``MemberLane`` that ``find_member_lane``
+    (``lobes.gateway._mesh_routing``) resolved. These ids are appended
+    *after* all existing entries, de-duplicated against ids already listed
+    and against duplicates within the argument itself; they are always
+    advertised regardless of ``ready`` or ``infeasible`` because the caller
+    supplies only verified lane ids.
     """
     # PATH-routed tenants (the innereye render lane) are not OpenAI models and
     # are never listed here — /v1/models is the set of ids a caller may put in
@@ -697,6 +707,11 @@ def list_models_payload(
                 if adapter in confirmed
             )
     data.extend(_peer_model_entries(table, ready, peer_served, pooled, data))
+    listed = {entry["id"] for entry in data}
+    for lane_id in member_lane_ids:
+        if lane_id not in listed:
+            data.append({"id": lane_id, "object": "model", "owned_by": "lobes"})
+            listed.add(lane_id)
     return {"object": "list", "data": data}
 
 
