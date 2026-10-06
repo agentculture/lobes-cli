@@ -120,7 +120,8 @@ def test_destination_serves_hop_marked_arrival_locally_even_when_pooled(mesh_env
     unmarked = S._pool_selection(
         table, "primary", [], replica_snapshot=None, mesh_snapshot=pooled, local_busy=False
     )
-    assert unmarked is not None and len(unmarked.candidates) >= 2  # the pool is armed
+    assert unmarked is not None
+    assert len(unmarked.candidates) >= 2  # the pool is armed
     placement = S._pool_selection(
         table,
         "primary",
@@ -258,7 +259,8 @@ def test_member_lane_ids_lists_self_and_verified_peers_only(mesh_env):
         _member("thor", "http://thor:8000", verified=(), announced=("cortex",), probed=False),
     )
     ids = S.member_lane_ids(table, snap)
-    assert "cortex-spark" in ids and "cortex-spark2" in ids
+    assert "cortex-spark" in ids
+    assert "cortex-spark2" in ids
     assert "cortex-thor" not in ids  # pending: 503 until probed, so never advertised
     assert not any(i.startswith(("stt-", "tts-", "innereye-")) for i in ids)
 

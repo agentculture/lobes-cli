@@ -66,7 +66,8 @@ def test_self_not_hosting_has_no_self_lane():
 def test_peer_named_self_is_skipped():
     snap = _snap(_info("mid", announced=("cortex",), verified=("cortex",)))
     lanes = member_lanes(snap, "cortex", self_name="mid", self_hosts=True)
-    assert len(lanes) == 1 and lanes[0].is_self
+    assert len(lanes) == 1
+    assert lanes[0].is_self
 
 
 def test_pending_member_is_flagged():
@@ -105,7 +106,8 @@ def test_find_disagreeing_peer_matches_find_suffixed_lane():
     snap = _two_member_snapshot(_fp(quantization="NVFP4"), _fp(quantization="FP8"))
     old = find_suffixed_lane(snap, "cortex-nameB", ("cortex",))
     new = find_member_lane(snap, "cortex-nameB", ("cortex",))
-    assert old is not None and new is not None
+    assert old is not None
+    assert new is not None
     assert (new.name, new.role, new.member, new.origin) == (
         old.name,
         old.role,
@@ -119,7 +121,9 @@ def test_find_self_lane_only_when_self_hosts():
     hit = find_member_lane(
         snap, "cortex-mid", ("cortex",), self_name="mid", hosted_roles={"cortex"}
     )
-    assert hit is not None and hit.is_self and hit.origin == ""
+    assert hit is not None
+    assert hit.is_self
+    assert hit.origin == ""
     assert (
         find_member_lane(snap, "cortex-mid", ("cortex",), self_name="mid", hosted_roles=set())
         is None
