@@ -340,3 +340,33 @@ def test_non_hosting_box_pins_a_peer_lane_instead_of_pooling_it(mesh_env):
         assert resp.status == 200, target
         assert [c["base_url"].rstrip("/") for c in rec.calls] == [origin], target
         assert _hdr(resp, S.ROUTE_REASON_HEADER)[-1] == "mesh-forwarded"
+
+
+# --- #92 on /v1/models: a listed member lane must reach a live engine --------
+
+
+def test_member_lane_ids_skip_a_self_lane_whose_local_backend_is_not_ready(mesh_env):
+    """Live: spark listed `reranker-spark` with no reranker container running."""
+    table, _cfg = build_config({})
+    ready = {b.name: b.name != "rerank" for b in table.backends}
+    ids = S.member_lane_ids(table, _snap(), ready=ready)
+    assert "cortex-spark" in ids
+    assert "reranker-spark" not in ids
+
+
+def test_member_lane_ids_skip_a_peer_lane_whose_probe_was_not_ready(mesh_env):
+    table, _cfg = build_config({})
+    snap = _snap(
+        MemberInfo(
+            name="spark2",
+            origin=SPARK2,
+            announced_roles=("cortex", "hand"),
+            verified_roles=("cortex", "hand"),
+            ready_roles=("cortex",),
+            capacity=1.0,
+            probed=True,
+        )
+    )
+    ids = S.member_lane_ids(table, snap, ready={b.name: True for b in table.backends})
+    assert "cortex-spark2" in ids
+    assert "hand-spark2" not in ids

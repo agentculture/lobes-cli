@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - stt-, tts- and innereye- member names no longer forward a chat request to a peer (the old suffixed-lane path could); they answer 404 model_not_found
 - A cross-box `{role}-{member}` forward (including the pre-existing disagreeing-member `cortex-<peer>` lanes) sent the destination `model: primary`, which no gateway accepts, so it 404'd; it now sends the destination's announced served id (role name fallback). Found live in the t6 acceptance run (deviation d1)
 - On a box that does not host a role, a member name was pool-forwarded by the peer-only path (an unknown id resolves to the default model) and refused 508 at the next hop; member lanes now resolve first (deviation d1)
+- `GET /v1/models` lists a member lane only when it can answer: this box's own lane needs its backend ready, a peer's needs its probe to report the role ready (the Spark listed `reranker-spark` with no reranker running)
 
 ## [0.81.4] - 2026-09-23
 

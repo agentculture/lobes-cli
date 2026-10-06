@@ -965,27 +965,48 @@ def _hosted_roles(table: RoutingTable) -> frozenset[str]:
 
 
 def member_lane_ids(
-    table: RoutingTable, mesh_snapshot: "RoutingSnapshot | None"
+    table: RoutingTable,
+    mesh_snapshot: "RoutingSnapshot | None",
+    *,
+    ready: "Mapping[str, bool | None] | None" = None,
 ) -> tuple[str, ...]:
     """Every ROUTABLE ``{role}-{member}`` id, for ``GET /v1/models``.
 
-    A pending (not-yet-probed) member is left out — a listed id must reach a
-    live engine (#92); it answers 503 ``role_unverified`` until probed. With
-    the mesh disabled this is ``()`` so the listing stays byte-identical.
+    A listed id must reach a live engine (#92), so a pending (not-yet-probed)
+    member is left out (it answers 503 ``role_unverified`` until probed), and
+    when *ready* — this box's readiness snapshot, as ``/v1/models`` holds it —
+    is given, this box's own lane is listed only if its backend is ready and a
+    peer's only if its probe reported the role ready. Live 2026-10-06: the
+    Spark listed ``reranker-spark`` with no reranker container running. With
+    *ready* ``None`` (no readiness evidence wired, the offline path) nothing is
+    filtered, matching how the plain listing treats that case. With the mesh
+    disabled this is ``()`` so the listing stays byte-identical.
     """
     if mesh_snapshot is None:
         return ()
     from lobes.gateway._mesh_routing import member_lanes
+    from lobes.roles import ROLE_BACKEND
 
     self_name = _mesh_self_name()
     hosted = _hosted_roles(table)
+    peer_ready = {m.name: set(m.ready_roles) for m in mesh_snapshot.members}
+
+    def live(lane: "MemberLane") -> bool:
+        if lane.pending:
+            return False
+        if ready is None:
+            return True
+        if lane.is_self:
+            return bool(ready.get(ROLE_BACKEND.get(lane.role, lane.role)))
+        return lane.role in peer_ready.get(lane.member, set())
+
     return tuple(
         lane.name
         for role in _member_lane_roles()
         for lane in member_lanes(
             mesh_snapshot, role, self_name=self_name, self_hosts=role in hosted
         )
-        if not lane.pending
+        if live(lane)
     )
 
 
@@ -5464,7 +5485,9 @@ class _Handler(BaseHTTPRequestHandler):
                 # Member lanes (mesh-pool-load-sharing, t4): every routable
                 # "{role}-{member}" this box answers — () with mesh disabled,
                 # so the listing stays byte-identical there.
-                member_lane_ids=member_lane_ids(self.table, as_routing_snapshot(mesh_snapshot)),
+                member_lane_ids=member_lane_ids(
+                    self.table, as_routing_snapshot(mesh_snapshot), ready=ready
+                ),
             ),
         )
 
