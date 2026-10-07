@@ -60,6 +60,15 @@ bluetts = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]
+# The EmbeddingGemma 2 embed sidecar (orin-embedding-specialist plan, t5) —
+# lobes/embed_sidecar/server.py. torch, sentence-transformers>=6.1.0 (older
+# versions ignore the order of multimodal dict inputs), Pillow and torchcodec are
+# installed by the sidecar's own Dockerfile (Jetson torch wheels need a specific
+# index), not listed here; only the HTTP shell is.
+embed-sidecar = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/lobes-cli"

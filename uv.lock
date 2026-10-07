@@ -510,6 +510,10 @@ chatterbox-ml = [
     { name = "phonikud-onnx" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+embed-sidecar = [
+    { name = "fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 realtime = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -538,6 +542,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'bluetts'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox-ml'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'embed-sidecar'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'realtime'", specifier = ">=0.28" },
     { name = "numpy", marker = "extra == 'realtime'", specifier = ">=2.0" },
@@ -549,9 +554,10 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'bluetts'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'chatterbox-ml'", specifier = ">=0.34" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'embed-sidecar'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'realtime'", specifier = ">=0.34" },
 ]
-provides-extras = ["realtime", "chatterbox", "chatterbox-ml", "bluetts"]
+provides-extras = ["realtime", "chatterbox", "chatterbox-ml", "bluetts", "embed-sidecar"]
 
 [package.metadata.requires-dev]
 dev = [
