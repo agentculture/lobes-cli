@@ -239,8 +239,9 @@ AUDIO_HE_TEMPLATES = {
 AUDIO_HE_ENV_TEMPLATE = "fleet/env.audio-he.example"
 # Specialist embed/rerank lane overlay (orin-embedding-specialist, t13). Declares
 # one profile-gated, port-less service per registry lane (``embed-<lane>``); the
-# base fleet compose is untouched. NOT yet wired into ``lobes init`` — the
-# overlay is scaffolded by hand until the init wiring lands.
+# base fleet compose is untouched. ``lobes init --shape <shape>`` scaffolds both
+# files for any shape that hosts lanes (``orin-embed``); ``compose_file_args``
+# chains the overlay whenever it is present in the deployment dir.
 EMBED_OVERLAY = "docker-compose.embed.yml"
 EMBED_TEMPLATES = {
     "fleet/docker-compose.embed.yml": EMBED_OVERLAY,

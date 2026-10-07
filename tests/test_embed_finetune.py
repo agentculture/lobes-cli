@@ -89,3 +89,32 @@ def test_finetune_instance_leaves_base_vectors_identical():
     assert tune_body["model"] == "local:my-tune"
     assert all(_cos(a, b) == pytest.approx(1.0, abs=1e-12) for a, b in zip(before, after))
     assert any(_cos(a, b) < 1.0 - 1e-6 for a, b in zip(before, tuned))
+
+
+def test_gateway_wires_a_declared_finetune_lane():
+    """Review finding: EMBED_FINETUNE_LANES must reach the gateway, not stop at the registry."""
+    import lobes.gateway  # noqa: F401  (load order: the roles<->gateway cycle)
+    from lobes.gateway import server
+    from lobes.gateway._config import build_config
+    from lobes.gateway._routing import resolve_model
+
+    env = {
+        "EMBED_FINETUNE_LANES": "my-tune=/models/my-tune",
+        "MY_TUNE_BASE_URL": "http://embed-my-tune:8000",
+        "MY_TUNE_TESTED_ON": "unit",
+    }
+    table, cfg = build_config(env)
+    backend = next(b for b in table.backends if b.name == "my-tune")
+    assert backend.served_name == "local:my-tune"
+    assert backend.task == "embed"
+    for requested in ("my-tune", "local:my-tune"):
+        assert resolve_model(table, requested) == "local:my-tune"
+    caps = server.capabilities_payload(
+        table, cfg, env, gateway_url="http://gw:8000", backend_ready={"my-tune": True}
+    )
+    entry = caps["my-tune"]
+    assert entry["lane"] is True
+    assert entry["model"] == "local:my-tune"
+    assert entry["dimension"] == 768
+    assert entry["tested_on"] == "unit"
+    assert "gemma2-embed" not in caps  # the base lane is not wired by a fine-tune's env

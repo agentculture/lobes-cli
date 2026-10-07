@@ -45,8 +45,8 @@ services:
     runtime: nvidia
     ipc: host
     environment:
-      - EMBED_MODEL_ID=${GEMMA2_EMBED_MODEL:-google/embeddinggemma-2}
-      - EMBED_SERVED_NAME=${GEMMA2_EMBED_SERVED_NAME:-google/embeddinggemma-2}
+      - EMBED_MODEL_ID=google/embeddinggemma-2
+      - EMBED_SERVED_NAME=google/embeddinggemma-2
       - EMBED_MODALITIES=${GEMMA2_EMBED_MODALITIES:-text,image,video,audio}
       - EMBED_DTYPE=${GEMMA2_EMBED_DTYPE:-bf16}
       - EMBED_HOST=0.0.0.0
@@ -104,8 +104,8 @@ services:
     command:
       - vllm
       - serve
-      - ${QWEN3VL_EMBED_MODEL:-Qwen/Qwen3-VL-Embedding-8B}
-      - --served-model-name=${QWEN3VL_EMBED_SERVED_NAME:-Qwen/Qwen3-VL-Embedding-8B}
+      - Qwen/Qwen3-VL-Embedding-8B
+      - --served-model-name=Qwen/Qwen3-VL-Embedding-8B
       - --host=0.0.0.0
       - --port=8000
       - --runner=pooling
@@ -162,8 +162,8 @@ services:
     command:
       - vllm
       - serve
-      - ${QWEN3VL_RERANK_MODEL:-Qwen/Qwen3-VL-Reranker-8B}
-      - --served-model-name=${QWEN3VL_RERANK_SERVED_NAME:-Qwen/Qwen3-VL-Reranker-8B}
+      - Qwen/Qwen3-VL-Reranker-8B
+      - --served-model-name=Qwen/Qwen3-VL-Reranker-8B
       - --host=0.0.0.0
       - --port=8000
       - --runner=pooling
@@ -217,8 +217,8 @@ services:
     command:
       - vllm
       - serve
-      - ${NEMOTRON_EMBED_MODEL:-nvidia/Nemotron-3-Embed-8B-BF16}
-      - --served-model-name=${NEMOTRON_EMBED_SERVED_NAME:-nvidia/Nemotron-3-Embed-8B-BF16}
+      - nvidia/Nemotron-3-Embed-8B-BF16
+      - --served-model-name=nvidia/Nemotron-3-Embed-8B-BF16
       - --host=0.0.0.0
       - --port=8000
       - --runner=pooling
@@ -272,8 +272,8 @@ services:
     command:
       - vllm
       - serve
-      - ${NOMIC_CODE_EMBED_MODEL:-nomic-ai/nomic-embed-code}
-      - --served-model-name=${NOMIC_CODE_EMBED_SERVED_NAME:-nomic-ai/nomic-embed-code}
+      - nomic-ai/nomic-embed-code
+      - --served-model-name=nomic-ai/nomic-embed-code
       - --host=0.0.0.0
       - --port=8000
       - --runner=pooling

@@ -19,6 +19,7 @@ from typing import Mapping
 
 import lobes.gateway  # noqa: F401  (pre-existing roles<->gateway cycle: load gateway first)
 from lobes.catalog import ENGINE_SENTENCE_TRANSFORMERS, ENGINE_VLLM, TIER_ROLE
+from lobes.lane_keys import lane_env_key
 from lobes.roles import ROLE_BACKEND, ROLES
 
 TASK_EMBED = "embed"
@@ -47,7 +48,7 @@ class EmbedLane:
 
 
 def base_url_env_for(name: str) -> str:
-    return name.upper().replace("-", "_") + "_BASE_URL"
+    return lane_env_key(name, "BASE_URL")
 
 
 def reserved_names() -> frozenset[str]:

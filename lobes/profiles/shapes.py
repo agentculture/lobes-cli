@@ -170,10 +170,16 @@ _LANE_KNOB_TYPES: dict[str, tuple[type, ...]] = {
 
 def _parse_lane_names(name: str, data: Mapping[str, Any], known: set[str]) -> tuple[str, ...]:
     raw_lanes = data.get("lanes", [])
-    if not isinstance(raw_lanes, (list, tuple)):
+    if not isinstance(raw_lanes, (list, tuple)) or not all(isinstance(x, str) for x in raw_lanes):
         raise _shape_error(
             message=f"shape {name!r}: 'lanes' must be a list of specialist lane names",
             remediation=f"known lanes: {', '.join(sorted(known))}",
+        )
+    dupes = sorted({x for x in raw_lanes if raw_lanes.count(x) > 1})
+    if dupes:
+        raise _shape_error(
+            message=f"shape {name!r}: lane(s) {dupes!r} listed more than once in 'lanes'",
+            remediation="list each hosted lane once",
         )
     unknown = set(raw_lanes) - known
     if unknown:

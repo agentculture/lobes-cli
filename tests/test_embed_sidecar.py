@@ -442,3 +442,27 @@ def test_app_shell_reads_the_body_not_a_query_param():
         sidecar._encoder = None
         resp = client.post("/v1/embeddings", json={"input": ["hi"]})
     assert resp.status_code == 503, resp.text  # "loading" — reached the handler, not a 422
+
+
+def test_health_reports_a_failed_load_distinctly():
+    """Review finding: a failed model load is a terminal 500 'failed', never 'loading' forever."""
+    from lobes.embed_sidecar import server as sidecar
+
+    settings = sidecar.load_settings({})
+    assert sidecar.health_status(False, settings)[0] == 503
+    code, body = sidecar.health_status(False, settings, "OutOfMemoryError: CUDA")
+    assert code == 500
+    assert body == {"status": "failed", "error": "OutOfMemoryError: CUDA"}
+
+
+def test_system_plus_user_text_parts_are_joined_not_refused():
+    """Review finding: an ordinary system + user chat body (two text parts) must embed."""
+    body = {
+        "messages": [
+            {"role": "system", "content": "Represent this for retrieval"},
+            {"role": "user", "content": [{"type": "text", "text": "a red square"}]},
+        ]
+    }
+    payload, enc = _ok(body)
+    assert enc.calls[0][0][0].parts == (Part("text", "Represent this for retrieval\na red square"),)
+    assert payload["modalities"] == ["text"]

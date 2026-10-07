@@ -215,6 +215,18 @@ addressed by its own lane name (`lobes/embed_lanes.py`,
    `local:<name>`.
 4. Wire it like any lane: `MY_TUNE_BASE_URL`, `_FEASIBLE`, `_MAX_ACTIVE`,
    `_TESTED_ON`, `_MAX_MODEL_LEN` (the lane name upper-cased, `-` to `_`).
+   The gateway builds the fine-tune's backend, its `model=my-tune` /
+   `model=local:my-tune` aliases and its `/capabilities` key from
+   `EMBED_FINETUNE_LANES` in ITS OWN environment (unit-tested,
+   `tests/test_embed_finetune.py::test_gateway_wires_a_declared_finetune_lane`).
+5. **What you add by hand.** The overlay ships no service for a fine-tune, so
+   add one to `docker-compose.override.yml`: a copy of `embed-gemma2-embed`
+   named `embed-my-tune` with `EMBED_MODEL_ID=/abs/path/to/checkpoint` (mount
+   it) and `EMBED_SERVED_NAME=local:my-tune`. The gateway does not read `.env`,
+   so also pass `EMBED_FINETUNE_LANES` and the `MY_TUNE_*` keys to the
+   `gateway` service's `environment:` there. `lobes up/status/assess` know
+   only the built-in lanes, and a fine-tune lane is not forwarded across the
+   mesh: address it on the box that serves it.
 
 A fine-tune is its own vector space; do not mix its vectors with the base's.
 No fine-tune lane has been served on a live box (UNVALIDATED, #108).

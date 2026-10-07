@@ -26,6 +26,7 @@ from lobes.gateway._mesh_routing import (
     MESH_MEMBER_HEADER,
     MemberInfo,
     RoutingSnapshot,
+    lane_placement,
     verify_member_roles,
 )
 from lobes.gateway._mesh_wire import Fingerprint, decode, encode
@@ -259,28 +260,43 @@ def test_a_different_checkpoint_under_the_lane_name_is_never_used(mesh_env):
     assert resp.status == 404
 
 
-def test_two_hosts_that_disagree_are_never_pooled(mesh_env):
-    ann_orin, payload = _hosting_announcement(_lane_env())
-    info = ann_orin.roles[LANE.name]
-    other_fp = dataclasses.replace(info.fingerprint, max_model_len=1234)
-    ann_thor = dataclasses.replace(
-        ann_orin,
-        name="thor",
-        origin=THOR,
-        roles={LANE.name: dataclasses.replace(info, fingerprint=other_fp)},
-    )
-    snap = RoutingSnapshot(
+def _two_host_snapshot(ann_orin, thor_info):
+    ann_thor = dataclasses.replace(ann_orin, name="thor", origin=THOR, roles={LANE.name: thor_info})
+    return RoutingSnapshot(
         members=(
             _member("orin", ORIN, ann_orin, {LANE.name}),
             _member("thor", THOR, ann_thor, {LANE.name}),
         ),
         announcements=((ORIN, ann_orin), (THOR, ann_thor)),
     )
+
+
+def test_same_checkpoint_on_two_hosts_still_forwards(mesh_env):
+    """Same served id = same vector space: a differing non-identity field never strands the lane."""
+    ann_orin, _payload = _hosting_announcement(_lane_env())
+    info = ann_orin.roles[LANE.name]
+    other_fp = dataclasses.replace(info.fingerprint, max_model_len=1234)
+    snap = _two_host_snapshot(ann_orin, dataclasses.replace(info, fingerprint=other_fp))
     table, cfg = build_config({})
     rec = _Recorder()
     resp = _post(table, cfg, LANE.name, rec, snap=snap)
-    assert rec.calls == []
-    assert resp.status == 404
+    assert resp.status == 200
+    assert len(rec.calls) == 1
+
+
+def test_a_member_serving_another_checkpoint_never_strands_the_correct_one(mesh_env):
+    """Review finding: the served-id filter runs BEFORE any agreement check."""
+    ann_orin, _payload = _hosting_announcement(_lane_env())
+    info = ann_orin.roles[LANE.name]
+    wrong_fp = dataclasses.replace(info.fingerprint, served_id="someone/other-embedder")
+    snap = _two_host_snapshot(ann_orin, dataclasses.replace(info, fingerprint=wrong_fp))
+    placement = lane_placement(snap, LANE.name, LANE.catalog_id)
+    assert placement.plain_origins == (ORIN,)
+    table, cfg = build_config({})
+    rec = _Recorder()
+    resp = _post(table, cfg, LANE.name, rec, snap=snap)
+    assert resp.status == 200
+    assert len(rec.calls) == 1
 
 
 def test_hosting_member_serves_its_own_lane_locally(mesh_env):

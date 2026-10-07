@@ -98,9 +98,12 @@ def _cmd_assess_lane(args: argparse.Namespace, json_mode: bool) -> int:
     Reuses the embedder/reranker correctness probes, each of which carries its
     own negative control: embed passes iff the query's relevant text scores
     above an unrelated one; rerank passes iff the one relevant document ranks
-    first. The lane's endpoint is ``--endpoint`` or its ``<LANE>_BASE_URL`` key
-    in the deployment's ``.env``; a lane with neither FAILS without a network
-    call, like any unwired role.
+    first. By default the probe goes through THIS box's gateway
+    (``http://localhost:<VLLM_PORT>``) addressing the lane by name, so it works
+    from the host shell on the hosting box AND on any mesh member that reaches
+    the lane by forwarding; ``<LANE>_BASE_URL`` is a container-network URL
+    (``http://embed-<lane>:8000``) the host cannot resolve. ``--endpoint`` probes
+    a lane server directly, addressing it by its raw checkpoint id.
     """
     lane = _lanes.lane_by_name(args.lane)
     if lane is None:
@@ -109,25 +112,19 @@ def _cmd_assess_lane(args: argparse.Namespace, json_mode: bool) -> int:
             message=f"unknown lane '{args.lane}'",
             remediation="valid: " + ", ".join(_lanes.LANE_SERVICE),
         )
-    env = _runtime_ops.deployment_env_soft(args)
-    url = getattr(args, "endpoint", None) or env.get(lane.base_url_env, "")
-    timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
-    if url:
-        probe = (
-            _assess.probe_rerank_correctness
-            if lane.task == TASK_SCORE
-            else _assess.probe_embed_correctness
-        )
-        result = probe(url, lane.catalog_id, timeout=timeout)
+    endpoint = getattr(args, "endpoint", None)
+    if endpoint:
+        url, model = endpoint, lane.catalog_id
     else:
-        result = _assess._probe_result(
-            lane.name,
-            "lane probe",
-            False,
-            {},
-            0.0,
-            error=f"no endpoint ({lane.base_url_env} unset)",
-        )
+        port, _deploy_dir = _runtime_ops.resolve_port_soft(args)
+        url, model = f"http://localhost:{port}", lane.name
+    timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
+    probe = (
+        _assess.probe_rerank_correctness
+        if lane.task == TASK_SCORE
+        else _assess.probe_embed_correctness
+    )
+    result = probe(url, model, timeout=timeout)
     result["role"] = lane.name
     results = {lane.name: result}
     if json_mode:

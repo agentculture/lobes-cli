@@ -76,6 +76,7 @@ from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
+from lobes.lane_keys import lane_env_prefix
 
 if TYPE_CHECKING:  # lobes.embed_lanes -> lobes.roles -> gateway: import lazily
     from lobes.embed_lanes import EmbedLane
@@ -4443,20 +4444,17 @@ def _pooled_peer_advert(
 # identity a caller needs to pick a lane: dimension, mrl_dims, modalities,
 # normalization, and an operator-declared ``tested_on``.
 _LANE_TASK_PATH = {"embed": "/v1/embeddings", "score": "/v1/rerank"}
-_LANE_FALSE = "false"
-
-
-def _lane_env_prefix(name: str) -> str:
-    return name.upper().replace("-", "_")
 
 
 def _lane_feasible(name: str, table: RoutingTable, env: Mapping[str, str]) -> bool:
-    declared = (env.get(f"{_lane_env_prefix(name)}_FEASIBLE") or "").strip().lower()
-    return declared != _LANE_FALSE and name not in table.infeasible
+    # build_config already folded <LANE>_FEASIBLE (with the gateway's one falsy
+    # set) into table.infeasible -- never re-parse it here with a different set.
+    del env
+    return name not in table.infeasible
 
 
 def _lane_context(name: str, env: Mapping[str, str], native: int) -> int:
-    raw = (env.get(f"{_lane_env_prefix(name)}_MAX_MODEL_LEN") or "").strip()
+    raw = (env.get(f"{lane_env_prefix(name)}_MAX_MODEL_LEN") or "").strip()
     try:
         return int(raw) if raw else native
     except ValueError:
@@ -4505,11 +4503,11 @@ def _lane_entry(
     return entry
 
 
-def _lane_registry() -> tuple:
-    """The specialist-lane registry, loaded lazily to avoid the import cycle."""
-    from lobes.embed_lanes import EMBED_LANES
+def _lane_registry(env: Mapping[str, str] | None = None) -> tuple:
+    """The lane registry (plus *env*'s declared fine-tunes) -- one loader, in _config."""
+    from lobes.gateway._config import _embed_lanes
 
-    return EMBED_LANES
+    return _embed_lanes(env)
 
 
 def _lane_identity(
@@ -4530,7 +4528,7 @@ def _lane_identity(
         "mrl_dims": list(model.mrl_dims if model else lane.mrl_dims),
         "modalities": list(model.modalities if model else lane.modalities),
         "normalization": model.normalization if model else lane.normalization,
-        "tested_on": (env.get(f"{_lane_env_prefix(lane.name)}_TESTED_ON") or "").strip(),
+        "tested_on": (env.get(f"{lane_env_prefix(lane.name)}_TESTED_ON") or "").strip(),
         "quant": model.quantization if model else "",
         "responsibilities": [],
         "forbidden_responsibilities": [],
@@ -4550,7 +4548,7 @@ def lane_capabilities(
     """
     backends = {b.name: b for b in table.backends}
     out: dict[str, dict] = {}
-    for lane in _lane_registry():
+    for lane in _lane_registry(env):
         backend = backends.get(lane.name)
         if backend is None or backend.served_name != lane.catalog_id or backend.task != lane.task:
             continue

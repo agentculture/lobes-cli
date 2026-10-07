@@ -74,7 +74,9 @@ live Orin followed:
 
    The 0.6B embedder and reranker containers are never recreated. Equivalent
    lane verbs: `lobes up gemma2-embed --apply`, `lobes status` (lists defined
-   lanes), `lobes assess gemma2-embed` (probes one lane).
+   lanes), `lobes assess gemma2-embed` (probes one lane THROUGH this box's
+   gateway by lane name, so it works on any mesh member; `--endpoint
+   http://127.0.0.1:<port>` probes a lane server directly).
 6. **Dev wheels.** While the sidecar and gateway need an unreleased lobes-cli,
    set `GATEWAY_PIP_EXTRA_INDEX_URL` in `.env` to the TestPyPI index; the
    Dockerfile fetches the `.devN` wheel `--no-deps` from that index only

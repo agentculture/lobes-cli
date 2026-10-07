@@ -124,10 +124,12 @@ def test_assess_embed_lane_uses_negative_control(tmp_path, capsys, monkeypatch) 
     out = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert out["passed"] is True
+    # Review finding: the default goes through this box's gateway (host-reachable)
+    # addressing the lane by NAME -- never the container-network <LANE>_BASE_URL.
     assert seen == {
-        "url": "http://lane:8000",
+        "url": "http://localhost:8000",
         "path": "/v1/embeddings",
-        "model": "google/embeddinggemma-2",
+        "model": "gemma2-embed",
     }
     assert out["probes"]["gemma2-embed"]["role"] == "gemma2-embed"
 
@@ -158,14 +160,22 @@ def test_assess_score_lane_uses_rerank_endpoint(tmp_path, capsys, monkeypatch) -
     capsys.readouterr()
 
 
-def test_assess_lane_without_endpoint_fails_without_network(tmp_path, capsys, monkeypatch) -> None:
+def test_assess_lane_endpoint_probes_the_lane_server_by_checkpoint_id(
+    tmp_path, capsys, monkeypatch
+) -> None:
     _deploy(tmp_path, lanes=False)
-    monkeypatch.setattr(_assess, "_post", lambda *a, **k: pytest.fail("no endpoint, no call"))
-    rc = main(["assess", "nemotron-embed", "--compose-dir", str(tmp_path), "--json"])
-    out = json.loads(capsys.readouterr().out)
-    assert rc != 0
-    assert out["passed"] is False
-    assert "NEMOTRON_EMBED_BASE_URL" in out["probes"]["nemotron-embed"]["error"]
+    seen: dict = {}
+
+    def fake_post(url, payload, timeout=300, *, path=""):
+        seen.update(url=url, model=payload["model"])
+        vecs = [[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]]
+        return {"data": [{"index": i, "embedding": v} for i, v in enumerate(vecs)]}
+
+    monkeypatch.setattr(_assess, "_post", fake_post)
+    argv = ["assess", "nemotron-embed", "--endpoint", "http://127.0.0.1:8099"]
+    assert main([*argv, "--compose-dir", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    assert seen == {"url": "http://127.0.0.1:8099", "model": "nvidia/Nemotron-3-Embed-8B-BF16"}
 
 
 def test_assess_unknown_lane_is_user_error(tmp_path) -> None:

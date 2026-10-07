@@ -72,6 +72,7 @@ from typing import Mapping
 
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.lane_keys import lane_env_key
 from lobes.profiles.render import profile_env, role_engine
 from lobes.profiles.schema import KNOB_LANE_ROLES, ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
@@ -395,9 +396,8 @@ def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles
 
 
 def lane_key(lane: str, suffix: str) -> str:
-    # Same spelling as lobes.gateway._config.lane_env_key (kept local: importing
-    # the gateway here would re-open the roles<->gateway import cycle).
-    return f"{lane.upper().replace('-', '_')}_{suffix}"
+    """The lane env key -- the one spelling in :mod:`lobes.lane_keys`."""
+    return lane_env_key(lane, suffix)
 
 
 # Shape lane knob -> the overlay's env-key suffix (docker-compose.embed.yml).

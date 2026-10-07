@@ -149,3 +149,14 @@ def test_sidecar_default_modalities_are_accepted_by_the_sidecar() -> None:
     line = next(item for item in env if item.startswith("EMBED_MODALITIES="))
     default = re.search(r":-([^}]*)}", line).group(1)
     assert parse_modalities(default) == frozenset({"text", "image", "video", "audio"})
+
+
+def test_lane_identity_is_pinned_not_overridable() -> None:
+    """Review finding: a <LANE>_MODEL / _SERVED_NAME override would make the gateway's
+    advertised identity (and its served_name rewrite) lie. Identity is the catalog id."""
+    text = (_FLEET / "docker-compose.embed.yml").read_text()
+    for lane in EMBED_LANES:
+        prefix = lane.name.upper().replace("-", "_")
+        assert f"${{{prefix}_MODEL" not in text
+        assert f"${{{prefix}_SERVED_NAME" not in text
+        assert lane.catalog_id in text

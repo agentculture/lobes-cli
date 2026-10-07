@@ -214,7 +214,15 @@ def load_settings(env: Mapping[str, str]) -> Settings:
     )
 
 
-def health_status(loaded: bool, settings: Settings) -> tuple[int, dict]:
+def health_status(loaded: bool, settings: Settings, error: str = "") -> tuple[int, dict]:
+    """``/health``: 200 ok, 503 while loading, 500 once the load has FAILED.
+
+    A failed load is terminal and distinct from "loading" -- the process also
+    exits non-zero (see ``_load_encoder``) so the container's restart policy
+    retries it visibly instead of sitting at "loading" forever.
+    """
+    if error:
+        return 500, {"status": "failed", "error": error}
     if not loaded:
         return 503, {"status": "loading"}
     return 200, {
@@ -350,10 +358,32 @@ def _check_parts(parts: list[Part], loaded: frozenset) -> None:
         seen.add(part.modality)
 
 
+def _merge_text_parts(parts: list[Part]) -> list[Part]:
+    """Join every text part into ONE, in order, at the first text part's position.
+
+    A chat-style body routinely carries several text parts (a system instruction
+    plus the user's text, or a caption after an image). sentence-transformers
+    keys a multimodal input by modality, so text is concatenated (newline-
+    joined) rather than refused; a SECOND media part of one modality is still
+    refused, because its order could not be preserved.
+    """
+    texts = [p.value for p in parts if p.modality == "text"]
+    if len(texts) < 2:
+        return parts
+    merged = Part("text", "\n".join(texts))
+    out: list[Part] = []
+    for part in parts:
+        if part.modality != "text":
+            out.append(part)
+        elif merged not in out:
+            out.append(merged)
+    return out
+
+
 def parse_messages(messages: Any, loaded: frozenset) -> tuple[EmbedInput, ...]:
     if not isinstance(messages, list) or not messages:
         raise _bad("messages must be a non-empty list")
-    parts = [p for message in messages for p in _message_parts(message)]
+    parts = _merge_text_parts([p for message in messages for p in _message_parts(message)])
     _check_parts(parts, loaded)
     return (EmbedInput(parts=tuple(parts)),)
 
@@ -557,21 +587,30 @@ class SentenceTransformerEncoder:  # pragma: no cover — needs torch + a GPU
 
 
 _encoder: Any = None
+_load_error = ""
 _encoder_lock = threading.Lock()
 
 
 def _load_encoder(settings: Settings) -> None:  # pragma: no cover
-    global _encoder
+    global _encoder, _load_error
     with _encoder_lock:
-        if _encoder is None:
-            log.info(
-                "[embed] loading %s (%s, %s)",
-                settings.model_id,
-                settings.dtype,
-                ",".join(sorted(settings.modalities)),
-            )
+        if _encoder is not None:
+            return
+        log.info(
+            "[embed] loading %s (%s, %s)",
+            settings.model_id,
+            settings.dtype,
+            ",".join(sorted(settings.modalities)),
+        )
+        try:
             _encoder = SentenceTransformerEncoder(settings)
-            log.info("[embed] ready")
+        except BaseException as exc:  # noqa: BLE001
+            # OOM, a refused dtype, a bad checkpoint, a missing codec: never sit at
+            # "loading" forever -- report it, then exit so restart: policies apply.
+            _load_error = f"{type(exc).__name__}: {exc}"
+            log.exception("[embed] model load FAILED")
+            os._exit(1)
+        log.info("[embed] ready")
 
 
 def build_app(settings: Settings):  # pragma: no cover — needs the [embed-sidecar] extra
@@ -587,7 +626,7 @@ def build_app(settings: Settings):  # pragma: no cover — needs the [embed-side
 
     @app.get("/health")
     async def health() -> JSONResponse:
-        code, body = health_status(_encoder is not None, settings)
+        code, body = health_status(_encoder is not None, settings, _load_error)
         return JSONResponse(status_code=code, content=body)
 
     # ``from __future__ import annotations`` turns ``Request`` into a string that

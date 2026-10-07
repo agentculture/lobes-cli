@@ -16,7 +16,7 @@ from lobes.cli import main
 from lobes.embed_lanes import EMBED_LANES
 from lobes.profiles.loader import builtin_names, resolve_profile
 from lobes.profiles.shape_render import overcommitted_groups, shape_env, shape_services
-from lobes.profiles.shapes import AUDIO_ROLES, builtin_shape_names, resolve_shape
+from lobes.profiles.shapes import AUDIO_ROLES, Shape, builtin_shape_names, resolve_shape
 from lobes.runtime import _compose, _detect, _env
 from tests.goldens.regen import shape_golden_path
 
@@ -148,3 +148,14 @@ def test_a_shape_without_lanes_does_not_scaffold_the_overlay(tmp_path, monkeypat
         == 0
     )
     assert not (tmp_path / "docker-compose.embed.yml").exists()
+
+
+@pytest.mark.parametrize(
+    "lanes", [[{"name": "gemma2-embed"}], ["gemma2-embed", "gemma2-embed"], "gemma2-embed"]
+)
+def test_malformed_lanes_raise_a_shape_error_not_a_raw_exception(lanes) -> None:
+    """Review finding: unhashable entries / duplicates are structured shape errors."""
+    from lobes.cli._errors import ModelGearError
+
+    with pytest.raises(ModelGearError):
+        Shape.from_dict("x", {"hosts": ["embedder"], "lanes": lanes})

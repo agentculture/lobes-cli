@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 
 from lobes.catalog import TIER_ROLE, resolve_tier
 from lobes.gateway._routing import RENDER_TASK, Backend, RoutingTable, tier_aliases
+from lobes.lane_keys import lane_env_key as _lane_env_key
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
 # sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP). NOTE this is the served-name a
@@ -278,20 +279,21 @@ LANE_KEY_SUFFIXES: tuple[str, ...] = (
 )
 
 
-def lane_env_key(lane_name: str, suffix: str) -> str:
-    """The ``<LANE>_<SUFFIX>`` env key for a specialist lane (``-`` -> ``_``)."""
-    return f"{lane_name.upper().replace('-', '_')}_{suffix}"
+lane_env_key = _lane_env_key  # the one spelling lives in lobes.lane_keys
 
 
-def _embed_lanes() -> tuple:
-    """The lane registry, imported lazily.
+def _embed_lanes(env: Mapping[str, str] | None = None) -> tuple:
+    """The lane registry plus, given an env, its declared fine-tune lanes.
 
-    ``lobes.embed_lanes`` imports ``lobes.roles``, which imports THIS module,
-    so a top-level import would be circular whichever side loads first.
+    ``EMBED_FINETUNE_LANES`` (``name=/abs/path,...``) adds operator-declared
+    fine-tunes of EmbeddingGemma 2, each served under its own ``local:<name>``
+    identity behind its own ``<NAME>_BASE_URL``; a malformed declaration raises.
+    Imported lazily: ``lobes.embed_lanes`` imports ``lobes.roles``, which
+    imports THIS module, so a top-level import would be circular.
     """
-    from lobes.embed_lanes import EMBED_LANES
+    from lobes.embed_lanes import EMBED_LANES, all_lanes
 
-    return EMBED_LANES
+    return EMBED_LANES if env is None else all_lanes(env)
 
 
 # The sentinel every replica ranks at today (weight hardcoded 1.0 everywhere
@@ -337,7 +339,7 @@ def _local_capacities(env: Mapping[str, str]) -> dict[str, float]:
     # Specialist lanes carry their own per-backend <LANE>_MAX_ACTIVE (t6). The
     # kill switch above returns before this, so it still wins for lanes too: a
     # lane then has no entry, which downstream ranks at the same sentinel.
-    keys.update({lane.name: lane_env_key(lane.name, "MAX_ACTIVE") for lane in _embed_lanes()})
+    keys.update({lane.name: lane_env_key(lane.name, "MAX_ACTIVE") for lane in _embed_lanes(env)})
     out: dict[str, float] = {}
     for name, key in keys.items():
         raw = (env.get(key) or "").strip()
@@ -860,7 +862,7 @@ def _lane_backends(env: Mapping[str, str]) -> list[Backend]:
     means not wired — no backend, no alias, so a request for it 404s.
     """
     out: list[Backend] = []
-    for lane in _embed_lanes():
+    for lane in _embed_lanes(env):
         url = (env.get(lane_env_key(lane.name, "BASE_URL")) or "").strip()
         if url:
             out.append(
@@ -894,7 +896,7 @@ def _infeasible_lanes(env: Mapping[str, str]) -> frozenset[str]:
     """
     return frozenset(
         lane.name
-        for lane in _embed_lanes()
+        for lane in _embed_lanes(env)
         if (env.get(lane_env_key(lane.name, "FEASIBLE")) or "").strip().lower() in _FALSY_FEASIBLE
     )
 

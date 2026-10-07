@@ -1059,34 +1059,35 @@ def _announces_served_id(
 
 
 def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str) -> RolePlacement:
-    """:func:`compute_role_placement` for a lane, restricted to its checkpoint.
+    """Where a lane this box does not host is served, restricted to its checkpoint.
 
-    Plain and pending origins are kept only when the member announced
-    *served_id* for *lane* — never a different checkpoint under the same name
-    — and a fingerprint disagreement among the rest still refuses the plain
-    name exactly as it does for a role. No local fingerprint: this is only
-    consulted for a lane this box does not host.
+    A lane's vector space is its checkpoint, so the served id is the gate:
+    candidates are filtered to members that announced exactly *served_id* for
+    *lane* FIRST, and every one of those is a plain origin (ordered by member
+    name). The role-style "every fingerprint field must agree" rule is NOT
+    applied here: it would let a member serving a different checkpoint -- or two
+    identical hosts whose fingerprints carry an ``unknown`` field (#297) --
+    strand the correct members with no plain origin, and lanes have no
+    ``{lane}-{member}`` addresses to fall back on. A member announcing another
+    checkpoint under the lane's name is never a candidate. No local fingerprint:
+    this is only consulted for a lane this box does not host.
     """
-    placement = compute_role_placement(snapshot, lane)
     ann_by_origin = dict(snapshot.announcements)
-
-    def keep(origins: tuple[str, ...], *, unknown_ok: bool) -> tuple[str, ...]:
-        return tuple(
-            o
-            for o in origins
-            if (unknown_ok and o not in ann_by_origin)
-            or _announces_served_id(ann_by_origin, o, lane, served_id)
-        )
-
+    plain = tuple(
+        origin
+        for _name, origin, _fp in sorted(_collect_role_candidates(snapshot, lane))
+        if _announces_served_id(ann_by_origin, origin, lane, served_id)
+    )
     # A pending member a seed roster listed before its announcement arrived
     # has no served id to check yet; it is only ever a 503 "not yet", never a
     # forward, so it stays pending until its announcement says otherwise.
-    return RolePlacement(
-        role=lane,
-        plain_origins=keep(placement.plain_origins, unknown_ok=False),
-        suffixed=placement.suffixed,
-        pending_origins=keep(placement.pending_origins, unknown_ok=True),
+    pending = tuple(
+        origin
+        for origin in _pending_origins_for_role(snapshot, lane)
+        if origin not in ann_by_origin
+        or _announces_served_id(ann_by_origin, origin, lane, served_id)
     )
+    return RolePlacement(role=lane, plain_origins=plain, suffixed=(), pending_origins=pending)
 
 
 def member_name_for_origin(snapshot: RoutingSnapshot, origin: str) -> str:
