@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.84.2] - 2026-10-07
+
+### Added
+
+- `culture.yaml` declares the culture-rules PR fixer test gate (`uv sync`, then `uv run pytest -n auto`), so the fixer can push fixes to lobes-cli PRs once the repo is on its allow-list.
+
 ## [0.84.1] - 2026-10-07
 
 ### Changed

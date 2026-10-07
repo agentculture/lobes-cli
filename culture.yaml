@@ -2,6 +2,13 @@
 # *and* the deployed agent that consumes it over the acp `vllm-local` provider.
 # `model:` must match VLLM_SERVED_NAME in the deployment .env (the part after
 # `vllm-local/`); `lobes doctor` checks this.
+# Test gate for the culture-rules PR fixer: read from a PR's base commit; the fixer's
+# commit is pushed only when these pass in a fresh checkout.
+gate:
+  setup:
+  - [uv, sync]
+  test:
+  - [uv, run, pytest, -n, auto]
 agents:
 - suffix: lobes
   backend: acp
