@@ -413,7 +413,37 @@ def _render_table(registry: dict[str, dict], source: str) -> str:
         lines.extend(_render_infeasible_lines(info))
         lines.append(f"          responsibilities: {', '.join(info['responsibilities'])}")
         lines.extend(_render_mesh_lines(info))
+    lines.extend(_render_lane_lines(registry))
     return "\n".join(lines)
+
+
+def _render_lane_lines(registry: dict[str, dict]) -> list[str]:
+    """The separate ``lanes:`` block — every top-level entry flagged ``lane``.
+
+    Specialist embed/rerank lanes (orin-embedding-specialist t7) are NOT
+    roles: the gateway adds one top-level key per WIRED lane next to the role
+    keys, so they are listed here, after the role rows, never mixed into them.
+    No wired lane (and every pre-lane gateway) → no block at all.
+    """
+    lanes = [
+        (name, info)
+        for name, info in registry.items()
+        if isinstance(info, dict) and info.get("lane")
+    ]
+    if not lanes:
+        return []
+    lines = ["", "lanes:"]
+    for name, info in lanes:
+        dims = info.get("dimension") or "-"
+        mrl = ",".join(str(d) for d in info.get("mrl_dims") or ()) or "-"
+        lines.append(
+            f"  {name:<18} {str(info.get('model') or ''):<40} task={info.get('task') or '-'} "
+            f"dim={dims} mrl={mrl} {_loaded_cell(info)}"
+        )
+        modalities = ", ".join(info.get("modalities") or ()) or "-"
+        tested = info.get("tested_on") or "unmeasured"
+        lines.append(f"    modalities: {modalities}; tested_on: {tested}")
+    return lines
 
 
 @dataclasses.dataclass(frozen=True)

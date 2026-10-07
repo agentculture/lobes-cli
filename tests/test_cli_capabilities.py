@@ -746,3 +746,38 @@ def test_capabilities_table_names_pooled_mesh_members_and_keeps_sole_origin_line
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_render_table_shows_wired_lanes_in_a_separate_block() -> None:
+    """orin-embedding-specialist t7: lane keys never crash the table; they
+    render in their own ``lanes`` block, after every role row."""
+    import dataclasses as _dc
+
+    from lobes.embed_lanes import EMBED_LANES
+    from lobes.gateway import server as gateway_server
+    from lobes.gateway._config import build_config
+    from lobes.gateway._routing import Backend
+
+    env = {"PRIMARY_URL": "http://vllm-primary:8000", "GEMMA2_EMBED_TESTED_ON": "orin"}
+    table, cfg = build_config(env)
+    lane = next(lane for lane in EMBED_LANES if lane.name == "gemma2-embed")
+    table = _dc.replace(
+        table,
+        backends=table.backends
+        + (Backend(lane.name, "http://x:8000", lane.catalog_id, task=lane.task),),
+    )
+    payload = gateway_server.capabilities_payload(
+        table, cfg, env=env, gateway_url="http://localhost:8000"
+    )
+    text = capabilities_module._render_table(payload, "gateway")
+    role_part, _, lane_part = text.partition("\nlanes:")
+    assert "gemma2-embed" not in role_part
+    assert "gemma2-embed" in lane_part
+    assert "google/embeddinggemma-2" in lane_part
+    assert "768" in lane_part and "orin" in lane_part
+    # No lane wired → no lanes block at all.
+    plain_table, _ = build_config(env)
+    plain = gateway_server.capabilities_payload(
+        plain_table, cfg, env=env, gateway_url="http://localhost:8000"
+    )
+    assert "\nlanes:" not in capabilities_module._render_table(plain, "gateway")

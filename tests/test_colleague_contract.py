@@ -47,8 +47,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from lobes.embed_lanes import EMBED_LANES
 from lobes.gateway import server as S
 from lobes.gateway._config import ServerConfig, build_config
+from lobes.gateway._routing import Backend
 from lobes.roles import ROLES, STT_REALTIME_RESPONSIBILITY, RoleInfo, build_role_registry
 from lobes.roles_measure import ALLOWED_METRIC_KEYS, measure_registry
 
@@ -229,10 +231,35 @@ def _make_fake_fleet_handler(table, cfg: ServerConfig, env: dict) -> type[_FakeF
     )
 
 
+def _with_lanes(table, lane_names: tuple[str, ...]):
+    """``table`` plus a directly-built Backend per named specialist lane.
+
+    The shared t7 contract: a wired lane is a Backend whose ``name`` is the
+    lane name, ``served_name`` its catalog id and ``task`` its task family.
+    Built here directly so this test pins the contract, not t6's env parsing.
+    """
+    by_name = {lane.name: lane for lane in EMBED_LANES}
+    extra = tuple(
+        Backend(
+            name=name,
+            base_url=f"http://{name}:8000",  # never dialed
+            served_name=by_name[name].catalog_id,
+            task=by_name[name].task,
+        )
+        for name in lane_names
+    )
+    return dataclasses.replace(table, backends=table.backends + extra)
+
+
+_ALL_LANES = tuple(lane.name for lane in EMBED_LANES)
+
+
 @contextlib.contextmanager
-def _running_fake_fleet(env: dict):
+def _running_fake_fleet(env: dict, lanes: tuple[str, ...] = ()):
     """Stand up the fake fleet for the duration of the ``with`` block."""
     table, cfg = build_config(env)
+    if lanes:
+        table = _with_lanes(table, lanes)
     handler_cls = _make_fake_fleet_handler(table, cfg, env)
     httpd = ThreadingHTTPServer((cfg.host, cfg.port), handler_cls)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -250,6 +277,15 @@ def fake_fleet():
     port = _free_port()
     env = _full_env(port)
     with _running_fake_fleet(env) as (base_url, table, cfg):
+        yield base_url, table, cfg, env
+
+
+@pytest.fixture
+def fake_fleet_with_lanes():
+    """The fully-wired fake fleet with EVERY specialist lane wired as well."""
+    port = _free_port()
+    env = _full_env(port)
+    with _running_fake_fleet(env, lanes=_ALL_LANES) as (base_url, table, cfg):
         yield base_url, table, cfg, env
 
 
@@ -394,31 +430,66 @@ _QUALITY_TOKENS = (
 )
 
 
-def test_capabilities_contract_is_runtime_descriptor_only(fake_fleet) -> None:
-    base_url, _table, _cfg, _env = fake_fleet
+# Every key a specialist-lane entry carries (orin-embedding-specialist t7).
+_LANE_FIELDS = frozenset(
+    {
+        "lane",
+        "model",
+        "runtime",
+        "endpoint",
+        "path",
+        "task",
+        "context",
+        "dimension",
+        "mrl_dims",
+        "modalities",
+        "normalization",
+        "tested_on",
+        "quant",
+        "responsibilities",
+        "forbidden_responsibilities",
+        "feasible",
+        "loaded",
+        "ready",
+        "fingerprint",
+    }
+)
+
+
+def test_capabilities_contract_is_runtime_descriptor_only(fake_fleet_with_lanes) -> None:
+    base_url, _table, _cfg, _env = fake_fleet_with_lanes
     with urllib.request.urlopen(base_url + "/capabilities", timeout=5) as r:
         contract = json.load(r)
     known_fields = {f.name for f in dataclasses.fields(RoleInfo)}
-    assert set(contract) == set(ROLES)
-    for role, entry in contract.items():
-        extra = set(entry) - known_fields
-        assert not extra, f"{role} carries an undeclared field: {extra}"
+    # Every ROLES key is present; the only other keys are wired lanes.
+    assert set(ROLES) <= set(contract)
+    assert set(contract) - set(ROLES) == set(_ALL_LANES)
+    for name, entry in contract.items():
+        allowed = _LANE_FIELDS if name in _ALL_LANES else known_fields
+        if name in _ALL_LANES:
+            assert entry["lane"] is True
+            assert _LANE_FIELDS <= set(entry), f"lane {name} is missing a field"
+        extra = set(entry) - allowed
+        assert not extra, f"{name} carries an undeclared field: {extra}"
         for key in entry:
             lowered = key.lower()
             assert not any(
                 tok in lowered for tok in _QUALITY_TOKENS
-            ), f"{role}.{key} looks like a task-quality/correctness claim"
+            ), f"{name}.{key} looks like a task-quality/correctness claim"
 
 
-def test_measure_registry_emits_only_allowed_runtime_metric_keys(fake_fleet) -> None:
-    base_url, table, cfg, env = fake_fleet
+def test_measure_registry_emits_only_allowed_runtime_metric_keys(fake_fleet_with_lanes) -> None:
+    base_url, table, cfg, env = fake_fleet_with_lanes
     # gateway_url=base_url: the fake fleet's own real, dialable loopback origin
     # — the honest fix for issue #81 t5 criterion 3 (build_role_registry never
     # fabricates an endpoint from GATEWAY_HOST/GATEWAY_PORT), mirroring what the
     # production HTTP route passes via reachable_origin(...).
     registry = build_role_registry(table, cfg, env=env, gateway_url=base_url)
     measured = measure_registry(registry, timeout=3.0)
-    assert set(measured) == set(ROLES)
+    # Every ROLES key is present, and a wired lane never leaks into the role
+    # registry: lanes are /capabilities keys, never Colleague roles (c35).
+    assert set(ROLES) <= set(measured)
+    assert not set(measured) & set(_ALL_LANES)
     for role, result in measured.items():
         extra = set(result["metrics"]) - ALLOWED_METRIC_KEYS
         assert not extra, f"{role} emitted a metric key outside ALLOWED_METRIC_KEYS: {extra}"
@@ -436,3 +507,93 @@ def test_measure_registry_emits_only_allowed_runtime_metric_keys(fake_fleet) -> 
         assert measured[role]["ready"] is False  # unwired — present, never omitted, never a crash
     # The registry's derived endpoint is the SAME fake fleet the fixture is running.
     assert registry["cortex"].endpoint == base_url
+
+
+# --- o7: colleague still resolves every seat with lane keys present ---------
+#
+# Vendored, faithfully, from colleague's own parser — the consumer this
+# contract must not break. Source: /home/spark/git/colleague/colleague/lobes.py
+# at colleague commit 6081b8c8: ``_parse_role`` (lines 215-258) and the seat
+# loop of ``resolve_roles`` (lines 299-326; the urllib fetch above it is
+# replaced by the HTTP GET in the test). colleague is not a dependency of this
+# repo, so it cannot be imported here; keep this copy in step with upstream.
+
+_COLLEAGUE_RESOLVED_ROLES = ("cortex", "senses")
+_COLLEAGUE_OPTIONAL_ROLES = ("stt", "tts", "embedder", "muse", "worker", "associate")
+
+
+def _colleague_parse_role(raw: object) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    try:
+        model = raw["model"]
+        endpoint = raw["endpoint"]
+        path = raw["path"]
+        context = raw["context"]
+        ready = raw["ready"]
+        responsibilities = raw["responsibilities"]
+        forbidden = raw["forbidden_responsibilities"]
+
+        if not isinstance(model, str) or not model:
+            return None
+        if not isinstance(endpoint, str) or not isinstance(path, str):
+            return None
+        if not isinstance(context, int) or isinstance(context, bool):
+            return None
+        if not isinstance(ready, bool):
+            return None
+        if not isinstance(responsibilities, list) or not all(
+            isinstance(item, str) for item in responsibilities
+        ):
+            return None
+        if not isinstance(forbidden, list) or not all(isinstance(item, str) for item in forbidden):
+            return None
+        return {"model": model, "endpoint": endpoint, "path": path, "context": context}
+    except (KeyError, TypeError):
+        return None
+
+
+def _colleague_resolve_roles(payload: object) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    resolved: dict = {}
+    for name in _COLLEAGUE_RESOLVED_ROLES:
+        role = _colleague_parse_role(payload.get(name))
+        if role is None:
+            return None
+        resolved[name] = role
+    for name in _COLLEAGUE_OPTIONAL_ROLES:
+        resolved[name] = _colleague_parse_role(payload.get(name))
+    return resolved
+
+
+def test_colleague_superset_parser_resolves_every_seat_with_lane_keys(
+    fake_fleet, fake_fleet_with_lanes
+) -> None:
+    """o7: the same seats resolve, to the same values, with or without lanes."""
+
+    def _fetch(base_url: str) -> dict:
+        with urllib.request.urlopen(base_url + "/capabilities", timeout=5) as r:
+            return json.load(r)
+
+    plain = _fetch(fake_fleet[0])
+    with_lanes = _fetch(fake_fleet_with_lanes[0])
+    assert set(with_lanes) - set(plain) == set(_ALL_LANES)  # lane keys really are there
+
+    resolved_plain = _colleague_resolve_roles(plain)
+    resolved = _colleague_resolve_roles(with_lanes)
+    assert resolved is not None
+    for seat in _COLLEAGUE_RESOLVED_ROLES:
+        assert resolved[seat] is not None
+    # Every seat — mandatory and optional — resolves exactly as it did before
+    # the lane keys existed. The endpoint differs only by the two fleets'
+    # ports, so compare everything but it.
+    for seat in (*_COLLEAGUE_RESOLVED_ROLES, *_COLLEAGUE_OPTIONAL_ROLES):
+        before, after = resolved_plain[seat], resolved[seat]
+        assert (before is None) == (after is None), seat
+        if after is not None:
+            assert {k: v for k, v in after.items() if k != "endpoint"} == {
+                k: v for k, v in before.items() if k != "endpoint"
+            }, seat
+    # The embedder seat still resolves to the ROLE, never to a lane.
+    assert resolved["embedder"]["model"] == _EMBED_ID

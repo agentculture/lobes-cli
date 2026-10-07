@@ -75,6 +75,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
+from lobes.embed_lanes import EMBED_LANES, EmbedLane
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.gateway._config import (
     NEVER_PROXIED_BACKENDS,
@@ -4361,6 +4362,113 @@ def _pooled_peer_advert(
     return ready, context
 
 
+# --- specialist embed/rerank lanes on /capabilities (orin-embedding-specialist
+# t7, c36/h6). A lane is NOT a Colleague role (lobes.roles.ROLES is untouched;
+# adding a role is effectively irreversible), so each WIRED lane is one
+# additional top-level key, flagged ``lane: true``, alongside the role keys. It
+# carries the same mesh-relevant keys a role entry does (model, runtime,
+# context, quant, responsibilities, feasible, fingerprint — exactly what
+# ``_mesh_routes._role_info_from_capability_entry`` reads) plus the vector-space
+# identity a caller needs to pick a lane: dimension, mrl_dims, modalities,
+# normalization, and an operator-declared ``tested_on``.
+_LANE_TASK_PATH = {"embed": "/v1/embeddings", "score": "/v1/rerank"}
+_LANE_FALSE = "false"
+
+
+def _lane_env_prefix(name: str) -> str:
+    return name.upper().replace("-", "_")
+
+
+def _lane_feasible(name: str, table: RoutingTable, env: Mapping[str, str]) -> bool:
+    declared = (env.get(f"{_lane_env_prefix(name)}_FEASIBLE") or "").strip().lower()
+    return declared != _LANE_FALSE and name not in table.infeasible
+
+
+def _lane_context(name: str, env: Mapping[str, str], native: int) -> int:
+    raw = (env.get(f"{_lane_env_prefix(name)}_MAX_MODEL_LEN") or "").strip()
+    try:
+        return int(raw) if raw else native
+    except ValueError:
+        return native
+
+
+def _lane_ready(
+    loaded: bool, endpoint: str, name: str, backend_ready: Mapping[str, bool | None] | None
+) -> bool:
+    """The same clamp roles get (lobes.roles._resolve_ready): never ready when
+    unwired/infeasible or with no endpoint to dial; an authoritative live
+    signal wins (a present None/False or a missing key is not ready, h14);
+    no signal at all falls back to ``loaded``."""
+    if not (loaded and endpoint):
+        return False
+    if backend_ready is None:
+        return loaded
+    return backend_ready.get(name) is True
+
+
+def _lane_entry(
+    lane: EmbedLane,
+    backend: Backend,
+    table: RoutingTable,
+    env: Mapping[str, str],
+    gateway: str,
+    backend_ready: Mapping[str, bool | None] | None,
+) -> dict:
+    """One wired lane's /capabilities entry, its identity read from the catalog."""
+    from lobes.roles import _offline_fingerprint
+
+    model = next((m for m in SUPPORTED_MODELS if m.id == backend.served_name), None)
+    feasible = _lane_feasible(lane.name, table, env)
+    loaded = feasible
+    native = model.native_max_model_len if model else 0
+    entry: dict = {
+        "lane": True,
+        "model": backend.served_name,
+        "runtime": model.engine if model else lane.engine,
+        "endpoint": gateway,
+        "path": _LANE_TASK_PATH.get(lane.task, ""),
+        "task": lane.task,
+        "context": _lane_context(lane.name, env, native),
+        "dimension": model.dimension if model else lane.dim,
+        "mrl_dims": list(model.mrl_dims if model else lane.mrl_dims),
+        "modalities": list(model.modalities if model else lane.modalities),
+        "normalization": model.normalization if model else lane.normalization,
+        "tested_on": (env.get(f"{_lane_env_prefix(lane.name)}_TESTED_ON") or "").strip(),
+        "quant": model.quantization if model else "",
+        "responsibilities": [],
+        "forbidden_responsibilities": [],
+        "feasible": feasible,
+        "loaded": loaded,
+        "ready": _lane_ready(loaded, gateway, lane.name, backend_ready),
+    }
+    # The role fingerprint machinery, verbatim: declared lane knobs plus the
+    # entry's own served id / context / runtime, so announced and advertised
+    # fingerprints are the same bytes (mesh verification compares them).
+    entry["fingerprint"] = _offline_fingerprint(table.lane_fingerprints.get(lane.name, {}), entry)
+    return entry
+
+
+def lane_capabilities(
+    table: RoutingTable,
+    env: Mapping[str, str],
+    gateway: str,
+    backend_ready: Mapping[str, bool | None] | None = None,
+) -> dict[str, dict]:
+    """``{lane_name: entry}`` for every WIRED lane; an unwired lane has no key.
+
+    Wired means a Backend with ``name == lane.name``, ``served_name ==
+    lane.catalog_id`` and ``task == lane.task`` is in ``table.backends``.
+    """
+    backends = {b.name: b for b in table.backends}
+    out: dict[str, dict] = {}
+    for lane in EMBED_LANES:
+        backend = backends.get(lane.name)
+        if backend is None or backend.served_name != lane.catalog_id or backend.task != lane.task:
+            continue
+        out[lane.name] = _lane_entry(lane, backend, table, env, gateway, backend_ready)
+    return out
+
+
 def capabilities_payload(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -4484,7 +4592,7 @@ def capabilities_payload(
         role: next((s for s in (replica_snapshot or {}).get(role, ()) if s.local), None)
         for role in ROLES
     }
-    return annotate_mesh_naming(
+    payload = annotate_mesh_naming(
         payload,
         as_routing_snapshot(mesh_snapshot),
         local_fingerprints=local_fingerprints,
@@ -4493,6 +4601,13 @@ def capabilities_payload(
         self_name=_mesh_self_name(),
         hosted_roles=_hosted_roles(table),
     )
+    # Specialist lanes (orin-embedding-specialist t7): added AFTER every
+    # role annotation, so none of the role-keyed passes above (referral,
+    # replicas, {role}-{member} naming) ever sees a lane key. With no lane
+    # wired this adds nothing and the payload keeps its pre-lane key set.
+    gateway = (gateway_url or (cfg.public_url or "")).rstrip("/")
+    payload.update(lane_capabilities(table, resolved_env, gateway, backend_ready))
+    return payload
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to
