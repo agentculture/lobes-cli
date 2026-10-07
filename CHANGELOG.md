@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Scrub the fleet tailnet MagicDNS name (now TAILNET) and three real tailnet IPs (now 100.64.0.10-12) from committed docs, evidence, devague/eidetic records, code comments, templates and test fixtures (#301); the env.example mesh test now rejects any *.tail<hex>.ts.net name; the orin-embed deployment lock digest is re-captured for its comment-only change.
+- Scrub the fleet tailnet MagicDNS name (now TAILNET) and three real tailnet IPs (now 100.64.0.10-12) from committed docs, evidence, devague/eidetic records, code comments, templates and test fixtures (#301); the env.example mesh test now rejects any `*.tail<hex>.ts.net` name; the orin-embed deployment lock digest is re-captured for its comment-only change.
 
 ## [0.84.2] - 2026-10-07
 
