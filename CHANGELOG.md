@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- The Jetson AGX Orin becomes the mesh embedding specialist (#291): specialist embedding lanes (gemma2-embed = EmbeddingGemma 2 multimodal sidecar, qwen3vl-embed, qwen3vl-rerank, nemotron-embed, nomic-code-embed) registered in lobes/embed_lanes.py, wired by the gateway behind <LANE>_BASE_URL with no cross-lane fallback, advertised as top-level /capabilities keys with vector-space identity, and forwarded across the mesh by name
+- The Jetson AGX Orin becomes the mesh embedding specialist (#291): specialist embedding lanes (gemma2-embed = EmbeddingGemma 2 multimodal sidecar, qwen3vl-embed, qwen3vl-rerank, nemotron-embed, nomic-code-embed) registered in lobes/embed_lanes.py, wired by the gateway behind `<LANE>_BASE_URL` with no cross-lane fallback, advertised as top-level /capabilities keys with vector-space identity, and forwarded across the mesh by name
 - EmbeddingGemma 2 Sentence-Transformers sidecar (lobes/embed_sidecar): text/image/audio/video, prompt names, MRL truncation + re-normalization, bf16-only with a degenerate-vector guard, selective encoder load
 - orin-embed built-in shape + docker-compose.embed.yml overlay + Dockerfile.embed-st; lobes up/status/assess per lane; fine-tune lane mechanism (EMBED_FINETUNE_LANES); code-retrieval head-to-head harness (scripts/embed_h2h)
 
