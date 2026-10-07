@@ -2,7 +2,7 @@
   "plan_slug": "orin-embedding-specialist",
   "schema_version": 2,
   "created": "2026-10-07T12:30:03Z",
-  "updated": "2026-10-07T12:30:03Z",
+  "updated": "2026-10-07T13:10:21Z",
   "deviations": [
     {
       "id": "d1",
@@ -36,7 +36,401 @@
       "seq": 2
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_embed_lanes.py::{test_refuses_role_name,test_refuses_tier_alias,test_refuses_member_lane_pattern}",
+      "behavior_text": "every ROLES name, every tier alias key/value and any {reserved}-* name raise ValueError from validate_lane_name",
+      "contract_text": "a lane name equal to a role, a tier alias, or matching {role}-{member} is refused at import/test time",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 3
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_embed_sidecar.py::{test_guard_vector_refuses_degenerate,test_truncated_slice_all_zero_is_an_error,test_float16_is_refused_at_load}",
+      "behavior_text": "NaN/inf/all-zero vectors (full and post-truncation) yield an error status, and EMBED_DTYPE fp16/float16/half is refused in load_settings",
+      "contract_text": "a NaN, inf or all-zero vector returns an error, never 200; loading in float16 is refused",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 4
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_embed_sidecar.py::{test_response_vectors_are_unit_length_at_every_mrl_dim,test_unsupported_dimensions_are_refused}",
+      "behavior_text": "vectors are unit length at 128/256/512/768 and any other dimensions value gets 400 unsupported_dimensions",
+      "contract_text": "MRL-truncated vectors come back re-normalized to unit length; a dimension outside 128/256/512/768 is refused",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 5
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_embed_sidecar.py::{test_messages_with_every_modality_reach_their_own_encoder,test_image_part_with_text_like_payload_stays_image,test_unloaded_modality_refused_never_dropped}",
+      "behavior_text": "each media part reaches the fake encoder as its own modality (never as text); an unloaded modality is refused, not dropped",
+      "contract_text": "image/audio/video parts are encoded by their own encoder, never converted to text",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o4",
+      "test_ref": "docs/evidence/2026-10-07-accept-orin-embed.txt \u00a72",
+      "behavior_text": "live through the Spark's gateway: image/audio/video data-URL parts embedded by EG2 on the Orin, correct item ranked 1st of 3 per modality",
+      "contract_text": "image/audio/video parts are encoded by their own encoder, never converted to text",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live probe on the deployed mesh at 0.84.0.dev619; synthetic inputs (ordering, not quality)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_gateway_embed_lanes.py::{test_unwired_lane_404s_and_dials_nothing,test_stopped_lane_503s_after_dialling_only_itself,test_wired_lane_serves_from_its_own_backend_only}",
+      "behavior_text": "an unwired lane 404s dialling nothing; a stopped lane 503s after dialling only itself; a wired lane is served only by its own backend",
+      "contract_text": "an unwired or stopped lane answers 404/503 and is never served by another lane, checkpoint or cloud provider",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o5",
+      "test_ref": "docs/evidence/2026-10-07-accept-orin-embed.txt \u00a73",
+      "behavior_text": "live: with embed-gemma2-embed stopped, the Orin and the Spark both answered 503 backend_unavailable, never another model",
+      "contract_text": "an unwired or stopped lane answers 404/503 and is never served by another lane, checkpoint or cloud provider",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live probe on the deployed mesh at 0.84.0.dev619",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_gateway_embed_lanes.py::test_multimodal_messages_body_reaches_upstream_byte_identical",
+      "behavior_text": "a compact non-ASCII messages body with image/video/text parts arrives at the fake upstream byte-equal to what was sent",
+      "contract_text": "a multimodal messages body reaches the upstream byte-identical",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_colleague_contract.py::test_colleague_superset_parser_resolves_every_seat_with_lane_keys",
+      "behavior_text": "a vendored copy of colleague's _parse_role/resolve_roles (colleague/lobes.py @6081b8c8) resolves every seat identically with and without lane keys",
+      "contract_text": "colleague resolves every seat from a payload that also carries lane keys",
+      "evidence_type": "automated",
+      "strength": "fidelity",
+      "strength_basis": "vendored copy of the colleague parser, not colleague itself \u2014 fidelity, not execution against the real client",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_mesh_lanes.py::test_non_hosting_member_forwards_lane_in_one_hop",
+      "behavior_text": "a non-hosting member forwards model=<lane> to the announcing peer once, with X-Lobes-Mesh-Member, no per-lane env",
+      "contract_text": "a non-hosting member forwards model=<lane> to the hosting peer in one hop with X-Lobes-Mesh-Member, with no per-lane env typed",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o8",
+      "test_ref": "docs/evidence/2026-10-07-accept-orin-embed.txt \u00a71",
+      "behavior_text": "live: spark, spark2 and thor answered model=gemma2-embed and the raw id with 200 + X-Lobes-Mesh-Member: orin, no lane env typed on any of them",
+      "contract_text": "a non-hosting member forwards model=<lane> to the hosting peer in one hop with X-Lobes-Mesh-Member, with no per-lane env typed",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live probe on the deployed mesh at 0.84.0.dev619",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_mesh_lanes.py::test_older_peer_ignores_lane_keys_and_still_verifies_real_roles",
+      "behavior_text": "a ROLES-only verifier (simulated older peer) verifies the announcer's real roles and ignores the lane key",
+      "contract_text": "a peer that does not know lane keys still verifies the announcer's roles",
+      "evidence_type": "automated",
+      "strength": "fidelity",
+      "strength_basis": "the older peer is simulated in-test; no real pre-0.84 gateway was exercised",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_cli_lanes.py::{test_up_lane_dry_run_touches_only_that_service,test_up_lane_apply_and_down_run_one_service}",
+      "behavior_text": "lobes up <lane> dry-run calls no compose; --apply/--down run exactly one service with --no-deps",
+      "contract_text": "starts or stops only that lane's service (no dependency walk), dry-run by default",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_embed_finetune.py::test_finetune_instance_leaves_base_vectors_identical",
+      "behavior_text": "base-lane vectors on a fixed probe set are cosine 1.0 before/after a fine-tune instance runs alongside (fake encoders)",
+      "contract_text": "adding a fine-tune lane leaves the base lane's vectors identical (cosine 1.0)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_embed_overlay.py::{test_no_specialist_service_publishes_a_host_port,test_every_specialist_service_has_mem_limit_and_healthcheck}",
+      "behavior_text": "no embed-<lane> service has ports:; every one has mem_limit and a healthcheck",
+      "contract_text": "no specialist service publishes a host port; every one carries mem_limit and a healthcheck",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "named test(s) ran green at the named commit on the merged branch (uv run pytest)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o13",
+      "test_ref": "git diff --name-status d1017b0..HEAD -- tests/goldens; tests/test_shape_goldens.py",
+      "behavior_text": "only the four new orin-embed goldens were added; switch-plans.txt gained 89 lines with 0 deletions; every pre-existing .env golden is unchanged",
+      "contract_text": "every pre-existing golden .env is byte-unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "goldens test suite green and the diff shows additions only",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o14",
+      "test_ref": "docs/evidence/2026-10-07-accept-orin-embed.txt \u00a71 + \u00a74",
+      "behavior_text": "live: model=embedder answers Qwen/Qwen3-Embedding-0.6B on spark2 and thor, but 404 role_infeasible on the Spark; identical embedder fingerprints never pool (compare_fingerprints(fp, fp) -> False, 'quantization: unknown')",
+      "contract_text": "model=embedder still answers with Qwen/Qwen3-Embedding-0.6B on every box, and orin stays in the agreeing pool",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live probe + offline reproduction; PRE-EXISTING rule (#233/#252), tracked as #297 \u2014 the obligation's 'orin stays in the agreeing pool' cannot hold for any member",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-07T12:49:04Z",
+        "commit": "ab4eae85c0a3df53e77b3aa178465773d0267817"
+      },
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false,
+      "seq": 19
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "orin-embed hosts gemma2-embed (EmbeddingGemma 2) as the ONLY standard specialist lane; nemotron-embed is a declared opt-in candidate (unwired, 404 on the Orin) instead of a resident 8B specialist",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "specialist embedding lanes: a lane is a top-level /capabilities key (lane: true + vector-space identity), wired behind <LANE>_BASE_URL, auto-forwarded across the mesh by name with X-Lobes-Mesh-Member; never a role",
+      "caused_by": [
+        "c20"
+      ],
+      "evidence_refs": [
+        "e12",
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "the gateway now relays an embeddings/rerank/score body that already names the served id byte-identically (it previously always re-encoded the JSON); a body addressed by alias is still re-encoded",
+      "caused_by": [
+        "c9"
+      ],
+      "evidence_refs": [
+        "e9"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "associate is unhosted mesh-wide: associate.feasible is false on every member (the Orin was its only host)",
+      "caused_by": [
+        "c27"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "removed",
+      "behavior_text": "the planned 8B reranker lane (Qwen3-VL-Reranker-8B) is not served: measured to need ~0.5 util and excluded under decision c18",
+      "caused_by": [
+        "c18"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "approved",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
