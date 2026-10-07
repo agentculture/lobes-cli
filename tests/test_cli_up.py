@@ -361,6 +361,56 @@ def test_up_innereye_without_activation_is_a_user_error_naming_its_own_shape(
     assert "thor-innereye" not in err
 
 
+def test_up_innereye_without_activation_names_the_env_keys(tmp_path, capsys) -> None:
+    """The remediation names the .env edit first (what a hand-kept box needs):
+    the compose profile AND the gateway's INNEREYE_BASE_URL, and warns that a
+    re-scaffold overwrites hand-kept files."""
+    _scaffold_fleet(tmp_path)
+    assert main(["up", "innereye", "--compose-dir", str(tmp_path)]) != 0
+    err = capsys.readouterr().err
+    assert "add 'innereye' to COMPOSE_PROFILES" in err
+    assert "INNEREYE_BASE_URL=http://comfyui:8188" in err
+    assert "hand-kept" in err
+
+
+def test_up_innereye_hints_name_missing_gateway_url_and_ui(tmp_path, capsys) -> None:
+    """Starting comfyui is not the whole job: the dry run says the gateway is
+    unwired and the web UI is unpublished, naming the keys that fix each."""
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=innereye\n", encoding="utf-8")
+    assert main(["up", "innereye", "--compose-dir", str(tmp_path)]) == 0
+    err = capsys.readouterr().err
+    assert "INNEREYE_BASE_URL=http://comfyui:8188" in err
+    assert "lobes up gateway --apply" in err
+    assert "INNEREYE_UI_PORT=0.0.0.0:8188" in err
+
+
+def test_up_innereye_hints_report_a_wired_published_lane(tmp_path, capsys) -> None:
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text(
+        "COMPOSE_PROFILES=innereye\nINNEREYE_BASE_URL=http://comfyui:8188\n"
+        "INNEREYE_UI_PORT=0.0.0.0:8188\n",
+        encoding="utf-8",
+    )
+    assert main(["up", "innereye", "--compose-dir", str(tmp_path)]) == 0
+    err = capsys.readouterr().err
+    assert "is not set" not in err
+    assert "web UI: INNEREYE_UI_PORT=0.0.0.0:8188" in err
+
+
+def test_up_innereye_down_prints_no_hints(tmp_path, capsys) -> None:
+    _scaffold_fleet(tmp_path)
+    (tmp_path / ".env").write_text("COMPOSE_PROFILES=innereye\n", encoding="utf-8")
+    assert main(["up", "innereye", "--down", "--compose-dir", str(tmp_path)]) == 0
+    assert "web UI" not in capsys.readouterr().err
+
+
+def test_up_help_lists_innereye(capsys) -> None:
+    with pytest.raises(SystemExit):
+        main(["up", "--help"])
+    assert "innereye" in capsys.readouterr().out
+
+
 def test_up_associate_without_activation_names_orin_associate(tmp_path, capsys) -> None:
     """Sibling regression check for the same fix: ``associate``'s hosting shape
     is ``orin-associate``, never a guessed ``thor-associate``."""

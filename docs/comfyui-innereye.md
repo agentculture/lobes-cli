@@ -257,21 +257,22 @@ Instead, the Spark card profile declares `declared_peak_gib = 31.42` under
 `[roles.innereye]`, sourced from the bare-venv baseline measurement: a cold
 FLUX turn staged CLIP 9318 MiB + Flux 22700 MiB + VAE 159 MiB = 32177 MiB.
 
-**This number has exactly one consumer: the `exclusive_roles` co-residency
-veto in `lobes/profiles/shape_render.py` (`overcommitted_groups`).** Every
-reference to `declared_peak_gib` in this repo terminates there — it is
-**never summed** with `cortex`'s (or any other role's) `gpu_mem_util`
-fraction, and **never compared against the card's total memory**. The veto
-itself is not arithmetic: it is an operator-authored `[[exclusive_roles]]`
-group (`roles = ["cortex", "innereye"]`, `shapes = ["spark-innereye"]`) plus
-a prose `reason` string quoting the measured bare-venv numbers. `lobes init`
-on the Spark card refuses to resolve a shape that would host both `cortex`
-and `innereye` together, naming the reason and the resolving shape
-(`spark-innereye`) in the refusal text — that refusal is the entire
-mechanism. **Say this plainly because it is easy to over-read**: `lobes`
-declares a known-bad pairing and refuses it. It does not measure, cap, or
-account for GPU memory for this tenant in any other way, and no code path
-anywhere sums `declared_peak_gib` with anything.
+**This number has two consumers, and neither sums it with anything.** The
+first is the `exclusive_roles` co-residency veto in
+`lobes/profiles/shape_render.py` (`overcommitted_groups`). The veto itself is
+not arithmetic. It is an operator-authored `[[exclusive_roles]]` group
+(`roles = ["cortex", "innereye"]`, `shapes = ["spark-innereye"]`) plus a prose
+`reason` string quoting the measured bare-venv numbers. `lobes init` on the
+Spark card refuses to resolve a shape that would host both `cortex` and
+`innereye`, naming the reason and the resolving shape (`spark-innereye`) in the
+refusal. `lobes up` reads the same group on a live box: it refuses to start
+one role beside the other unless `--replace` switches them.
+
+The second consumer is `lobes up`'s memory gate (`lobes/cli/_role_swap.py`).
+It compares the figure, alone, with the host's current `MemAvailable` before
+starting `comfyui`. That is an admission check, not metering. Nothing tracks
+what ComfyUI actually uses afterwards, and `declared_peak_gib` is never added
+to `cortex`'s (or any other role's) `gpu_mem_util` fraction.
 
 Co-residency — `cortex` and `innereye` sharing one Spark — is explicitly a
 **later milestone**, not a v1 goal, and v1 does not attempt to answer it by
@@ -341,7 +342,8 @@ not**:
   under `lobes/gateway/` imports `lobes.runtime._compose`, and a test
   enforces that absence so a later refactor cannot quietly cross it.
 - **Meter or sum GPU memory.** See "Declaration, not metering" above —
-  `declared_peak_gib` feeds one boolean co-residency veto and nothing else.
+  `declared_peak_gib` feeds the co-residency veto and `lobes up`'s
+  start-time memory check, and is never summed with anything.
   Nothing in `render.py`, `schema.py`, `shapes.py`, or `shape_render.py`
   sums `gpu_mem_util` (or the declared peak) across roles or compares it to
   a card total, for `innereye` or any other role.
@@ -392,6 +394,36 @@ not mere **liveness** (the process is up and answering something) — a
 distinction worth stating because ComfyUI's own `/` and `/system_stats`
 answer 200 earlier, during the loading window, and would falsely advertise
 `ready: true` if used instead.
+
+## Turning it on for a live box
+
+`lobes up innereye --replace --apply` switches a box from `cortex` to
+`innereye` when its card declares the two exclusive, as the Spark's does. It
+stops cortex and backs up `.env`. It then sets `PRIMARY_FEASIBLE=false`, so the
+mesh serves `cortex`, and activates innereye (`COMPOSE_PROFILES`,
+`INNEREYE_BASE_URL`, `INNEREYE_FEASIBLE=true`). Finally it starts `comfyui` and
+recreates the gateway. `lobes up cortex --replace --apply` switches back.
+Without `--replace`, `lobes up` (including `lobes up colleague-stack`)
+refuses to start either role beside the other. `lobes fleet up` and `lobes
+serve` don't check yet: they start every lane, so on a switched box they
+bring cortex back beside ComfyUI (issue #294).
+
+**Memory gate.** For a role with exclusive rivals or a declared peak on its
+card, `lobes up <role> --apply` refuses to start the role when
+`MemAvailable` is below what the role needs. A dry run only reports it. The
+requirement is the card's `declared_peak_gib`, or for a vLLM role its
+`*_GPU_MEM_UTIL` share of `MemTotal`. A role that is already running isn't
+checked. Under `--replace` the check runs after the rival stops. If memory is
+still short, it restarts the rival and leaves `.env` alone. If writing `.env`
+or starting the role fails, the switch restores `.env` from its backup and
+restarts the rival. `--override-memory` skips the gate. This is a coarse
+admission check against host memory, not the per-role metering "Declaration,
+not metering" rules out. The declared peak is still never summed with
+anything.
+
+The web UI is separate: publish it with `INNEREYE_UI_PORT` (below). The
+step-by-step version is the "Recipe: serve innereye" section of the
+[`lobes-deploy` skill](../.claude/skills/lobes-deploy/SKILL.md).
 
 ## Rebuilding the image on a live box
 
