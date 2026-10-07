@@ -734,6 +734,8 @@ def _expected_templates(deploy_dir: Path) -> dict[str, str]:
         templates.update(_compose.AUDIO_TEMPLATES)
     if _compose.audio_he_overlay_present(deploy_dir):
         templates.update(_compose.AUDIO_HE_TEMPLATES)
+    if _compose.embed_overlay_present(deploy_dir):
+        templates.update(_compose.EMBED_TEMPLATES)
     return templates
 
 

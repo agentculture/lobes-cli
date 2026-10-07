@@ -138,7 +138,9 @@ def lock_keys() -> frozenset[str]:
     3. the activation keys an alternative-engine or opt-in lane renders
        (:data:`lobes.profiles.render.LLAMA_CPP_ACTIVATION_ENV`,
        :data:`lobes.profiles.shape_render.OPT_IN_ACTIVATION_ENV`,
-       :data:`lobes.profiles.shape_render.OPT_IN_CORE_ACTIVATION_ENV`).
+       :data:`lobes.profiles.shape_render.OPT_IN_CORE_ACTIVATION_ENV`);
+    4. the specialist embed-lane knobs
+       (:data:`lobes.profiles.shape_render.LANE_KNOB_SUFFIXES` per lane).
 
     :func:`is_excluded` then narrows the result — see
     :data:`EXCLUDED_RENDERED_KEYS` / :data:`EXCLUDED_KEY_SUFFIXES`.
@@ -159,6 +161,12 @@ def lock_keys() -> frozenset[str]:
     ):
         for activation in table.values():
             keys |= set(activation)
+    # 4. the specialist-lane knobs a lane-hosting shape renders
+    #    (shape_render.LANE_KNOB_SUFFIXES crossed with the lane registry).
+    from lobes.embed_lanes import EMBED_LANES
+    from lobes.profiles.shape_render import LANE_KNOB_SUFFIXES, lane_key
+
+    keys |= {lane_key(lane.name, sfx) for lane in EMBED_LANES for sfx in LANE_KNOB_SUFFIXES}
     return frozenset(key for key in keys if not is_excluded(key))
 
 

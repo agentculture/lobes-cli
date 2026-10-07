@@ -160,6 +160,68 @@ def _parse(text: str, *, source: str) -> dict:
         ) from exc
 
 
+_LANE_KNOB_TYPES: dict[str, tuple[type, ...]] = {
+    "gpu_mem_util": (float,),
+    "max_model_len": (int,),
+    "mem_limit": (str,),
+}
+
+
+def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], dict]:
+    """Validate a shape's ``lanes`` / ``lane_knobs`` (specialist embed lanes)."""
+    from lobes.embed_lanes import EMBED_LANES  # lazy: embed_lanes imports roles/gateway
+
+    known = {lane.name for lane in EMBED_LANES}
+    raw_lanes = data.get("lanes", [])
+    if not isinstance(raw_lanes, (list, tuple)):
+        raise _shape_error(
+            message=f"shape {name!r}: 'lanes' must be a list of specialist lane names",
+            remediation=f"known lanes: {', '.join(sorted(known))}",
+        )
+    unknown = set(raw_lanes) - known
+    if unknown:
+        raise _shape_error(
+            message=f"unknown lane(s) {sorted(unknown)!r} in shape {name!r} 'lanes'",
+            remediation=f"known lanes: {', '.join(sorted(known))}",
+        )
+    raw_knobs = data.get("lane_knobs", {})
+    if not isinstance(raw_knobs, Mapping):
+        raise _shape_error(
+            message=f"shape {name!r}: 'lane_knobs' must be a table/mapping",
+            remediation="declare knobs as [lane_knobs.<lane>] tables",
+        )
+    stray = set(raw_knobs) - set(raw_lanes)
+    if stray:
+        raise _shape_error(
+            message=f"lane_knobs for non-hosted lane(s) {sorted(stray)!r} in shape {name!r}",
+            remediation="list the lane in 'lanes' or drop its [lane_knobs.<lane>] table",
+        )
+    knobs: dict[str, dict[str, Any]] = {}
+    for lane, table in raw_knobs.items():
+        if not isinstance(table, Mapping):
+            raise _shape_error(
+                message=f"shape {name!r}: lane_knobs.{lane} must be a table",
+                remediation=f"known knobs: {', '.join(_LANE_KNOB_TYPES)}",
+            )
+        bad = set(table) - set(_LANE_KNOB_TYPES)
+        if bad:
+            raise _shape_error(
+                message=f"unknown knob(s) {sorted(bad)!r} in shape {name!r} lane_knobs.{lane}",
+                remediation=f"known knobs: {', '.join(_LANE_KNOB_TYPES)}",
+            )
+        for key, value in table.items():
+            ok = _LANE_KNOB_TYPES[key]
+            if isinstance(value, bool) or not isinstance(
+                value, ok + ((int,) if ok == (float,) else ())
+            ):
+                raise _shape_error(
+                    message=f"shape {name!r} lane_knobs.{lane}.{key} has the wrong type",
+                    remediation=f"{key} must be a {ok[0].__name__}",
+                )
+        knobs[lane] = dict(table)
+    return tuple(raw_lanes), knobs
+
+
 @dataclass(frozen=True)
 class Shape:
     """A named deployment shape -- the role subset one box hosts.
@@ -181,10 +243,23 @@ class Shape:
     summary: str = ""
     hosts: tuple[str, ...] = ()
     overrides: Mapping[str, RoleProfile] = field(default_factory=dict)
+    # Specialist embed/rerank lanes (lobes.embed_lanes.EMBED_LANES names) this
+    # shape hosts -- NOT Colleague roles, so they live beside `hosts`, never in
+    # it. `lane_knobs` holds each hosted lane's declared budget
+    # (gpu_mem_util / max_model_len / mem_limit). Empty for every shape that
+    # predates the specialist lanes, so their renders stay byte-identical.
+    lanes: tuple[str, ...] = ()
+    lane_knobs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", tuple(self.hosts))
         object.__setattr__(self, "overrides", MappingProxyType(dict(self.overrides)))
+        object.__setattr__(self, "lanes", tuple(self.lanes))
+        object.__setattr__(
+            self,
+            "lane_knobs",
+            MappingProxyType({k: MappingProxyType(dict(v)) for k, v in self.lane_knobs.items()}),
+        )
 
     def hosts_role(self, role: str) -> bool:
         """Whether this shape hosts ``role`` at all."""
@@ -203,12 +278,16 @@ class Shape:
 
     def to_dict(self) -> dict[str, Any]:
         """Plain-dict view, ``{"name", "summary", "hosts", "overrides"}``."""
-        return {
+        out: dict[str, Any] = {
             "name": self.name,
             "summary": self.summary,
             "hosts": list(self.hosts),
             "overrides": {role: rp.to_dict() for role, rp in self.overrides.items()},
         }
+        if self.lanes:  # absent for pre-lane shapes: their dict view is unchanged
+            out["lanes"] = list(self.lanes)
+            out["lane_knobs"] = {k: dict(v) for k, v in self.lane_knobs.items()}
+        return out
 
     @staticmethod
     def from_dict(name: str, data: Mapping[str, Any]) -> "Shape":
@@ -222,7 +301,7 @@ class Shape:
         a silently ignored value, matching
         :meth:`~lobes.profiles.schema.Profile.from_dict`'s contract exactly.
         """
-        known_top = {"name", "summary", "hosts", "overrides"}
+        known_top = {"name", "summary", "hosts", "overrides", "lanes", "lane_knobs"}
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
             raise _shape_error(
@@ -276,6 +355,8 @@ class Shape:
             for role, role_data in raw_overrides.items()
         }
 
+        lanes, lane_knobs = _parse_lanes(name, data)
+
         # declared-name wins over an embedded "name" field (the loader passes
         # the filename stem, which is the source of truth for a shape's
         # identity) -- matches Profile.from_dict's mismatch check exactly.
@@ -289,7 +370,14 @@ class Shape:
                 remediation="rename the file or fix the 'name' field so they agree",
             )
 
-        return Shape(name=name, summary=summary, hosts=tuple(raw_hosts), overrides=overrides)
+        return Shape(
+            name=name,
+            summary=summary,
+            hosts=tuple(raw_hosts),
+            overrides=overrides,
+            lanes=lanes,
+            lane_knobs=lane_knobs,
+        )
 
 
 def builtin_shape_names() -> tuple[str, ...]:

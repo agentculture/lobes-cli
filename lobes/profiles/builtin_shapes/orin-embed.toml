@@ -1,0 +1,65 @@
+# The Jetson AGX Orin 64GB EMBEDDING-SPECIALIST shape (orin-embedding-specialist
+# plan, t14; operator decisions in docs/specs/2026-10-07-orin-embedding-specialist.md).
+#
+# Hosts the two unchanged 0.6B pooling roles (`embedder`, `reranker`) plus the
+# specialist embed/rerank LANES -- addressed by their own lane names, never as
+# new Colleague roles (lobes/embed_lanes.py):
+#   gemma2-embed    google/embeddinggemma-2, FULL multimodal, Sentence-Transformers
+#                   sidecar (vLLM refuses the checkpoint)
+#   qwen3vl-embed   Qwen3-VL-Embedding-8B -- PROVISIONAL code/retrieval specialist;
+#                   a later head-to-head may swap it
+#   qwen3vl-rerank  Qwen3-VL-Reranker-8B -- the FIRST lane to drop if measured
+#                   memory leaves < 2 GiB free (plan t15)
+# It hosts NO associate / cortex / senses / hand: the 8B lanes need the budget
+# orin-associate spends on the 30B-A3B Lightning, so the two shapes are
+# alternatives for this board. orin-associate.toml is untouched.
+#
+# nemotron-embed and nomic-code-embed are declared in the overlay but NOT
+# started by default -- they are head-to-head candidates, brought up by adding
+# their compose profile to COMPOSE_PROFILES.
+#
+# Rendering: the shape adds docker-compose.embed.yml (+ Dockerfile.embed-st) to
+# the deployment (`lobes init --shape orin-embed` scaffolds them), appends every
+# hosted lane to COMPOSE_PROFILES, and sets <LANE>_BASE_URL=http://embed-<lane>:8000
+# for the HOSTED lanes only, so the gateway wires exactly the hosted set.
+# <LANE>_TESTED_ON is deliberately left unset ("") -- unmeasured.
+#
+# DECLARED, NOT VALIDATED (#108): no box has booted this shape. The only
+# measured fact is EmbeddingGemma 2's footprint
+# (docs/evidence/2026-10-07-spike-embeddinggemma2-sidecar-orin.txt): full
+# multimodal load CUDA peak 1.48 GiB, process RSS max 4.03 GiB (text-only:
+# 0.51 GiB / 2.25 GiB). The Orin has 61.34 GiB unified memory and ZERO swap.
+name = "orin-embed"
+summary = "Jetson AGX Orin 64GB embedding-specialist (DECLARED, UNVALIDATED) -- embedder + reranker + gemma2-embed / qwen3vl-embed / qwen3vl-rerank lanes, no associate/cortex/senses/hand"
+
+hosts = ["embedder", "reranker"]
+lanes = ["gemma2-embed", "qwen3vl-embed", "qwen3vl-rerank"]
+
+# Budget arithmetic (DECLARED): gpu_memory_utilization is a fraction of the
+# whole 61.34 GiB device, and unified memory is shared with the sidecar's RSS:
+#   embedder 0.06 + reranker 0.06 (builtin/orin.toml) + qwen3vl-embed 0.30
+#   + qwen3vl-rerank 0.30 = 0.72 of 61.34 GiB  (~44.2 GiB)
+#   plus ~4 GiB gemma2-embed sidecar RSS (MEASURED max 4.03 GiB)
+#   => ~48.2 GiB of 61.34 GiB, ~13 GiB left for the OS and page cache.
+# Not yet booted together: plan t15 measures it and replaces these numbers.
+# If free memory is < 2 GiB, qwen3vl-rerank is the first lane to drop.
+
+[lane_knobs.gemma2-embed]
+# DECLARED — to be measured in plan t15. Cap from the measured 4.03 GiB RSS max.
+mem_limit = "6g"
+
+[lane_knobs.qwen3vl-embed]
+# DECLARED — to be measured in plan t15.
+gpu_mem_util = 0.30
+# DECLARED — to be measured in plan t15.
+max_model_len = 8192
+# DECLARED — to be measured in plan t15. 8B bf16 weights (~16 GiB) plus runtime.
+mem_limit = "24g"
+
+[lane_knobs.qwen3vl-rerank]
+# DECLARED — to be measured in plan t15.
+gpu_mem_util = 0.30
+# DECLARED — to be measured in plan t15.
+max_model_len = 8192
+# DECLARED — to be measured in plan t15. 8B bf16 weights (~16 GiB) plus runtime.
+mem_limit = "24g"

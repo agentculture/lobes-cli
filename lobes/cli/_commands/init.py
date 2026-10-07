@@ -708,10 +708,19 @@ AUDIO_LANG_ENV_APPENDS: dict[str, tuple] = {
 }
 
 
-def _templates(fleet: bool, audio: bool, audio_lang: str = AUDIO_LANG_DEFAULT) -> dict[str, str]:
+def _templates(
+    fleet: bool,
+    audio: bool,
+    audio_lang: str = AUDIO_LANG_DEFAULT,
+    shape: Shape | None = None,
+) -> dict[str, str]:
     if not fleet:
         return _compose.SINGLE_TEMPLATES
     templates = dict(_compose.FLEET_TEMPLATES)
+    if shape is not None and shape.lanes:
+        # A shape hosting specialist embed lanes scaffolds their overlay
+        # (+ the sentence-transformers Dockerfile) like the audio overlay.
+        templates.update(_compose.EMBED_TEMPLATES)
     if audio:
         templates.update(_compose.AUDIO_TEMPLATES)
         templates.update(AUDIO_LANG_TEMPLATES[audio_lang])
@@ -1048,7 +1057,7 @@ def _emit_dry_run(
     force: bool = False,
     audio_lang: str = AUDIO_LANG_DEFAULT,
 ) -> None:
-    plan = _compose.scaffold_plan(target, _templates(fleet, audio, audio_lang))
+    plan = _compose.scaffold_plan(target, _templates(fleet, audio, audio_lang, shape))
     profile = card = None
     if fleet:
         # Detection/warning happens on a dry run too — the plan must be honest
@@ -1217,7 +1226,7 @@ def _emit_apply(
             target, profile_name, shape, shape_explicit=shape_explicit
         )
     written = _compose.write_scaffold(
-        target, force=force, templates=_templates(fleet, audio, audio_lang)
+        target, force=force, templates=_templates(fleet, audio, audio_lang, shape)
     )
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
