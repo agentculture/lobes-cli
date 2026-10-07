@@ -423,3 +423,22 @@ def test_encoder_config_kwargs_follows_the_cards_selective_load_table(modalities
     from lobes.embed_sidecar import server as sidecar
 
     assert sidecar.encoder_config_kwargs(sidecar.parse_modalities(modalities)) == expected
+
+
+def test_app_shell_reads_the_body_not_a_query_param():
+    """Regression (live Orin, 2026-10-07): POST /v1/embeddings must accept a JSON body.
+
+    Under ``from __future__ import annotations`` the lazily imported ``Request`` was
+    unresolvable, so FastAPI demanded a ``request`` QUERY parameter and 422'd every call.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from lobes.embed_sidecar import server as sidecar
+
+    app = sidecar.build_app(sidecar.load_settings({}))
+    with TestClient(app) as client:  # startup spawns a loader thread; the encoder stays None here
+        sidecar._encoder = None
+        resp = client.post("/v1/embeddings", json={"input": ["hi"]})
+    assert resp.status_code == 503, resp.text  # "loading" — reached the handler, not a 422

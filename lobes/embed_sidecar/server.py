@@ -590,8 +590,11 @@ def build_app(settings: Settings):  # pragma: no cover — needs the [embed-side
         code, body = health_status(_encoder is not None, settings)
         return JSONResponse(status_code=code, content=body)
 
-    @app.post("/v1/embeddings")
-    async def embeddings(request: Request) -> JSONResponse:
+    # ``from __future__ import annotations`` turns ``Request`` into a string that
+    # FastAPI resolves against MODULE globals, where this lazily imported class is
+    # absent; it then reads ``request`` as a required QUERY parameter (422 on every
+    # call, found on the live Orin 2026-10-07). Bind the real classes explicitly.
+    async def embeddings(request):
         if _encoder is None:
             return JSONResponse(status_code=503, content={"error": {"message": "loading"}})
         try:
@@ -600,6 +603,9 @@ def build_app(settings: Settings):  # pragma: no cover — needs the [embed-side
             body = None
         code, payload = await anyio.to_thread.run_sync(handle_embeddings, body, _encoder, settings)
         return JSONResponse(status_code=code, content=payload)
+
+    embeddings.__annotations__ = {"request": Request, "return": JSONResponse}
+    app.post("/v1/embeddings")(embeddings)
 
     return app
 
