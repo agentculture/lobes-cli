@@ -187,6 +187,24 @@ def parse_modalities(value: str | None) -> frozenset:
     return names
 
 
+def encoder_config_kwargs(modalities: frozenset) -> dict:
+    """The model card's selective-encoder load for a modality set.
+
+    EmbeddingGemma 2's card ("Selective Encoder Loading") disables unused
+    towers through ``SentenceTransformer(config_kwargs=...)``: text only ->
+    ``{"vision_config": None, "audio_config": None}`` (270M), text+image ->
+    ``{"audio_config": None}`` (440M), text+audio -> ``{"vision_config":
+    None}`` (570M), full -> ``{}`` (740M). Image and video share the vision
+    tower; code is text.
+    """
+    kwargs: dict = {}
+    if not modalities & {"image", "video"}:
+        kwargs["vision_config"] = None
+    if "audio" not in modalities:
+        kwargs["audio_config"] = None
+    return kwargs
+
+
 def load_settings(env: Mapping[str, str]) -> Settings:
     """Read and validate the sidecar's env. Raises :class:`EmbedError` at load."""
     return Settings(
@@ -491,11 +509,9 @@ class SentenceTransformerEncoder:  # pragma: no cover — needs torch + a GPU
     order is why >= 6.1.0 is required). Image bytes are opened with PIL; audio
     and video bytes go to torchcodec decoders. Nothing is captioned.
 
-    The modality gate is enforced per request by :func:`parse_request`. The
-    weight-level modular load (skipping the vision/audio towers on a text-only
-    sidecar) is NOT done here: sentence-transformers 6.1 exposes no
-    per-modality load switch, so the mechanism is still to be chosen and
-    measured on the target box.
+    The modality gate is enforced per request by :func:`parse_request`; the
+    weight-level modular load skips the unused towers via the card's
+    ``config_kwargs`` (:func:`encoder_config_kwargs`).
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -507,6 +523,7 @@ class SentenceTransformerEncoder:  # pragma: no cover — needs torch + a GPU
             settings.model_id,
             device="cuda" if torch.cuda.is_available() else "cpu",
             model_kwargs={"torch_dtype": dtype},
+            config_kwargs=encoder_config_kwargs(settings.modalities),
         )
         loaded = next(self.model.parameters()).dtype
         if loaded == torch.float16:

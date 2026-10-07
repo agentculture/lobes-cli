@@ -407,3 +407,19 @@ def test_encoder_returning_wrong_count_is_an_error():
             return []
 
     assert _err({"input": ["a", "b"]}, Short())[0] == 500
+
+
+@pytest.mark.parametrize(
+    ("modalities", "expected"),
+    [
+        ("text", {"vision_config": None, "audio_config": None}),
+        ("text,image", {"audio_config": None}),
+        ("text,video", {"audio_config": None}),
+        ("text,audio", {"vision_config": None}),
+        ("text,image,video,audio", {}),
+    ],
+)
+def test_encoder_config_kwargs_follows_the_cards_selective_load_table(modalities, expected):
+    from lobes.embed_sidecar import server as sidecar
+
+    assert sidecar.encoder_config_kwargs(sidecar.parse_modalities(modalities)) == expected
