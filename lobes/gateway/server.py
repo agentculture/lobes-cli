@@ -76,6 +76,7 @@ from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
 from lobes.gateway._authlog import RejectionLog, rejection_reason
+
 if TYPE_CHECKING:  # lobes.embed_lanes -> lobes.roles -> gateway: import lazily
     from lobes.embed_lanes import EmbedLane
 
@@ -4511,7 +4512,9 @@ def _lane_registry() -> tuple:
     return EMBED_LANES
 
 
-def _lane_identity(lane: "EmbedLane", served_name: str, env: Mapping[str, str], gateway: str) -> dict:
+def _lane_identity(
+    lane: "EmbedLane", served_name: str, env: Mapping[str, str], gateway: str
+) -> dict:
     """A lane's vector-space identity (model, dimension, modalities, ...) from the catalog."""
     model = next((m for m in SUPPORTED_MODELS if m.id == served_name), None)
     native = model.native_max_model_len if model else 0
