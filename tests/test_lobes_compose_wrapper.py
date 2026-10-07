@@ -60,6 +60,14 @@ def test_no_profile_leaves_the_command_alone(tmp_path) -> None:
     assert "-f docker-compose.yml up -d --no-deps gateway" in out.stdout
 
 
+def test_profile_after_the_service_belongs_to_the_command_inside(tmp_path) -> None:
+    """In `exec comfyui python main.py --profile x`, --profile is an argument
+    of the in-container command; it must stay where it is."""
+    out = _run(tmp_path, "exec", "comfyui", "python", "main.py", "--profile", "x")
+    assert out.returncode == 0, out.stderr
+    assert "-f docker-compose.yml exec comfyui python main.py --profile x" in out.stdout
+
+
 def test_the_template_folder_is_refused(tmp_path) -> None:
     templates = tmp_path / "lobes" / "templates" / "fleet"
     templates.mkdir(parents=True)

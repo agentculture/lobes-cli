@@ -57,18 +57,27 @@ esac
 mapfile -t files < <(lobes fleet files --compose-dir "$dir")
 
 # `--profile X` is a GLOBAL compose option: after the subcommand
-# (`up -d --profile innereye comfyui`) compose rejects it with "unknown flag".
-# Accept it anywhere and move it to the front.
+# (`up -d --no-deps --profile innereye comfyui`) compose rejects it with
+# "unknown flag". Move it to the front, but only while it is still among the
+# subcommand's own options: after the first service name (as in
+# `exec comfyui python main.py --profile x`) it belongs to the command inside.
 profiles=()
 rest=()
+seen_sub=0
+in_cmd=0
 while [ $# -gt 0 ]; do
-  case "$1" in
-    --profile) profiles+=(--profile "${2:?--profile needs a name}"); shift 2 ;;
-    --profile=*) profiles+=(--profile "${1#*=}"); shift ;;
-    *) rest+=("$1"); shift ;;
-  esac
+  if [ "$in_cmd" = 0 ]; then
+    case "$1" in
+      --profile) profiles+=(--profile "${2:?--profile needs a name}"); shift 2; continue ;;
+      --profile=*) profiles+=(--profile "${1#*=}"); shift; continue ;;
+      -*) ;;
+      *) if [ "$seen_sub" = 1 ]; then in_cmd=1; else seen_sub=1; fi ;;
+    esac
+  fi
+  rest+=("$1"); shift
 done
-set -- "${profiles[@]}" "${rest[@]}"
+# ${a[@]+"${a[@]}"}: an empty array is "unbound" under `set -u` before bash 4.4.
+set -- ${profiles[@]+"${profiles[@]}"} ${rest[@]+"${rest[@]}"}
 
 # First non-option word decides read-only vs mutating. Compose's global options
 # that take a value (`--profile innereye`) must not be mistaken for it.

@@ -251,6 +251,18 @@ def _opt_in_core_activated(deploy_dir: Path, target: str) -> None:
             f"lists it in 'hosts' and re-scaffold with 'lobes init --shape <name> "
             "--apply', then retry"
         )
+    rivals = _role_swap.exclusivity(
+        _role_swap.load_card(_env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE), deploy_dir),
+        target,
+    ).rivals
+    if rivals:
+        # On a card where the role has exclusive rivals, --replace does the
+        # activation and the stop in one step; say that first.
+        remediation = (
+            f"'lobes up {target} --replace --apply' activates it and stops "
+            f"{', '.join(rivals)} if running (run it without --apply to see the plan); "
+            + remediation
+        )
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=(
@@ -378,6 +390,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     # Validate the target FIRST so `lobes up bogus` errors on the role name even
     # when nothing is scaffolded yet (acceptance criterion 4).
     services, needs_audio = _resolve(target)
+    replace = _replace_requested(args, target, action)
 
     deploy_dir = _runtime_ops.deployment_dir(args)
 
@@ -385,65 +398,86 @@ def cmd_up(args: argparse.Namespace) -> int:
     if target == GATEWAY_TARGET and _compose.audio_overlay_present(deploy_dir):
         needs_audio = True
 
-    swap = _plan_swap(args, deploy_dir, target, action)
-
     # An opt-in core role (muse) needs its compose profile activated by a
     # hosting shape — name the real fix instead of compose's "no such service".
     # A --replace swap writes that activation itself, so it skips the check.
-    if not swap.replace:
+    if not replace:
         _opt_in_core_activated(deploy_dir, target)
 
     # A role the deployment shape drops must not start here — name the shape
     # instead of letting compose fail with "no such service" (t4b overlay).
     shape_present = _shape_blocked_services(deploy_dir, services, target)
 
-    compose_files = _compose_file_args(
-        needs_audio,
+    build = _resolve_build(args, action)
+    argv = _compose.compose_service_argv(
+        action, _chain(deploy_dir, needs_audio, shape_present), services, build=build
+    )
+
+    # The card's exclusive-role guard and memory gate run after the checks
+    # above, so a role this deployment can't start at all says so first.
+    swap = _plan_swap(args, deploy_dir, target, action, replace)
+    if replace:
+        swap.compose_files = _chain(deploy_dir, False, shape_present)
+        swap.gateway_files = _chain(
+            deploy_dir, _compose.audio_overlay_present(deploy_dir), shape_present
+        )
+        return _run_swap(args, deploy_dir, target, services, argv, swap, json_mode)
+    if not args.apply:
+        return _dry_run(deploy_dir, target, action, services, argv, build, json_mode)
+    return _apply(args, deploy_dir, target, action, services, argv, build, json_mode)
+
+
+def _chain(deploy_dir: Path, audio: bool, shape_present: bool) -> list[str]:
+    return _compose_file_args(
+        audio,
         shape_present,
         _compose.local_override_present(deploy_dir),
         _compose.gpu_overlay_present(deploy_dir),
         _compose.audio_he_overlay_present(deploy_dir),
     )
-    build = _resolve_build(args, action)
-    argv = _compose.compose_service_argv(action, compose_files, services, build=build)
+
+
+def _dry_run(
+    deploy_dir: Path,
+    target: str,
+    action: str,
+    services: list[str],
+    argv: list[str],
+    build: bool,
+    json_mode: bool,
+) -> int:
     command = " ".join(argv)
-    if swap.replace:
-        swap.compose_files = _compose_file_args(
-            False,
-            shape_present,
-            _compose.local_override_present(deploy_dir),
-            _compose.gpu_overlay_present(deploy_dir),
-            _compose.audio_he_overlay_present(deploy_dir),
-        )
-        swap.gateway_files = _compose_file_args(
-            _compose.audio_overlay_present(deploy_dir),
-            shape_present,
-            _compose.local_override_present(deploy_dir),
-            _compose.gpu_overlay_present(deploy_dir),
-            _compose.audio_he_overlay_present(deploy_dir),
-        )
-        return _run_swap(args, deploy_dir, target, services, argv, swap, json_mode)
+    payload = {
+        "dry_run": True,
+        "target": target,
+        "action": action,
+        "services": services,
+        "command": command,
+        "build": build,
+        "deployment_dir": str(deploy_dir),
+    }
+    verb_word = "STOP" if action == "stop" else "START"
+    text = (
+        f"DRY RUN — would run: {command} in {deploy_dir} "
+        f"({verb_word} target {target}: {', '.join(services)}).\n"
+        "Re-run with --apply to execute."
+    )
+    emit_result(payload if json_mode else text, json_mode=json_mode)
+    _emit_innereye_hints(deploy_dir, target, action)
+    return 0
 
-    if not args.apply:
-        payload = {
-            "dry_run": True,
-            "target": target,
-            "action": action,
-            "services": services,
-            "command": command,
-            "build": build,
-            "deployment_dir": str(deploy_dir),
-        }
-        verb_word = "STOP" if action == "stop" else "START"
-        text = (
-            f"DRY RUN — would run: {command} in {deploy_dir} "
-            f"({verb_word} target {target}: {', '.join(services)}).\n"
-            "Re-run with --apply to execute."
-        )
-        emit_result(payload if json_mode else text, json_mode=json_mode)
-        _emit_innereye_hints(deploy_dir, target, action)
-        return 0
 
+def _apply(
+    args: argparse.Namespace,
+    deploy_dir: Path,
+    target: str,
+    action: str,
+    services: list[str],
+    argv: list[str],
+    build: bool,
+    json_mode: bool,
+) -> int:
+    command = " ".join(argv)
     verb_word = "stopping" if action == "stop" else "starting"
     emit_diagnostic(f">> {verb_word} {target} ({', '.join(services)}) in {deploy_dir}")
     if action == "up":
@@ -463,96 +497,136 @@ def cmd_up(args: argparse.Namespace) -> int:
         _runtime_ops.resolve_port(args, deploy_dir / _compose.ENV_FILE),
         _env.read_env_file(deploy_dir / _compose.ENV_FILE),
     )
+    done = "started" if action == "up" else "stopped"
     result = {
-        ("started" if action == "up" else "stopped"): True,
+        done: True,
         "target": target,
         "services": services,
         "command": command,
         "build": build,
         "deployment_dir": str(deploy_dir),
     }
-    done = "started" if action == "up" else "stopped"
     emit_result(result if json_mode else f">> {target} {done} in {deploy_dir}", json_mode=json_mode)
     _emit_innereye_hints(deploy_dir, target, action)
     return 0
 
 
+# --- exclusive roles, --replace and the memory gate ---------------------------
+
+
 class _Swap:
-    """What ``--replace`` / the exclusivity guard / the memory gate decided."""
+    """What the exclusive-role guard and the memory gate decided for one ``up``."""
 
     def __init__(self) -> None:
-        self.replace = False
+        self.card = _role_swap.Card()
         self.excl = _role_swap.Exclusivity()
-        self.running: list[str] = []
+        # (role, service) for each exclusive rival with a running container.
+        self.running: list[tuple[str, str]] = []
         self.memory: _role_swap.MemoryVerdict | None = None
         self.check_memory = False
         self.env: dict[str, str] = {}
         self.compose_files: list[str] = []
         self.gateway_files: list[str] = []
 
+    def rival_names(self) -> str:
+        return ", ".join(role for role, _ in self.running)
 
-def _container_running(service: str) -> bool:
-    return _compose.container_status(_role_swap.container_for(service)) == "running"
 
-
-def _plan_swap(args: argparse.Namespace, deploy_dir: Path, target: str, action: str) -> _Swap:
-    """Apply the card's exclusive-role guard and the memory gate to ``target``.
-
-    Refuses (USER_ERROR) when an exclusive rival is running and ``--replace``
-    was not given, and when memory is short and ``--override-memory`` was not
-    given. Under ``--replace`` with a running rival the memory verdict is only
-    final after the rival stops, so it is deferred to :func:`_run_swap`.
-    """
-    swap = _Swap()
-    swap.replace = bool(getattr(args, "replace", False))
-    override_memory = bool(getattr(args, "override_memory", False))
-    if swap.replace and action == "stop":
+def _replace_requested(args: argparse.Namespace, target: str, action: str) -> bool:
+    """``--replace``, refusing the combinations that cannot mean anything."""
+    if not getattr(args, "replace", False):
+        return False
+    if action == "stop":
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message="--replace has no meaning with --down",
             remediation="to switch back, start the other role: 'lobes up <role> --replace --apply'",
         )
+    if target not in ROLE_SERVICE:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"--replace applies to a role, not '{target}'",
+            remediation="name the role to switch to, e.g. 'lobes up innereye --replace'",
+        )
+    return True
+
+
+def _running_service(role: str) -> str | None:
+    for service in _role_swap.role_services(role):
+        if _compose.container_status(_role_swap.container_for(service)) == "running":
+            return service
+    return None
+
+
+def _plan_swap(
+    args: argparse.Namespace, deploy_dir: Path, target: str, action: str, replace: bool
+) -> _Swap:
+    """Apply the card's exclusive-role guard and the memory gate to ``target``.
+
+    Refuses (USER_ERROR) when an exclusive rival is running and ``--replace``
+    was not given. Under ``--replace`` with a running rival, the memory verdict
+    is only final after the rival stops, so it is deferred to :func:`_run_swap`.
+    """
+    swap = _Swap()
     if action != "up" or target not in ROLE_SERVICE:
-        if swap.replace:
-            raise ModelGearError(
-                code=EXIT_USER_ERROR,
-                message=f"--replace applies to a role, not '{target}'",
-                remediation="name the role to switch to, e.g. 'lobes up innereye --replace'",
-            )
         return swap
     env_path = Path(deploy_dir) / _compose.ENV_FILE
     swap.env = _env.read_env_file(env_path) if env_path.is_file() else {}
-    swap.excl = _role_swap.exclusivity(swap.env, Path(deploy_dir), target)
-    swap.running = [r for r in swap.excl.rivals if _container_running(ROLE_SERVICE[r])]
-    if swap.replace and not swap.excl.rivals:
+    swap.card = _role_swap.load_card(swap.env, Path(deploy_dir))
+    if swap.card.warning:
+        emit_diagnostic(f">> warning: {swap.card.warning}")
+    swap.excl = _role_swap.exclusivity(swap.card, target)
+    if replace and not swap.excl.rivals:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
             message=(
-                f"--replace: the '{swap.excl.profile or 'unset'}' card profile declares "
+                f"--replace: the '{swap.card.name or 'unset'}' card profile declares "
                 f"no role exclusive with '{target}', so there is nothing to replace"
             ),
             remediation=f"drop --replace: 'lobes up {target} --apply'",
         )
-    if swap.running and not swap.replace:
-        names = ", ".join(swap.running)
-        raise ModelGearError(
-            code=EXIT_USER_ERROR,
-            message=(
-                f"'{target}' can't run beside {names} on this card "
-                f"({swap.excl.profile}: {swap.excl.reason})"
-            ),
-            remediation=(
-                f"'lobes up {target} --replace --apply' stops {names}, hands it to "
-                "the mesh and starts "
-                f"{target}; run it without --apply first to see the plan"
-            ),
-        )
-    swap.check_memory = not override_memory and not _container_running(ROLE_SERVICE[target])
-    if swap.check_memory:
-        swap.memory = _role_swap.memory_verdict(swap.env, Path(deploy_dir), target)
-        if not swap.memory.ok and not swap.running:
-            raise _memory_error(target, swap.memory)
+    for rival in swap.excl.rivals:
+        service = _running_service(rival)
+        if service:
+            swap.running.append((rival, service))
+    if swap.running and not replace:
+        raise _rival_error(target, swap)
+    _check_memory(args, target, swap)
     return swap
+
+
+def _rival_error(target: str, swap: _Swap) -> ModelGearError:
+    names = swap.rival_names()
+    return ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"'{target}' can't run beside {names} on this card "
+            f"({swap.card.name}: {swap.excl.reason})"
+        ),
+        remediation=(
+            f"'lobes up {target} --replace --apply' stops {names}, hands it to the mesh "
+            f"and starts {target}; run it without --apply first to see the plan"
+        ),
+    )
+
+
+def _check_memory(args: argparse.Namespace, target: str, swap: _Swap) -> None:
+    """The memory gate, before anything stops. A shortfall refuses ``--apply``
+    (a dry run only reports it), except under ``--replace`` with a running
+    rival, where the stop itself frees memory and the check is repeated."""
+    swap.check_memory = (
+        not getattr(args, "override_memory", False)
+        and _role_swap.gate_applies(swap.card, target)
+        and _running_service(target) is None
+    )
+    if not swap.check_memory:
+        return
+    swap.memory = _role_swap.memory_verdict(swap.env, swap.card, target)
+    if swap.memory.ok or swap.running:
+        return
+    if args.apply:
+        raise _memory_error(target, swap.memory)
+    emit_diagnostic(f">> --apply would refuse: {swap.memory.describe()}")
 
 
 def _memory_error(
@@ -568,11 +642,13 @@ def _memory_error(
     )
 
 
-def _with_profile(argv: list[str], role: str) -> list[str]:
-    """A profile-gated role's service is invisible to compose without its profile."""
-    if role not in OPT_IN_CORE_ROLES:
+def _service_argv(action: str, files: list[str], role: str, service: str) -> list[str]:
+    """One service's up/stop argv, carrying the profile that gates it if any."""
+    argv = _compose.compose_service_argv(action, files, [service])
+    profile = _role_swap.service_profile(role, service)
+    if profile is None:
         return argv
-    return argv[:2] + ["--profile", role] + argv[2:]
+    return argv[:2] + ["--profile", profile] + argv[2:]
 
 
 def _run_swap(
@@ -585,18 +661,47 @@ def _run_swap(
     json_mode: bool,
 ) -> int:
     """``lobes up <role> --replace``: stop rivals, gate memory, rewrite .env,
-    start the role, recreate the gateway. Dry-run prints exactly that plan."""
-    env_path = Path(deploy_dir) / _compose.ENV_FILE
+    start the role, recreate the gateway. A dry run prints exactly that plan."""
     changes = _role_swap.env_changes(swap.env, target, swap.excl.rivals)
-    stops = [
-        _with_profile(
-            _compose.compose_service_argv("stop", swap.compose_files, [ROLE_SERVICE[r]]), r
+    payload = _swap_plan(deploy_dir, target, argv, swap, changes)
+    if not args.apply:
+        payload["dry_run"] = True
+        text = (
+            f"DRY RUN — switch {deploy_dir} to {target}:\n"
+            + "\n".join(f"  {i}. {step}" for i, step in enumerate(payload["steps"], 1))
+            + "\nRe-run with --apply to execute."
         )
-        for r in swap.running
-    ]
-    gateway = _compose.compose_service_argv("up", swap.gateway_files, [GATEWAY_SERVICE])
+        emit_result(payload if json_mode else text, json_mode=json_mode)
+        _emit_innereye_hints(deploy_dir, target, "up", {**swap.env, **changes})
+        return 0
+
+    for rival, service in swap.running:
+        stop = _service_argv("stop", swap.compose_files, rival, service)
+        emit_diagnostic(f">> stopping {rival} ({service})")
+        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, stop), " ".join(stop))
+    _gate_after_stop(deploy_dir, target, swap)
+    _commit_swap(deploy_dir, target, services, argv, swap, changes)
+    port = _runtime_ops.resolve_port(args, Path(deploy_dir) / _compose.ENV_FILE)
+    if changes:
+        gateway = _compose.compose_service_argv("up", swap.gateway_files, [GATEWAY_SERVICE])
+        emit_diagnostic(">> recreating the gateway so it reads the new .env")
+        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, gateway), " ".join(gateway))
+        _await_gateway(port)
+    trigger_reannounce(port, _env.read_env_file(Path(deploy_dir) / _compose.ENV_FILE))
+    payload["started"] = True
+    emit_result(
+        payload if json_mode else f">> switched to {target} in {deploy_dir}", json_mode=json_mode
+    )
+    _emit_innereye_hints(deploy_dir, target, "up")
+    return 0
+
+
+def _swap_plan(
+    deploy_dir: Path, target: str, argv: list[str], swap: _Swap, changes: dict[str, str]
+) -> dict:
+    stops = [_service_argv("stop", swap.compose_files, r, s) for r, s in swap.running]
     if swap.memory is None:
-        memory_line = "memory: not checked (--override-memory, or already running)"
+        memory_line = "memory: not checked (--override-memory, already running, or no requirement)"
     elif swap.running:
         memory_line = f"{swap.memory.describe()} now; re-checked after the stop"
     else:
@@ -606,60 +711,81 @@ def _run_swap(
     steps += [f".env: {k}={v}" for k, v in changes.items()]
     steps.append(" ".join(argv))
     if changes:
+        gateway = _compose.compose_service_argv("up", swap.gateway_files, [GATEWAY_SERVICE])
         steps.append(" ".join(gateway))
-    payload = {
+    return {
         "target": target,
-        "replace": swap.running,
+        "replace": [role for role, _ in swap.running],
         "env_changes": changes,
         "memory": memory_line,
         "steps": steps,
         "deployment_dir": str(deploy_dir),
     }
-    if not args.apply:
-        payload["dry_run"] = True
-        text = (
-            f"DRY RUN — switch {deploy_dir} to {target}:\n"
-            + "\n".join(f"  {i}. {step}" for i, step in enumerate(steps, 1))
-            + "\nRe-run with --apply to execute."
-        )
-        emit_result(payload if json_mode else text, json_mode=json_mode)
-        _emit_innereye_hints(deploy_dir, target, "up", {**swap.env, **changes})
-        return 0
 
-    for rival, stop in zip(swap.running, stops):
-        emit_diagnostic(f">> stopping {rival} ({ROLE_SERVICE[rival]})")
-        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, stop), " ".join(stop))
-    if swap.check_memory and swap.running:
-        verdict = _role_swap.wait_for_memory(swap.env, Path(deploy_dir), target)
-        emit_diagnostic(f">> {verdict.describe()}")
-        if not verdict.ok:
-            for rival in swap.running:
-                restart = _with_profile(
-                    _compose.compose_service_argv("up", swap.compose_files, [ROLE_SERVICE[rival]]),
-                    rival,
-                )
-                emit_diagnostic(f">> restarting {rival}: not switching")
-                _compose.run_compose(deploy_dir, restart)
-            raise _memory_error(target, verdict, f"; restarted {', '.join(swap.running)}")
-    if changes:
-        backup = _role_swap.backup_env(env_path, f"switch-to-{target}")
-        emit_diagnostic(f">> .env backed up to {backup.name}")
-        _role_swap.write_env(env_path, changes)
-    emit_diagnostic(f">> starting {target} ({', '.join(services)})")
-    _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
-    _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), " ".join(argv))
-    port = _runtime_ops.resolve_port(args, env_path)
-    if changes:
-        emit_diagnostic(">> recreating the gateway so it reads the new .env")
-        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, gateway), " ".join(gateway))
-        _await_gateway(port)
-    trigger_reannounce(port, _env.read_env_file(env_path))
-    payload["started"] = True
-    emit_result(
-        payload if json_mode else f">> switched to {target} in {deploy_dir}", json_mode=json_mode
-    )
-    _emit_innereye_hints(deploy_dir, target, "up")
-    return 0
+
+def _restart_rivals(deploy_dir: Path, swap: _Swap) -> list[str]:
+    """Start the stopped rivals again; return the ones that failed to start."""
+    failed = []
+    for rival, service in swap.running:
+        restart = _service_argv("up", swap.compose_files, rival, service)
+        emit_diagnostic(f">> restarting {rival} ({service})")
+        if _compose.run_compose(deploy_dir, restart).returncode != 0:
+            failed.append(rival)
+    return failed
+
+
+def _rollback_note(deploy_dir: Path, swap: _Swap) -> str:
+    if not swap.running:
+        return ""
+    failed = _restart_rivals(deploy_dir, swap)
+    if failed:
+        return (
+            f"; restarting {', '.join(failed)} FAILED, so it is down: "
+            f"'lobes up {failed[0]} --apply' to retry"
+        )
+    return f"; restarted {swap.rival_names()}"
+
+
+def _gate_after_stop(deploy_dir: Path, target: str, swap: _Swap) -> None:
+    """The memory check that counts: after the rivals stopped. A shortfall
+    puts them back, so a refused swap changes nothing."""
+    if not (swap.check_memory and swap.running):
+        return
+    verdict = _role_swap.wait_for_memory(swap.env, swap.card, target)
+    emit_diagnostic(f">> {verdict.describe()}")
+    if not verdict.ok:
+        raise _memory_error(target, verdict, _rollback_note(deploy_dir, swap))
+
+
+def _commit_swap(
+    deploy_dir: Path,
+    target: str,
+    services: list[str],
+    argv: list[str],
+    swap: _Swap,
+    changes: dict[str, str],
+) -> None:
+    """Write .env and start the role. If either fails, put .env back and
+    restart the rivals, so the box is never left serving neither role."""
+    env_path = Path(deploy_dir) / _compose.ENV_FILE
+    backup = None
+    try:
+        if changes:
+            backup = _role_swap.backup_env(env_path, target)
+            emit_diagnostic(f">> .env backed up to {backup.name}")
+            _role_swap.write_env(env_path, changes)
+        emit_diagnostic(f">> starting {target} ({', '.join(services)})")
+        _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
+        _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), " ".join(argv))
+    except ModelGearError as exc:
+        if backup is not None:
+            _role_swap.restore_env(env_path, backup)
+            emit_diagnostic(f">> .env restored from {backup.name}")
+        raise ModelGearError(
+            code=exc.code,
+            message=f"switch to '{target}' failed: {exc.message}{_rollback_note(deploy_dir, swap)}",
+            remediation=exc.remediation,
+        ) from exc
 
 
 GATEWAY_WAIT_S = 30.0

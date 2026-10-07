@@ -32,7 +32,7 @@ def box(tmp_path, monkeypatch):
         "COMPOSE_PROFILES=\nINNEREYE_UI_PORT=0.0.0.0:8188\n",
         encoding="utf-8",
     )
-    state = {"running": {"model-gear-vllm-primary"}, "calls": []}
+    state = {"running": {"model-gear-vllm-primary"}, "calls": [], "fail": set()}
     monkeypatch.setattr(
         _compose,
         "container_status",
@@ -42,6 +42,8 @@ def box(tmp_path, monkeypatch):
     def fake_run(deploy_dir, argv):
         state["calls"].append(argv)
         svc = argv[-1]
+        if (svc, "up" in argv) in state["fail"]:
+            return types.SimpleNamespace(returncode=1, stdout="", stderr="boom")
         if "stop" in argv:
             state["running"].discard("model-gear-" + svc)
         elif "up" in argv:
@@ -80,7 +82,21 @@ def _up(box, *args: str) -> int:
 # --- the exclusivity guard ---------------------------------------------------
 
 
+def _activate_innereye(box) -> None:
+    (box["dir"] / ".env").write_text(
+        _env(box).replace("COMPOSE_PROFILES=", "COMPOSE_PROFILES=innereye"), encoding="utf-8"
+    )
+
+
+def test_unactivated_innereye_on_the_spark_points_at_replace(box, capsys) -> None:
+    assert _up(box, "innereye") != 0
+    err = capsys.readouterr().err
+    assert "lobes up innereye --replace --apply" in err
+    assert "stops cortex" in err
+
+
 def test_up_innereye_beside_running_cortex_is_refused_naming_replace(box, capsys) -> None:
+    _activate_innereye(box)
     assert _up(box, "innereye", "--apply") != 0
     err = capsys.readouterr().err
     assert "can't run beside cortex" in err
@@ -151,7 +167,8 @@ def test_replace_back_to_cortex_reverses_the_env(box) -> None:
     assert _up(box, "cortex", "--replace", "--apply") == 0
     calls = [" ".join(c) for c in box["calls"]]
     # comfyui is profile-gated: the stop must carry its profile to see it.
-    assert "--profile innereye" in calls[0] and calls[0].endswith("stop comfyui")
+    assert "--profile innereye" in calls[0]
+    assert calls[0].endswith("stop comfyui")
     env = _env(box)
     assert "PRIMARY_FEASIBLE=true" in env
     assert "INNEREYE_FEASIBLE=false" in env
@@ -169,7 +186,8 @@ def test_short_memory_refuses_and_names_override(box, capsys) -> None:
     box["set_mem"](121.7, 20.0)
     assert _up(box, "innereye", "--apply") != 0
     err = capsys.readouterr().err
-    assert "not enough memory" in err and "31.4 GiB" in err
+    assert "not enough memory" in err
+    assert "31.4 GiB" in err
     assert "--override-memory" in err
     assert box["calls"] == []
 
@@ -222,3 +240,84 @@ def test_unreadable_meminfo_does_not_block(box, monkeypatch) -> None:
         _env(box).replace("COMPOSE_PROFILES=", "COMPOSE_PROFILES=innereye"), encoding="utf-8"
     )
     assert _up(box, "innereye", "--apply") == 0
+
+
+def test_short_memory_on_a_dry_run_reports_without_refusing(box, capsys) -> None:
+    box["running"] = set()
+    (box["dir"] / ".env").write_text(
+        _env(box).replace("COMPOSE_PROFILES=", "COMPOSE_PROFILES=innereye"), encoding="utf-8"
+    )
+    box["set_mem"](121.7, 20.0)
+    assert _up(box, "innereye") == 0
+    assert "--apply would refuse: memory SHORT" in capsys.readouterr().err
+
+
+def test_gate_skips_a_role_with_no_rival_or_peak(box) -> None:
+    """hand has no exclusive rival and no declared peak on the Spark card, so a
+    host-RAM comparison would mean nothing for it; it starts regardless."""
+    box["set_mem"](121.7, 0.5)
+    (box["dir"] / ".env").write_text(_env(box) + "HAND_GPU_MEM_UTIL=0.06\n", encoding="utf-8")
+    assert _up(box, "hand", "--apply") == 0
+
+
+def test_gate_is_off_without_a_card_profile(box) -> None:
+    """A deployment that names no card (the discrete-GPU / unknown case) is
+    never refused on host RAM."""
+    box["running"] = set()
+    (box["dir"] / ".env").write_text("PRIMARY_GPU_MEM_UTIL=0.9\n", encoding="utf-8")
+    box["set_mem"](64.0, 4.0)
+    assert _up(box, "cortex", "--apply") == 0
+
+
+def test_a_failed_start_restores_env_and_restarts_the_rival(box, capsys) -> None:
+    before = _env(box)
+    box["fail"].add(("comfyui", True))
+    assert _up(box, "innereye", "--replace", "--apply") != 0
+    err = capsys.readouterr().err
+    assert _env(box) == before
+    assert "model-gear-vllm-primary" in box["running"]
+    assert "restarted cortex" in err
+    assert ".env restored from" in err
+
+
+def test_a_failed_rival_restart_is_reported_not_hidden(box, capsys) -> None:
+    box["set_mem"](121.7, 10.0)
+    box["fail"].add(("vllm-primary", True))
+    assert _up(box, "innereye", "--replace", "--apply") != 0
+    err = capsys.readouterr().err
+    assert "restarting cortex FAILED" in err
+    assert "restarted cortex" not in err
+
+
+def test_a_llama_cpp_cortex_counts_as_the_running_rival(box, capsys) -> None:
+    box["running"] = {"model-gear-llamacpp-primary"}
+    _activate_innereye(box)
+    assert _up(box, "innereye", "--apply") != 0
+    assert "can't run beside cortex" in capsys.readouterr().err
+
+
+def test_replace_stops_a_llama_cpp_cortex_with_its_profile(box) -> None:
+    box["running"] = {"model-gear-llamacpp-primary"}
+    assert _up(box, "innereye", "--replace", "--apply") == 0
+    first = " ".join(box["calls"][0])
+    assert "--profile llamacpp" in first
+    assert first.endswith("stop llamacpp-primary")
+
+
+def test_a_broken_card_profile_is_warned_about(box, capsys) -> None:
+    (box["dir"] / ".env").write_text(
+        _env(box).replace("LOBES_PROFILE=spark", "LOBES_PROFILE=nosuchcard"), encoding="utf-8"
+    )
+    _activate_innereye(box)
+    _up(box, "innereye")
+    assert "card profile 'nosuchcard' did not load" in capsys.readouterr().err
+
+
+def test_write_env_is_one_atomic_write_keeping_mode(tmp_path) -> None:
+    env = tmp_path / ".env"
+    env.write_text("# c\nA=1\nB=2\n", encoding="utf-8")
+    env.chmod(0o600)
+    _role_swap.write_env(env, {"B": "3", "C": "4"})
+    assert env.read_text(encoding="utf-8") == "# c\nA=1\nB=3\nC=4\n"
+    assert env.stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.glob(".env.tmp-*"))

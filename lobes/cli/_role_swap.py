@@ -9,30 +9,34 @@ live box:
 
 * **Refuse** to start a role while an exclusive rival's container is running.
 * **``--replace``** does the whole swap: stop the rivals, then rewrite the few
-  ``.env`` keys the gateway and compose read, so a rival is reported
-  ``feasible:false`` and the mesh serves it. The keys are the role's
-  ``*_FEASIBLE`` flag, its compose profile, and its base-URL wiring. Then start
-  the role and recreate the gateway so it reads the new keys.
-* **Memory gate.** Refuse when ``MemAvailable`` is below what the role needs:
-  the card's ``declared_peak_gib``, else the role's ``*_GPU_MEM_UTIL`` share of
-  ``MemTotal``. Under ``--replace`` the gate runs after the rivals stop, and a
-  shortfall restarts them, so a refused swap leaves the box as it was.
-  ``--override-memory`` skips the gate.
-
-``.env`` is backed up before the first write, and only keys whose value changes
-are written.
+  ``.env`` keys the gateway and compose read (a rival's ``*_FEASIBLE=false`` so
+  the mesh serves it, the role's compose profile and base-URL wiring), start the
+  role and recreate the gateway so it reads them. A failure after the stop puts
+  ``.env`` back and restarts the rivals.
+* **Memory gate**, for a role that has exclusive rivals or a declared peak on
+  its card: refuse when ``MemAvailable`` is below what the role needs (the
+  card's ``declared_peak_gib``, else its ``*_GPU_MEM_UTIL`` share of
+  ``MemTotal`` -- meaningful because exclusivity is only declared on
+  unified-memory cards). ``--override-memory`` skips it.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from lobes.gateway._config import FEASIBLE_ENV
 from lobes.profiles.loader import resolve_profile
-from lobes.profiles.shape_render import OPT_IN_CORE_ACTIVATION_ENV
-from lobes.profiles.shapes import OPT_IN_CORE_ROLES
+from lobes.profiles.render import LLAMA_CPP_COMPOSE_PROFILE, ROLE_ENV_PREFIX
+from lobes.profiles.schema import Profile
+from lobes.profiles.shape_render import (
+    LLAMA_CPP_ROLE_SERVICE,
+    OPT_IN_CORE_ACTIVATION_ENV,
+    OPT_IN_CORE_COMPOSE_PROFILE,
+    ROLE_SERVICE,
+)
 from lobes.runtime import _env
 
 
@@ -57,38 +61,90 @@ RELEASE_WAIT_S = 60.0
 RELEASE_POLL_S = 3.0
 
 
+# --- the card ----------------------------------------------------------------
+
+
+@dataclass
+class Card:
+    """The deployment's card profile, resolved once per ``lobes up``."""
+
+    name: str = ""
+    profile: Profile | None = None
+    warning: str = ""
+
+
+def load_card(env: dict[str, str], deploy_dir: Path) -> Card:
+    """Resolve ``LOBES_PROFILE``. A name that won't resolve is reported, not
+    swallowed: it turns the exclusive-role guard off, and the operator should
+    know that."""
+    name = (env.get(PROFILE_KEY) or "").strip()
+    if not name:
+        return Card()
+    try:
+        return Card(name=name, profile=resolve_profile(name, deploy_dir))
+    except Exception as exc:  # any load/validation error has the same consequence
+        return Card(
+            name=name,
+            warning=(
+                f"card profile {name!r} did not load ({exc}); exclusive-role and "
+                "memory checks are off for this command"
+            ),
+        )
+
+
 @dataclass
 class Exclusivity:
     """The card's exclusive-role facts for one target role."""
 
-    profile: str = ""
     rivals: list[str] = field(default_factory=list)
     reason: str = ""
 
 
-def exclusivity(env: dict[str, str], deploy_dir: Path, target: str) -> Exclusivity:
-    """The roles the deployment's card declares exclusive with ``target``.
-
-    Empty when ``.env`` names no profile, the profile can't be resolved, or the
-    card declares no group containing ``target``.
-    """
-    name = (env.get(PROFILE_KEY) or "").strip()
-    if not name:
-        return Exclusivity()
-    try:
-        profile = resolve_profile(name, deploy_dir)
-    except Exception:  # an unknown/broken profile only disables the guard
-        return Exclusivity(profile=name)
-    found = Exclusivity(profile=profile.name)
-    for group in profile.exclusive_roles:
+def exclusivity(card: Card, target: str) -> Exclusivity:
+    """The roles ``card`` declares exclusive with ``target``."""
+    found = Exclusivity()
+    if card.profile is None:
+        return found
+    for group in card.profile.exclusive_roles:
         if target in group.roles:
             found.rivals += [r for r in group.roles if r != target and r not in found.rivals]
             found.reason = found.reason or group.reason
     return found
 
 
+def declared_peak(card: Card, target: str) -> float | None:
+    if card.profile is None:
+        return None
+    peak = getattr(card.profile.roles.get(target), "declared_peak_gib", None)
+    return float(peak) if peak else None
+
+
+# --- services ----------------------------------------------------------------
+
+
 def container_for(service: str) -> str:
     return CONTAINER_PREFIX + service
+
+
+def role_services(role: str) -> list[str]:
+    """Every compose service that can serve ``role``: its vLLM lane plus any
+    alternative-engine lane (``llamacpp-primary`` for cortex)."""
+    services = [ROLE_SERVICE[role]]
+    alt = LLAMA_CPP_ROLE_SERVICE.get(role)
+    if alt:
+        services.append(alt)
+    return services
+
+
+def service_profile(role: str, service: str) -> str | None:
+    """The compose profile gating ``service``, if any. Compose can't see a
+    profile-gated service, even to stop it, unless that profile is active."""
+    if service == LLAMA_CPP_ROLE_SERVICE.get(role):
+        return LLAMA_CPP_COMPOSE_PROFILE
+    return OPT_IN_CORE_COMPOSE_PROFILE.get(role)
+
+
+# --- .env --------------------------------------------------------------------
 
 
 def _profiles(env: dict[str, str]) -> list[str]:
@@ -107,12 +163,14 @@ def env_changes(env: dict[str, str], target: str, rivals: list[str]) -> dict[str
     profiles = _profiles(env)
     for rival in rivals:
         want[FEASIBLE_ENV[_role_backend(rival)]] = "false"
-        if rival in OPT_IN_CORE_ROLES and rival in profiles:
-            profiles.remove(rival)
+        rival_profile = OPT_IN_CORE_COMPOSE_PROFILE.get(rival)
+        if rival_profile in profiles:
+            profiles.remove(rival_profile)
     want[FEASIBLE_ENV[_role_backend(target)]] = "true"
-    if target in OPT_IN_CORE_ROLES:
-        if target not in profiles:
-            profiles.append(target)
+    target_profile = OPT_IN_CORE_COMPOSE_PROFILE.get(target)
+    if target_profile:
+        if target_profile not in profiles:
+            profiles.append(target_profile)
         for key, value in OPT_IN_CORE_ACTIVATION_ENV.get(target, {}).items():
             if not (env.get(key) or "").strip():
                 want[key] = value
@@ -120,16 +178,45 @@ def env_changes(env: dict[str, str], target: str, rivals: list[str]) -> dict[str
     return {k: v for k, v in want.items() if (env.get(k) or "").strip() != v}
 
 
-def backup_env(env_path: Path, why: str) -> Path:
+# Backup names come from this table, never from the command line, so no
+# caller-supplied text reaches a path.
+_BACKUP_TAG = {role: f"switch-to-{role}" for role in ROLE_SERVICE}
+
+
+def backup_env(env_path: Path, target: str) -> Path:
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    backup = env_path.with_name(f"{env_path.name}.bak-{stamp}-{why}")
+    backup = env_path.with_name(f"{env_path.name}.bak-{stamp}-{_BACKUP_TAG[target]}")
     backup.write_bytes(env_path.read_bytes())
     return backup
 
 
+def _replace_atomically(env_path: Path, text: str) -> None:
+    tmp = env_path.with_name(env_path.name + ".tmp-switch")
+    tmp.write_text(text, encoding="utf-8")
+    os.chmod(tmp, env_path.stat().st_mode & 0o777)
+    os.replace(tmp, env_path)
+
+
+def restore_env(env_path: Path, backup: Path) -> None:
+    _replace_atomically(env_path, backup.read_text(encoding="utf-8"))
+
+
 def write_env(env_path: Path, changes: dict[str, str]) -> None:
+    """Apply ``changes`` in one atomic write: existing keys are rewritten in
+    place, missing ones appended, and the file is swapped in with
+    ``os.replace`` so an interruption never leaves it half-switched."""
     for key, value in changes.items():
-        _env.set_env(env_path, key, value)
+        _env.check_value(value, key)
+    pending = dict(changes)
+    out: list[str] = []
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        key = line.split("=", 1)[0] if "=" in line else None
+        if key in pending:
+            out.append(f"{key}={pending.pop(key)}")
+        else:
+            out.append(line)
+    out += [f"{k}={v}" for k, v in pending.items()]
+    _replace_atomically(env_path, "\n".join(out) + "\n")
 
 
 # --- the memory gate ---------------------------------------------------------
@@ -146,20 +233,24 @@ def meminfo_gib(field_name: str, meminfo: Path | None = None) -> float | None:
     return None
 
 
+def gate_applies(card: Card, target: str) -> bool:
+    """The gate runs only where its arithmetic means something: a role with
+    exclusive rivals (declared only on unified-memory cards) or a declared
+    peak. A discrete-GPU box never has its GPU budget compared with host RAM."""
+    return bool(exclusivity(card, target).rivals) or declared_peak(card, target) is not None
+
+
 def required_gib(
-    env: dict[str, str], deploy_dir: Path, target: str, *, meminfo: Path | None = None
+    env: dict[str, str], card: Card, target: str, *, meminfo: Path | None = None
 ) -> tuple[float | None, str]:
     """``(GiB the role needs, where that figure came from)``; None when unknown."""
-    name = (env.get(PROFILE_KEY) or "").strip()
-    if name:
-        try:
-            role = resolve_profile(name, deploy_dir).roles.get(target)
-        except Exception:  # an unresolvable profile just falls through
-            role = None
-        peak = getattr(role, "declared_peak_gib", None)
-        if peak:
-            return float(peak), f"declared_peak_gib in the {name} card profile"
-    util_key = _role_backend(target).upper() + "_GPU_MEM_UTIL"
+    peak = declared_peak(card, target)
+    if peak:
+        return peak, f"declared_peak_gib in the {card.name} card profile"
+    prefix = ROLE_ENV_PREFIX.get(target)
+    if not prefix:
+        return None, ""
+    util_key = prefix + "_GPU_MEM_UTIL"
     raw = (env.get(util_key) or "").split("#")[0].strip()
     total = meminfo_gib("MemTotal", meminfo)
     try:
@@ -191,9 +282,9 @@ class MemoryVerdict:
 
 
 def memory_verdict(
-    env: dict[str, str], deploy_dir: Path, target: str, *, meminfo: Path | None = None
+    env: dict[str, str], card: Card, target: str, *, meminfo: Path | None = None
 ) -> MemoryVerdict:
-    required, source = required_gib(env, deploy_dir, target, meminfo=meminfo)
+    required, source = required_gib(env, card, target, meminfo=meminfo)
     available = meminfo_gib("MemAvailable", meminfo)
     ok = required is None or available is None or available >= required
     return MemoryVerdict(ok, required, available, source)
@@ -201,7 +292,7 @@ def memory_verdict(
 
 def wait_for_memory(
     env: dict[str, str],
-    deploy_dir: Path,
+    card: Card,
     target: str,
     *,
     meminfo: Path | None = None,
@@ -214,10 +305,10 @@ def wait_for_memory(
     wait_s = RELEASE_WAIT_S if wait_s is None else wait_s
     poll_s = RELEASE_POLL_S if poll_s is None else poll_s
     sleep = sleep or time.sleep
-    verdict = memory_verdict(env, deploy_dir, target, meminfo=meminfo)
+    verdict = memory_verdict(env, card, target, meminfo=meminfo)
     waited = 0.0
     while not verdict.ok and waited < wait_s:
         sleep(poll_s)
         waited += poll_s
-        verdict = memory_verdict(env, deploy_dir, target, meminfo=meminfo)
+        verdict = memory_verdict(env, card, target, meminfo=meminfo)
     return verdict

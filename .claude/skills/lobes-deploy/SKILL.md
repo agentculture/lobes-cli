@@ -73,8 +73,10 @@ working because the mesh serves it from another member.
    lists every step: stop cortex, the `.env` keys it writes (it backs the
    file up first), start `comfyui`, recreate the gateway, and a memory line.
 3. **Do it:** `lobes up innereye --replace --apply`.
-   - When nothing has to stop, it refuses `--replace`. Use
-     `lobes up innereye --apply`.
+   - If cortex is already stopped, the same command still works: it stops
+     nothing and only writes the `.env` keys.
+   - If it fails partway, it puts `.env` back and restarts cortex. Report
+     the error rather than retrying by hand.
    - **`not enough memory`:** stop and tell the operator what it printed.
      After a `--replace` it has already restarted cortex, so nothing changed.
      Pass `--override-memory` only if the operator says so.

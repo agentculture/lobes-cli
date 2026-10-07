@@ -405,15 +405,18 @@ mesh serves `cortex`, and activates innereye (`COMPOSE_PROFILES`,
 recreates the gateway. `lobes up cortex --replace --apply` switches back.
 Without `--replace`, `lobes up` refuses to start either role beside the other.
 
-**Memory gate.** `lobes up <role>` refuses to start a role when
-`MemAvailable` is below what the role needs. The requirement is the card's
-`declared_peak_gib`, or for a vLLM role its `*_GPU_MEM_UTIL` share of
-`MemTotal`. A role that is already running isn't checked. Under `--replace`
-the check runs after the rival stops. If memory is still short, it restarts
-the rival and leaves `.env` alone. `--override-memory` skips the gate. This
-is a coarse admission check against host memory, not the per-role metering
-"Declaration, not metering" rules out. The declared peak is still never
-summed with anything.
+**Memory gate.** For a role with exclusive rivals or a declared peak on its
+card, `lobes up <role> --apply` refuses to start the role when
+`MemAvailable` is below what the role needs. A dry run only reports it. The
+requirement is the card's `declared_peak_gib`, or for a vLLM role its
+`*_GPU_MEM_UTIL` share of `MemTotal`. A role that is already running isn't
+checked. Under `--replace` the check runs after the rival stops. If memory is
+still short, it restarts the rival and leaves `.env` alone. If writing `.env`
+or starting the role fails, the switch restores `.env` from its backup and
+restarts the rival. `--override-memory` skips the gate. This is a coarse
+admission check against host memory, not the per-role metering "Declaration,
+not metering" rules out. The declared peak is still never summed with
+anything.
 
 The web UI is separate: publish it with `INNEREYE_UI_PORT` (below). The
 step-by-step version is the "Recipe: serve innereye" section of the
