@@ -164,6 +164,7 @@ _LANE_KNOB_TYPES: dict[str, tuple[type, ...]] = {
     "gpu_mem_util": (float,),
     "max_model_len": (int,),
     "mem_limit": (str,),
+    "tested_on": (str,),
 }
 
 

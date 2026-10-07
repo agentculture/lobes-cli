@@ -22,8 +22,8 @@ from tests.goldens.regen import shape_golden_path
 
 _SHAPE = "orin-embed"
 _CARD = "orin"
-_HOSTED = ("gemma2-embed", "qwen3vl-embed", "qwen3vl-rerank")
-_NOT_HOSTED = ("nemotron-embed", "nomic-code-embed")
+_HOSTED = ("gemma2-embed",)
+_NOT_HOSTED = ("qwen3vl-embed", "qwen3vl-rerank", "nemotron-embed", "nomic-code-embed")
 
 
 def _key(lane: str, suffix: str) -> str:
@@ -51,24 +51,17 @@ def test_hosts_pooling_gears_and_the_specialist_lanes_but_not_associate() -> Non
     assert {lane.name for lane in EMBED_LANES} >= set(_HOSTED + _NOT_HOSTED)
 
 
-def test_declared_budgets_and_every_one_is_marked_declared() -> None:
+def test_measured_budgets_and_nemotron_is_documented_opt_in() -> None:
+    """Deviation d1: EG2 is the only standard lane; Nemotron's measured knobs are documented, not rendered."""
     shape = resolve_shape(_SHAPE)
-    assert dict(shape.lane_knobs["qwen3vl-embed"]) == {
-        "gpu_mem_util": 0.30,
-        "max_model_len": 8192,
-        "mem_limit": "24g",
+    assert dict(shape.lane_knobs["gemma2-embed"]) == {
+        "mem_limit": "6g",
+        "tested_on": "jetson-agx-orin 2026-10-07",
     }
-    assert dict(shape.lane_knobs["qwen3vl-rerank"]) == {
-        "gpu_mem_util": 0.30,
-        "max_model_len": 8192,
-        "mem_limit": "24g",
-    }
-    assert dict(shape.lane_knobs["gemma2-embed"]) == {"mem_limit": "6g"}
     text = files("lobes.profiles.builtin_shapes").joinpath("orin-embed.toml").read_text("utf-8")
-    assert text.count("DECLARED — to be measured in plan t15") >= 7
-    assert "0.06 + reranker 0.06" in text and "= 0.72 of 61.34 GiB" in text
-    assert "4.03 GiB" in text
-    assert "UNVALIDATED" in shape.summary
+    assert "DECLARED — to be measured" not in text
+    assert "NEMOTRON_EMBED_GPU_MEM_UTIL=0.35" in text and "#296" in text
+    assert "UNVALIDATED" not in shape.summary
 
 
 def test_the_overcommit_check_passes() -> None:
@@ -82,16 +75,12 @@ def test_render_enables_hosted_lanes_and_wires_only_them(card: str) -> None:
     for lane in _HOSTED:
         assert lane in profiles
         assert env[_key(lane, "BASE_URL")] == f"http://embed-{lane}:8000"
-        assert _key(lane, "TESTED_ON") not in env
+        assert env[_key(lane, "TESTED_ON")] == "jetson-agx-orin 2026-10-07"
     for lane in _NOT_HOSTED:
         assert lane not in profiles
         assert _key(lane, "BASE_URL") not in env
-    assert env["QWEN3VL_EMBED_GPU_MEM_UTIL"] == "0.3"
-    assert env["QWEN3VL_RERANK_GPU_MEM_UTIL"] == "0.3"
-    assert env["QWEN3VL_EMBED_MAX_MODEL_LEN"] == "8192"
-    assert env["QWEN3VL_RERANK_MAX_MODEL_LEN"] == "8192"
     assert env["GEMMA2_EMBED_MEM_LIMIT"] == "6g"
-    assert env["QWEN3VL_EMBED_MEM_LIMIT"] == "24g"
+    assert not any(k.startswith(("QWEN3VL_", "NEMOTRON_", "NOMIC_")) for k in env)
     assert "GEMMA2_EMBED_GPU_MEM_UTIL" not in env  # the sidecar has no vLLM util
 
 
@@ -136,7 +125,8 @@ def test_init_scaffolds_the_embed_overlay_and_renders_the_lanes(tmp_path, monkey
     assert (tmp_path / "docker-compose.embed.yml").is_file()
     assert (tmp_path / "Dockerfile.embed-st").is_file()
     env_text = (tmp_path / _compose.ENV_FILE).read_text(encoding="utf-8")
-    assert "QWEN3VL_EMBED_BASE_URL=http://embed-qwen3vl-embed:8000" in env_text
+    assert "GEMMA2_EMBED_BASE_URL=http://embed-gemma2-embed:8000" in env_text
+    assert "QWEN3VL_EMBED_BASE_URL" not in env_text
     written = _env.read_env_file(tmp_path / _compose.ENV_FILE)
     assert set(_HOSTED) <= set(written["COMPOSE_PROFILES"].split(","))
     assert _compose.embed_overlay_present(tmp_path)

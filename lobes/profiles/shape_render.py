@@ -405,6 +405,7 @@ _LANE_KNOB_ENV = (
     ("gpu_mem_util", "GPU_MEM_UTIL"),
     ("max_model_len", "MAX_MODEL_LEN"),
     ("mem_limit", "MEM_LIMIT"),
+    ("tested_on", "TESTED_ON"),
 )
 LANE_KNOB_SUFFIXES = tuple(suffix for _, suffix in _LANE_KNOB_ENV)
 
