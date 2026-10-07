@@ -81,8 +81,10 @@ def test_status_values_are_known() -> None:
     assert {m.status for m in SUPPORTED_MODELS} <= {"load-tested", "configured"}
 
 
-# oes-t4: candidates whose docs/<name>.md and fleet-template wiring land in later
-# plan tasks. Explicit, so each exemption is visible and removable.
+# Specialist embed/rerank lane candidates (orin-embedding-specialist). Their docs
+# now exist and are covered by test_every_doc_file_exists; the set remains only
+# for the checks that single out lane candidates (the 0.6B-embedder singletons,
+# the hf_overrides requirement the sidecar/other-engine models do not carry).
 _EMBED_LANE_CANDIDATES = {
     "google/embeddinggemma-2",
     "Qwen/Qwen3-VL-Embedding-8B",
@@ -104,8 +106,6 @@ def test_native_max_model_len_is_a_positive_int() -> None:
 def test_every_doc_file_exists() -> None:
     # The machine catalog and the human prose must not silently diverge.
     for model in SUPPORTED_MODELS:
-        if model.id in _EMBED_LANE_CANDIDATES:
-            continue  # doc pending (orin-embedding-specialist)
         assert (_DOCS / model.doc).is_file(), f"{model.id}: missing docs/{model.doc}"
 
 
