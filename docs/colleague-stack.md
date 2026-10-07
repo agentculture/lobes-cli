@@ -738,6 +738,65 @@ deployment is ever proxied — every payload here
 looks exactly as it did before this state existed (a `feasible: false` role
 carries `hosted_by` at most, never `proxied`).
 
+## Specialist lanes (not roles)
+
+Beyond the eleven roles, a box can host **specialist embed/rerank lanes**
+(orin-embedding-specialist plan, 2026-10-07): additional models addressed by
+their **own lane name**, such as `gemma2-embed` (EmbeddingGemma 2, the standard
+lane of the `orin-embed` shape; see
+[`embeddinggemma-2.md`](embeddinggemma-2.md) and
+[`orin-embed-deployment.md`](orin-embed-deployment.md)). The registry is
+`lobes/embed_lanes.py`; the other registered names are `nemotron-embed` (declared
+opt-in), `nomic-code-embed`, `qwen3vl-embed` (measured, not carried) and
+`qwen3vl-rerank` (excluded).
+
+**How a lane is advertised.** `GET /capabilities` carries a lane as a
+**top-level key named by the lane**, next to the role keys, with `lane: true`.
+An unwired lane has no key. The entry is a vector-space identity, not a role
+description: `model`, `runtime`, `endpoint`, `path`, `task`, `context`,
+`dimension`, `mrl_dims`, `modalities`, `normalization`, `tested_on`, `quant`,
+plus `feasible` / `loaded` / `ready` and the same `fingerprint` the mesh
+verifies. `responsibilities` and `forbidden_responsibilities` are empty lists: a
+lane has no responsibilities contract. A mesh-forwarded lane additionally
+carries `proxied: true` and `hosted_by`.
+
+```json
+"gemma2-embed": {"lane": true, "model": "google/embeddinggemma-2",
+  "dimension": 768, "mrl_dims": [128, 256, 512, 768],
+  "modalities": ["text", "code", "image", "video", "audio"],
+  "ready": true, "proxied": true, "hosted_by": "http://orin.example:8000"}
+```
+
+**Wiring.** Per lane, derived from the lane name (`gemma2-embed` becomes
+`GEMMA2_EMBED_*`): `<LANE>_BASE_URL` (wires the backend), `_FEASIBLE`,
+`_MAX_ACTIVE`, `_TESTED_ON`, `_MAX_MODEL_LEN`. Operate one with `lobes up
+<lane>`, `lobes status` and `lobes assess <lane>`.
+
+**Mesh forwarding.** A lane is forwarded by the mesh by name, like a role: a
+member that does not host it is auto-wired to the verified member that
+announces it, and the answer carries `X-Lobes-Mesh-Member`. MEASURED
+2026-10-07 on spark, spark2 and thor reaching the Orin's `gemma2-embed`, text
+and multimodal bodies alike
+([acceptance](evidence/2026-10-07-accept-orin-embed.txt)). The raw checkpoint id
+(`google/embeddinggemma-2`) routes to the same lane.
+
+**No cross-lane fallback.** An embedding lane's vectors live in its own space,
+so a stopped or unwired lane answers 503 (`backend_unavailable`) or 404, never a
+vector from another model.
+
+**Why lanes are not roles.** A role is a public, Colleague-facing contract
+whose names, responsibilities and forbidden responsibilities callers pin; adding
+one is effectively irreversible (the `hand` section above records why: removing
+a responsibility or a role is a break, and every consumer, tier table and
+advert serializer learns the name). Specialist models are expected to change
+with measurement (the Orin's lane set was chosen by a head-to-head and may
+change again, issue #296), and a lane's value is its vector space, not a
+responsibility. So lanes are deliberately **data in a registry**, never entries
+in `lobes.roles.ROLES`: a lane name may not equal a role, tier or backend alias
+or match the `{role}-{member}` member-lane pattern, and a lane can be dropped or
+swapped without touching the role contract. The 0.6B `embedder` and `reranker`
+roles are unchanged.
+
 ## Serving: `lobes up <role>` and `colleague-stack`
 
 `lobes up` starts (or, with `--down`, stops) **one** role's gear without

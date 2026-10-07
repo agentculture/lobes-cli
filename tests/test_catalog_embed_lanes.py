@@ -52,7 +52,9 @@ def test_existing_entries_untouched() -> None:
 def test_new_entries_are_inert_candidates(model_id: str) -> None:
     m = _by_id(model_id)
     assert m.role_hint == "candidate"
-    assert m.status == "configured"
+    # "load-tested" only for what was actually booted on the Orin (2026-10-07);
+    # the Qwen3-VL reranker never served, so it stays "configured".
+    assert m.status == ("configured" if model_id == "Qwen/Qwen3-VL-Reranker-8B" else "load-tested")
     assert m.doc.endswith(".md")
 
 
