@@ -123,3 +123,14 @@ def test_compose_files_probes_the_deploy_dir_for_the_overlay(tmp_path: Path) -> 
         "-f",
         _compose.EMBED_OVERLAY,
     ]
+
+
+def test_gateway_receives_every_lane_key_the_gateway_reads() -> None:
+    """The gateway does not read .env: every per-lane key it consumes must be passed through."""
+    from lobes.gateway._config import lane_env_key
+
+    env = _load("docker-compose.embed.yml")["services"]["gateway"]["environment"]
+    names = {item.split("=", 1)[0] for item in env}
+    for lane in EMBED_LANES:
+        for suffix in ("BASE_URL", "FEASIBLE", "MAX_ACTIVE", "TESTED_ON", "MAX_MODEL_LEN"):
+            assert lane_env_key(lane.name, suffix) in names

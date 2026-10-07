@@ -69,14 +69,16 @@ from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 from urllib.parse import quote, urlencode, urlsplit
 
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
-from lobes.embed_lanes import EMBED_LANES, EmbedLane
 from lobes.gateway._authlog import RejectionLog, rejection_reason
+if TYPE_CHECKING:  # lobes.embed_lanes -> lobes.roles -> gateway: import lazily
+    from lobes.embed_lanes import EmbedLane
+
 from lobes.gateway._config import (
     NEVER_PROXIED_BACKENDS,
     RENDER_BODY_LIMIT_ENV,
@@ -1227,7 +1229,7 @@ def _mesh_lane_response(
     ``role_infeasible``. No per-lane env is consulted: the roster is the
     only source.
     """
-    lane = lane_for_model(requested, EMBED_LANES)
+    lane = lane_for_model(requested, _lane_registry())
     if lane is None or lane.name in _hosted_roles(table):
         return None
     placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id)
@@ -4475,7 +4477,7 @@ def _lane_ready(
 
 
 def _lane_entry(
-    lane: EmbedLane,
+    lane: "EmbedLane",
     backend: Backend,
     table: RoutingTable,
     env: Mapping[str, str],
@@ -4502,7 +4504,14 @@ def _lane_entry(
     return entry
 
 
-def _lane_identity(lane: EmbedLane, served_name: str, env: Mapping[str, str], gateway: str) -> dict:
+def _lane_registry() -> tuple:
+    """The specialist-lane registry, loaded lazily to avoid the import cycle."""
+    from lobes.embed_lanes import EMBED_LANES
+
+    return EMBED_LANES
+
+
+def _lane_identity(lane: "EmbedLane", served_name: str, env: Mapping[str, str], gateway: str) -> dict:
     """A lane's vector-space identity (model, dimension, modalities, ...) from the catalog."""
     model = next((m for m in SUPPORTED_MODELS if m.id == served_name), None)
     native = model.native_max_model_len if model else 0
@@ -4538,7 +4547,7 @@ def lane_capabilities(
     """
     backends = {b.name: b for b in table.backends}
     out: dict[str, dict] = {}
-    for lane in EMBED_LANES:
+    for lane in _lane_registry():
         backend = backends.get(lane.name)
         if backend is None or backend.served_name != lane.catalog_id or backend.task != lane.task:
             continue
@@ -4568,7 +4577,7 @@ def annotate_mesh_lanes(
         return payload
     from lobes.roles import _annotate_plain_member
 
-    for lane in EMBED_LANES:
+    for lane in _lane_registry():
         entry = payload.get(lane.name)
         if entry is not None and entry.get("feasible"):
             continue

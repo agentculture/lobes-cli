@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass, replace
 from typing import Mapping
 
+import lobes.gateway  # noqa: F401  (pre-existing roles<->gateway cycle: load gateway first)
 from lobes.catalog import ENGINE_SENTENCE_TRANSFORMERS, ENGINE_VLLM, TIER_ROLE
 from lobes.roles import ROLE_BACKEND, ROLES
 
