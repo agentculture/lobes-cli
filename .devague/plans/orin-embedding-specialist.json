@@ -1,0 +1,977 @@
+{
+  "slug": "orin-embedding-specialist",
+  "title": "orin-embedding-specialist",
+  "frame_slug": "orin-embedding-specialist",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-10-07T06:59:33Z",
+  "updated": "2026-10-07T07:06:34Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Jetson AGX Orin is the mesh's embedding specialist: it hosts several distinctly-addressed embedding lanes \u2014 a compact multimodal one (EmbeddingGemma 2: text, code, image, video, audio in one 768-d space) and a code/retrieval specialist picked by a measured head-to-head \u2014 each advertising its concrete vector-space identity, reachable from every mesh member, with no cross-model fallback and the 0.6B default embedder untouched.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Every lane named in the announcement is served from the Orin, advertised with its identity, mesh-reachable, and the plain embedder still answers with Qwen3-Embedding-0.6B.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "before_state",
+      "text": "Today the Orin runs only the 0.6B embedder+reranker (Qwen3-Embedding-0.6B / Qwen3-Reranker-0.6B at util 0.06 each); the associate lane has been Exited(1) for ~9 days though COMPOSE_PROFILES=associate / ASSOCIATE_GPU_MEM_UTIL=0.70 are still set, leaving ~46 GiB host memory available.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "The before-state is the measured 2026-10-07 baseline, not recalled history.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "New embedding models land as self-named, opt-in task=embed backends on the embed-deep pattern (own compose service, *_BASE_URL gateway wiring, a model= alias plus the raw checkpoint id) \u2014 not as a new Colleague role and not as a tier alias.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "No new name is added to lobes/roles.py ROLES; each lane is a catalog entry + gateway backend + compose service.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "The plain embedder/reranker roles stay Qwen3-Embedding-0.6B / Qwen3-Reranker-0.6B on every box, Orin included: swapping them changes the vector space consumers pin and splits the mesh fingerprint pool.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The plain embedder/reranker served id on every box is byte-identical before and after (Qwen/Qwen3-Embedding-0.6B / Qwen/Qwen3-Reranker-0.6B) and the mesh embedder pool keeps orin as an agreeing member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "boundary",
+      "text": "No embedding request ever falls back across checkpoints or to a cloud provider: an unavailable specialist lane fails visibly (404/503), never answers from a different vector space.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Stopping a specialist lane yields a visible error (404/503) for model=<lane>, never a 200 from another checkpoint or a cloud call.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Each specialist lane advertises its vector-space identity on /capabilities (and lobes capabilities): concrete checkpoint, native dimension, MRL truncation dims, loaded modalities, normalization, runtime, and the box it is load-tested on.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "Each specialist lane's /capabilities entry carries checkpoint, native dimension, MRL dims, modalities, normalization, runtime and tested-on box, and the values match the catalog entry.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "EmbeddingGemma 2 (google/embeddinggemma-2) is the Orin's first specialist lane: multimodal embeddings for text, code, image, video and audio in one 768-d space, MRL 128/256/512, 8K context, with full and modular (text-only) loads both measured on the Orin.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "EmbeddingGemma 2 is measured on the physical Orin in both the full multimodal load and the text-only modular load (resident memory + latency each).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Multimodal embedding inputs travel in an honest schema \u2014 vLLM's chat-style messages extension on /v1/embeddings (or a distinct endpoint where that cannot carry audio) \u2014 never flattened into text.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "A multimodal request reaches the model with its image/video/audio parts intact; no code path converts a non-text part to a caption or text.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The code/retrieval specialist is assigned only after a measured head-to-head on the Orin \u2014 EmbeddingGemma 2 vs Qwen3-VL-Embedding-8B (and a permissively licensed code embedder such as nomic-embed-code) on code/repo retrieval over our own repos \u2014 not by model card scores.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The head-to-head corpus is drawn from our own repos (lobes-cli, culture, etc.) with labelled relevance, and every candidate is scored on the same corpus/box.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "A new built-in shape (orin-embed) declares the Orin's embedding-specialist hosting set and budgets, with goldens, replacing orin-associate as what the Orin renders.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "orin-embed renders deterministically with goldens for base/orin/spark/thor and does not host associate; orin-associate stays in-tree (cite-don't-delete).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Every mesh member reaches the Orin's specialist lanes by name through its own gateway (single hop, X-Lobes-Mesh-Member), exactly as roles are mesh-forwarded today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "From spark, spark2 and thor, each Orin specialist lane answers by name in a single hop carrying X-Lobes-Mesh-Member: orin.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c19",
+      "kind": "requirement",
+      "text": "A fine-tunable embedding lane may be hosted: a base whose adapters/fine-tunes are produced out of tree (unsloth-cli / Sentence-Transformers) and served under a new distinct model identity, never overwriting the base's vector space.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "A fine-tuned EmbeddingGemma 2 is served under its own model identity and the base EmbeddingGemma 2 lane's outputs are unchanged by its presence.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "Specialist embedding lanes become first-class ADVERTISED lanes (not roles): /capabilities carries an entry per wired specialist lane with its fingerprint, so announcement_from_capabilities announces it and every mesh member auto-wires and forwards it by lane name \u2014 today a self-named backend like embed-deep is invisible to both.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "announcement_from_capabilities includes specialist lanes from /capabilities, and a mesh member that does not host a lane auto-wires it with no per-lane env typed.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "audience",
+      "text": "Mesh consumers needing semantic vectors beyond the 0.6B default \u2014 embeddings-cli / coherence-cli research frames, eidetic opting into a richer space, agents doing code/repo retrieval and image/video/audio search \u2014 plus the lobes operator who runs and swaps the Orin's lanes.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "Each named consumer has a documented opt-in path to a specialist lane by model id; none is switched implicitly.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "after_state",
+      "text": "The Orin renders the orin-embed shape: EmbeddingGemma 2 (multimodal, 768-d), an 8B code/retrieval embedder chosen by measurement, the 0.6B embedder+reranker, and \u2014 if memory allows \u2014 Qwen3-VL-Reranker-8B, all resident; each lane is advertised on /capabilities with its vector-space identity and reachable by name from every mesh member's gateway.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "The after-state is shown by one acceptance transcript on the live mesh, not by unit tests alone (#108).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "why_it_matters",
+      "text": "One small text-only 0.6B space cannot do code retrieval well or see images/video/audio; #291 needs several independently trained semantic frames, and the Orin is idle (associate Exited) with ~46 GiB free \u2014 the cheapest box to make the mesh's embedding specialist.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "The baseline numbers cited are the 2026-10-07 live readings.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "success_signal",
+      "text": "On the AGX Orin: all chosen lanes co-resident with min available host memory >= 2 GiB under a load probe, zero container restarts over the acceptance run, and EmbeddingGemma 2 text/image/audio/video probes each pass a negative-control retrieval check (correct item ranked 1 of >= 3).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "The thresholds are measured on the physical AGX Orin under the shipped orin-embed render, not extrapolated from Spark or vendor numbers.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "success_signal",
+      "text": "The 8B code specialist is chosen by a head-to-head on our own repos: it beats EmbeddingGemma 2 by >= 5 points nDCG@10 on NL->code and issue->source retrieval, or EmbeddingGemma 2 takes the code slot and the 8B slot goes to the next-best measured candidate.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "The 5-point nDCG@10 threshold and the corpus are fixed before any candidate is scored.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "Dropping associate leaves it unhosted mesh-wide (the Orin was its only host), so model=associate 404s role_infeasible everywhere: lobes docs mark associate DORMANT/unhosted (like muse), and colleague's opt-in associate seat (COLLEAGUE_ASSOCIATE_MODEL, addressed by role name) is told via a tracked issue before the Orin is re-rendered.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "A colleague issue exists and lobes CLAUDE.md + docs name associate unhosted before orin-embed is applied.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "The EmbeddingGemma 2 lane never runs float16 (bf16 on the Orin, fp32 fallback) and refuses to return a NaN, inf or all-zero vector \u2014 a degraded embedding is an error, not a 200.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "A unit test feeds a NaN/zero vector through the lane's guard and gets an error; the running lane's dtype is logged bf16.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "requirement",
+      "text": "Asymmetric task prompts are explicit: the EmbeddingGemma 2 lane accepts a prompt name (query vs document, CodeRetrieval, etc.) per request, echoes the applied prompt in its response metadata, and the code head-to-head applies each candidate's own recommended query/document instructions.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Two requests differing only in prompt name return different vectors and each response names its applied prompt.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Every Orin lane is memory-contained: vLLM lanes by gpu_mem_util and the sidecar by a container memory cap, lanes boot in a healthchecked order, and the acceptance run records zero OOM kills.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The acceptance transcript records each container's memory cap, RestartCount 0 and no OOM-kill lines in dmesg.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "Rollback is one command: re-rendering orin-associate (lobes init --shape orin-associate --profile orin --apply --force) restores the previous Orin deployment byte-for-byte, and the rollback is exercised once before acceptance.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "The evidence shows an orin-associate re-render diffing clean against the pre-change deployment, then orin-embed re-applied.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The operator can start, stop and probe each specialist lane individually (lobes up/status/assess today are keyed off lobes.roles ROLES, so a non-role lane is invisible to them).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "Each specialist lane can be started/stopped/probed by a lobes verb without touching any other lane (dry-run by default).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "boundary",
+      "text": "Specialist lanes are reachable only through the gateway (bearer-gated when GATEWAY_API_KEY is set) \u2014 no host-published container port.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "The rendered compose publishes no host port for any specialist lane.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "The role contract becomes 'every ROLES key is present' rather than 'keys == ROLES': tests/test_colleague_contract.py:402/421 change to a subset check plus a lane-key check, and lane names may never collide with a role name or tier alias.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "A test refuses a lane name equal to any role, tier alias or role-member lane spelling ({role}-{member}); colleague's superset parser still resolves every seat against a payload carrying lane keys.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Spike: which Orin lanes vLLM pooling can serve",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-spike-orin-embed-vllm.txt records, for google/embeddinggemma-2, Qwen/Qwen3-VL-Embedding-8B, Qwen/Qwen3-VL-Reranker-8B and nvidia/Nemotron-3-Embed-8B-BF16, whether the Orin's pinned vLLM digest boots it under --runner pooling (bf16), with the exact error or a passing /v1/embeddings (or /v1/rerank) call",
+        "each model ends the spike labelled vllm or sidecar, which later tasks consume"
+      ],
+      "deps": [],
+      "covers": [],
+      "instruction": "Read-only against the deployment: run throwaway containers with --rm, a --memory cap, and HF_HUB_DISABLE_XET=1 (the Orin has zero swap; an uncapped download OOM-killed associate on 2026-09-13). Do not touch ~/.lobes. Associate is already Exited, so memory is free. Resolves parked v2."
+    },
+    {
+      "id": "t2",
+      "summary": "Retire associate from the Orin: docs plus a colleague issue",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an issue on agentculture/colleague says the associate seat has no host once the Orin renders orin-embed, and links this plan",
+        "the CLAUDE.md associate section and docs/orin-associate-deployment.md say associate is DORMANT/unhosted (like muse), with orin-associate kept in-tree as the rollback shape"
+      ],
+      "deps": [],
+      "covers": [
+        "c27",
+        "h20"
+      ],
+      "instruction": "Use the communicate skill for the cross-repo issue. Edit prose only. The docs land before orin-embed is applied (h20). Note what associate's Exit(1) log showed (parked v4) without guessing a cause."
+    },
+    {
+      "id": "t3",
+      "summary": "Specialist-lane registry with name-collision rules",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "new lobes/embed_lanes.py declares each specialist lane (name, catalog id, engine, base-URL env key, task embed/score, modalities, native dim, MRL dims, normalization) as a frozen dataclass tuple; lobes.roles.ROLES is unchanged",
+        "tests/test_embed_lanes.py refuses a lane name equal to any role, any tier alias, or matching the {role}-{member} member-lane pattern"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "h3",
+        "h27"
+      ],
+      "instruction": "Each lane gets its own distinct name (operator decision c35); use a short model slug such as gemma2-embed, never anything starting with embedder- or reranker-. Pure data plus a validator; no I/O."
+    },
+    {
+      "id": "t4",
+      "summary": "Catalog: vector-space identity fields and the new embedding entries",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "SupportedModel gains modalities, mrl_dims and normalization fields (defaulted, so existing entries render byte-identical); ENGINES gains a sentence-transformers engine",
+        "catalog entries exist for google/embeddinggemma-2 (Apache-2.0, 768, MRL 128/256/512, text/code/image/video/audio), Qwen3-VL-Embedding-8B, Qwen3-VL-Reranker-8B, Nemotron-3-Embed-8B-BF16 (license recorded as OpenMDW-1.1) and nomic-embed-code; none has role_hint embedding/reranker; status is 'configured' until measured"
+      ],
+      "deps": [],
+      "covers": [
+        "c6"
+      ],
+      "instruction": "role_hint must be 'candidate' so _catalog_by_role_hint never lets one hijack the 0.6B embedder (catalog.py:440-443). No jina-code entry (CC-BY-NC, c11)."
+    },
+    {
+      "id": "t5",
+      "summary": "EmbeddingGemma 2 sidecar server module",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "new lobes/embed_sidecar/server.py serves /v1/embeddings: text input, a messages body with image/audio/video parts, a prompt_name field, and a dimensions field (MRL truncate, then re-normalize); unsupported dims are refused",
+        "responses echo model, applied prompt, dimensions and loaded modalities; a NaN/inf/all-zero vector is an error, not a 200; float16 is refused at load (tests/test_embed_sidecar.py with an injected fake encoder)",
+        "no code path turns a non-text part into text"
+      ],
+      "deps": [],
+      "covers": [
+        "c29",
+        "h21",
+        "c30",
+        "h22",
+        "c9"
+      ],
+      "instruction": "Mirror the lobes/realtime/*_server.py pattern: a thin pragma-no-cover app shell over pure, tested functions. Modular load (text-only vs full) is selected by env. Health endpoint for the compose healthcheck."
+    },
+    {
+      "id": "t6",
+      "summary": "Gateway: wire specialist lanes from the registry, with no fallback",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/_config.py wires one optional backend per registry lane behind its own *_BASE_URL, with its own FEASIBLE and MAX_ACTIVE keys; model=<lane> and the raw checkpoint id both resolve",
+        "tests/test_gateway_embed_lanes.py: an unwired or stopped lane answers 404/503 and never another lane; a multimodal messages body reaches the upstream byte-identical (parked v3)"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c5",
+        "h5"
+      ],
+      "instruction": "Generalise the embed-deep pattern (_config.py:1014-1029, 772-812) by iterating the registry rather than hard-coding names. Leave embed-deep's own behaviour byte-identical."
+    },
+    {
+      "id": "t7",
+      "summary": "Capabilities: each lane is a top-level /capabilities key; widen the role contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "capabilities_payload adds one top-level key per wired lane carrying model, runtime, task, path, native dim, MRL dims, modalities, normalization, tested_on, ready/feasible and a fingerprint; the values match the catalog (tests/test_gateway_capabilities.py)",
+        "tests/test_colleague_contract.py:402/421 become 'every ROLES key present' plus a lane-key check; a test proves colleague's superset parser still resolves every seat with lane keys present"
+      ],
+      "deps": [
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c36",
+        "h6"
+      ],
+      "instruction": "Touch lobes/gateway/server.py's capabilities_payload and the contract tests only. lobes capabilities (CLI) renders lanes in a separate block."
+    },
+    {
+      "id": "t8",
+      "summary": "Mesh: announce lanes, auto-wire them, forward by name",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "announcement_from_capabilities includes lane keys (test); a member that does not host a lane auto-wires it from a verified peer with no per-lane env and forwards model=<lane> in one hop with X-Lobes-Mesh-Member",
+        "a peer on an older build ignores unknown lane keys without failing verification of its roles (decode test)"
+      ],
+      "deps": [
+        "t6",
+        "t7"
+      ],
+      "covers": [
+        "c20",
+        "h13"
+      ],
+      "instruction": "Files: lobes/gateway/_mesh_routes.py and _mesh_routing.py, plus tests/test_mesh_lanes.py. Lanes are per-lane, never pooled across different checkpoints."
+    },
+    {
+      "id": "t9",
+      "summary": "CLI: start, stop and probe each lane individually",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes up <lane> (dry-run by default, --apply to commit, always --no-deps) starts just that lane; lobes status lists lanes; lobes assess <lane> runs an embed or rerank probe with a negative control",
+        "tests/test_cli_up.py-style tests prove a lane target touches no other service"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c33",
+        "h25"
+      ],
+      "instruction": "Extend TARGETS in lobes/cli/_commands/up.py from the registry rather than ROLES."
+    },
+    {
+      "id": "t10",
+      "summary": "Code-retrieval head-to-head harness and corpus",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "scripts/embed_h2h/ holds a labelled corpus from our own repos (NL\u2192code and issue/stacktrace\u2192source, lobes-cli + culture at a pinned SHA), an nDCG@10 scorer, and per-model query/document prompts",
+        "the corpus and the 5-point threshold are committed in a commit before any results commit (h18)"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h9",
+        "h18"
+      ],
+      "instruction": "HTTP-only against the gateway: it scores whatever model ids it is given. Each candidate gets its card's recommended prompts (EG2 CodeRetrieval/Document; the Qwen instruct format). The script has no network or mesh dependency of its own beyond the target URL."
+    },
+    {
+      "id": "t11",
+      "summary": "Fine-tuned EmbeddingGemma 2 lane mechanism",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the registry and sidecar accept a fine-tune lane pointing at a local checkpoint path under its own name and identity; its presence leaves the base lane's vectors identical (cosine 1.0 on a fixed probe set, offline test with fake encoders)"
+      ],
+      "deps": [
+        "t5",
+        "t3"
+      ],
+      "covers": [
+        "c19",
+        "h12"
+      ],
+      "instruction": "Adapter/fine-tune production stays out of tree (Sentence-Transformers, operator-run). No fine-tune ships in this PR; only the mechanism."
+    },
+    {
+      "id": "t12",
+      "summary": "Spike: build and boot the EmbeddingGemma 2 Sentence-Transformers image on the Orin",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "an aarch64 CUDA-13 image with pinned transformers (5.18.0.dev0 or the first release supporting EmbeddingGemma2Model), sentence-transformers>=6.1.0 and torch builds and runs on the Orin with bf16 (torch.cuda.is_bf16_supported() true on sm_87)",
+        "text, image, audio and video encode calls each return a finite 768-d vector; the pins and measured resident memory are recorded in the evidence file"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": "Base the image on the CUDA-13 aarch64 stack the Orin already runs (L4T R39). Use uv pip install --system, not pip. Use throwaway --rm containers with a --memory cap and HF_HUB_DISABLE_XET=1. Skip only if t1 shows vLLM serves EmbeddingGemma2Model for every declared modality. Proves the c28 assumption."
+    },
+    {
+      "id": "t13",
+      "summary": "Compose overlay and Dockerfile for the embedding lanes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "new lobes/templates/fleet/docker-compose.embed.yml declares each specialist lane service (vLLM or sidecar, per t1) with a healthcheck, a container memory cap (mem_limit) and no ports: mapping; Dockerfile.embed-st builds the sidecar with the pins from the image spike",
+        "a template test asserts that no specialist service publishes a host port and that every one carries mem_limit"
+      ],
+      "deps": [
+        "t12"
+      ],
+      "covers": [
+        "c34",
+        "h26",
+        "c31"
+      ],
+      "instruction": "Leave the base fleet docker-compose.yml untouched. Boot order is healthcheck-gated without depends_on edges on the gateway (compose up walks depends_on, issue #222)."
+    },
+    {
+      "id": "t14",
+      "summary": "orin-embed built-in shape, render knobs and goldens",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/profiles/builtin_shapes/orin-embed.toml hosts embedder, reranker and the specialist lanes, does not host associate, and declares per-lane budgets (DECLARED until the deploy task measures them)",
+        "tests/goldens/shapes/orin-embed__{base,orin,spark,thor}.env are generated by tests/goldens/regen.py; every pre-existing golden is byte-unchanged; tests/test_orin_embed_shape.py passes"
+      ],
+      "deps": [
+        "t3",
+        "t4",
+        "t13"
+      ],
+      "covers": [
+        "c13",
+        "h10"
+      ],
+      "instruction": "Follow orin-associate.toml's structure; the shape adds docker-compose.embed.yml to the rendered compose file set. orin-associate.toml stays in-tree, untouched."
+    },
+    {
+      "id": "t15",
+      "summary": "Deploy orin-embed on the Orin and measure every lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-measure-orin-embed.txt records: EG2 full and text-only resident memory and p50 latency; each 8B lane's resident memory; the free -m minimum under a load probe; per-container mem_limit; RestartCount; a dmesg OOM grep",
+        "the Qwen3-VL-Reranker-8B include/exclude decision follows c18 (at least 2 GiB available with it loaded); the shape's DECLARED budgets are replaced by measured values"
+      ],
+      "deps": [
+        "t6",
+        "t7",
+        "t9",
+        "t14"
+      ],
+      "covers": [
+        "c7",
+        "h7",
+        "h23",
+        "c25"
+      ],
+      "instruction": "Use the lobes-deploy skill and lobes-compose.sh, never compose inside lobes/templates. Back up ~/.lobes first. Run the PR's TestPyPI dev wheel on the Orin gateway (allow for propagation delay)."
+    },
+    {
+      "id": "t16",
+      "summary": "Run the code head-to-head on the Orin and pick the 8B specialist",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a results table (every candidate on identical queries) is committed under docs/evidence/, naming the chosen 8B code lane and applying the decision rule",
+        "the shape's 8B lane is set to the winner (or the next-best candidate, per c26)"
+      ],
+      "deps": [
+        "t10",
+        "t15"
+      ],
+      "covers": [
+        "c26"
+      ],
+      "instruction": "Use the t10 harness against the Orin gateway. Never change the threshold after scoring."
+    },
+    {
+      "id": "t17",
+      "summary": "Exercise the rollback to orin-associate",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "evidence shows lobes init --shape orin-associate --profile orin --apply --force diffing clean against the pre-change backup, then orin-embed re-applied"
+      ],
+      "deps": [
+        "t15"
+      ],
+      "covers": [
+        "c32",
+        "h24"
+      ],
+      "instruction": "Do this before the acceptance run. The claim covers the rendered deployment files; associate need not serve."
+    },
+    {
+      "id": "t18",
+      "summary": "Mesh-wide acceptance transcript",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-accept-orin-embed.txt holds the 2026-10-07 baseline and, from spark, spark2 and thor: GET /capabilities listing each Orin lane, plus model=<lane> calls answered with X-Lobes-Mesh-Member: orin; plain embedder is still Qwen/Qwen3-Embedding-0.6B and orin stays in the agreeing embedder pool",
+        "it also shows a stopped lane answering 404/503 (then restarted), per-modality EG2 probes ranking the correct item 1st of at least 3, RestartCount 0 and no OOM lines"
+      ],
+      "deps": [
+        "t8",
+        "t16",
+        "t17"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c2",
+        "h2",
+        "c4",
+        "h4",
+        "c5",
+        "h5",
+        "c14",
+        "h11",
+        "c23",
+        "h15",
+        "c24",
+        "h16",
+        "h17",
+        "h8"
+      ],
+      "instruction": "The header records box, shape, image digests and wheel version. Spark, spark2 and thor must run a gateway that includes the mesh task (t8)."
+    },
+    {
+      "id": "t19",
+      "summary": "Docs: per-model docs, the Orin deployment doc and consumer opt-in",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/embeddinggemma-2.md, a doc for the chosen 8B lane(s) and docs/orin-embed-deployment.md cite the evidence files; a consumer section shows EIDETIC_EMBED_MODEL / COHERENCE_EMBED_MODEL opt-in by lane id and states that no consumer is switched implicitly",
+        "CLAUDE.md, the lobes explain catalog and docs/colleague-stack.md's lane description are updated; markdownlint passes"
+      ],
+      "deps": [
+        "t2",
+        "t16"
+      ],
+      "covers": [
+        "c22",
+        "h14"
+      ],
+      "instruction": "Use the #108 honesty vocabulary (MEASURED / DECLARED / UNVALIDATED) exactly."
+    },
+    {
+      "id": "t20",
+      "summary": "PR obligations: bump, lint, rubric, lock capture",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "version bumped (minor) via the version-bump skill with a CHANGELOG entry; uv.lock re-pinned",
+        "uv run pytest -n auto, black --check, isort --check-only, flake8, bandit, afi cli doctor . --strict and markdownlint all pass; the doc-test-alignment skill has run; secrets-scan is clean",
+        "the Orin deployment lock is captured into deployments/jetson-agx-orin__orin-embed/ with a VARIATION.md citing the acceptance transcript"
+      ],
+      "deps": [
+        "t11",
+        "t18",
+        "t19"
+      ],
+      "covers": [],
+      "instruction": "Pre-empt Sonar S3776/S1192 in the new modules before pushing."
+    },
+    {
+      "id": "t21",
+      "summary": "Run /validate-delivery",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the validate-delivery skill ran the plan's behavioral tests and filed obligations as evidence or behavioral deltas via the devague CLI, failing or partial outcomes included"
+      ],
+      "deps": [
+        "t20"
+      ],
+      "covers": [],
+      "instruction": "Never suppress a partial outcome. Check every confirmed plan obligation (devague plan oblige --list)."
+    },
+    {
+      "id": "t22",
+      "summary": "Run /summarize-delivery",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/deliveries/<date>-orin-embedding-specialist.md records planned vs actual, deviations, evidence-backed delivery claims and remaining work"
+      ],
+      "deps": [
+        "t21"
+      ],
+      "covers": [],
+      "instruction": "Runs on complete, partial and failed runs alike."
+    },
+    {
+      "id": "t23",
+      "summary": "Open the PR and drive review to merge",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a PR opened via the cicd skill references #291 and the spec, plan and delivery docs; every review thread is answered and resolved; the Sonar gate passes (SONAR_PROJECT_KEY=agentculture_model-gear); CI is green"
+      ],
+      "deps": [
+        "t22"
+      ],
+      "covers": [],
+      "instruction": "Network-bound gh/agex calls need the sandbox disabled. Never merge with unaddressed comments."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "vLLM pooling may not serve some candidates on the Orin's sm_87 digest (frame park v2) \u2014 the t1 spike decides vllm vs sidecar per model",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "EmbeddingGemma 2 depends on a transformers DEV build (5.18.0.dev0); a moving pin could break the sidecar image \u2014 pin by version or commit, record it",
+      "kind": "unknown_nonblocking",
+      "task_id": "t12",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "the 8B embedder + 8B reranker + EG2 may not fit with >= 2 GiB free on the zero-swap Orin; the c18 rule drops the reranker first",
+      "kind": "unknown_nonblocking",
+      "task_id": "t15",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "/v1/embeddings has no request-body cap (frame park v5); base64 video is buffered whole in gateway memory \u2014 measure in t15, cap if needed",
+      "kind": "unknown_nonblocking",
+      "task_id": "t15",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "spark/spark2/thor gateways must be re-imaged with the mesh-lane build before acceptance (stale-advert trap from the 2026-09-11 run)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t18",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": [
+    {
+      "id": "o1",
+      "task_id": "t3",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/test_embed_lanes.py refuses a lane name equal to any role, any tier alias, or matching the {role}-{member} member-lane pattern",
+      "seam": "lane registry name validation",
+      "behavior": "a lane name equal to a role, a tier alias, or matching {role}-{member} is refused at import/test time",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "task_id": "t5",
+      "criterion_index": 2,
+      "criterion_snapshot": "responses echo model, applied prompt, dimensions and loaded modalities; a NaN/inf/all-zero vector is an error, not a 200; float16 is refused at load (tests/test_embed_sidecar.py with an injected fake encoder)",
+      "seam": "sidecar /v1/embeddings response",
+      "behavior": "a NaN, inf or all-zero vector returns an error, never 200; loading in float16 is refused",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "task_id": "t5",
+      "criterion_index": 1,
+      "criterion_snapshot": "new lobes/embed_sidecar/server.py serves /v1/embeddings: text input, a messages body with image/audio/video parts, a prompt_name field, and a dimensions field (MRL truncate, then re-normalize); unsupported dims are refused",
+      "seam": "sidecar dimensions parameter",
+      "behavior": "MRL-truncated vectors come back re-normalized to unit length; a dimension outside 128/256/512/768 is refused",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "task_id": "t5",
+      "criterion_index": 3,
+      "criterion_snapshot": "no code path turns a non-text part into text",
+      "seam": "sidecar multimodal input",
+      "behavior": "image/audio/video parts are encoded by their own encoder, never converted to text",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "task_id": "t6",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/test_gateway_embed_lanes.py: an unwired or stopped lane answers 404/503 and never another lane; a multimodal messages body reaches the upstream byte-identical (parked v3)",
+      "seam": "gateway model routing",
+      "behavior": "an unwired or stopped lane answers 404/503 and is never served by another lane, checkpoint or cloud provider",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "task_id": "t6",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/test_gateway_embed_lanes.py: an unwired or stopped lane answers 404/503 and never another lane; a multimodal messages body reaches the upstream byte-identical (parked v3)",
+      "seam": "gateway \u2192 lane request body",
+      "behavior": "a multimodal messages body reaches the upstream byte-identical",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "task_id": "t7",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/test_colleague_contract.py:402/421 become 'every ROLES key present' plus a lane-key check; a test proves colleague's superset parser still resolves every seat with lane keys present",
+      "seam": "/capabilities \u2194 colleague parser",
+      "behavior": "colleague resolves every seat from a payload that also carries lane keys",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "task_id": "t8",
+      "criterion_index": 1,
+      "criterion_snapshot": "announcement_from_capabilities includes lane keys (test); a member that does not host a lane auto-wires it from a verified peer with no per-lane env and forwards model=<lane> in one hop with X-Lobes-Mesh-Member",
+      "seam": "mesh announcement and forward",
+      "behavior": "a non-hosting member forwards model=<lane> to the hosting peer in one hop with X-Lobes-Mesh-Member, with no per-lane env typed",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o9",
+      "task_id": "t8",
+      "criterion_index": 2,
+      "criterion_snapshot": "a peer on an older build ignores unknown lane keys without failing verification of its roles (decode test)",
+      "seam": "mixed-version mesh decode",
+      "behavior": "a peer that does not know lane keys still verifies the announcer's roles",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o10",
+      "task_id": "t9",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/test_cli_up.py-style tests prove a lane target touches no other service",
+      "seam": "lobes up <lane>",
+      "behavior": "starts or stops only that lane's service (no dependency walk), dry-run by default",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o11",
+      "task_id": "t11",
+      "criterion_index": 1,
+      "criterion_snapshot": "the registry and sidecar accept a fine-tune lane pointing at a local checkpoint path under its own name and identity; its presence leaves the base lane's vectors identical (cosine 1.0 on a fixed probe set, offline test with fake encoders)",
+      "seam": "base EmbeddingGemma 2 lane",
+      "behavior": "adding a fine-tune lane leaves the base lane's vectors identical (cosine 1.0)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o12",
+      "task_id": "t13",
+      "criterion_index": 2,
+      "criterion_snapshot": "a template test asserts that no specialist service publishes a host port and that every one carries mem_limit",
+      "seam": "rendered compose",
+      "behavior": "no specialist service publishes a host port; every one carries mem_limit and a healthcheck",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o13",
+      "task_id": "t14",
+      "criterion_index": 2,
+      "criterion_snapshot": "tests/goldens/shapes/orin-embed__{base,orin,spark,thor}.env are generated by tests/goldens/regen.py; every pre-existing golden is byte-unchanged; tests/test_orin_embed_shape.py passes",
+      "seam": "pre-existing shape goldens",
+      "behavior": "every pre-existing golden .env is byte-unchanged",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o14",
+      "task_id": "t18",
+      "criterion_index": 1,
+      "criterion_snapshot": "docs/evidence/<date>-accept-orin-embed.txt holds the 2026-10-07 baseline and, from spark, spark2 and thor: GET /capabilities listing each Orin lane, plus model=<lane> calls answered with X-Lobes-Mesh-Member: orin; plain embedder is still Qwen/Qwen3-Embedding-0.6B and orin stays in the agreeing embedder pool",
+      "seam": "plain embedder role mesh-wide",
+      "behavior": "model=embedder still answers with Qwen/Qwen3-Embedding-0.6B on every box, and orin stays in the agreeing pool",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
+}
