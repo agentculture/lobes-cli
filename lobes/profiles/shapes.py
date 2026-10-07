@@ -168,11 +168,7 @@ _LANE_KNOB_TYPES: dict[str, tuple[type, ...]] = {
 }
 
 
-def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], dict]:
-    """Validate a shape's ``lanes`` / ``lane_knobs`` (specialist embed lanes)."""
-    from lobes.embed_lanes import EMBED_LANES  # lazy: embed_lanes imports roles/gateway
-
-    known = {lane.name for lane in EMBED_LANES}
+def _parse_lane_names(name: str, data: Mapping[str, Any], known: set[str]) -> tuple[str, ...]:
     raw_lanes = data.get("lanes", [])
     if not isinstance(raw_lanes, (list, tuple)):
         raise _shape_error(
@@ -185,42 +181,56 @@ def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], d
             message=f"unknown lane(s) {sorted(unknown)!r} in shape {name!r} 'lanes'",
             remediation=f"known lanes: {', '.join(sorted(known))}",
         )
+    return tuple(raw_lanes)
+
+
+def _check_knob_value(name: str, lane: str, key: str, value: Any) -> None:
+    ok = _LANE_KNOB_TYPES[key]
+    allowed = ok + ((int,) if ok == (float,) else ())
+    if isinstance(value, bool) or not isinstance(value, allowed):
+        raise _shape_error(
+            message=f"shape {name!r} lane_knobs.{lane}.{key} has the wrong type",
+            remediation=f"{key} must be a {ok[0].__name__}",
+        )
+
+
+def _parse_lane_table(name: str, lane: str, table: Any) -> dict[str, Any]:
+    known_knobs = ", ".join(_LANE_KNOB_TYPES)
+    if not isinstance(table, Mapping):
+        raise _shape_error(
+            message=f"shape {name!r}: lane_knobs.{lane} must be a table",
+            remediation=f"known knobs: {known_knobs}",
+        )
+    bad = set(table) - set(_LANE_KNOB_TYPES)
+    if bad:
+        raise _shape_error(
+            message=f"unknown knob(s) {sorted(bad)!r} in shape {name!r} lane_knobs.{lane}",
+            remediation=f"known knobs: {known_knobs}",
+        )
+    for key, value in table.items():
+        _check_knob_value(name, lane, key, value)
+    return dict(table)
+
+
+def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], dict]:
+    """Validate a shape's ``lanes`` / ``lane_knobs`` (specialist embed lanes)."""
+    from lobes.embed_lanes import EMBED_LANES  # lazy: embed_lanes imports roles/gateway
+
+    lanes = _parse_lane_names(name, data, {lane.name for lane in EMBED_LANES})
     raw_knobs = data.get("lane_knobs", {})
     if not isinstance(raw_knobs, Mapping):
         raise _shape_error(
             message=f"shape {name!r}: 'lane_knobs' must be a table/mapping",
             remediation="declare knobs as [lane_knobs.<lane>] tables",
         )
-    stray = set(raw_knobs) - set(raw_lanes)
+    stray = set(raw_knobs) - set(lanes)
     if stray:
         raise _shape_error(
             message=f"lane_knobs for non-hosted lane(s) {sorted(stray)!r} in shape {name!r}",
             remediation="list the lane in 'lanes' or drop its [lane_knobs.<lane>] table",
         )
-    knobs: dict[str, dict[str, Any]] = {}
-    for lane, table in raw_knobs.items():
-        if not isinstance(table, Mapping):
-            raise _shape_error(
-                message=f"shape {name!r}: lane_knobs.{lane} must be a table",
-                remediation=f"known knobs: {', '.join(_LANE_KNOB_TYPES)}",
-            )
-        bad = set(table) - set(_LANE_KNOB_TYPES)
-        if bad:
-            raise _shape_error(
-                message=f"unknown knob(s) {sorted(bad)!r} in shape {name!r} lane_knobs.{lane}",
-                remediation=f"known knobs: {', '.join(_LANE_KNOB_TYPES)}",
-            )
-        for key, value in table.items():
-            ok = _LANE_KNOB_TYPES[key]
-            if isinstance(value, bool) or not isinstance(
-                value, ok + ((int,) if ok == (float,) else ())
-            ):
-                raise _shape_error(
-                    message=f"shape {name!r} lane_knobs.{lane}.{key} has the wrong type",
-                    remediation=f"{key} must be a {ok[0].__name__}",
-                )
-        knobs[lane] = dict(table)
-    return tuple(raw_lanes), knobs
+    knobs = {lane: _parse_lane_table(name, lane, table) for lane, table in raw_knobs.items()}
+    return lanes, knobs
 
 
 @dataclass(frozen=True)

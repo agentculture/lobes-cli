@@ -547,7 +547,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # startup instead of degrading to prose. See docs/lfm2.5-1.2b-hand.md.
         role_hint="hand",
         shape="hybrid short-conv + GQA (text-only)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="lfm2",
         quantization="none",
@@ -1328,7 +1328,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # from the 0.6B/4B Qwen3-Embedding gears.
         role_hint="candidate",
         shape="multimodal embedding (text+image+video)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="",
         quantization="",
@@ -1344,7 +1344,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # Apache-2.0, 32K context; a scorer, so no embedding dimension.
         role_hint="candidate",
         shape="multimodal reranker (text+image+video)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="",
         quantization="",

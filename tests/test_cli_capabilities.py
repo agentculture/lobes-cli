@@ -774,7 +774,8 @@ def test_render_table_shows_wired_lanes_in_a_separate_block() -> None:
     assert "gemma2-embed" not in role_part
     assert "gemma2-embed" in lane_part
     assert "google/embeddinggemma-2" in lane_part
-    assert "768" in lane_part and "orin" in lane_part
+    assert "768" in lane_part
+    assert "orin" in lane_part
     # No lane wired → no lanes block at all.
     plain_table, _ = build_config(env)
     plain = gateway_server.capabilities_payload(

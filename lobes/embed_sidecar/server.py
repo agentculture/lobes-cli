@@ -66,7 +66,6 @@ reported in ``model`` / ``/health``, e.g. ``local:my-tune``; default
 from __future__ import annotations
 
 import base64
-import binascii
 import logging
 import math
 import os
@@ -264,7 +263,7 @@ def _decode_b64(data: Any, what: str) -> bytes:
         raise _bad(f"{what}: empty or non-string base64 payload", "invalid_media")
     try:
         return base64.b64decode(data, validate=True)
-    except (binascii.Error, ValueError) as exc:
+    except ValueError as exc:  # binascii.Error is a ValueError subclass
         raise _bad(f"{what}: invalid base64 ({exc})", "invalid_media") from exc
 
 
@@ -405,7 +404,7 @@ def guard_vector(vec: Sequence[float]) -> float:
     if not all(math.isfinite(x) for x in vec):
         raise _degenerate("encoder returned a non-finite (NaN/inf) embedding")
     norm = math.sqrt(math.fsum(x * x for x in vec))
-    if norm == 0.0 or not math.isfinite(norm):
+    if not norm > 0.0 or not math.isfinite(norm):
         raise _degenerate("encoder returned an all-zero embedding")
     return norm
 
@@ -432,7 +431,8 @@ def _finish_vector(raw: Any, dims: int) -> list[float]:
 def _encode(encoder: Encoder, request: EmbedRequest) -> list[list[float]]:
     try:
         raw = list(encoder.encode(list(request.inputs), request.prompt_name))
-    except Exception as exc:  # noqa: BLE001 — any model failure is a 500, never a 200
+    # Any model failure is a 500, never a 200.
+    except Exception as exc:  # noqa: BLE001
         log.exception("embed encode failed")
         raise EmbedError(f"encode failed: {type(exc).__name__}", "encode_failed", 500) from exc
     if len(raw) != len(request.inputs):

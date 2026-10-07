@@ -75,7 +75,8 @@ def test_up_lane_refused_when_compose_set_lacks_service(tmp_path, capsys) -> Non
     rc = main(["up", "gemma2-embed", "--compose-dir", str(tmp_path), "--apply"])
     assert rc == 1
     err = capsys.readouterr().err
-    assert "embed-gemma2-embed" in err and "does not define" in err
+    assert "embed-gemma2-embed" in err
+    assert "does not define" in err
 
 
 def test_up_lane_rejects_replace(tmp_path) -> None:
@@ -121,7 +122,8 @@ def test_assess_embed_lane_uses_negative_control(tmp_path, capsys, monkeypatch) 
     monkeypatch.setattr(_assess, "_post", fake_post)
     rc = main(["assess", "gemma2-embed", "--compose-dir", str(tmp_path), "--json"])
     out = json.loads(capsys.readouterr().out)
-    assert rc == 0 and out["passed"] is True
+    assert rc == 0
+    assert out["passed"] is True
     assert seen == {
         "url": "http://lane:8000",
         "path": "/v1/embeddings",
@@ -161,7 +163,8 @@ def test_assess_lane_without_endpoint_fails_without_network(tmp_path, capsys, mo
     monkeypatch.setattr(_assess, "_post", lambda *a, **k: pytest.fail("no endpoint, no call"))
     rc = main(["assess", "nemotron-embed", "--compose-dir", str(tmp_path), "--json"])
     out = json.loads(capsys.readouterr().out)
-    assert rc != 0 and out["passed"] is False
+    assert rc != 0
+    assert out["passed"] is False
     assert "NEMOTRON_EMBED_BASE_URL" in out["probes"]["nemotron-embed"]["error"]
 
 

@@ -160,8 +160,9 @@ def test_lane_max_active_parses_per_backend() -> None:
 def test_malformed_lane_max_active_raises_loudly() -> None:
     from lobes.gateway._config import CapacityConfigError
 
+    env = _env("gemma2-embed", GEMMA2_EMBED_MAX_ACTIVE="lots")
     with pytest.raises(CapacityConfigError, match="GEMMA2_EMBED_MAX_ACTIVE"):
-        build_config(_env("gemma2-embed", GEMMA2_EMBED_MAX_ACTIVE="lots"))
+        build_config(env)
 
 
 def test_lane_feasible_false_marks_only_that_lane_infeasible() -> None:

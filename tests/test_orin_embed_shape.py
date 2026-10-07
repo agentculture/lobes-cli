@@ -63,7 +63,8 @@ def test_measured_budgets_and_nemotron_is_documented_opt_in() -> None:
     }
     text = files("lobes.profiles.builtin_shapes").joinpath("orin-embed.toml").read_text("utf-8")
     assert "DECLARED — to be measured" not in text
-    assert "NEMOTRON_EMBED_GPU_MEM_UTIL=0.35" in text and "#296" in text
+    assert "NEMOTRON_EMBED_GPU_MEM_UTIL=0.35" in text
+    assert "#296" in text
     assert "UNVALIDATED" not in shape.summary
 
 
@@ -90,7 +91,8 @@ def test_render_enables_hosted_lanes_and_wires_only_them(card: str) -> None:
 def test_services_do_not_include_associate() -> None:
     services = shape_services(resolve_shape(_SHAPE), resolve_profile(_CARD))
     assert "vllm-associate" not in services
-    assert "vllm-embed" in services and "vllm-rerank" in services
+    assert "vllm-embed" in services
+    assert "vllm-rerank" in services
 
 
 def test_shapes_without_lanes_render_no_lane_keys() -> None:

@@ -83,9 +83,13 @@ def test_each_model_gets_its_own_prompts():
     h2h.score_model(emb, "m2", PROMPTS, CORPUS, QUERIES)
     m1 = [t for m, ts in calls if m == "m1" for t in ts]
     m2 = [t for m, ts in calls if m == "m2" for t in ts]
-    assert "T: a.py | alpha" in m1 and "Q1: alpha" in m1 and "Q1I: beta" in m1
+    assert "T: a.py | alpha" in m1
+    assert "Q1: alpha" in m1
+    assert "Q1I: beta" in m1
     assert "Instruct: TASK-NL\nQuery:alpha" in m2
-    assert "beta" in m2 and "alpha" in m2  # null templates -> raw text
+    # null templates -> raw text
+    assert "beta" in m2
+    assert "alpha" in m2
     assert not any(t.startswith("Q1") or t.startswith("T:") for t in m2)
 
 
@@ -121,7 +125,8 @@ def test_real_prompts_cover_all_candidates_with_provenance():
         "Qwen/Qwen3-Embedding-0.6B",
     ):
         entry = prompts["models"][model]
-        assert "source" in entry and "verified" in entry
+        assert "source" in entry
+        assert "verified" in entry
         for fam in h2h.FAMILIES:
             assert fam in entry["query"]
     q = h2h.render_query(prompts, "google/embeddinggemma-2", "issue_to_source", "boom")
@@ -136,8 +141,10 @@ def test_corpus_and_queries_integrity():
     assert {c["repo"] for c in corpus} == {"lobes-cli", "culture"}
     assert all(len(c["sha"]) == 40 and c["start"] <= c["end"] for c in corpus)
     fam = [q["family"] for q in queries]
-    assert fam.count("nl_to_code") >= 40 and fam.count("issue_to_source") >= 20
+    assert fam.count("nl_to_code") >= 40
+    assert fam.count("issue_to_source") >= 20
     for q in queries:
-        assert q["relevant"] and set(q["relevant"].values()) <= {1, 2}
+        assert q["relevant"]
+        assert set(q["relevant"].values()) <= {1, 2}
         assert set(q["relevant"]) <= ids
     assert (H / "corpus.jsonl").stat().st_size < 5_000_000

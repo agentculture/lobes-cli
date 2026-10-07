@@ -45,7 +45,9 @@ def test_existing_entries_untouched() -> None:
     old = [m for m in SUPPORTED_MODELS if m.id not in _NEW_IDS]
     assert old
     for m in old:
-        assert m.modalities == () and m.mrl_dims == () and m.normalization == ""
+        assert m.modalities == ()
+        assert m.mrl_dims == ()
+        assert m.normalization == ""
 
 
 @pytest.mark.parametrize("model_id", _NEW_IDS)

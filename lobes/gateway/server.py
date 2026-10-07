@@ -4560,7 +4560,6 @@ def lane_capabilities(
 
 def annotate_mesh_lanes(
     payload: dict[str, dict],
-    table: RoutingTable,
     env: Mapping[str, str],
     gateway: str,
     mesh_snapshot: "RoutingSnapshot | None",
@@ -4734,9 +4733,7 @@ def capabilities_payload(
     gateway = (gateway_url or (cfg.public_url or "")).rstrip("/")
     payload.update(lane_capabilities(table, resolved_env, gateway, backend_ready))
     # ... and the lanes this box reaches only through the mesh (t8).
-    return annotate_mesh_lanes(
-        payload, table, resolved_env, gateway, as_routing_snapshot(mesh_snapshot)
-    )
+    return annotate_mesh_lanes(payload, resolved_env, gateway, as_routing_snapshot(mesh_snapshot))
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to

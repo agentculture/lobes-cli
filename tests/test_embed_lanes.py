@@ -45,14 +45,16 @@ def test_lane_names_and_ids():
 
 def test_lanes_are_frozen_and_well_formed():
     assert isinstance(EMBED_LANES, tuple)
+    lane_copy = dataclasses.replace(EMBED_LANES[0])  # never mutate the shared registry
     with pytest.raises(dataclasses.FrozenInstanceError):
-        EMBED_LANES[0].name = "x"  # type: ignore[misc]
+        lane_copy.name = "x"  # type: ignore[misc]
     for lane in EMBED_LANES:
         assert isinstance(lane, EmbedLane)
         assert lane.task in {"embed", "score"}
         assert lane.engine in {"vllm", "sentence-transformers"}
         assert lane.normalization in {"l2", "none", ""}  # "" = not declared by the card
-        assert lane.modalities and set(lane.modalities) <= _MODALITIES
+        assert lane.modalities
+        assert set(lane.modalities) <= _MODALITIES
         assert lane.base_url_env == lane.name.upper().replace("-", "_") + "_BASE_URL"
         validate_lane_name(lane.name)
 
