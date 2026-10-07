@@ -236,9 +236,10 @@ files are hand-edited and were not re-rendered.
 Approved deviation d1: the gateway relays `/v1/rerank` and `/v1/score` bodies
 **semantically unmodified** — it never injects, rewrites, or defaults an
 `instruction` field; the prompt is shaped inside the engine by
-`--chat-template`, never by a gateway rewrite. It does **re-encode** the JSON
-(whitespace), so the forwarded body is semantically identical but not
-byte-identical.
+`--chat-template`, never by a gateway rewrite. A body whose `model` already
+names the served id is relayed **byte-identical** (orin-embedding-specialist
+t6); one addressed by an alias has its `model` rewritten, which re-encodes the
+JSON (whitespace), so it is semantically identical but not byte-identical.
 
 ## Upgrade note — a missing jinja fails LOUD
 
