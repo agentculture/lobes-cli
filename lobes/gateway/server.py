@@ -236,10 +236,13 @@ def rewrite_model(body: bytes, served_name: str) -> bytes:
 
     Aliases and default-routing change the model the *gateway* picked; the
     backend only knows its own ``--served-model-name``, so the forwarded body
-    must carry that name. Non-JSON bodies pass through untouched.
+    must carry that name. Non-JSON bodies pass through untouched, and so does a
+    body that already names ``served_name``: re-serialising it would change its
+    bytes (separators, non-ASCII escaping) for no routing reason, and a
+    multimodal request must reach the upstream byte-identical.
     """
     data = _parse_body(body)
-    if data is None:
+    if data is None or data.get("model") == served_name:
         return body
     data["model"] = served_name
     return json.dumps(data).encode("utf-8")

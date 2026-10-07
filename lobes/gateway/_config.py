@@ -260,6 +260,40 @@ MAX_ACTIVE_ENV: dict[str, str] = {
     "innereye": "INNEREYE_MAX_ACTIVE",
 }
 
+# Specialist embed/rerank LANES (orin-embedding-specialist t6). The registry in
+# :data:`lobes.embed_lanes.EMBED_LANES` is the single source of truth for which
+# lanes exist; every per-lane env key derives from the lane name via
+# :func:`lane_env_key` (``gemma2-embed`` -> ``GEMMA2_EMBED_<SUFFIX>``), so adding
+# a lane to the registry wires it here with no edit to this module. Lanes are
+# deliberately kept OUT of :data:`FEASIBLE_ENV` / :data:`MAX_ACTIVE_ENV`: those
+# two maps are the Colleague-ROLE channel (pinned exactly by tests, iterated by
+# doctor and the fingerprint layer with a ``name.upper()`` prefix a hyphenated
+# lane name would get wrong), and a lane is not a role (operator decision c35).
+LANE_KEY_SUFFIXES: tuple[str, ...] = (
+    "BASE_URL",
+    "FEASIBLE",
+    "MAX_ACTIVE",
+    "TESTED_ON",
+    "MAX_MODEL_LEN",
+)
+
+
+def lane_env_key(lane_name: str, suffix: str) -> str:
+    """The ``<LANE>_<SUFFIX>`` env key for a specialist lane (``-`` -> ``_``)."""
+    return f"{lane_name.upper().replace('-', '_')}_{suffix}"
+
+
+def _embed_lanes() -> tuple:
+    """The lane registry, imported lazily.
+
+    ``lobes.embed_lanes`` imports ``lobes.roles``, which imports THIS module,
+    so a top-level import would be circular whichever side loads first.
+    """
+    from lobes.embed_lanes import EMBED_LANES
+
+    return EMBED_LANES
+
+
 # The sentinel every replica ranks at today (weight hardcoded 1.0 everywhere
 # — see lobes/gateway/_selection.py's own docstring). Named here, not
 # inlined, so the kill switch below and a later ranking task both cite the
@@ -299,8 +333,13 @@ def _local_capacities(env: Mapping[str, str]) -> dict[str, float]:
     """
     if _as_bool(env, CAPACITY_KILL_SWITCH_ENV):
         return dict.fromkeys(MAX_ACTIVE_ENV, CAPACITY_SENTINEL)
+    keys = dict(MAX_ACTIVE_ENV)
+    # Specialist lanes carry their own per-backend <LANE>_MAX_ACTIVE (t6). The
+    # kill switch above returns before this, so it still wins for lanes too: a
+    # lane then has no entry, which downstream ranks at the same sentinel.
+    keys.update({lane.name: lane_env_key(lane.name, "MAX_ACTIVE") for lane in _embed_lanes()})
     out: dict[str, float] = {}
-    for name, key in MAX_ACTIVE_ENV.items():
+    for name, key in keys.items():
         raw = (env.get(key) or "").strip()
         if not raw:
             continue
@@ -811,6 +850,55 @@ def _add_pooling_role_aliases(aliases: dict[str, str], backends: list[Backend]) 
             aliases.setdefault(backend_name, backend.served_name)
 
 
+def _lane_backends(env: Mapping[str, str]) -> list[Backend]:
+    """One optional backend per registry lane, wired only by ``<LANE>_BASE_URL``.
+
+    Generalises the ``embed-deep`` pattern over :data:`EMBED_LANES` rather than
+    hard-coding names. The backend NAME is the lane name and its served name is
+    the lane's catalog id (no ``*_SERVED_NAME`` override: the id IS the vector
+    space, so a lane is named for exactly one checkpoint). Unset ``BASE_URL``
+    means not wired — no backend, no alias, so a request for it 404s.
+    """
+    out: list[Backend] = []
+    for lane in _embed_lanes():
+        url = (env.get(lane_env_key(lane.name, "BASE_URL")) or "").strip()
+        if url:
+            out.append(
+                Backend(
+                    name=lane.name,
+                    base_url=url.rstrip("/"),
+                    served_name=lane.catalog_id,
+                    task=lane.task,
+                )
+            )
+    return out
+
+
+def _add_lane_aliases(aliases: dict[str, str], lane_backends: list[Backend]) -> None:
+    """``model=<lane>`` resolves to the lane's own checkpoint — and nothing else.
+
+    Only a WIRED lane earns its alias (the ``embed-deep`` contract): an absent
+    lane is absent (404 ``model_not_found``), NEVER substituted by another lane,
+    the 0.6B embedder or any other checkpoint — each lane is its own vector
+    space. ``setdefault`` so an explicit operator alias still wins.
+    """
+    for backend in lane_backends:
+        aliases.setdefault(backend.name, backend.served_name)
+
+
+def _infeasible_lanes(env: Mapping[str, str]) -> frozenset[str]:
+    """Lane names this box declares it cannot serve (``<LANE>_FEASIBLE=false``).
+
+    Independent of wiring, like :data:`FEASIBLE_ENV`. A wired-but-infeasible
+    lane 404s ``role_infeasible``; it is never served by a sibling lane.
+    """
+    return frozenset(
+        lane.name
+        for lane in _embed_lanes()
+        if (env.get(lane_env_key(lane.name, "FEASIBLE")) or "").strip().lower() in _FALSY_FEASIBLE
+    )
+
+
 def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, ServerConfig]:
     """Construct the routing table and server config from environment variables."""
     env = os.environ if env is None else env
@@ -1037,7 +1125,10 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             task="score",
         ),
     )
-    backends = [primary, *(b for b in optional if b is not None)]
+    # Specialist lanes (t6) are appended AFTER every pre-existing backend so the
+    # first-match served-name ownership of embed/embed-deep is unchanged.
+    lane_backends = _lane_backends(env)
+    backends = [primary, *(b for b in optional if b is not None), *lane_backends]
     # The capability-tier layer: main/minor/multimodal (and back-compat
     # cheap/normal/hard) resolve to the served name of the wired minor /
     # multimodal / primary *generate* gear, on top of the task-family routing.
@@ -1093,6 +1184,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # Both the Colleague-facing ROLE name and the internal BACKEND name are
     # accepted, exactly as the generate lane takes `senses` and `multimodal`.
     _add_pooling_role_aliases(aliases, backends)
+    _add_lane_aliases(aliases, lane_backends)
     aliases.update(_expand_tier_alias_synonyms(_parse_aliases(env.get("GATEWAY_ALIASES"))))
     # Hardware feasibility (task t6): computed over the FIVE canonical backend
     # names FEASIBLE_ENV knows about — independent of whether each is actually
@@ -1118,7 +1210,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     wired_names = frozenset(b.name for b in backends)
     infeasible = frozenset(
         name for name in FEASIBLE_ENV if not _is_feasible(env, name, wired=name in wired_names)
-    )
+    ) | _infeasible_lanes(env)
     # Retired (t14): the env peer family used to be parsed here into
     # peer_origins/peer_proxied/peer_api_keys/replica_origins/replica_api_keys
     # — see the "Retired" comment above _config.NEVER_PROXIED_BACKENDS. The
