@@ -1,0 +1,62 @@
+# SPIKE — EmbeddingGemma 2 on the Jetson AGX Orin: vLLM refuses it; a Sentence-Transformers image serves every modality in bf16
+#
+# Date:     2026-10-07 (UTC), plan tasks t1 (EG2 arm) + t12 of orin-embedding-specialist
+# Board:    Jetson AGX Orin 64GB (sm_87 Ampere, 62,817 MiB host RAM, ZERO swap), L4T R39 (release) REVISION 2.0, ssh orin@orin
+# Frame:    orin-embedding-specialist (docs/specs/2026-10-07-orin-embedding-specialist.md); assumption c28 / honesty h19
+# Checkpoint: google/embeddinggemma-2 (HF, Apache-2.0, created 2026-09-14)
+#
+# SUMMARY
+#   1. vLLM CANNOT serve it on this box today. The Orin's pinned engine image
+#      vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+#      (vllm 0.23.1rc1.dev672+g93d8f834d, transformers 5.12.1, torch 2.11.0+cu130) refuses at config
+#      validation: "model type `embedding_gemma2` but Transformers does not recognize this architecture".
+#      -> EG2 is a SIDECAR lane (engine "sentence-transformers"), as the plan's c8 assumption expected.
+#   2. A Sentence-Transformers image BUILT ON THAT SAME ENGINE BASE serves it: transformers 5.19.0
+#      (a release — the card's config names 5.18.0.dev0), sentence-transformers 6.1.0, torch 2.11.0+cu130
+#      (NOT the card's 2.14 — the base image's torch works), Pillow 12.2.0. bf16 supported, parameters load bf16.
+#   3. Every modality returns a finite, unit-norm 768-d vector: text, prompted text (CodeRetrieval),
+#      image, audio, text+image, video. Selective encoder load per the card's config_kwargs works:
+#      text-only = 271.0M params, full = 744.4M.
+#   Throwaway containers only (--rm, --memory 12g/10g); ~/.lobes untouched; associate already Exited.
+
+## t1 arm — vLLM pooling runner, the deployed engine digest
+
+  docker run --rm --name oes-v-eg2 --runtime nvidia --memory 10g -e HF_HUB_OFFLINE=1 \
+    -v /home/orin/.cache/huggingface:/root/.cache/huggingface \
+    vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9 \
+    google/embeddinggemma-2 --runner pooling --convert embed --dtype bfloat16 --max-model-len 8192 \
+    --gpu-memory-utilization 0.08 --attention-config '{"backend": "TRITON_ATTN"}'
+  -> exit 1:
+  (APIServer pid=1) pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelConfig
+  (APIServer pid=1)   Value error, The checkpoint you are trying to load has model type `embedding_gemma2` but
+  Transformers does not recognize this architecture. ...
+
+## t12 — the spike image (oes/eg2-spike:local, image id sha256:9501b20087a1d8c37f0e242a4bbbc2a317c9964482cb381ded0a9b28e97b665e)
+
+  FROM vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+  RUN uv pip install --system --no-deps "transformers==5.19.0" \
+   && uv pip install --system "sentence-transformers==6.1.0" pillow torchcodec soundfile
+
+  Versions in the built image: transformers 5.19.0, sentence-transformers 6.1.0, torch 2.11.0+cu130, Pillow 12.2.0
+
+## Probe (one process per load; SentenceTransformer(..., model_kwargs={"torch_dtype": torch.bfloat16},
+## config_kwargs=<card table>); docker run --rm --runtime nvidia --memory 12g)
+
+  /home/orin/oes-spike/eg2-full.log:RESULT {"mods": "full", "bf16_supported": true, "param_dtype": "torch.bfloat16", "params_M": 744.4, "load_s": 18.8, "cuda_alloc_GiB": 1.399, "text": {"shape": [1, 768], "finite": true, "norm0": 1.0029, "s": 0.574}, "text_prompted": {"shape": [1, 768], "finite": true, "norm0": 1.0003, "s": 0.13}, "text_p50_ms": 129.1, "image": {"shape": [1, 768], "finite": true, "norm0": 0.9987, "s": 0.484}, "audio": {"shape": [1, 768], "finite": true, "norm0": 0.9986, "s": 0.557}, "text+image": {"shape": [1, 768], "finite": true, "norm0": 0.9996, "s": 0.321}, "video": {"shape": [1, 768], "finite": true, "norm0": 1.0015, "s": 0.308}, "cuda_max_GiB": 1.48, "rss_max_GiB": 4.034}
+  /home/orin/oes-spike/eg2-text.log:RESULT {"mods": "text", "bf16_supported": true, "param_dtype": "torch.bfloat16", "params_M": 271.0, "load_s": 4.2, "cuda_alloc_GiB": 0.505, "text": {"shape": [1, 768], "finite": true, "norm0": 1.0029, "s": 0.426}, "text_prompted": {"shape": [1, 768], "finite": true, "norm0": 1.0003, "s": 0.119}, "text_p50_ms": 117.4, "cuda_max_GiB": 0.514, "rss_max_GiB": 2.246}
+
+  Reading the rows:
+    full : 744.4M params, load 18.8 s, CUDA allocated 1.399 GiB (peak 1.48), process RSS max 4.03 GiB,
+           text p50 129.1 ms (10 single-sentence calls), image/audio/video/text+image all finite, |v| ~1.0
+    text : 271.0M params, load 4.2 s,  CUDA allocated 0.505 GiB (peak 0.514), process RSS max 2.25 GiB,
+           text p50 117.4 ms
+  Inputs: image = a 224x224 solid RGB PIL image; audio = a 2 s 440 Hz sine {"array","sampling_rate":16000};
+  video = a 2 s 160x120 ffmpeg testsrc mp4 (by path). These prove the encode PATH per modality, not
+  retrieval quality — the negative-control retrieval probes are acceptance-run work (plan t18).
+  Norms are ~1.0 (0.9986-1.0029) in bf16; the lobes sidecar re-normalizes after MRL truncation anyway.
+
+## What this does NOT show
+
+  - No served HTTP lane yet (the lobes sidecar module runs inside this image in plan t13/t15).
+  - No co-residency with the 8B lanes; no load test; RSS here is a single-process figure.
+  - The card's torch 2.14 was not tried; 2.11 (the engine base) works for every modality above.
