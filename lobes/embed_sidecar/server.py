@@ -604,7 +604,7 @@ def _load_encoder(settings: Settings) -> None:  # pragma: no cover
         )
         try:
             _encoder = SentenceTransformerEncoder(settings)
-        except BaseException as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             # OOM, a refused dtype, a bad checkpoint, a missing codec: never sit at
             # "loading" forever -- report it, then exit so restart: policies apply.
             _load_error = f"{type(exc).__name__}: {exc}"
