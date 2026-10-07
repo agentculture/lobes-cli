@@ -393,6 +393,15 @@ Re-image the front on every box that serves or proxies the role.
 > `docs/qwen3.6-35b-a3b-nvfp4.md` for that checkpoint's full history and its
 > own GDN-MTP kernel gap on the fleet's newer nightly.
 
+**Associate is being retired (2026-10-07): DORMANT/unhosted mesh-wide** once
+the Orin renders `orin-embed`, the mesh's embedding-specialist shape
+(`docs/specs/2026-10-07-orin-embedding-specialist.md`). The Orin was
+associate's only host, so `model=associate` will 404 `role_infeasible` with
+no `hosted_by` anywhere, exactly like `muse`. The role, its catalog entry and
+the `orin-associate` shape stay in-tree; `orin-associate` is the rollback
+shape. The lane had already been `Exited (1)` for ~9 days (cause not
+diagnosed). The text below is the record of what it was.
+
 **`associate` — the TENTH role (opt-in hosting), the Jetson AGX Orin's local
 generate lobe.** Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
 — the SAME Lightning checkpoint the Spark served as `worker` under
