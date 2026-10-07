@@ -1,0 +1,57 @@
+# MEASURE — code-retrieval head-to-head on the Jetson AGX Orin: EmbeddingGemma 2 keeps the code slot (c26); Nemotron-3-Embed-8B takes the 8B slot (operator)
+#
+# Date:     2026-10-07, ~13:14 -> 14:55 Orin local (run1 through the live orin-embed gateway; run2/run3 on a
+#           throwaway vLLM container, port 127.0.0.1:8099, same engine digest), plan task t16
+# Board:    Jetson AGX Orin 64GB (sm_87, 62,817 MiB host RAM, ZERO swap), L4T R39
+# Harness:  scripts/embed_h2h/h2h.py — corpus + THRESHOLD_POINTS = 5.0 committed in c5ebec0 BEFORE any result (h18);
+#           prompts card-verified in 8956e17 (also before scoring). Corpus: 1,724 function/class chunks from
+#           lobes-cli @ 971117b1 + culture @ ff258157; 48 nl_to_code + 24 issue_to_source labelled queries.
+# Frame:    orin-embedding-specialist, success signal c26 / honesty h18, requirement c10 / h9
+#
+# DECISION (c26, applied as committed — h2h.decide(), "beats EG2 by >= 5 points on BOTH families"):
+#   No 8B candidate clears it  ->  google/embeddinggemma-2 TAKES THE CODE SLOT; the 8B slot goes to the
+#   next-best measured candidate.  Operator decision 2026-10-07: nvidia/Nemotron-3-Embed-8B-BF16 takes the 8B
+#   slot (best on the discriminating family, independent Ministral/NVIDIA lineage per #291).
+#
+# VALIDITY FINDING (reported, NOT used to move the bar): the nl_to_code family is SATURATED — every model,
+#   including the 0.6B baseline, scores 0.88-0.95, so it cannot separate candidates. The "both families" clause
+#   therefore hinged on a non-discriminating test. issue_to_source does discriminate (0.52 -> 0.61). A harder
+#   NL->code set is follow-up work, not a reason to re-score this decision.
+
+## Margins vs google/embeddinggemma-2 (nDCG@10 points)
+
+  nvidia/Nemotron-3-Embed-8B-BF16 {'nl_to_code': 0.23, 'issue_to_source': 8.36} takes code slot: False
+  nomic-ai/nomic-embed-code {'nl_to_code': 0.95, 'issue_to_source': 7.02} takes code slot: False
+  Qwen/Qwen3-VL-Embedding-8B {'nl_to_code': -5.93, 'issue_to_source': 4.85} takes code slot: False
+
+## Full table (nDCG@10; raw per-run JSON + md beside this file in docs/evidence/2026-10-07-h2h/)
+
+| model | family | nDCG@10 | n |
+|---|---|---|---|
+| google/embeddinggemma-2 | issue_to_source | 0.5229 | 24 |
+| google/embeddinggemma-2 | nl_to_code | 0.9424 | 48 |
+| nvidia/Nemotron-3-Embed-8B-BF16 | issue_to_source | 0.6065 | 24 |
+| nvidia/Nemotron-3-Embed-8B-BF16 | nl_to_code | 0.9447 | 48 |
+| Qwen/Qwen3-Embedding-0.6B | issue_to_source | 0.5191 | 24 |
+| Qwen/Qwen3-Embedding-0.6B | nl_to_code | 0.9472 | 48 |
+| nomic-ai/nomic-embed-code | issue_to_source | 0.5931 | 24 |
+| nomic-ai/nomic-embed-code | nl_to_code | 0.9520 | 48 |
+| Qwen/Qwen3-VL-Embedding-8B | issue_to_source | 0.5713 | 24 |
+| Qwen/Qwen3-VL-Embedding-8B | nl_to_code | 0.8831 | 48 |
+
+## Memory as served on the Orin (docker stats; util is vLLM --gpu-memory-utilization)
+
+  google/embeddinggemma-2          sidecar, full multimodal       4.69 GiB (mem_limit 6g)
+  nvidia/Nemotron-3-Embed-8B-BF16  vLLM util 0.35, len 8192       20.56 GiB (mem_limit 26g)
+  nomic-ai/nomic-embed-code        vLLM util 0.35, len 8192       19.17 GiB (min host available during scoring 18,970 MiB)
+  Qwen/Qwen3-VL-Embedding-8B       vLLM util 0.52, len 8192       31.59 GiB, KV 3.14 GiB — booted ONLY with the EG2
+                                   sidecar and Nemotron stopped (with EG2 resident it refused at 0.52: not co-residable)
+  Qwen/Qwen3-Embedding-0.6B        vLLM util 0.06 (role embedder)  5.24 GiB
+
+## Run notes
+
+  - run2/run3 first FAILED to boot: CUDA free memory on Jetson excludes page cache. After run1's I/O, vLLM saw
+    18.1 GiB "free" with ~30 GiB "available" and refused util 0.35. Evicting the HF cache pages with
+    posix_fadvise(DONTNEED) (no root) cut buff/cache 18.5 -> 3.8 GiB and both booted.
+  - Qwen3-VL-Embedding's instruction is a SYSTEM prompt on its card; the harness sends text input with the
+    Qwen3 "Instruct:/Query:" prefix (prompts.json marks it verified=false). Its score may understate it.
