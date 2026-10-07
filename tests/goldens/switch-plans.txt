@@ -374,3 +374,92 @@
   msg: tool-call parser: skipped (sglang gear — no vLLM --tool-call-parser on this engine)
   msg: quantization: skipped (sglang gear — quantization is baked into the checkpoint file, not a serve flag)
   note: sglang-served gear — `lobes switch` configures the vLLM lane (sglang takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/dspark-speculation.md.
+### google/embeddinggemma-2
+  VLLM_MODEL=google/embeddinggemma-2
+  VLLM_SERVED_NAME=google/embeddinggemma-2
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: skipped (sentence-transformers gear — quantization is baked into the checkpoint file, not a serve flag)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: sentence-transformers-served gear — `lobes switch` configures the vLLM lane (sentence-transformers takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/embeddinggemma-2.md.
+### Qwen/Qwen3-VL-Embedding-8B
+  VLLM_MODEL=Qwen/Qwen3-VL-Embedding-8B
+  VLLM_SERVED_NAME=Qwen/Qwen3-VL-Embedding-8B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: none (task=embed)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### Qwen/Qwen3-VL-Reranker-8B
+  VLLM_MODEL=Qwen/Qwen3-VL-Reranker-8B
+  VLLM_SERVED_NAME=Qwen/Qwen3-VL-Reranker-8B
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=score
+  msg: tool-call parser: skipped (task=score)
+  msg: quantization: none (task=score)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-rerank service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=classify\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### nvidia/Nemotron-3-Embed-8B-BF16
+  VLLM_MODEL=nvidia/Nemotron-3-Embed-8B-BF16
+  VLLM_SERVED_NAME=nvidia/Nemotron-3-Embed-8B-BF16
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: none (task=embed)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### nomic-ai/nomic-embed-code
+  VLLM_MODEL=nomic-ai/nomic-embed-code
+  VLLM_SERVED_NAME=nomic-ai/nomic-embed-code
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=8192
+  VLLM_GPU_MEM_UTIL=0.06
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TASK=embed
+  msg: tool-call parser: skipped (task=embed)
+  msg: quantization: none (task=embed)
+  msg: max-model-len (embed/score default): 8192
+  msg: gpu-mem-util (embed/score default): 0.06
+  note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+  note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
