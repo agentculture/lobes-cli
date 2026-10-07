@@ -134,3 +134,15 @@ def test_gateway_receives_every_lane_key_the_gateway_reads() -> None:
     for lane in EMBED_LANES:
         for suffix in ("BASE_URL", "FEASIBLE", "MAX_ACTIVE", "TESTED_ON", "MAX_MODEL_LEN"):
             assert lane_env_key(lane.name, suffix) in names
+
+
+def test_sidecar_default_modalities_are_accepted_by_the_sidecar() -> None:
+    """The overlay's EMBED_MODALITIES default must parse — "code" is text to the sidecar, not a modality."""
+    import re
+
+    from lobes.embed_sidecar.server import parse_modalities
+
+    env = _load("docker-compose.embed.yml")["services"]["embed-gemma2-embed"]["environment"]
+    line = next(item for item in env if item.startswith("EMBED_MODALITIES="))
+    default = re.search(r":-([^}]*)}", line).group(1)
+    assert parse_modalities(default) == frozenset({"text", "image", "video", "audio"})

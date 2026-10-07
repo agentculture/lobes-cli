@@ -47,7 +47,7 @@ services:
     environment:
       - EMBED_MODEL_ID=${GEMMA2_EMBED_MODEL:-google/embeddinggemma-2}
       - EMBED_SERVED_NAME=${GEMMA2_EMBED_SERVED_NAME:-google/embeddinggemma-2}
-      - EMBED_MODALITIES=${GEMMA2_EMBED_MODALITIES:-text,code,image,video,audio}
+      - EMBED_MODALITIES=${GEMMA2_EMBED_MODALITIES:-text,image,video,audio}
       - EMBED_DTYPE=${GEMMA2_EMBED_DTYPE:-bf16}
       - EMBED_HOST=0.0.0.0
       - EMBED_PORT=8000
