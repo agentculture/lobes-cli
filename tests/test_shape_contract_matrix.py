@@ -289,6 +289,14 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-lobe", "muse"),
         ("orin-lobe", "worker"),
         ("orin-lobe", "associate"),
+        # orin-embed (orin-embedding-specialist t14) hosts only the pooling
+        # gears + specialist embed lanes: it drops every generate role.
+        ("orin-embed", "cortex"),
+        ("orin-embed", "senses"),
+        ("orin-embed", "muse"),
+        ("orin-embed", "worker"),
+        ("orin-embed", "associate"),
+        ("orin-embed", "hand"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),
