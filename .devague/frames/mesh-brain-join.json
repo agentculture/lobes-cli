@@ -252,7 +252,7 @@
     {
       "id": "c10",
       "kind": "assumption",
-      "text": "Live baseline 2026-09-11 (ssh, read-only): Spark hosts cortex+rerank and proxies worker/embed->Thor, associate->Orin; Thor hosts worker/embed/rerank and proxies cortex/hand->Spark; Orin hosts associate and pools cortex over Spark+Thor \u2014 but the Thor no longer hosts cortex, so that replica reads compatible:false ('quantization: unknown; runtime: unknown'): a static peer list already went stale. Orin .env pins MODEL_GEAR_VERSION=0.63.1 while its gateway serves 0.70.0, lacks GATEWAY_SELF_ORIGIN, and neither Thor nor Orin has the lobes CLI on PATH. All three are on the tailnet tail0be7e0.ts.net (Spark :8001, Thor :8000, Orin :8000).",
+      "text": "Live baseline 2026-09-11 (ssh, read-only): Spark hosts cortex+rerank and proxies worker/embed->Thor, associate->Orin; Thor hosts worker/embed/rerank and proxies cortex/hand->Spark; Orin hosts associate and pools cortex over Spark+Thor \u2014 but the Thor no longer hosts cortex, so that replica reads compatible:false ('quantization: unknown; runtime: unknown'): a static peer list already went stale. Orin .env pins MODEL_GEAR_VERSION=0.63.1 while its gateway serves 0.70.0, lacks GATEWAY_SELF_ORIGIN, and neither Thor nor Orin has the lobes CLI on PATH. All three are on the tailnet TAILNET.ts.net (Spark :8001, Thor :8000, Orin :8000).",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [],
@@ -725,7 +725,7 @@
     {
       "id": "c38",
       "kind": "requirement",
-      "text": "Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce LOBES_MESH_SEEDS (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (tail0be7e0.ts.net) where multicast does not cross nodes.",
+      "text": "Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce LOBES_MESH_SEEDS (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (TAILNET.ts.net) where multicast does not cross nodes.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
@@ -1224,7 +1224,7 @@
     },
     {
       "id": "s15",
-      "surface": "challenge pass / hidden-dependency lens: tailnet transport (tail0be7e0.ts.net), no multicast; _replicas.py:283 outbound bearer",
+      "surface": "challenge pass / hidden-dependency lens: tailnet transport (TAILNET.ts.net), no multicast; _replicas.py:283 outbound bearer",
       "finding": "Every member is the brain, but the FIRST contact needs a typed seed \u2014 no broadcast on a tailnet; member-to-member auth must move from per-box peer keys to the join key.",
       "seeds": [
         "c38",

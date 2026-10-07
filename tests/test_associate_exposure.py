@@ -8,8 +8,8 @@ the API server starting, TWO DISTINCT tailnet peers queried it, neither
 initiated by the operator --
 ``docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`` records::
 
-    INFO:     100.127.105.72:50652 - "GET /v1/models HTTP/1.1" 200 OK
-    INFO:     100.105.216.63:55196 - "GET /v1/models HTTP/1.1" 200 OK
+    INFO:     100.64.0.10:50652 - "GET /v1/models HTTP/1.1" 200 OK
+    INFO:     100.64.0.11:55196 - "GET /v1/models HTTP/1.1" 200 OK
 
 Frame claim c30 predicted the exposure; c46 records that it was REALISED. The
 shipped lane therefore departs from the vendor recipe in one NAMED way (frame
@@ -65,7 +65,7 @@ _EVIDENCE = _REPO / "docs" / "evidence" / "2026-08-26-associate-gateway-auth-fro
 #: The two tailnet clients that queried the unauthenticated spike endpoint.
 #: Quoted verbatim from the spike transcript -- neither was initiated by the
 #: operator's session (honesty condition h32).
-_OBSERVED_TAILNET_CLIENTS = ("100.127.105.72", "100.105.216.63")
+_OBSERVED_TAILNET_CLIENTS = ("100.64.0.10", "100.64.0.11")
 _SPIKE_TRANSCRIPT = _REPO / "docs" / "evidence" / "2026-08-25-spike-lightning-vllm-orin.txt"
 
 _KEY = "sk-lobes-associate-inbound-0001"

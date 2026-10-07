@@ -208,14 +208,14 @@ therefore still DECLARED/UNVALIDATED.
 
 ## Mesh wiring (#127) from this box
 
-- `PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001` — cortex referral
+- `PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001` — cortex referral
   (the same operator-typed value the Thor uses). `PRIMARY_PEER_PROXY=true` +
   `PRIMARY_PEER_API_KEY=<the Spark's inbound GATEWAY_API_KEY>` arm the
   follow-the-referral forward. **VALIDATED LIVE 2026-07-17**: a
   `model=cortex` chat request from this box answers from the Spark's 27B
-  (`X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001`, HTTP 200),
+  (`X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001`, HTTP 200),
   caller's own credential stripped per the #127 contract.
-- `AUDIO_URL=http://100.127.105.72:8001` — `/v1/audio/*` is *configured* to
+- `AUDIO_URL=http://100.64.0.10:8001` — `/v1/audio/*` is *configured* to
   forward to the Spark's gateway instead of local sidecars, but **audio
   cannot chain gateway→gateway as of 0.45.0** (found live, 2026-07-17): the
   audio readiness probe GETs `<AUDIO_URL>/v1/health/ready` unauthenticated,

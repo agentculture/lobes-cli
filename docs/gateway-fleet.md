@@ -555,8 +555,8 @@ doctor`.** The bearer gate above is opt-in fleet-wide, but the `associate`
 lane is the one role whose exposure has already gone wrong in practice. On
 2026-08-25 the Lightning spike ran NVIDIA's published Jetson recipe verbatim
 — `--network host`, no key — and within *seconds* two distinct tailnet peers
-queried the uncredentialed endpoint unprompted, `100.127.105.72` and
-`100.105.216.63`, neither initiated by the operator
+queried the uncredentialed endpoint unprompted, `100.64.0.10` and
+`100.64.0.11`, neither initiated by the operator
 (`docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt`; the full writeup is
 `docs/evidence/2026-08-26-associate-gateway-auth-front.txt`). The shipped
 lane corrects that in the one named way: `vllm-associate` does **not**

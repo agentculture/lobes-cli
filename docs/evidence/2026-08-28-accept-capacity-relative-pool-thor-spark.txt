@@ -19,7 +19,7 @@ and static pswpin/pswpout over 5s, with zero D-state tasks.
 
 ## Both replicas visible and compatible, Spark still flagged busy
   http://vllm-primary:8000                       ready=True  busy=False weight=2.0 capacity=2.0
-  http://spark.tail0be7e0.ts.net:8001            ready=True  busy=True  weight=2.0 capacity=2.0
+  http://spark.TAILNET.ts.net:8001            ready=True  busy=True  weight=2.0 capacity=2.0
 
 ## BASELINE — 8-way, pool bypassed (direct to Thor vllm-primary)
 wall=19.2s  completion_tokens=888  AGGREGATE=46.19 tok/s  errors=0
@@ -28,18 +28,18 @@ wall=17.2s  completion_tokens=888  AGGREGATE=51.66 tok/s  errors=0
 
 ## POOLED — 8-way to Thor's gateway, model=cortex
 wall=16.8s  completion_tokens=888  AGGREGATE=52.76 tok/s  errors=0
-served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
-proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+served_by: {'-': 2, 'http://thor.TAILNET.ts.net:8000': 6}
+proxied_by: {'http://spark.TAILNET.ts.net:8001': 2, '-': 6}
 reasons: {'peer-less-loaded': 2, 'sole-ready': 1, 'local-idle': 1, 'none': 4}
 
 wall=13.3s  completion_tokens=888  AGGREGATE=66.92 tok/s  errors=0
-served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
-proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+served_by: {'-': 2, 'http://thor.TAILNET.ts.net:8000': 6}
+proxied_by: {'http://spark.TAILNET.ts.net:8001': 2, '-': 6}
 reasons: {'peer-less-loaded': 2, 'none': 6}
 
 wall=13.2s  completion_tokens=888  AGGREGATE=67.37 tok/s  errors=0
-served_by: {'-': 2, 'http://thor.tail0be7e0.ts.net:8000': 6}
-proxied_by: {'http://spark.tail0be7e0.ts.net:8001': 2, '-': 6}
+served_by: {'-': 2, 'http://thor.TAILNET.ts.net:8000': 6}
+proxied_by: {'http://spark.TAILNET.ts.net:8001': 2, '-': 6}
 reasons: {'peer-less-loaded': 2, 'none': 6}
 
 ## RESULT

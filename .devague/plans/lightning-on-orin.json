@@ -276,7 +276,7 @@
     {
       "id": "c30",
       "kind": "requirement",
-      "text": "SECURITY: both published recipes stand up an UNAUTHENTICATED 30B endpoint on this box's tailnet. Each binds --host 0.0.0.0 (llama.cpp) or --network host (both), and llama-server's own startup banner warns verbatim: 'CORS is set to allow all origins and no API key is set / this can be a security risk'. PROBED 2026-08-25: this box holds tailnet address 100.81.137.121, so for the whole life of a spike every tailnet peer can reach port 8080 (or 8000) with no credential. The repo's own gateway exists partly to avoid this -- it has an opt-in GATEWAY_API_KEY bearer gate and #127's rule that peer credentials are always a copy of the peer's own inbound key. The frame carried no claim about this before this pass.",
+      "text": "SECURITY: both published recipes stand up an UNAUTHENTICATED 30B endpoint on this box's tailnet. Each binds --host 0.0.0.0 (llama.cpp) or --network host (both), and llama-server's own startup banner warns verbatim: 'CORS is set to allow all origins and no API key is set / this can be a security risk'. PROBED 2026-08-25: this box holds tailnet address 100.64.0.12, so for the whole life of a spike every tailnet peer can reach port 8080 (or 8000) with no credential. The repo's own gateway exists partly to avoid this -- it has an opt-in GATEWAY_API_KEY bearer gate and #127's rule that peer credentials are always a copy of the peer's own inbound key. The frame carried no claim about this before this pass.",
       "deferred": false,
       "deferred_reason": ""
     },
@@ -437,7 +437,7 @@
     {
       "id": "c46",
       "kind": "requirement",
-      "text": "SECURITY, now REALISED not hypothetical: within seconds of the API server starting, two DISTINCT tailnet peers hit the unauthenticated endpoint -- the transcript records 'INFO: 100.127.105.72:50652 - GET /v1/models HTTP/1.1 200 OK' and 'INFO: 100.105.216.63:55196 - GET /v1/models HTTP/1.1 200 OK', neither of which this session initiated. c30 predicted the exposure; the boot log proves mesh peers actually discovered and queried it. Any adopted lane must sit behind the gateway's GATEWAY_API_KEY rather than binding an open port on the tailnet.",
+      "text": "SECURITY, now REALISED not hypothetical: within seconds of the API server starting, two DISTINCT tailnet peers hit the unauthenticated endpoint -- the transcript records 'INFO: 100.64.0.10:50652 - GET /v1/models HTTP/1.1 200 OK' and 'INFO: 100.64.0.11:55196 - GET /v1/models HTTP/1.1 200 OK', neither of which this session initiated. c30 predicted the exposure; the boot log proves mesh peers actually discovered and queried it. Any adopted lane must sit behind the gateway's GATEWAY_API_KEY rather than binding an open port on the tailnet.",
       "deferred": false,
       "deferred_reason": ""
     },

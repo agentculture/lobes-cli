@@ -3,8 +3,8 @@ ACCEPTANCE — peer-only replica pools on the Jetson AGX Orin
 Date:      2026-08-30
 Box:       Jetson AGX Orin 64 GB (sm_87); cortex NOT hosted
            (PRIMARY_FEASIBLE=false)
-Peers:     Spark  http://spark.tail0be7e0.ts.net:8001  (inbound gate: YES)
-           Thor   http://thor.tail0be7e0.ts.net:8000   (inbound gate: NO)
+Peers:     Spark  http://spark.TAILNET.ts.net:8001  (inbound gate: YES)
+           Thor   http://thor.TAILNET.ts.net:8000   (inbound gate: NO)
 Build:     lobes-cli 0.70.0, branch feat/peer-only-replica-pools, local wheel
            into the gateway image (Dockerfile.gateway LOCAL-WHEEL VARIANT)
 Baseline:  docs/evidence/2026-08-30-baseline-orin-cortex-pinned.txt
@@ -21,7 +21,7 @@ number is reported as measured, not softened.
 (0) CONFIGURATION UNDER TEST
 -----------------------------
     PRIMARY_FEASIBLE=false
-    PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001
     PRIMARY_PEER_PROXY=true
     PRIMARY_PEER_API_KEY=<spark's inbound GATEWAY_API_KEY>
     PRIMARY_PEER_ORIGINS=http://spark...:8001,http://thor...:8000
@@ -55,12 +55,12 @@ GET /capabilities on the Orin, cortex entry:
     BEFORE (baseline):  ready=False  context=1048576
     AFTER:              ready=True   context=262144
     unchanged:          feasible=False  proxied=True
-                        hosted_by=http://spark.tail0be7e0.ts.net:8001
+                        hosted_by=http://spark.TAILNET.ts.net:8001
 
     replicas:
-      http://spark.tail0be7e0.ts.net:8001  ready=True compat=True
+      http://spark.TAILNET.ts.net:8001  ready=True compat=True
                                            reason="fingerprint reference"
-      http://thor.tail0be7e0.ts.net:8000   ready=True compat=True  reason=""
+      http://thor.TAILNET.ts.net:8000   ready=True compat=True  reason=""
 
 Both peers serve unsloth/Qwen3.8-27B-NVFP4 at 262144, so 262144 is the
 fingerprint-agreed window. 1048576 was this box's own PRIMARY_MAX_MODEL_LEN
@@ -204,7 +204,7 @@ it does not prove is a mid-flight peer dying.
     replicas:
       http://127.0.0.1:9                   ready=False compat=False
                                            reason="peer gateway unreachable"
-      http://thor.tail0be7e0.ts.net:8000   ready=True  compat=True
+      http://thor.TAILNET.ts.net:8000   ready=True  compat=True
                                            reason="fingerprint reference"
 
     ready=True  context=262144   (both still correct with one replica down)

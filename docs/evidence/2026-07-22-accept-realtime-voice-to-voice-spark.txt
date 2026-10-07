@@ -6,7 +6,7 @@ bridge:  lobes-cli 0.54.0 built from branch spec/151-realtime-voice-to-voice
          (local wheel layered over the deployed image — 0.54.0 is not on PyPI yet)
 gateway: http://localhost:8001 (unchanged, 0.52.3 — this work has a zero-line gateway diff)
 voice lane: OPENAI_MODEL empty -> resolves to 'multimodal', served via MULTIMODAL_PEER_PROXY
-            to http://orin.tail0be7e0.ts.net:8000 (senses is dropped on this shape)
+            to http://orin.TAILNET.ts.net:8000 (senses is dropped on this shape)
 
 ## 0. Preconditions
 

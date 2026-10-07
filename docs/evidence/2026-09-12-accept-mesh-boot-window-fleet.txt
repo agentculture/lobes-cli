@@ -151,14 +151,14 @@ spark: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_a
 thor: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_api_key", "code": "invalid_api_key"}}
 orin: (no members) {"error": {"message": "Invalid API key.", "type": "invalid_api_key", "code": "invalid_api_key"}}
 ## spark gateway mesh log lines since recreate
-[gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.tail0be7e0.ts.net:8000#pending (not_yet_probed)
-[gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+[gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.TAILNET.ts.net:8000#pending (not_yet_probed)
+[gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.TAILNET.ts.net:8000#pending (not_yet_probed)
 ## rosters 2026-09-12T10:59:53Z (join-key bearer)
 spark: thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None]
 thor: orin[p=True,v=True,roles=1,r=None]
 orin: thor[p=True,v=True,roles=3,r=None] spark[p=True,v=True,roles=2,r=None]
 
-thor roster 2026-09-12T11:00:35Z: {"members": [{"name": "orin", "origin": "http://orin.tail0be7e0.ts.net:8000", "capacity": 1.0, "last_seen_age": 40.29937719699228, "expiry": null, "verified": true, "flapping": false, "roles": ["associate"], "probed": true, "unverified_reason": null}, {"name": "spark", "origin": "http://spark.tail0be7e0.ts.net:8001", "capacity": 1.0, "last_seen_age": 40.46725072094705, "expiry": null, "verified": true, "flapping": false, "roles": ["cortex", "reranker"], "probed": true, "unverified_reason": null}], "ledger": {}}
+thor roster 2026-09-12T11:00:35Z: {"members": [{"name": "orin", "origin": "http://orin.TAILNET.ts.net:8000", "capacity": 1.0, "last_seen_age": 40.29937719699228, "expiry": null, "verified": true, "flapping": false, "roles": ["associate"], "probed": true, "unverified_reason": null}, {"name": "spark", "origin": "http://spark.TAILNET.ts.net:8001", "capacity": 1.0, "last_seen_age": 40.46725072094705, "expiry": null, "verified": true, "flapping": false, "roles": ["cortex", "reranker"], "probed": true, "unverified_reason": null}], "ledger": {}}
 ## thor gateway log: mesh + announce lines since recreate
 [gateway] "GET /mesh/roster HTTP/1.1" 200 -
 
@@ -184,8 +184,8 @@ t+67.33s  worker -> HTTP 200 type=- retry-after,unverified,member=-,-,thor
 2026-09-12T11:01:54.763707165Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
 2026-09-12T11:01:54.777819277Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
 2026-09-12T11:01:54.777959741Z [gateway] "POST /mesh/announce HTTP/1.1" 200 -
-2026-09-12T11:01:54.795957325Z [gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.tail0be7e0.ts.net:8000#pending (not_yet_probed)
-2026-09-12T11:01:54.795989869Z [gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.tail0be7e0.ts.net:8000#pending (not_yet_probed)
+2026-09-12T11:01:54.795957325Z [gateway] mesh pending orin: auth: rejected GET /capabilities from http://orin.TAILNET.ts.net:8000#pending (not_yet_probed)
+2026-09-12T11:01:54.795989869Z [gateway] mesh pending thor: auth: rejected GET /capabilities from http://thor.TAILNET.ts.net:8000#pending (not_yet_probed)
 2026-09-12T11:01:55.575920296Z [gateway] "GET /mesh/roster HTTP/1.1" 401 -
 ## spark roster now
 orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None]
@@ -197,15 +197,15 @@ spark-gw: orin[p=True,v=True,roles=1,r=None] thor[p=True,v=True,roles=3,r=None] 
 thor:     orin[p=True,v=True,roles=1,r=None] spark[p=True,v=True,roles=2,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities]
 orin:     thor[p=True,v=True,roles=3,r=None] spark[p=True,v=True,roles=2,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities]
 ## spark-gw gateway log (mesh lines)
-2026-09-12T11:20:10.783729453Z [gateway] mesh pending orin: http://orin.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
-2026-09-12T11:20:10.783736957Z [gateway] mesh pending thor: http://thor.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
-2026-09-12T11:20:10.783740558Z [gateway] mesh pending spark: http://spark.tail0be7e0.ts.net:8001 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+2026-09-12T11:20:10.783729453Z [gateway] mesh pending orin: http://orin.TAILNET.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+2026-09-12T11:20:10.783736957Z [gateway] mesh pending thor: http://thor.TAILNET.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+2026-09-12T11:20:10.783740558Z [gateway] mesh pending spark: http://spark.TAILNET.ts.net:8001 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
 ## spark-gw /capabilities per role
-  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.tail0be7e0.ts.net:8001 members=None member=spark
-  worker    feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
-  associate feasible=False ready=True proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 members=None member=orin
+  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.TAILNET.ts.net:8001 members=None member=spark
+  worker    feasible=False ready=True proxied=True hosted_by=http://thor.TAILNET.ts.net:8000 members=None member=thor
+  associate feasible=False ready=True proxied=True hosted_by=http://orin.TAILNET.ts.net:8000 members=None member=orin
   hand      feasible=False ready=False proxied=None hosted_by=None members=None member=None
-  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.TAILNET.ts.net:8000 members=None member=thor
   reranker  feasible=False ready=True proxied=True hosted_by=None members=['spark', 'thor'] member=thor
   senses    feasible=False ready=False proxied=None hosted_by=None members=None member=None
   muse      feasible=False ready=False proxied=None hosted_by=None members=None member=None
@@ -267,14 +267,14 @@ E       AssertionError: advertised-ready roles that are NOT reachably served (a 
 E           worker    http://localhost:8002/v1/chat/completions  -> 508 backend error (no honest Retry-After — dishonest relay)
 
 ## raw-id routing matrix on dev541 (spark-gw, spark, thor)
-  spark-gw  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  spark-gw  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  spark-gw  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
-  spark     nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  spark-gw  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  spark-gw  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  spark-gw  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.TAILNET.ts.net:8000
+  spark     nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.TAILNET.ts.net:8000
   spark     nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=- member=- proxied-by=-
-  spark     worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  spark     worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.TAILNET.ts.net:8000
   thor      nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 200 type=- route=- member=- proxied-by=-
-  thor      nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
+  thor      nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
   thor      worker                                       HTTP 200 type=- route=- member=- proxied-by=-
 
 ## raw-id control on 0.76.0 — INVALID (ran 45 s after the control gateway started, inside the 0.76.0 boot window; lapse l7)
@@ -288,10 +288,10 @@ E           worker    http://localhost:8002/v1/chat/completions  -> 508 backend 
 spark:    orin[p=True,v=True,roles=1,r=None] spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] thor[p=True,v=True,roles=3,r=None]
 spark-gw: thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None] spark[p=True,v=True,roles=2,r=None]
 ## spark-gw /capabilities
-  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.tail0be7e0.ts.net:8001 members=None member=spark
-  worker    feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
-  associate feasible=False ready=True proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 members=None member=orin
-  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000 members=None member=thor
+  cortex    feasible=False ready=True proxied=True hosted_by=http://spark.TAILNET.ts.net:8001 members=None member=spark
+  worker    feasible=False ready=True proxied=True hosted_by=http://thor.TAILNET.ts.net:8000 members=None member=thor
+  associate feasible=False ready=True proxied=True hosted_by=http://orin.TAILNET.ts.net:8000 members=None member=orin
+  embedder  feasible=False ready=True proxied=True hosted_by=http://thor.TAILNET.ts.net:8000 members=None member=thor
   reranker  feasible=False ready=True proxied=True hosted_by=None members=['spark', 'thor'] member=thor
   hand      feasible=False ready=False proxied=None hosted_by=None members=None member=None
 recreate spark gateway: 2026-09-12T11:41:34Z
@@ -323,31 +323,31 @@ pause thor gateway: model-gear-gateway
 recreate spark gateway: 2026-09-12T11:58:25Z
 gateway up after 11.1 s
 ## while thor is paused (12 probes, 1 s apart)
-t+11.13s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+12.17s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+13.2s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+14.23s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+15.27s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+16.31s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+17.34s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+18.38s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+19.41s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+20.46s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+21.49s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
-t+22.54s  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+11.13s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+12.17s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+13.2s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+14.23s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+15.27s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+16.31s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+17.34s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+18.38s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+19.41s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+20.46s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+21.49s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+22.54s  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
 ## spark roster while thor paused
 spark-gw[p=False,v=False,roles=0,r=not_yet_probed] thor[p=False,v=False,roles=0,r=not_yet_probed] orin[p=False,v=False,roles=0,r=not_yet_probed]
 unpause thor gateway: model-gear-gateway
 2026-09-12T11:58:49Z
 ## after unpause: retry honouring Retry-After (5 s) until 200 or 120 s
-t+0.01s after unpause  HTTP 503 type=role_unverified hosted_by=http://thor.tail0be7e0.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
+t+0.01s after unpause  HTTP 503 type=role_unverified hosted_by=http://thor.TAILNET.ts.net:8000 Retry-After=5 X-Lobes-Mesh-Unverified=true X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=worker
 t+5.38s after unpause  HTTP 200 type=- hosted_by=- Retry-After=- X-Lobes-Mesh-Unverified=- X-Lobes-Mesh-Member=thor X-Lobes-Mesh-Role=-
 ## spark roster after
 spark-gw[p=True,v=False,roles=0,r=no announced role verified against /capabilities] thor[p=True,v=True,roles=3,r=None] orin[p=True,v=True,roles=1,r=None]
 ## spark gateway log: pending lines
-[gateway] mesh pending thor: http://thor.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
-[gateway] mesh pending orin: http://orin.tail0be7e0.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
-[gateway] mesh pending spark-gw: http://spark.tail0be7e0.ts.net:8002 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+[gateway] mesh pending thor: http://thor.TAILNET.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+[gateway] mesh pending orin: http://orin.TAILNET.ts.net:8000 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
+[gateway] mesh pending spark-gw: http://spark.TAILNET.ts.net:8002 not yet probed — requests for its roles answer 503 role_unverified until the first /capabilities probe lands
 
 ## A. boot window, all peers up — dev544
 recreate spark gateway: 2026-09-12T12:00:04Z
@@ -384,31 +384,31 @@ FAILED tests/test_live_capabilities.py::test_advertised_models_are_reachable
 2 failed, 3 passed in 6.25s
 
 ## raw ids and the alias via spark-gw on dev544
-  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
-  associate                                    HTTP 200 type=- route=sole-ready member=orin proxied-by=http://orin.tail0be7e0.ts.net:8000
+  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.TAILNET.ts.net:8000
+  associate                                    HTTP 200 type=- route=sole-ready member=orin proxied-by=http://orin.TAILNET.ts.net:8000
 
 ## raw-id FAIR control on 0.76.0 — spark-gw rebuilt at the 0.76.0 release, probed 100 s after start (after its first verify pass)
 Identical to dev544: the mis-route is pre-existing (#236 defect 2 — an unknown raw id falls back to the primary lane and is forwarded to the cortex member). Posted to #236.
 ## FAIR raw-id control: spark-gw on 0.76.0, 2026-09-12T12:18:24Z, 100 s after start
 spark-gw roster: orin[p=None,v=True,roles=2,r=None] spark[p=None,v=True,roles=2,r=None] thor[p=None,v=True,roles=3,r=None]
-  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.tail0be7e0.ts.net:8001
-  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.tail0be7e0.ts.net:8000
+  nvidia/Qwen3.6-35B-A3B-NVFP4                 HTTP 508 type=proxy_loop route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B HTTP 404 type=model_not_found route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  unsloth/Qwen3.8-27B-NVFP4                    HTTP 200 type=- route=sole-ready member=spark proxied-by=http://spark.TAILNET.ts.net:8001
+  worker                                       HTTP 200 type=- route=sole-ready member=thor proxied-by=http://thor.TAILNET.ts.net:8000
 
 ## F. ready flips when the Orin's associate lane stops (dev544)
 ## F (continued): associate lane recovered on the Orin at 12:21:39Z (healthy after 180 s once embed+rerank were stopped); spark-gw associate ready:
-  2026-09-12T12:26:22Z ready,hosted_by,proxied = True http://orin.tail0be7e0.ts.net:8000 True
+  2026-09-12T12:26:22Z ready,hosted_by,proxied = True http://orin.TAILNET.ts.net:8000 True
 ## orinlane.sh output (the poller saw the stop; the lane's own restart crash-looped on util 0.80 — see orin-recovery)
 stop orin associate lane: 2026-09-12T12:02:03Z
 0
-t+11s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
-t+16s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
-t+21s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
-t+26s spark-gw associate ready,hosted_by = True http://orin.tail0be7e0.ts.net:8000
+t+11s spark-gw associate ready,hosted_by = True http://orin.TAILNET.ts.net:8000
+t+16s spark-gw associate ready,hosted_by = True http://orin.TAILNET.ts.net:8000
+t+21s spark-gw associate ready,hosted_by = True http://orin.TAILNET.ts.net:8000
+t+26s spark-gw associate ready,hosted_by = True http://orin.TAILNET.ts.net:8000
 t+31s spark-gw associate ready,hosted_by = False None
 start orin associate lane: 2026-09-12T12:05:23Z
 orin lane: model-gear-vllm-associate Up 6 minutes (healthy)

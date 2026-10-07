@@ -188,7 +188,7 @@ facade exposes.
 | value | rendered bind |
 |---|---|
 | `INNEREYE_UI_PORT=8188` | `127.0.0.1:8188:8188` — **loopback only** |
-| `INNEREYE_UI_PORT=100.127.105.72:8188` | `100.127.105.72:8188:8188` — that interface only |
+| `INNEREYE_UI_PORT=100.64.0.10:8188` | `100.64.0.10:8188:8188` — that interface only |
 
 A bare port number binds loopback, never `0.0.0.0`. A wider bind (a LAN
 address, a tailnet address, or `0.0.0.0` itself) has to be typed as an
@@ -219,7 +219,7 @@ truth about what gets published, so the value has to *be* an address, not an
 expression that becomes one later. The accepted grammar:
 
 - **port** — 1 to 65535, digits only. A bare port binds `127.0.0.1`.
-- **interface** — an IPv4 address (`100.127.105.72`), a hostname
+- **interface** — an IPv4 address (`100.64.0.10`), a hostname
   (`localhost`, `host.example`), or a **bracketed** IPv6 literal
   (`[::1]:8188`, with an optional `%zone`).
 - nothing else. Anything outside `[A-Za-z0-9.\-:\[\]%]` is refused, which

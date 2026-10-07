@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.84.3] - 2026-10-07
+
+### Changed
+
+- Scrub the fleet tailnet MagicDNS name (now TAILNET) and three real tailnet IPs (now 100.64.0.10-12) from committed docs, evidence, devague/eidetic records, code comments, templates and test fixtures (#301); the env.example mesh test now rejects any *.tail<hex>.ts.net name; the orin-embed deployment lock digest is re-captured for its comment-only change.
+
 ## [0.84.2] - 2026-10-07
 
 ### Added
@@ -162,7 +168,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `INNEREYE_UI_PORT` — an opt-in, default-OFF knob that publishes ComfyUI's own web UI. A bare port number binds loopback (`127.0.0.1:PORT:8188`); a wider bind must be typed as an explicit interface (`100.127.105.72:8188`). Rendered by `lobes init --apply` into the generated `docker-compose.shape.yml`, never a hand-written override, and never parsed into an int (issue #272). Unset, the rendered deployment is byte-identical to before the knob existed.
+- `INNEREYE_UI_PORT` — an opt-in, default-OFF knob that publishes ComfyUI's own web UI. A bare port number binds loopback (`127.0.0.1:PORT:8188`); a wider bind must be typed as an explicit interface (`100.64.0.10:8188`). Rendered by `lobes init --apply` into the generated `docker-compose.shape.yml`, never a hand-written override, and never parsed into an int (issue #272). Unset, the rendered deployment is byte-identical to before the knob existed.
 - `lobes.runtime._compose.shape_parked_service_keys` — reads the shape overlay's dropped-profile MARKER instead of bare service presence.
 
 ### Changed

@@ -10,7 +10,7 @@
 #   WORKER_MODEL=WORKER_SERVED_NAME=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
 #   WORKER_GPU_MEM_UTIL=0.30, WORKER_MAX_MODEL_LEN=65536 (progressive start; 1M is a ceiling)
 #   WORKER_QUANTIZATION=modelopt (Lightning's own quant_method)
-#   PRIMARY_FEASIBLE=false + PRIMARY_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000 (cortex moved)
+#   PRIMARY_FEASIBLE=false + PRIMARY_PEER_ORIGIN=http://thor.TAILNET.ts.net:8000 (cortex moved)
 #   compose worker lane (deployment-side edits, template follow-ups recorded):
 #     MTP line removed (plain decode first, #187), --reasoning-parser=nemotron_v3
 #     (tool parser stays qwen3_coder per the NVIDIA recipe).

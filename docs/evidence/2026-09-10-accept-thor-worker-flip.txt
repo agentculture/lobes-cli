@@ -22,7 +22,7 @@
     worker: feasible=True  ready=True  proxied=None
             model=nvidia/Qwen3.6-35B-A3B-NVFP4  context=65536 -> later 262144
     cortex: feasible=False ready=False proxied=True
-            hosted_by=http://spark.tail0be7e0.ts.net:8001
+            hosted_by=http://spark.TAILNET.ts.net:8001
             model=unsloth/Qwen3.8-27B-NVFP4  context=262144
 
 `GET /v1/models`: nvidia/Qwen3.6-35B-A3B-NVFP4, Qwen/Qwen3-Embedding-0.6B,
@@ -72,7 +72,7 @@ so the proxy hop is not the bottleneck at this rate.
   vision     : 64x64 solid PNGs -> red "Red", blue "Blue"          PASS
                (negative control discriminates)
   cortex     : model=cortex -> 200, X-Lobes-Proxied-By:
-               http://spark.tail0be7e0.ts.net:8001                 PASS
+               http://spark.TAILNET.ts.net:8001                 PASS
 
 ## 5. Qwen Code end-to-end on the new lane
 

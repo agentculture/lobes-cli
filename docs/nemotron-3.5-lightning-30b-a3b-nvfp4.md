@@ -180,7 +180,7 @@ served value), `WORKER_GPU_MEM_UTIL=0.30`.
 
 The probe ran from the Thor box through its own gateway's `worker` proxy
 (`model=worker` at `thor:8000` → `X-Lobes-Proxied-By` →
-`spark.tail0be7e0.ts.net:8001`), so this transcript validates the d1
+`spark.TAILNET.ts.net:8001`), so this transcript validates the d1
 referral/proxy chain live, not just the engine.
 
 **Comparison with the incumbent it replaced** (`unsloth/Qwen3.6-35B-A3B-NVFP4`

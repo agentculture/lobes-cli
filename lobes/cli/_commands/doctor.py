@@ -651,7 +651,7 @@ _FIX_REMEDIATION = (
 # credential. Within seconds of the API server starting, two DISTINCT tailnet
 # peers queried it, neither initiated by the operator — see
 # docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt (the two `GET
-# /v1/models 200 OK` lines from 100.127.105.72 and 100.105.216.63) and
+# /v1/models 200 OK` lines from 100.64.0.10 and 100.64.0.11) and
 # docs/evidence/2026-08-26-associate-gateway-auth-front.txt.
 #
 # The shipped lane publishes NO host port (the gateway is the only front

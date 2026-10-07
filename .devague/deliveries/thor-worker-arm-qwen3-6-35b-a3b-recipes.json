@@ -243,7 +243,7 @@
       "id": "e9",
       "obligation_ref": "o8",
       "test_ref": "live probe: GET /capabilities senses entry on the Thor after the flip",
-      "behavior_text": "senses feasible=false, proxied=true, hosted_by http://orin.tail0be7e0.ts.net:8000 \u2014 unchanged by the flip",
+      "behavior_text": "senses feasible=false, proxied=true, hosted_by http://orin.TAILNET.ts.net:8000 \u2014 unchanged by the flip",
       "contract_text": "after the flip model=senses on the Thor still resolves to the Orin peer, byte-identically to today",
       "evidence_type": "manual",
       "strength": "execution",
