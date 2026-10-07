@@ -55,7 +55,10 @@ Design decisions
 
 Environment
 -----------
-``EMBED_MODEL_ID`` (default ``google/embeddinggemma-2``), ``EMBED_MODALITIES``
+``EMBED_MODEL_ID`` (default ``google/embeddinggemma-2``; a fine-tune instance
+points it at a local checkpoint path), ``EMBED_SERVED_NAME`` (the identity
+reported in ``model`` / ``/health``, e.g. ``local:my-tune``; default
+``EMBED_MODEL_ID`` — one process serves one checkpoint), ``EMBED_MODALITIES``
 (comma list, default ``text``; ``text`` is mandatory), ``EMBED_DTYPE``
 (``bf16`` default, ``fp32``), ``EMBED_HOST`` / ``EMBED_PORT`` (0.0.0.0:8000).
 """
@@ -116,6 +119,11 @@ class Settings:
     model_id: str
     modalities: frozenset
     dtype: str
+    served_name: str = ""  # reported identity; empty means model_id
+
+    @property
+    def reported_model(self) -> str:
+        return self.served_name or self.model_id
 
 
 @dataclass(frozen=True)
@@ -185,6 +193,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         model_id=env.get("EMBED_MODEL_ID") or DEFAULT_MODEL_ID,
         modalities=parse_modalities(env.get("EMBED_MODALITIES")),
         dtype=resolve_dtype(env.get("EMBED_DTYPE")),
+        served_name=(env.get("EMBED_SERVED_NAME") or "").strip(),
     )
 
 
@@ -193,7 +202,7 @@ def health_status(loaded: bool, settings: Settings) -> tuple[int, dict]:
         return 503, {"status": "loading"}
     return 200, {
         "status": "ok",
-        "model": settings.model_id,
+        "model": settings.reported_model,
         "dtype": settings.dtype,
         "modalities_loaded": sorted(settings.modalities),
     }
@@ -448,7 +457,7 @@ def build_response(
     return {
         "object": "list",
         "data": data,
-        "model": settings.model_id,
+        "model": settings.reported_model,
         "prompt_name": prompt[0],
         "prompt": prompt[1],
         "dimensions": request.dimensions,

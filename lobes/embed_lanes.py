@@ -14,7 +14,8 @@ Dimensions are declared only where verified; ``dim=0`` / ``mrl_dims=()`` mean
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Mapping
 
 from lobes.catalog import ENGINE_SENTENCE_TRANSFORMERS, ENGINE_VLLM, TIER_ROLE
 from lobes.roles import ROLE_BACKEND, ROLES
@@ -41,6 +42,7 @@ class EmbedLane:
     dim: int = 0  # native dimension; 0 = not declared
     mrl_dims: tuple[int, ...] = ()
     normalization: str = "l2"  # "l2" | "none"
+    checkpoint_path: str = ""  # operator fine-tunes only: local checkpoint dir
 
 
 def base_url_env_for(name: str) -> str:
@@ -129,3 +131,58 @@ EMBED_LANES: tuple[EmbedLane, ...] = (
         dim=3584,
     ),
 )
+
+
+# --------------------------------------------------------------------------
+# Operator-declared fine-tune lanes (orin-embedding-specialist, t11)
+# --------------------------------------------------------------------------
+
+FINETUNE_ENV = "EMBED_FINETUNE_LANES"
+FINETUNE_BASE_LANE = "gemma2-embed"
+# A fine-tune's served identity is ``local:<name>``: an HF repo id always
+# contains "/", so this can never equal a catalog id, and it says plainly that
+# the weights are an operator-local checkpoint rather than a published model.
+FINETUNE_ID_PREFIX = "local:"
+
+
+def finetune_identity(name: str) -> str:
+    return FINETUNE_ID_PREFIX + name
+
+
+def _parse_finetune_entry(entry: str) -> tuple[str, str]:
+    name, sep, path = entry.partition("=")
+    name, path = name.strip(), path.strip()
+    if not sep or not name or not path:
+        raise ValueError(f"{FINETUNE_ENV} entry {entry!r} must be name=/abs/path")
+    if not path.startswith("/"):
+        raise ValueError(f"{FINETUNE_ENV} path for {name!r} must be absolute, got {path!r}")
+    return name, path
+
+
+def parse_finetune_lanes(env: Mapping[str, str]) -> tuple[EmbedLane, ...]:
+    """Derive fine-tune lanes from ``EMBED_FINETUNE_LANES`` (never mutates EMBED_LANES)."""
+    raw = env.get(FINETUNE_ENV) or ""
+    base = next(lane for lane in EMBED_LANES if lane.name == FINETUNE_BASE_LANE)
+    taken = {lane.name for lane in EMBED_LANES}
+    lanes: list[EmbedLane] = []
+    for entry in (e for e in raw.split(",") if e.strip()):
+        name, path = _parse_finetune_entry(entry)
+        validate_lane_name(name)
+        if name in taken:
+            raise ValueError(f"fine-tune lane {name!r} collides with an existing embed lane")
+        taken.add(name)
+        lanes.append(
+            replace(
+                base,
+                name=name,
+                catalog_id=finetune_identity(name),
+                base_url_env=base_url_env_for(name),
+                checkpoint_path=path,
+            )
+        )
+    return tuple(lanes)
+
+
+def all_lanes(env: Mapping[str, str]) -> tuple[EmbedLane, ...]:
+    """The static registry plus any declared fine-tunes; base entries untouched."""
+    return EMBED_LANES + parse_finetune_lanes(env)
