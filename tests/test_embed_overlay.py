@@ -137,7 +137,10 @@ def test_gateway_receives_every_lane_key_the_gateway_reads() -> None:
 
 
 def test_sidecar_default_modalities_are_accepted_by_the_sidecar() -> None:
-    """The overlay's EMBED_MODALITIES default must parse — "code" is text to the sidecar, not a modality."""
+    """The overlay's EMBED_MODALITIES default must parse.
+
+    "code" is text to the sidecar, not a modality.
+    """
     import re
 
     from lobes.embed_sidecar.server import parse_modalities

@@ -1300,9 +1300,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # Candidate, NOT the embedder role default (role_hint "candidate" so
         # `_catalog_by_role_hint` can never let it hijack the 0.6B embedder).
         # Facts read off the Hugging Face card/config 2026-10-07 (PUBLISHED-
-        # ELSEWHERE, not measured here, #108): Apache-2.0, 740M params, one
-        # shared 768-d space across text (incl. code), image, video and audio,
-        # MRL 128/256/512/768, 8192-token window, served via sentence-transformers.
+        # ELSEWHERE, #108): Apache-2.0, 740M params, one shared 768-d space
+        # across text (incl. code), image, video and audio, MRL 128/256/512/768,
+        # 8192-token window, served via sentence-transformers. MEASURED on the
+        # Jetson AGX Orin 2026-10-07 (the orin-embed shape's standard lane):
+        # docs/evidence/2026-10-07-accept-orin-embed.txt.
         role_hint="candidate",
         shape="multimodal embedding (text+code+image+video+audio), 768-d MRL",
         context="8K native",

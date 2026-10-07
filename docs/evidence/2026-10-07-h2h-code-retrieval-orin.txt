@@ -24,7 +24,7 @@
   nomic-ai/nomic-embed-code {'nl_to_code': 0.95, 'issue_to_source': 7.02} takes code slot: False
   Qwen/Qwen3-VL-Embedding-8B {'nl_to_code': -5.93, 'issue_to_source': 4.85} takes code slot: False
 
-## Full table (nDCG@10; raw per-run JSON + md beside this file in docs/evidence/2026-10-07-h2h/)
+## Full table (nDCG@10; raw per-run JSON + .table.txt beside this file in docs/evidence/2026-10-07-h2h/)
 
 | model | family | nDCG@10 | n |
 |---|---|---|---|

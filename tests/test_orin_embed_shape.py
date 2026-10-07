@@ -52,7 +52,10 @@ def test_hosts_pooling_gears_and_the_specialist_lanes_but_not_associate() -> Non
 
 
 def test_measured_budgets_and_nemotron_is_documented_opt_in() -> None:
-    """Deviation d1: EG2 is the only standard lane; Nemotron's measured knobs are documented, not rendered."""
+    """Deviation d1: EG2 is the only standard lane.
+
+    Nemotron's measured knobs are documented, not rendered.
+    """
     shape = resolve_shape(_SHAPE)
     assert dict(shape.lane_knobs["gemma2-embed"]) == {
         "mem_limit": "6g",

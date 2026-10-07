@@ -8,14 +8,30 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- The Jetson AGX Orin becomes the mesh embedding specialist (#291): specialist embedding lanes (gemma2-embed = EmbeddingGemma 2 multimodal sidecar, qwen3vl-embed, qwen3vl-rerank, nemotron-embed, nomic-code-embed) registered in lobes/embed_lanes.py, wired by the gateway behind `<LANE>_BASE_URL` with no cross-lane fallback, advertised as top-level /capabilities keys with vector-space identity, and forwarded across the mesh by name
-- EmbeddingGemma 2 Sentence-Transformers sidecar (lobes/embed_sidecar): text/image/audio/video, prompt names, MRL truncation + re-normalization, bf16-only with a degenerate-vector guard, selective encoder load
-- orin-embed built-in shape + docker-compose.embed.yml overlay + Dockerfile.embed-st; lobes up/status/assess per lane; fine-tune lane mechanism (EMBED_FINETUNE_LANES); code-retrieval head-to-head harness (scripts/embed_h2h)
+- The Jetson AGX Orin becomes the mesh's embedding specialist (#291), as the `orin-embed` shape. Its standard specialist lane is `gemma2-embed`: **EmbeddingGemma 2** (`google/embeddinggemma-2`), with text, code, image, video and audio in one 768-d space, served next to the unchanged 0.6B `embedder`/`reranker`. Measured live on the Orin and reached by name from every mesh member (`docs/evidence/2026-10-07-accept-orin-embed.txt`).
+- Specialist embedding lanes, which are not roles (`lobes/embed_lanes.py`):
+  - The gateway wires each lane behind `<LANE>_BASE_URL`, with no cross-lane fallback.
+  - Each lane is advertised as a top-level `/capabilities` key carrying its vector-space identity: model, dimension, MRL dims, modalities, normalization, `tested_on`.
+  - The mesh announces lanes and forwards them by name in one hop.
+  - `lobes up/status/assess <lane>` work per lane, and `lobes explain lanes` describes them.
+- EmbeddingGemma 2 Sentence-Transformers sidecar (`lobes.embed_sidecar`, `Dockerfile.embed-st`, `docker-compose.embed.yml`):
+  - text, plus image, audio and video `messages` parts (`data:` URLs only);
+  - `prompt_name`;
+  - MRL `dimensions` with re-normalization;
+  - bf16 only, with a degenerate-vector guard;
+  - the card's selective encoder load.
+- Measured catalog entries for Nemotron-3-Embed-8B (an opt-in lane), nomic-embed-code and Qwen3-VL-Embedding-8B (measured, not carried), and Qwen3-VL-Reranker-8B (excluded). Also a fine-tune lane mechanism (`EMBED_FINETUNE_LANES`) and a code-retrieval head-to-head harness (`scripts/embed_h2h`).
+- `deployments/jetson-agx-orin__orin-embed/`, the live Orin's lock and files.
 
 ### Changed
 
-- The colleague contract test now requires every ROLES key present (plus lane keys) instead of keys == ROLES
-- associate is being retired from the Orin (DORMANT once orin-embed is applied)
+- The colleague contract test now requires every ROLES key to be present, plus lane keys, instead of keys == ROLES.
+- `associate` is DORMANT/unhosted mesh-wide: the Orin was its only host.
+- The gateway relays a rerank/score body that already names the served id byte-identically. A body addressed by alias is still re-encoded.
+
+### Fixed
+
+- The gateway, `lobes.embed_lanes` and the CLI each import cold in a fresh interpreter, avoiding the pre-existing roles<->gateway import cycle.
 
 ## [0.83.0] - 2026-10-07
 
