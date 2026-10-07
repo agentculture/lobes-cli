@@ -321,3 +321,82 @@ def test_write_env_is_one_atomic_write_keeping_mode(tmp_path) -> None:
     assert env.read_text(encoding="utf-8") == "# c\nA=1\nB=3\nC=4\n"
     assert env.stat().st_mode & 0o777 == 0o600
     assert not list(tmp_path.glob(".env.tmp-*"))
+
+
+# --- second review pass --------------------------------------------------------
+
+
+def test_an_oserror_writing_env_still_rolls_back(box, monkeypatch, capsys) -> None:
+    before = _env(box)
+
+    def boom(*a, **k):
+        raise PermissionError("read-only .env")
+
+    monkeypatch.setattr(_role_swap, "write_env", boom)
+    assert _up(box, "innereye", "--replace", "--apply") != 0
+    err = capsys.readouterr().err
+    assert "read-only .env" in err
+    assert "restarted cortex" in err
+    assert _env(box) == before
+    assert "model-gear-vllm-primary" in box["running"]
+
+
+def test_a_failed_start_also_stops_the_half_started_target(box) -> None:
+    box["fail"].add(("comfyui", True))
+    assert _up(box, "innereye", "--replace", "--apply") != 0
+    calls = [" ".join(c) for c in box["calls"]]
+    stops = [c for c in calls if c.endswith("stop comfyui")]
+    assert stops
+    assert "--profile innereye" in stops[0]
+
+
+def test_a_failed_gateway_recreate_says_the_switch_is_half_done(box, capsys) -> None:
+    box["fail"].add(("gateway", True))
+    assert _up(box, "innereye", "--replace", "--apply") != 0
+    err = capsys.readouterr().err
+    assert "switched to 'innereye'" in err
+    assert "lobes up gateway --apply" in err
+    assert "COMPOSE_PROFILES=innereye" in _env(box)
+
+
+def test_a_duplicated_key_is_rewritten_on_every_line(box) -> None:
+    (box["dir"] / ".env").write_text(_env(box) + "PRIMARY_FEASIBLE=true\n", encoding="utf-8")
+    assert _up(box, "innereye", "--replace", "--apply") == 0
+    assert "PRIMARY_FEASIBLE=true" not in _env(box)
+
+
+def test_a_restarting_rival_counts_as_present(box, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        _compose,
+        "container_status",
+        lambda name: "restarting" if name == "model-gear-vllm-primary" else "exited",
+    )
+    _activate_innereye(box)
+    assert _up(box, "innereye", "--apply") != 0
+    assert "can't run beside cortex" in capsys.readouterr().err
+
+
+def test_colleague_stack_is_refused_beside_innereye(box, capsys) -> None:
+    box["running"] = {"model-gear-comfyui"}
+    (box["dir"] / "docker-compose.audio.yml").write_text("services: {}\n", encoding="utf-8")
+    assert _up(box, "colleague-stack", "--apply") != 0
+    assert "can't run beside innereye" in capsys.readouterr().err
+
+
+def test_plain_up_warns_when_the_role_is_marked_infeasible(box, capsys) -> None:
+    box["running"] = set()
+    (box["dir"] / ".env").write_text(
+        _env(box).replace("PRIMARY_FEASIBLE=true", "PRIMARY_FEASIBLE=false"), encoding="utf-8"
+    )
+    assert _up(box, "cortex", "--override-memory") == 0
+    err = capsys.readouterr().err
+    assert "PRIMARY_FEASIBLE=false" in err
+    assert "lobes up cortex --replace --apply" in err
+
+
+def test_activation_error_carries_a_profile_load_warning(box, capsys) -> None:
+    (box["dir"] / ".env").write_text(
+        _env(box).replace("LOBES_PROFILE=spark", "LOBES_PROFILE=nosuchcard"), encoding="utf-8"
+    )
+    assert _up(box, "innereye") != 0
+    assert "card profile 'nosuchcard' did not load" in capsys.readouterr().err

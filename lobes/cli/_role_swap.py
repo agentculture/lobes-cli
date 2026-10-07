@@ -147,6 +147,10 @@ def service_profile(role: str, service: str) -> str | None:
 # --- .env --------------------------------------------------------------------
 
 
+def feasible_key(role: str) -> str:
+    return FEASIBLE_ENV[_role_backend(role)]
+
+
 def _profiles(env: dict[str, str]) -> list[str]:
     return [p.strip() for p in (env.get(PROFILES_KEY) or "").split(",") if p.strip()]
 
@@ -190,33 +194,16 @@ def backup_env(env_path: Path, target: str) -> Path:
     return backup
 
 
-def _replace_atomically(env_path: Path, text: str) -> None:
-    tmp = env_path.with_name(env_path.name + ".tmp-switch")
-    tmp.write_text(text, encoding="utf-8")
-    os.chmod(tmp, env_path.stat().st_mode & 0o777)
+def restore_env(env_path: Path, backup: Path) -> None:
+    tmp = env_path.with_name(env_path.name + ".tmp-restore")
+    tmp.write_bytes(backup.read_bytes())
+    os.chmod(tmp, backup.stat().st_mode & 0o777)
     os.replace(tmp, env_path)
 
 
-def restore_env(env_path: Path, backup: Path) -> None:
-    _replace_atomically(env_path, backup.read_text(encoding="utf-8"))
-
-
 def write_env(env_path: Path, changes: dict[str, str]) -> None:
-    """Apply ``changes`` in one atomic write: existing keys are rewritten in
-    place, missing ones appended, and the file is swapped in with
-    ``os.replace`` so an interruption never leaves it half-switched."""
-    for key, value in changes.items():
-        _env.check_value(value, key)
-    pending = dict(changes)
-    out: list[str] = []
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        key = line.split("=", 1)[0] if "=" in line else None
-        if key in pending:
-            out.append(f"{key}={pending.pop(key)}")
-        else:
-            out.append(line)
-    out += [f"{k}={v}" for k, v in pending.items()]
-    _replace_atomically(env_path, "\n".join(out) + "\n")
+    """Apply ``changes`` in one atomic write (see ``_env.set_env_many``)."""
+    _env.set_env_many(env_path, changes)
 
 
 # --- the memory gate ---------------------------------------------------------

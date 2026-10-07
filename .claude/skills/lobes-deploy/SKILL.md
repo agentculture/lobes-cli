@@ -95,6 +95,10 @@ working because the mesh serves it from another member.
    address is the one on `tailscale0` (100.x); the others are LAN or
    point-to-point links. Check with `ip -4 -br addr`.
 
+**While switched, don't run `lobes fleet up` or `lobes serve`.** They
+start every lane, cortex included, beside ComfyUI (issue #294). Use
+`lobes up <role>` for single lanes.
+
 **Switch back to cortex:** `lobes up cortex --replace --apply`. Cortex needs a
 few minutes to load before it reports ready.
 

@@ -403,7 +403,10 @@ stops cortex and backs up `.env`. It then sets `PRIMARY_FEASIBLE=false`, so the
 mesh serves `cortex`, and activates innereye (`COMPOSE_PROFILES`,
 `INNEREYE_BASE_URL`, `INNEREYE_FEASIBLE=true`). Finally it starts `comfyui` and
 recreates the gateway. `lobes up cortex --replace --apply` switches back.
-Without `--replace`, `lobes up` refuses to start either role beside the other.
+Without `--replace`, `lobes up` (including `lobes up colleague-stack`)
+refuses to start either role beside the other. `lobes fleet up` and `lobes
+serve` don't check yet: they start every lane, so on a switched box they
+bring cortex back beside ComfyUI (issue #294).
 
 **Memory gate.** For a role with exclusive rivals or a declared peak on its
 card, `lobes up <role> --apply` refuses to start the role when

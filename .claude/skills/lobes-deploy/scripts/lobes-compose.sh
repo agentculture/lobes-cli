@@ -61,6 +61,16 @@ mapfile -t files < <(lobes fleet files --compose-dir "$dir")
 # "unknown flag". Move it to the front, but only while it is still among the
 # subcommand's own options: after the first service name (as in
 # `exec comfyui python main.py --profile x`) it belongs to the command inside.
+# Options whose value is a separate word (`-p lobes`, `--tail 50`): that word
+# is neither the subcommand nor a service name.
+takes_value() {
+  case "$1" in
+    -p|--project-name|-f|--file|--env-file|--project-directory|--ansi|--progress|--parallel) return 0 ;;
+    --tail|--since|--until|-t|--timeout|--scale|--index|-u|--user|-w|--workdir|-e|--env) return 0 ;;
+    --entrypoint|--name|--pull|--wait-timeout|--signal|-s) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 profiles=()
 rest=()
 seen_sub=0
@@ -70,7 +80,10 @@ while [ $# -gt 0 ]; do
     case "$1" in
       --profile) profiles+=(--profile "${2:?--profile needs a name}"); shift 2; continue ;;
       --profile=*) profiles+=(--profile "${1#*=}"); shift; continue ;;
-      -*) ;;
+      -*)
+        if takes_value "$1" && [ $# -gt 1 ]; then
+          rest+=("$1" "$2"); shift 2; continue
+        fi ;;
       *) if [ "$seen_sub" = 1 ]; then in_cmd=1; else seen_sub=1; fi ;;
     esac
   fi

@@ -68,6 +68,18 @@ def test_profile_after_the_service_belongs_to_the_command_inside(tmp_path) -> No
     assert "-f docker-compose.yml exec comfyui python main.py --profile x" in out.stdout
 
 
+def test_option_values_are_not_taken_for_the_service(tmp_path) -> None:
+    """`-t 5` and `-p lobes` carry values; the profile after them still
+    belongs to compose and is moved to the front. (A mutating subcommand, so
+    the wrapper only prints the plan.)"""
+    out = _run(tmp_path, "stop", "-t", "5", "--profile", "innereye", "comfyui")
+    assert out.returncode == 0, out.stderr
+    assert "--profile innereye stop -t 5 comfyui" in out.stdout
+    out = _run(tmp_path, "-p", "lobes", "up", "-d", "--profile", "innereye", "comfyui")
+    assert out.returncode == 0, out.stderr
+    assert "--profile innereye -p lobes up -d comfyui" in out.stdout
+
+
 def test_the_template_folder_is_refused(tmp_path) -> None:
     templates = tmp_path / "lobes" / "templates" / "fleet"
     templates.mkdir(parents=True)

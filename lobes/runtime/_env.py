@@ -93,6 +93,17 @@ def check_value(value: str, key: str = "value") -> None:
 
 def set_env(env_path: os.PathLike | str, key: str, value: str) -> None:
     """Update ``KEY=VALUE`` in ``.env`` (rewrite if present, append if absent)."""
+    set_env_many(env_path, {key: value})
+
+
+def set_env_many(env_path: os.PathLike | str, changes: dict[str, str]) -> None:
+    """Apply several ``KEY=VALUE`` updates in ONE atomic write.
+
+    Every line of a key is rewritten (a hand-duplicated key would otherwise keep
+    a stale later line, and the later line is the one readers use); a key with no
+    line is appended. The new file replaces the old with ``os.replace`` and keeps
+    its permission bits, so an interruption never leaves ``.env`` half-written.
+    """
     path = Path(env_path)
     if not path.is_file():
         raise ModelGearError(
@@ -100,16 +111,19 @@ def set_env(env_path: os.PathLike | str, key: str, value: str) -> None:
             message=f".env not found at {path}",
             remediation="run 'lobes init --apply' first",
         )
-    check_value(value, key)
-    prefix = key + "="
+    for key, value in changes.items():
+        check_value(value, key)
+    seen: set[str] = set()
     out: list[str] = []
-    seen = False
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith(prefix):
-            out.append(f"{key}={value}")
-            seen = True
+        key = line.split("=", 1)[0] if "=" in line else ""
+        if key in changes:
+            out.append(f"{key}={changes[key]}")
+            seen.add(key)
         else:
             out.append(line)
-    if not seen:
-        out.append(f"{key}={value}")
-    path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    out += [f"{k}={v}" for k, v in changes.items() if k not in seen]
+    tmp = path.with_name(path.name + ".tmp-write")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    os.chmod(tmp, path.stat().st_mode & 0o777)
+    os.replace(tmp, path)
