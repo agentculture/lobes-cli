@@ -1,0 +1,302 @@
+# lobes FLEET — specialist embed/rerank lane overlay (orin-embedding-specialist, t13).
+#
+# A docker-compose *override*: layer it on the base fleet with
+#   docker compose -f docker-compose.yml -f docker-compose.embed.yml --profile <lane> up -d embed-<lane>
+# `lobes up <lane>` chains it automatically when this file is present in the
+# deployment dir. The base fleet compose is untouched.
+#
+# One service per lane in lobes/embed_lanes.py (EMBED_LANES), named
+# `embed-<lane>`; container_name is that same name (`lobes status` inspects
+# containers by it). Each service:
+#   - sits behind a compose profile named after the lane (opt-in; chaining this
+#     file never starts a lane by itself);
+#   - publishes NO host port (`expose` only) — the gateway reaches it on the
+#     compose network as http://embed-<lane>:8000;
+#   - carries a healthcheck and a container memory cap (`mem_limit`);
+#   - declares NO `depends_on` (issue #222: `compose up` walks depends_on).
+#     Boot order is healthcheck-gated instead: the gateway tolerates a lane that
+#     is still loading and reports it `unreachable` per lane.
+#
+# The gateway does not inherit .env (it reads only scoped keys), so the
+# `gateway` override at the bottom passes each lane's <LANE>_BASE_URL through.
+# Default is EMPTY (opt-in): set e.g. GEMMA2_EMBED_BASE_URL=http://embed-gemma2-embed:8000
+# in .env, together with the lane's compose profile in COMPOSE_PROFILES.
+#
+# MEASURED: gemma2-embed's sidecar image (docs/evidence/2026-10-07-spike-embeddinggemma2-sidecar-orin.txt),
+#   max process RSS 4.03 GiB at full load.
+# DECLARED (unmeasured, #108): every vLLM lane below — vLLM viability on sm_87
+#   is pending plan t1 — and every mem_limit / start_period default.
+services:
+  embed-gemma2-embed:
+    # MEASURED image (see header): Sentence-Transformers sidecar on the pinned
+    # vLLM base. vLLM refuses google/embeddinggemma-2, hence this engine.
+    build:
+      context: .
+      dockerfile: Dockerfile.embed-st
+      args:
+        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}
+        # Dev lane only (see Dockerfile.embed-st): empty on release deployments.
+        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}
+    container_name: embed-gemma2-embed
+    profiles: ["gemma2-embed"]
+    restart: unless-stopped
+    # Cap from the measured 4.03 GiB RSS max, with headroom.
+    mem_limit: ${GEMMA2_EMBED_MEM_LIMIT:-6g}
+    runtime: nvidia
+    ipc: host
+    environment:
+      - EMBED_MODEL_ID=${GEMMA2_EMBED_MODEL:-google/embeddinggemma-2}
+      - EMBED_SERVED_NAME=${GEMMA2_EMBED_SERVED_NAME:-google/embeddinggemma-2}
+      - EMBED_MODALITIES=${GEMMA2_EMBED_MODALITIES:-text,code,image,video,audio}
+      - EMBED_DTYPE=${GEMMA2_EMBED_DTYPE:-bf16}
+      - EMBED_HOST=0.0.0.0
+      - EMBED_PORT=8000
+      - HF_HOME=/root/.cache/huggingface
+      - HF_TOKEN=${HF_TOKEN:-}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+    expose:
+      - "8000"
+    healthcheck:
+      # The vLLM base image ships curl and python3; the sidecar serves GET /health.
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # DECLARED: covers the weight load of every loaded modality.
+      start_period: ${GEMMA2_EMBED_START_PERIOD:-300s}
+
+  embed-qwen3vl-embed:
+    # DECLARED — vLLM viability on sm_87 pending plan t1
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: embed-qwen3vl-embed
+    profiles: ["qwen3vl-embed"]
+    restart: unless-stopped
+    # DECLARED — 8B bf16 weights (~16 GiB) plus runtime; unmeasured.
+    mem_limit: ${QWEN3VL_EMBED_MEM_LIMIT:-24g}
+    runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=qwen3vl-embed   # -> /logs/model-gear/qwen3vl-embed-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${QWEN3VL_EMBED_MODEL:-Qwen/Qwen3-VL-Embedding-8B}
+      - --served-model-name=${QWEN3VL_EMBED_SERVED_NAME:-Qwen/Qwen3-VL-Embedding-8B}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=embed
+      - --dtype=bfloat16
+      - '--attention-config={"backend": "TRITON_ATTN"}'
+      # DECLARED budget (unmeasured): ~35% of the Orin's 64 GB unified memory.
+      - --gpu-memory-utilization=${QWEN3VL_EMBED_GPU_MEM_UTIL:-0.35}
+      - --max-model-len=${QWEN3VL_EMBED_MAX_MODEL_LEN:-8192}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # DECLARED: 8B load on a unified-memory board.
+      start_period: ${QWEN3VL_EMBED_START_PERIOD:-900s}
+
+  embed-qwen3vl-rerank:
+    # DECLARED — vLLM viability on sm_87 pending plan t1
+    # qwen3vl-rerank: the Qwen3-VL-Reranker model card's vLLM recipe (hf_overrides
+    # etc.) was not consulted — no network, pending plan t1 — so NO recipe flags
+    # are invented here; add them once t1 measures what the engine needs.
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: embed-qwen3vl-rerank
+    profiles: ["qwen3vl-rerank"]
+    restart: unless-stopped
+    # DECLARED — 8B bf16 weights (~16 GiB) plus runtime; unmeasured.
+    mem_limit: ${QWEN3VL_RERANK_MEM_LIMIT:-24g}
+    runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=qwen3vl-rerank   # -> /logs/model-gear/qwen3vl-rerank-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${QWEN3VL_RERANK_MODEL:-Qwen/Qwen3-VL-Reranker-8B}
+      - --served-model-name=${QWEN3VL_RERANK_SERVED_NAME:-Qwen/Qwen3-VL-Reranker-8B}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=classify
+      - --dtype=bfloat16
+      - '--attention-config={"backend": "TRITON_ATTN"}'
+      # DECLARED budget (unmeasured): ~35% of the Orin's 64 GB unified memory.
+      - --gpu-memory-utilization=${QWEN3VL_RERANK_GPU_MEM_UTIL:-0.35}
+      - --max-model-len=${QWEN3VL_RERANK_MAX_MODEL_LEN:-8192}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # DECLARED: 8B load on a unified-memory board.
+      start_period: ${QWEN3VL_RERANK_START_PERIOD:-900s}
+
+  embed-nemotron-embed:
+    # DECLARED — vLLM viability on sm_87 pending plan t1
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: embed-nemotron-embed
+    profiles: ["nemotron-embed"]
+    restart: unless-stopped
+    # DECLARED — 8B bf16 weights (~16 GiB) plus runtime; unmeasured.
+    mem_limit: ${NEMOTRON_EMBED_MEM_LIMIT:-24g}
+    runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=nemotron-embed   # -> /logs/model-gear/nemotron-embed-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${NEMOTRON_EMBED_MODEL:-nvidia/Nemotron-3-Embed-8B-BF16}
+      - --served-model-name=${NEMOTRON_EMBED_SERVED_NAME:-nvidia/Nemotron-3-Embed-8B-BF16}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=embed
+      - --dtype=bfloat16
+      - '--attention-config={"backend": "TRITON_ATTN"}'
+      # DECLARED budget (unmeasured): ~35% of the Orin's 64 GB unified memory.
+      - --gpu-memory-utilization=${NEMOTRON_EMBED_GPU_MEM_UTIL:-0.35}
+      - --max-model-len=${NEMOTRON_EMBED_MAX_MODEL_LEN:-8192}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # DECLARED: 8B load on a unified-memory board.
+      start_period: ${NEMOTRON_EMBED_START_PERIOD:-900s}
+
+  embed-nomic-code-embed:
+    # DECLARED — vLLM viability on sm_87 pending plan t1
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    container_name: embed-nomic-code-embed
+    profiles: ["nomic-code-embed"]
+    restart: unless-stopped
+    # DECLARED — 8B bf16 weights (~16 GiB) plus runtime; unmeasured.
+    mem_limit: ${NOMIC_CODE_EMBED_MEM_LIMIT:-24g}
+    runtime: nvidia
+    ipc: host
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      stack: { soft: 67108864, hard: 67108864 }
+    env_file:
+      - path: .env
+        required: false
+      - path: .secrets.env
+        required: false
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - TOKENIZERS_PARALLELISM=false
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=nomic-code-embed   # -> /logs/model-gear/nomic-code-embed-<boot>.log
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    expose:
+      - "8000"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command:
+      - vllm
+      - serve
+      - ${NOMIC_CODE_EMBED_MODEL:-nomic-ai/nomic-embed-code}
+      - --served-model-name=${NOMIC_CODE_EMBED_SERVED_NAME:-nomic-ai/nomic-embed-code}
+      - --host=0.0.0.0
+      - --port=8000
+      - --runner=pooling
+      - --convert=embed
+      - --dtype=bfloat16
+      - '--attention-config={"backend": "TRITON_ATTN"}'
+      # DECLARED budget (unmeasured): ~35% of the Orin's 64 GB unified memory.
+      - --gpu-memory-utilization=${NOMIC_CODE_EMBED_GPU_MEM_UTIL:-0.35}
+      - --max-model-len=${NOMIC_CODE_EMBED_MAX_MODEL_LEN:-8192}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # DECLARED: 8B load on a unified-memory board.
+      start_period: ${NOMIC_CODE_EMBED_START_PERIOD:-900s}
+
+  # The gateway lives in the base compose; this override only adds env (a
+  # compose override merges `environment` by key). No depends_on, see header.
+  gateway:
+    environment:
+      - GEMMA2_EMBED_BASE_URL=${GEMMA2_EMBED_BASE_URL:-}
+      - QWEN3VL_EMBED_BASE_URL=${QWEN3VL_EMBED_BASE_URL:-}
+      - QWEN3VL_RERANK_BASE_URL=${QWEN3VL_RERANK_BASE_URL:-}
+      - NEMOTRON_EMBED_BASE_URL=${NEMOTRON_EMBED_BASE_URL:-}
+      - NOMIC_CODE_EMBED_BASE_URL=${NOMIC_CODE_EMBED_BASE_URL:-}
