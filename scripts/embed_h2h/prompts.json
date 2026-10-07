@@ -1,0 +1,59 @@
+{
+  "_comment": "Per-model prompt templates. Placeholders: {q} query text, {task} per-family task text from `tasks`, {filename} chunk path, {code} chunk text. A null template means NO prefix (raw text). `verified` is true only if the template was checked against the model card; never invent a prompt - an unverifiable one is marked verified=false with a note. Verification status below reflects what was available when this file was committed (no network, cards not fetched).",
+  "tasks": {
+    "nl_to_code": "Given a natural language description, retrieve the code that implements it",
+    "issue_to_source": "Given a bug report or stack trace, retrieve the source code that needs to change"
+  },
+  "models": {
+    "google/embeddinggemma-2": {
+      "query": {
+        "nl_to_code": "task: code retrieval | query: {q}",
+        "issue_to_source": "task: code retrieval | query: {q}"
+      },
+      "document": "title: {filename} | text: {code}",
+      "source": "plan brief (t10): EmbeddingGemma 2 CodeRetrieval/Document prompts; issue->source reuses the CodeRetrieval query prompt",
+      "verified": false,
+      "note": "Card not fetched in this run; taken from the confirmed plan's brief."
+    },
+    "Qwen/Qwen3-VL-Embedding-8B": {
+      "query": {
+        "nl_to_code": "Instruct: {task}\nQuery:{q}",
+        "issue_to_source": "Instruct: {task}\nQuery:{q}"
+      },
+      "document": null,
+      "source": "plan brief (t10): Qwen3 embedding instruct format for queries; documents carry no instruction",
+      "verified": false,
+      "note": "Format from the plan brief; card not fetched. The {task} sentences in `tasks` are chosen by this harness, not quoted from the card."
+    },
+    "nvidia/Nemotron-3-Embed-8B-BF16": {
+      "query": {
+        "nl_to_code": null,
+        "issue_to_source": null
+      },
+      "document": null,
+      "source": "none",
+      "verified": false,
+      "note": "UNVERIFIED: query/passage prefix not checked (card not reachable from this task). Run with no prefix is a placeholder, not the card's recommendation; re-check the card before treating its scores as final."
+    },
+    "nomic-ai/nomic-embed-code": {
+      "query": {
+        "nl_to_code": "Represent this query for searching relevant code: {q}",
+        "issue_to_source": "Represent this query for searching relevant code: {q}"
+      },
+      "document": null,
+      "source": "plan brief (t10): card's query prefix 'Represent this query for searching relevant code: '",
+      "verified": false,
+      "note": "Prefix from the plan brief, card not fetched; document side unspecified so no prefix."
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "query": {
+        "nl_to_code": "Instruct: {task}\nQuery:{q}",
+        "issue_to_source": "Instruct: {task}\nQuery:{q}"
+      },
+      "document": null,
+      "source": "Qwen3-Embedding instruct format (same family format as the 8B entry); baseline control",
+      "verified": false,
+      "note": "Card not fetched in this run."
+    }
+  }
+}
