@@ -1,0 +1,126 @@
+# SPIKE — which 8B embedding/rerank candidates the Orin's vLLM pooling runner can serve, and at what memory cost
+#
+# Date:     2026-10-07, 09:16 -> 09:55 UTC (driver ~/oes-spike/t1_driver.sh + retries), plan task t1 of orin-embedding-specialist
+# Board:    Jetson AGX Orin 64GB (sm_87 Ampere, 62,817 MiB host RAM, ZERO swap), L4T R39, ssh orin@orin
+# Engine:   vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+#           (vllm 0.23.1rc1.dev672+g93d8f834d — the digest the Orin's 0.6B embed lane already runs)
+# Frame:    orin-embedding-specialist (docs/specs/2026-10-07-orin-embedding-specialist.md); park v2, decision c18
+# EG2:      see docs/evidence/2026-10-07-spike-embeddinggemma2-sidecar-orin.txt (vLLM refuses it -> sidecar)
+#
+# SUMMARY (one candidate at a time; throwaway --rm containers; ~/.lobes untouched; the 0.6B embed+rerank
+#          lanes kept serving throughout, so every free-memory figure is WITH them resident)
+#   nvidia/Nemotron-3-Embed-8B-BF16 : SERVES at util 0.35, --memory 30g. 4096-d, unit norm. Weights 14.94 GiB;
+#                                     container 19.26 GiB. Negative control: cos(q,rel) 0.60 vs cos(q,irrel) 0.0017.
+#   nomic-ai/nomic-embed-code       : SERVES at util 0.35, --memory 30g. 3584-d, unit norm. KV 3.04 GiB = 56,896 tok;
+#                                     container 19.18 GiB. Negative control: 0.6043 vs -0.0241.
+#   Qwen/Qwen3-VL-Embedding-8B      : SERVES ONLY at util 0.52 (--memory 44g): 4096-d, unit norm, container 30.74 GiB,
+#                                     KV 5.26 GiB = 38,320 tok, min host available during boot 7,064 MiB.
+#                                     Negative control 0.7689 vs 0.3114 (weaker separation on this single probe).
+#                                     util 0.35/0.45 and 0.35 + --skip-mm-profiling all refused: the multimodal
+#                                     encoder profile (budget 12,288 tokens, profiled with 1 max-size video item)
+#                                     costs ~9-11 GiB above the 15.49 GiB weights.
+#   Qwen/Qwen3-VL-Reranker-8B       : did NOT serve at util 0.35 (KV -6.17 GiB) with the card's recipe
+#                                     (hf_overrides Qwen3VLForSequenceClassification / classifier_from_token no,yes /
+#                                     is_original_qwen3_reranker, chat template from the image). Same encoder-profile
+#                                     cost as the embedder => ~0.5 util. Not retried higher: see c18 below.
+#
+# CONSEQUENCES FOR THE PLAN
+#   - ON JETSON, GPU MEMORY COUNTS AGAINST THE CONTAINER'S CGROUP LIMIT: both Qwen3-VL engines were OOM-KILLED at
+#     --memory 30g mid weight-load (kernel: "Memory cgroup out of memory: Killed process ... VLLM::EngineCor
+#     anon-rss:30970640kB" 12:22:48 local, "anon-rss:30078124kB" 12:31:24 local). Every lane's mem_limit must cover
+#     weights + KV + encoder profile + graphs, not host-side RSS only.
+#   - Decision c18 ("add Qwen3-VL-Reranker-8B only if the measured Orin memory budget fits it alongside the
+#     embedders"): it does NOT fit. ~0.5 util for the reranker + >= 0.35 for any 8B embedder + EG2 (~4 GiB RSS) +
+#     the 0.6B pair (0.12) exceeds the board. The 8B reranker is EXCLUDED on measurement; the 0.6B reranker stays.
+#   - The 8B code specialist (c10/c26) is one of Nemotron (0.35), nomic-embed-code (0.35) or Qwen3-VL-Embedding
+#     (0.52). The candidates cannot co-reside, so the head-to-head (plan t16) serves them one at a time.
+#   - The orin-embed shape's DECLARED budgets (qwen3vl-embed 0.30, qwen3vl-rerank 0.30, 24g) are refuted by these
+#     measurements and are replaced in plan t15.
+#
+## Raw driver summary (verbatim; ~/oes-spike/t1/summary.txt, run 1 then the retries)
+  reranker template in image: /vllm-workspace/examples/pooling/score/template/qwen3_vl_reranker.jinja
+  == qwen3vl_embed (Qwen/Qwen3-VL-Embedding-8B) health_ok=0 boot_s=107
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=16899
+  == nemotron_embed (nvidia/Nemotron-3-Embed-8B-BF16) health_ok=1 boot_s=171
+  (APIServer pid=1) INFO 10-07 09:23:57 [api_utils.py:273] non-default args: {'model_tag': 'nvidia/Nemotron-3-Embed-8B-BF16', 'model': 'nvidia/Nemotron-3-Embed-8B-BF16', 'runner': 'pooling', 'convert': 'embed', 'dtype': 'bfloat16', 'max_model_len': 8192, 'gpu_memory_utilization': 0.35, 'attention_config': AttentionConfig(backend=<AttentionBackendEnum.TRITON_ATTN: 'vllm.v1.attention.backends.triton_attn.TritonAttentionBackend'>, flash_attn_version=None, use_prefill_decode_attention=False, flash_attn_max_num_splits_for_cuda_graph=32, tq_max_kv_splits_for_cuda_graph=32, use_trtllm_attention=None,
+  (EngineCore pid=131) INFO 10-07 09:24:54 [weight_utils.py:849] Filesystem type for checkpoints: EXT4. Checkpoint size: 14.81 GiB. Available RAM: 26.48 GiB.
+  (EngineCore pid=131) INFO 10-07 09:25:04 [gpu_model_runner.py:5291] Model loading took 14.94 GiB memory and 10.873740 seconds
+  (EngineCore pid=131) INFO 10-07 09:25:58 [gpu_model_runner.py:6692] Graph capturing finished in 54 secs, took 0.54 GiB
+  (EngineCore pid=131) INFO 10-07 09:25:59 [core.py:337] init engine (profile, create kv cache, warmup model) took 55.53 s (compilation: 38.06 s)
+  dims 4096 n 3 finite True norms [1.0, 1.0, 1.0]
+  cos(q,rel) 0.6 cos(q,irrel) 0.0017
+  mem_usage 19.26GiB / 30GiB
+  min_available_MiB_during=26625
+  == nomic_code_embed (nomic-ai/nomic-embed-code) health_ok=1 boot_s=147
+  (EngineCore pid=101) INFO 10-07 09:28:25 [gpu_worker.py:538] Available KV cache memory: 3.04 GiB
+  (EngineCore pid=101) INFO 10-07 09:28:25 [gpu_worker.py:553] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.3500 is equivalent to --gpu-memory-utilization=0.3108 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.3892. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+  (EngineCore pid=101) INFO 10-07 09:28:25 [kv_cache_utils.py:2146] GPU KV cache size: 56,896 tokens
+  (EngineCore pid=101) INFO 10-07 09:28:41 [gpu_model_runner.py:6692] Graph capturing finished in 15 secs, took 0.27 GiB
+  (EngineCore pid=101) INFO 10-07 09:28:41 [gpu_worker.py:771] CUDA graph pool memory: 0.27 GiB (actual), 2.4 GiB (estimated), difference: 2.14 GiB (804.0%).
+  (EngineCore pid=101) INFO 10-07 09:28:42 [core.py:337] init engine (profile, create kv cache, warmup model) took 48.33 s (compilation: 24.60 s)
+  dims 3584 n 3 finite True norms [1.0, 1.0, 1.0]
+  cos(q,rel) 0.6043 cos(q,irrel) -0.0241
+  mem_usage 19.18GiB / 30GiB
+  min_available_MiB_during=25322
+  == qwen3vl_rerank (Qwen/Qwen3-VL-Reranker-8B) health_ok=0 boot_s=152
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=17248
+  T1DONE
+  --- RETRY CAP=44g 2026-10-07T09:32:49Z ---
+  == qwen3vl_embed (Qwen/Qwen3-VL-Embedding-8B) health_ok=0 boot_s=212
+  (EngineCore pid=101) ERROR 10-07 09:36:02 [core.py:1231]     raise ValueError(
+  (EngineCore pid=101) ERROR 10-07 09:36:02 [core.py:1231] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (EngineCore pid=101)     raise e
+  (EngineCore pid=101)     raise ValueError(
+  (EngineCore pid=101) ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=9877
+  == qwen3vl_rerank (Qwen/Qwen3-VL-Reranker-8B) health_ok=0 boot_s=258
+  (EngineCore pid=101) ERROR 10-07 09:40:35 [core.py:1231]     raise ValueError(
+  (EngineCore pid=101) ERROR 10-07 09:40:35 [core.py:1231] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (EngineCore pid=101)     raise e
+  (EngineCore pid=101)     raise ValueError(
+  (EngineCore pid=101) ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=8683
+  T1RETRYDONE
+  --- QWEN3VL BUDGET PROBE 2026-10-07T09:41:48Z ---
+  [A] util 0.45
+  == qwen3vl_embed (Qwen/Qwen3-VL-Embedding-8B) health_ok=0 boot_s=202
+  (EngineCore pid=101) ERROR 10-07 09:44:59 [core.py:1231]     raise ValueError(
+  (EngineCore pid=101) ERROR 10-07 09:44:59 [core.py:1231] ValueError: To serve at least one request with the model's max seq len (8192), (1.12 GiB KV cache is needed, which is larger than the available KV cache memory (0.91 GiB). Based on the available memory, the estimated maximum model length is 6624. Try increasing `gpu_memory_utilization` (which also controls CPU memory on the CPU backend) or decreasing `max_model_len` when initializing the engine. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (EngineCore pid=101)     raise e
+  (EngineCore pid=101)     raise ValueError(
+  (EngineCore pid=101) ValueError: To serve at least one request with the model's max seq len (8192), (1.12 GiB KV cache is needed, which is larger than the available KV cache memory (0.91 GiB). Based on the available memory, the estimated maximum model length is 6624. Try increasing `gpu_memory_utilization` (which also controls CPU memory on the CPU backend) or decreasing `max_model_len` when initializing the engine. See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=10730
+  [B] util 0.35 --skip-mm-profiling
+  == qwen3vl_embed (Qwen/Qwen3-VL-Embedding-8B) health_ok=0 boot_s=197
+  (EngineCore pid=101) ERROR 10-07 09:48:47 [core.py:1231]     raise ValueError(
+  (EngineCore pid=101) ERROR 10-07 09:48:47 [core.py:1231] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (EngineCore pid=101)     raise e
+  (EngineCore pid=101)     raise ValueError(
+  (EngineCore pid=101) ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine (this flag also controls CPU memory reservation on the CPU backend, despite its name). See https://docs.vllm.ai/en/latest/configuration/conserving_memory/ for more details.
+  (APIServer pid=1)     raise RuntimeError(
+  (APIServer pid=1) RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+  min_available_MiB_during=9862
+  T1QDONE
+  --- QWEN3VL UTIL 0.52 2026-10-07T09:49:44Z ---
+  == qwen3vl_embed (Qwen/Qwen3-VL-Embedding-8B) health_ok=1 boot_s=323
+  (EngineCore pid=101) INFO 10-07 09:54:46 [gpu_worker.py:538] Available KV cache memory: 5.26 GiB
+  (EngineCore pid=101) INFO 10-07 09:54:46 [gpu_worker.py:553] CUDA graph memory profiling is enabled (default since v0.21.0). The current --gpu-memory-utilization=0.5200 is equivalent to --gpu-memory-utilization=0.5188 without CUDA graph memory profiling. To maintain the same effective KV cache size as before, increase --gpu-memory-utilization to 0.5212. To disable, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0.
+  (EngineCore pid=101) INFO 10-07 09:54:46 [kv_cache_utils.py:2146] GPU KV cache size: 38,320 tokens
+  (EngineCore pid=101) INFO 10-07 09:55:03 [gpu_model_runner.py:6692] Graph capturing finished in 16 secs, took 0.73 GiB
+  (EngineCore pid=101) INFO 10-07 09:55:03 [gpu_worker.py:771] CUDA graph pool memory: 0.73 GiB (actual), 0.08 GiB (estimated), difference: 0.66 GiB (89.8%).
+  (EngineCore pid=101) INFO 10-07 09:55:04 [core.py:337] init engine (profile, create kv cache, warmup model) took 103.13 s (compilation: 58.61 s)
+  dims 4096 n 3 finite True norms [1.0, 1.0, 1.0]
+  cos(q,rel) 0.7689 cos(q,irrel) 0.3114
+  mem_usage 30.74GiB / 44GiB
+  min_available_MiB_during=7064
+  T1Q2DONE
