@@ -50,6 +50,7 @@ def box(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_compose, "run_compose", fake_run)
     monkeypatch.setattr("lobes.cli._commands.up.trigger_reannounce", lambda *a, **k: None)
+    monkeypatch.setattr("lobes.cli._commands.up.GATEWAY_WAIT_S", 0.0)
     meminfo = tmp_path / "meminfo"
     state["meminfo"] = meminfo
 

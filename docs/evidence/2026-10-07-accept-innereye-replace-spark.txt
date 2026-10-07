@@ -1,0 +1,91 @@
+ACCEPTANCE — `lobes up innereye --replace`: an agent switches the Spark from cortex to innereye
+Date: 2026-10-07
+Branch: innereye-serve-easy (0.83.0), installed on the box from the local checkout
+Box: spark (DGX Spark GB10, 121.7 GiB unified), gateway :8001, deployment ~/.lobes (hand-kept compose)
+     card profile `spark` declares [[exclusive_roles]] cortex + innereye
+Mesh: spark2 hosts an identical cortex lane (pooled; agreeing fingerprints)
+
+What this proves: the cortex -> innereye switch, the memory gate's pass path, the ComfyUI web UI
+published to the network, the gateway's innereye advert, and cortex continuing through the mesh,
+all driven by an agent (Qwen Code) from the lobes-deploy skill alone.
+What it does NOT prove: a render through /v1/render (innereye's own t13 acceptance is still
+pending; docs/comfyui-innereye.md stays DECLARED), the memory gate's refusal/rollback path live
+(unit-tested only), or the switch back (`lobes up cortex --replace`).
+
+RESULT: PASS.
+
+================================================================================
+1. Baseline: the same request before this change
+================================================================================
+* 2026-10-07 ~01:11-01:45, Qwen Code (worker subagent) was asked to serve innereye with its web UI.
+  It took ~30 min and several attempts. Its transcript shows the causes:
+  - `lobes up --help` did not list innereye, so it never tried `lobes up innereye`;
+  - lobes-compose.sh `up -d --no-deps --profile innereye comfyui` -> compose "unknown flag:
+    --profile" (twice), so it fell back to raw `docker compose`;
+  - nothing named INNEREYE_BASE_URL; it found the commented-out key in .env and added a redundant
+    INNEREYE_FEASIBLE=true and a duplicate INNEREYE_DECLARED_PEAK_GIB;
+  - the run was cancelled before the gateway was recreated: comfyui up with cortex still running
+    (co-resident, against the card's declaration), gateway innereye feasible=False ready=False.
+
+================================================================================
+2. Reset before the test
+================================================================================
+* .env restored from that run's own backup (diff showed only its edits); comfyui stopped.
+  COMPOSE_PROFILES= (empty), INNEREYE_BASE_URL commented out, INNEREYE_UI_PORT=0.0.0.0:8188
+  (pre-existing operator setting, 2026-09-18).
+* vllm-primary (cortex) Up 18 hours (healthy); PRIMARY_FEASIBLE=true.
+* Dry run on the box before the test:
+    $ lobes up innereye
+    error: 'innereye' can't run beside cortex on this card (spark: MEASURED bare-venv (c41): ...)
+    hint: 'lobes up innereye --replace --apply' stops cortex, hands it to the mesh and starts innereye
+    $ lobes up innereye --replace
+    DRY RUN — switch /home/spark/.lobes to innereye:
+      1. docker compose -f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml stop vllm-primary
+      2. memory SHORT: needs 31.4 GiB (declared_peak_gib in the spark card profile), MemAvailable 23.6 GiB now; re-checked after the stop
+      3. .env: PRIMARY_FEASIBLE=false
+      4. .env: INNEREYE_FEASIBLE=true
+      5. .env: INNEREYE_BASE_URL=http://comfyui:8188
+      6. .env: COMPOSE_PROFILES=innereye
+      7. docker compose ... up -d --no-deps comfyui
+      8. docker compose -f docker-compose.yml -f docker-compose.audio.yml ... up -d --no-deps gateway
+
+================================================================================
+3. The run
+================================================================================
+* Started 2026-10-07T02:46:43+03:00 (after a culture-rules agent pinned to cortex-spark finished).
+  Command: qwen --approval-mode yolo "Please serve innereye (ComfyUI) on this box using the 'lobes'
+  command, with its web UI accessible from the network."   (model: cortex-spark2, via :8001)
+* Its tool calls, in order (from its session transcript):
+    1. skill lobes-deploy
+    2. grep '^INNEREYE_UI_PORT' ~/.lobes/.env           -> INNEREYE_UI_PORT=0.0.0.0:8188
+    3. lobes up innereye --replace                      -> the dry-run plan above
+    4. lobes up innereye --replace --apply              -> ">> stopping cortex (vllm-primary)",
+                                                           ">> memory ok: needs 31.4 GiB (declared_peak_gib ...)",
+                                                           .env backed up to .env.bak-20261007-024823-switch-to-innereye
+    5. docker ps --filter name=model-gear-comfyui       -> Up 34 seconds (healthy) 0.0.0.0:8188->8188/tcp
+    6. curl :8001/capabilities innereye                 -> True True
+    7. curl every `hostname -I` address :8188           -> 10.77.77.1 200, 192.168.1.157 200, 100.127.105.72 200
+* Work done ~2.5 min after start; process exit=0 elapsed=434s (including its summary).
+* No file read under lobes/, no hand edit of .env or compose, no subagent.
+* One stderr line during the gateway recreate: "mesh: reannounce not delivered" (the hint hit the
+  gateway mid-restart; peers converge at the next heartbeat). Fixed on this branch: the switch now
+  waits for the gateway's /health before the reannounce.
+* Its summary mislabeled 10.77.77.1 as the tailnet address (tailnet is 100.127.105.72 on
+  tailscale0). The recipe now says how to name the interface.
+
+================================================================================
+4. Independent verification (after exit)
+================================================================================
+  $ docker ps -a --filter name=comfyui --filter name=vllm-primary
+  model-gear-comfyui Up 5 minutes (healthy) 0.0.0.0:8188->8188/tcp
+  model-gear-vllm-primary Exited (137) 5 minutes ago
+  $ curl :8001/capabilities  (feasible, ready)
+  innereye True True
+  cortex False True
+  $ curl http://192.168.1.157:8188/ ; curl http://100.127.105.72:8188/
+  192.168.1.157 200
+  100.127.105.72 200
+  $ POST :8001/v1/chat/completions model=cortex "Reply with just: ok"
+  HTTP/1.1 200 OK
+  X-Lobes-Mesh-Member: spark2
+  -> content 'ok', model unsloth/Qwen3.8-27B-NVFP4

@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - `lobes up <role> --replace` switches a box between roles its card declares exclusive (the Spark: `cortex` and `innereye`, one unified memory pool). It stops the running rival, backs up `.env`, marks the rival `*_FEASIBLE=false` so the mesh serves it, activates the role (`COMPOSE_PROFILES`, base URL, `*_FEASIBLE=true`), starts it and recreates the gateway. Without `--replace`, `lobes up` refuses to start a role beside its running rival.
 - `lobes up` memory gate: refuses to start a role when `MemAvailable` is below its card `declared_peak_gib` (else its `*_GPU_MEM_UTIL` share of `MemTotal`). Under `--replace` the check runs after the rival stops, and a shortfall restarts the rival with `.env` untouched. `--override-memory` skips it.
+- Evidence: `docs/evidence/2026-10-07-accept-innereye-replace-spark.txt` — Qwen Code switched the Spark from cortex to innereye with `lobes up innereye --replace` in ~2.5 min (the same request took ~30 min before), UI 200 on LAN and tailnet, cortex served via spark2.
 - lobes-deploy skill: a step-by-step 'serve innereye (ComfyUI) with its web UI on the network' recipe (`lobes up innereye --replace`, then verify), pointed at from QWEN.md and docs/comfyui-innereye.md, so an agent can do it without exploring the code.
 - `lobes up innereye` prints which of its two exposures is still unwired: the gateway (`INNEREYE_BASE_URL`) and the web UI (`INNEREYE_UI_PORT`).
 
@@ -20,6 +21,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `lobes up <role> --replace` waits for the recreated gateway's /health before the mesh reannounce, instead of hitting it mid-restart.
 - `lobes up gateway` now keeps `docker-compose.audio.yml` in its -f chain when it is scaffolded, so a recreated gateway no longer loses `AUDIO_URL` (and with it /v1/audio/* and /v1/realtime).
 - lobes-compose.sh accepts `--profile X` anywhere and moves it before the compose subcommand, instead of compose failing with 'unknown flag: --profile'.
 

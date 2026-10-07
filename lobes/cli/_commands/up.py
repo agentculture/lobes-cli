@@ -64,6 +64,7 @@ compose stop`` (never a project-wide ``down``, which would remove every containe
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from lobes import roles
@@ -78,7 +79,7 @@ from lobes.profiles.shapes import (
     builtin_shape_names,
     load_builtin_shape,
 )
-from lobes.runtime import _compose, _env
+from lobes.runtime import _compose, _env, _health
 
 # role → the compose SERVICE name (the top-level key under ``services:`` — NOT the
 # container_name). ``docker compose up -d <service>`` targets exactly these, so a
@@ -647,16 +648,29 @@ def _run_swap(
     emit_diagnostic(f">> starting {target} ({', '.join(services)})")
     _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
     _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), " ".join(argv))
+    port = _runtime_ops.resolve_port(args, env_path)
     if changes:
         emit_diagnostic(">> recreating the gateway so it reads the new .env")
         _runtime_ops.compose_check(_compose.run_compose(deploy_dir, gateway), " ".join(gateway))
-    trigger_reannounce(_runtime_ops.resolve_port(args, env_path), _env.read_env_file(env_path))
+        _await_gateway(port)
+    trigger_reannounce(port, _env.read_env_file(env_path))
     payload["started"] = True
     emit_result(
         payload if json_mode else f">> switched to {target} in {deploy_dir}", json_mode=json_mode
     )
     _emit_innereye_hints(deploy_dir, target, "up")
     return 0
+
+
+GATEWAY_WAIT_S = 30.0
+
+
+def _await_gateway(port: int) -> None:
+    """Give a just-recreated gateway a moment to answer before the mesh
+    reannounce, which would otherwise hit it mid-restart. Best-effort."""
+    deadline = time.monotonic() + GATEWAY_WAIT_S
+    while not _health.is_healthy(port) and time.monotonic() < deadline:
+        time.sleep(1.0)
 
 
 def _emit_innereye_hints(

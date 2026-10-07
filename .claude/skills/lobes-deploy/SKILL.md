@@ -89,6 +89,10 @@ working because the mesh serves it from another member.
    #   want: True True   (8001 = this box's gateway port, VLLM_PORT in .env)
    ```
 
+   When you report the UI address, name the right interface. The tailnet
+   address is the one on `tailscale0` (100.x); the others are LAN or
+   point-to-point links. Check with `ip -4 -br addr`.
+
 **Switch back to cortex:** `lobes up cortex --replace --apply`. Cortex needs a
 few minutes to load before it reports ready.
 
