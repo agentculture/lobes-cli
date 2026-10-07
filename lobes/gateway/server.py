@@ -106,6 +106,9 @@ from lobes.gateway._mesh_routing import (
     build_snapshot,
     compute_role_placement,
     find_member_lane,
+    lane_for_model,
+    lane_placement,
+    member_name_for_origin,
     mesh_markers,
 )
 from lobes.gateway._mesh_wire import Announcement
@@ -1199,6 +1202,55 @@ def _forward_member_lane(
                 (MESH_MEMBER_HEADER, lane.member),
             ]
         ),
+    )
+
+
+def _mesh_lane_response(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    *,
+    requested: str,
+    mesh_snapshot: "RoutingSnapshot",
+) -> GatewayResponse | None:
+    """The mesh answer for a specialist lane this box does not host, or ``None``.
+
+    ``None`` when *requested* names no registry lane, or names one hosted
+    here (wired and feasible — served locally as before). Otherwise the lane
+    goes to the first verified member announcing the lane's own checkpoint
+    (one hop, the member-lane forwarder: hop marker, join key, the peer's
+    served id, ``X-Lobes-Mesh-Member``); a not-yet-probed announcer answers
+    503 ``role_unverified``; and with no candidate it is 404
+    ``role_infeasible``. No per-lane env is consulted: the roster is the
+    only source.
+    """
+    lane = lane_for_model(requested, EMBED_LANES)
+    if lane is None or lane.name in _hosted_roles(table):
+        return None
+    placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id)
+    if placement.plain_origins:
+        origin = placement.plain_origins[0]
+        target = MemberLane(
+            name=lane.name,
+            role=lane.name,
+            member=member_name_for_origin(mesh_snapshot, origin),
+            origin=origin,
+        )
+        return _forward_member_lane(
+            cfg, path, req_headers, body, open_upstream, target, mesh_snapshot
+        )
+    unverified = _role_unverified_response(
+        mesh_snapshot, lane.name, placement, requested, lane.name
+    )
+    if unverified is not None:
+        return unverified
+    return GatewayResponse(
+        status=404,
+        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+        body=_role_infeasible_body(requested, lane.name),
     )
 
 
@@ -3488,6 +3540,22 @@ def handle_post(
         )
         if pinned is not None:
             return pinned
+        # Specialist lanes (orin-embedding-specialist t8): a lane this box
+        # does not host is answered from the mesh — forwarded, 503, or 404 —
+        # and never falls through to the peer-only pool, which resolves an
+        # unwired id to the DEFAULT role and would serve it with cortex.
+        lane_answer = _mesh_lane_response(
+            table,
+            cfg,
+            path,
+            req_headers,
+            body,
+            open_upstream,
+            requested=requested,
+            mesh_snapshot=mesh_snapshot,
+        )
+        if lane_answer is not None:
+            return lane_answer
     pooled = _peer_only_forward(
         table,
         cfg,
@@ -4417,13 +4485,30 @@ def _lane_entry(
     """One wired lane's /capabilities entry, its identity read from the catalog."""
     from lobes.roles import _offline_fingerprint
 
-    model = next((m for m in SUPPORTED_MODELS if m.id == backend.served_name), None)
     feasible = _lane_feasible(lane.name, table, env)
     loaded = feasible
+    entry = _lane_identity(lane, backend.served_name, env, gateway)
+    entry.update(
+        {
+            "feasible": feasible,
+            "loaded": loaded,
+            "ready": _lane_ready(loaded, gateway, lane.name, backend_ready),
+        }
+    )
+    # The role fingerprint machinery, verbatim: declared lane knobs plus the
+    # entry's own served id / context / runtime, so announced and advertised
+    # fingerprints are the same bytes (mesh verification compares them).
+    entry["fingerprint"] = _offline_fingerprint(table.lane_fingerprints.get(lane.name, {}), entry)
+    return entry
+
+
+def _lane_identity(lane: EmbedLane, served_name: str, env: Mapping[str, str], gateway: str) -> dict:
+    """A lane's vector-space identity (model, dimension, modalities, ...) from the catalog."""
+    model = next((m for m in SUPPORTED_MODELS if m.id == served_name), None)
     native = model.native_max_model_len if model else 0
-    entry: dict = {
+    return {
         "lane": True,
-        "model": backend.served_name,
+        "model": served_name,
         "runtime": model.engine if model else lane.engine,
         "endpoint": gateway,
         "path": _LANE_TASK_PATH.get(lane.task, ""),
@@ -4437,15 +4522,7 @@ def _lane_entry(
         "quant": model.quantization if model else "",
         "responsibilities": [],
         "forbidden_responsibilities": [],
-        "feasible": feasible,
-        "loaded": loaded,
-        "ready": _lane_ready(loaded, gateway, lane.name, backend_ready),
     }
-    # The role fingerprint machinery, verbatim: declared lane knobs plus the
-    # entry's own served id / context / runtime, so announced and advertised
-    # fingerprints are the same bytes (mesh verification compares them).
-    entry["fingerprint"] = _offline_fingerprint(table.lane_fingerprints.get(lane.name, {}), entry)
-    return entry
 
 
 def lane_capabilities(
@@ -4467,6 +4544,43 @@ def lane_capabilities(
             continue
         out[lane.name] = _lane_entry(lane, backend, table, env, gateway, backend_ready)
     return out
+
+
+def annotate_mesh_lanes(
+    payload: dict[str, dict],
+    table: RoutingTable,
+    env: Mapping[str, str],
+    gateway: str,
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> dict[str, dict]:
+    """List every lane this box reaches only through the mesh (t8), in place.
+
+    For a registry lane this box does not host (unwired, or wired but
+    declared infeasible) that a verified member announces with the lane's
+    own checkpoint, the entry carries the lane's catalog identity and the
+    same ``proxied``/``hosted_by``/``members``/``ready``/``context``/``model``
+    overlay a mesh-reached role gets (:func:`lobes.roles._annotate_plain_member`).
+    No fingerprint is added, and ``proxied`` keeps the announcement builder
+    from announcing it again. A hosted lane, or one no member offers, is left
+    as it was — so with the mesh off the payload is unchanged.
+    """
+    if mesh_snapshot is None:
+        return payload
+    from lobes.roles import _annotate_plain_member
+
+    for lane in EMBED_LANES:
+        entry = payload.get(lane.name)
+        if entry is not None and entry.get("feasible"):
+            continue
+        placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id)
+        if not placement.plain_origins:
+            continue
+        if entry is None:
+            entry = _lane_identity(lane, lane.catalog_id, env, gateway)
+            entry.update({"feasible": False, "loaded": False, "ready": False})
+        _annotate_plain_member(entry, placement, None, mesh_snapshot)
+        payload[lane.name] = entry
+    return payload
 
 
 def capabilities_payload(
@@ -4607,7 +4721,10 @@ def capabilities_payload(
     # wired this adds nothing and the payload keeps its pre-lane key set.
     gateway = (gateway_url or (cfg.public_url or "")).rstrip("/")
     payload.update(lane_capabilities(table, resolved_env, gateway, backend_ready))
-    return payload
+    # ... and the lanes this box reaches only through the mesh (t8).
+    return annotate_mesh_lanes(
+        payload, table, resolved_env, gateway, as_routing_snapshot(mesh_snapshot)
+    )
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to

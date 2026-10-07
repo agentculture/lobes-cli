@@ -11,6 +11,8 @@ Public API
 * :class:`RoutingSnapshot` — immutable per-request view of the mesh roster
 * :func:`build_snapshot` — build a :class:`RoutingSnapshot` from Roster + optional
   probe data (capacities from /capabilities)
+* :func:`lane_placement` — placement for a specialist lane, restricted to the
+  lane's own checkpoint
 """
 
 from __future__ import annotations
@@ -1021,3 +1023,72 @@ def placement_origin_lane(placement: RolePlacement, origin: str) -> SuffixedLane
         if lane.origin == origin:
             return lane
     return None
+
+
+# ---------------------------------------------------------------------------
+# Specialist lanes over the mesh (orin-embedding-specialist t8)
+# ---------------------------------------------------------------------------
+#
+# A specialist embed/rerank lane (``lobes.embed_lanes``) is announced exactly
+# like a role — its hosting box's ``/capabilities`` carries it as a top-level
+# key with a fingerprint — so the roster, verification and placement above
+# already handle it by name. What is lane-specific is the checkpoint rule: a
+# lane name is ONE vector space, so a member is a candidate for it only when
+# the served id it announced for the lane IS the lane's catalog id. Two
+# members that agree with each other on some OTHER checkpoint under the lane
+# name are not a pool for this lane at all.
+
+
+def lane_for_model(requested: str | None, lanes: "Sequence[object]") -> object | None:
+    """The registry lane *requested* names — by lane name or raw catalog id."""
+    if not requested:
+        return None
+    for lane in lanes:
+        if requested in (getattr(lane, "name", None), getattr(lane, "catalog_id", None)):
+            return lane
+    return None
+
+
+def _announces_served_id(
+    ann_by_origin: Mapping[str, "Announcement"], origin: str, lane: str, served_id: str
+) -> bool:
+    ann = ann_by_origin.get(origin)
+    info = ann.roles.get(lane) if ann is not None else None
+    fp = getattr(info, "fingerprint", None)
+    return getattr(fp, "served_id", None) == served_id
+
+
+def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str) -> RolePlacement:
+    """:func:`compute_role_placement` for a lane, restricted to its checkpoint.
+
+    Plain and pending origins are kept only when the member announced
+    *served_id* for *lane* — never a different checkpoint under the same name
+    — and a fingerprint disagreement among the rest still refuses the plain
+    name exactly as it does for a role. No local fingerprint: this is only
+    consulted for a lane this box does not host.
+    """
+    placement = compute_role_placement(snapshot, lane)
+    ann_by_origin = dict(snapshot.announcements)
+
+    def keep(origins: tuple[str, ...], *, unknown_ok: bool) -> tuple[str, ...]:
+        return tuple(
+            o
+            for o in origins
+            if (unknown_ok and o not in ann_by_origin)
+            or _announces_served_id(ann_by_origin, o, lane, served_id)
+        )
+
+    # A pending member a seed roster listed before its announcement arrived
+    # has no served id to check yet; it is only ever a 503 "not yet", never a
+    # forward, so it stays pending until its announcement says otherwise.
+    return RolePlacement(
+        role=lane,
+        plain_origins=keep(placement.plain_origins, unknown_ok=False),
+        suffixed=placement.suffixed,
+        pending_origins=keep(placement.pending_origins, unknown_ok=True),
+    )
+
+
+def member_name_for_origin(snapshot: RoutingSnapshot, origin: str) -> str:
+    """The roster name of the member at *origin*, or *origin* itself."""
+    return next((m.name for m in snapshot.members if m.origin == origin), origin)
