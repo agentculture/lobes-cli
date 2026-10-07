@@ -1370,6 +1370,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         doc="nemotron-3-embed-8b.md",
         task="embed",
         dimension=4096,
+        normalization="l2",  # card: "Embeddings are L2-normalized"
         modalities=("text",),
     ),
     SupportedModel(

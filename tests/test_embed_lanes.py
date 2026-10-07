@@ -51,7 +51,7 @@ def test_lanes_are_frozen_and_well_formed():
         assert isinstance(lane, EmbedLane)
         assert lane.task in {"embed", "score"}
         assert lane.engine in {"vllm", "sentence-transformers"}
-        assert lane.normalization in {"l2", "none"}
+        assert lane.normalization in {"l2", "none", ""}  # "" = not declared by the card
         assert lane.modalities and set(lane.modalities) <= _MODALITIES
         assert lane.base_url_env == lane.name.upper().replace("-", "_") + "_BASE_URL"
         validate_lane_name(lane.name)
@@ -108,3 +108,18 @@ def test_no_registered_lane_collides():
     assert embed_lanes.EMBED_LANES  # sanity
     for lane in EMBED_LANES:
         assert not lane.name.startswith(("embedder-", "reranker-"))
+
+
+def test_every_lane_agrees_with_its_catalog_entry():
+    """The catalog owns vector-space identity; the registry must never drift from it."""
+    from lobes.catalog import SUPPORTED_MODELS
+
+    by_id = {m.id: m for m in SUPPORTED_MODELS}
+    for lane in EMBED_LANES:
+        entry = by_id[lane.catalog_id]
+        assert lane.engine == entry.engine, lane.name
+        assert lane.task == entry.task, lane.name
+        assert lane.dim == entry.dimension, lane.name
+        assert lane.modalities == entry.modalities, lane.name
+        assert lane.mrl_dims == entry.mrl_dims, lane.name
+        assert lane.normalization == entry.normalization, lane.name

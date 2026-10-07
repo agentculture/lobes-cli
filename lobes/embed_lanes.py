@@ -16,10 +16,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from lobes.catalog import ENGINE_VLLM, TIER_ROLE
+from lobes.catalog import ENGINE_SENTENCE_TRANSFORMERS, ENGINE_VLLM, TIER_ROLE
 from lobes.roles import ROLE_BACKEND, ROLES
-
-ENGINE_SENTENCE_TRANSFORMERS = "sentence-transformers"  # local literal; catalog owns its own
 
 TASK_EMBED = "embed"
 TASK_SCORE = "score"
@@ -79,7 +77,7 @@ def _lane(
     modalities: tuple[str, ...],
     dim: int = 0,
     mrl_dims: tuple[int, ...] = (),
-    normalization: str = "l2",
+    normalization: str = "",
 ) -> EmbedLane:
     validate_lane_name(name)
     return EmbedLane(
@@ -103,28 +101,31 @@ EMBED_LANES: tuple[EmbedLane, ...] = (
         modalities=("text", "code", "image", "video", "audio"),
         dim=768,
         mrl_dims=(128, 256, 512, 768),
+        normalization="l2",
     ),
     _lane(
         "qwen3vl-embed",
         "Qwen/Qwen3-VL-Embedding-8B",
         modalities=("text", "image", "video"),
+        dim=4096,
     ),
     _lane(
         "qwen3vl-rerank",
         "Qwen/Qwen3-VL-Reranker-8B",
         task=TASK_SCORE,
         modalities=("text", "image", "video"),
-        normalization="none",
     ),
     _lane(
         "nemotron-embed",
         "nvidia/Nemotron-3-Embed-8B-BF16",
         modalities=("text",),
         dim=4096,
+        normalization="l2",
     ),
     _lane(
         "nomic-code-embed",
         "nomic-ai/nomic-embed-code",
         modalities=("text", "code"),
+        dim=3584,
     ),
 )
