@@ -72,6 +72,7 @@ from typing import Mapping
 
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.lane_keys import lane_env_key
 from lobes.profiles.render import profile_env, role_engine
 from lobes.profiles.schema import KNOB_LANE_ROLES, ROLES, ExclusiveRoles, Profile, RoleProfile
 from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
@@ -394,6 +395,21 @@ def overcommitted_groups(shape: Shape, profile: Profile) -> tuple[ExclusiveRoles
     return tuple(over)
 
 
+def lane_key(lane: str, suffix: str) -> str:
+    """The lane env key -- the one spelling in :mod:`lobes.lane_keys`."""
+    return lane_env_key(lane, suffix)
+
+
+# Shape lane knob -> the overlay's env-key suffix (docker-compose.embed.yml).
+_LANE_KNOB_ENV = (
+    ("gpu_mem_util", "GPU_MEM_UTIL"),
+    ("max_model_len", "MAX_MODEL_LEN"),
+    ("mem_limit", "MEM_LIMIT"),
+    ("tested_on", "TESTED_ON"),
+)
+LANE_KNOB_SUFFIXES = tuple(suffix for _, suffix in _LANE_KNOB_ENV)
+
+
 def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     """The ``.env`` projection for a (shape, card) pair.
 
@@ -432,6 +448,16 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
         if shape.hosts_role(role) and composed.role(role).feasible:
             env.update(OPT_IN_CORE_ACTIVATION_ENV[role])
             compose_profiles.append(OPT_IN_CORE_COMPOSE_PROFILE[role])
+    # Specialist embed/rerank lanes (orin-embedding-specialist): each hosted
+    # lane is un-gated by its own compose profile (the overlay's service is
+    # `embed-<lane>`), and wired into the gateway by its <LANE>_BASE_URL. Only
+    # HOSTED lanes are wired, so the gateway sees exactly the hosted set.
+    for lane in shape.lanes:
+        compose_profiles.append(lane)
+        env[lane_key(lane, "BASE_URL")] = f"http://embed-{lane}:8000"
+        for knob, suffix in _LANE_KNOB_ENV:
+            if knob in shape.lane_knobs.get(lane, {}):
+                env[lane_key(lane, suffix)] = str(shape.lane_knobs[lane][knob])
     if compose_profiles:
         env["COMPOSE_PROFILES"] = ",".join(compose_profiles)
     return env

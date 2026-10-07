@@ -1,5 +1,17 @@
 # Running Nemotron 3.5 Lightning on a Jetson AGX Orin — the deployment, in full
 
+> **Status, 2026-10-07: `associate` is being retired from the Orin — DORMANT,
+> unhosted mesh-wide once the Orin renders `orin-embed`.** The operator chose to
+> make the Orin the mesh's embedding specialist instead
+> (`docs/specs/2026-10-07-orin-embedding-specialist.md`, decision c16). The
+> associate lane was already down when that was decided:
+> `model-gear-vllm-associate` had been `Exited (1)` for ~9 days, its log ending
+> in an engine-launch failure (`RuntimeError: generator didn't yield` /
+> `_pickle.UnpicklingError: pickle data was truncated`). That cause is NOT
+> diagnosed. Like `muse`, the role, its catalog entry and the `orin-associate`
+> shape stay in-tree (cite-don't-delete), and `orin-associate` is the rollback
+> shape. Everything below records the deployment as it was measured.
+
 The deployed `orin-associate` shape now runs at the checkpoint's **native
 1,048,576-token (1M) window**. This is the copy-pasteable version of what
 `docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt` (the

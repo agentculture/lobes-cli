@@ -1,0 +1,87 @@
+# ACCEPT — orin-embed on the live mesh: EmbeddingGemma 2 is the Orin's specialist lane, reached by name from every member
+#
+# Date:     2026-10-07 (Orin local ~15:00-15:50), plan task t18 of orin-embedding-specialist (draft PR #295)
+# Mesh:     spark (DGX Spark, gateway :8001), spark2 (DGX Spark, :8000), thor (Jetson AGX Thor, :8000),
+#           orin (Jetson AGX Orin 64GB, :8000). ALL four gateways on lobes-cli 0.84.0.dev619 (TestPyPI), each
+#           re-imaged with ONLY `up -d --no-deps gateway` over the running container's own compose chain.
+# Orin:     shape orin-embed (deviation d1: gemma2-embed is the ONLY standard lane): embedder + reranker (0.6B,
+#           unchanged containers, up since 2026-09-13) + embed-gemma2-embed (Sentence-Transformers sidecar,
+#           image built FROM vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9,
+#           transformers 5.19.0, sentence-transformers 6.1.0, lobes-cli[embed-sidecar]==0.84.0.dev619)
+#
+# RESULT: PASS for the lane on every member, with ONE pre-existing finding (plain `embedder` on the Spark, §4).
+
+## 0. Baseline (2026-10-07, before the change — the c2/h2 reading)
+
+  orin docker ps: model-gear-vllm-embed Up 3 weeks (healthy); model-gear-vllm-rerank Up 3 weeks (healthy);
+                  model-gear-vllm-associate Exited (1) 9 days ago (log tail: "RuntimeError: generator didn't
+                  yield" / "_pickle.UnpicklingError: pickle data was truncated"; cause NOT diagnosed)
+  orin free -m:   total 62817, used 16784, available 46033 MiB, swap 0
+  .env:           COMPOSE_PROFILES=associate, ASSOCIATE_GPU_MEM_UTIL=0.70, ASSOCIATE_MAX_MODEL_LEN=1048576
+  Backup taken before any change: ~/.lobes-bak-20261007-pre-orin-embed (24 files)
+
+## 1. /capabilities + by-name requests from each NON-hosting member (c14/h11, c20/h13, o8)
+
+### spark-f8a9 (mesh name spark) gateway http://localhost:8001
+capabilities gemma2-embed: {'lane': True, 'model': 'google/embeddinggemma-2', 'dimension': 768, 'mrl_dims': [128, 256, 512, 768], 'modalities': ['text', 'code', 'image', 'video', 'audio'], 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000', 'members': None}
+capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
+POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=embedder -> HTTP/1.1 404 Not Found | role_infeasible, suffixed_lanes ['embedder-orin', 'embedder-spark2', 'embedder-thor']   (see §4)
+### spark-e2f0 (mesh name spark2) gateway http://localhost:8000
+capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000'}
+capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
+POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=embedder -> HTTP/1.1 200 OK | (local) | model=Qwen/Qwen3-Embedding-0.6B 1024
+### thor (mesh name thor) gateway http://localhost:8000
+capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000'}
+capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
+POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
+POST model=embedder -> HTTP/1.1 200 OK | (local) | model=Qwen/Qwen3-Embedding-0.6B 1024
+
+  No per-lane env was typed on spark/spark2/thor: the lane was auto-wired from the Orin's announcement.
+  On the Orin itself: model=nemotron-embed -> 404 (opt-in candidate, unwired), associate feasible False.
+
+## 2. Per-modality negative controls, THROUGH THE SPARK (multimodal bodies cross the mesh; c9/h8, c25, o6)
+##    correct item must rank 1st of >= 3
+
+{"probe": "text->image", "query": "a solid red square", "via_member": "orin", "sims": {"red": 0.7174, "blue": 0.6428, "green": 0.6368}, "top": "red"}
+{"probe": "text->audio", "query": "a pure musical tone, a steady beep", "via_member": "orin", "sims": {"tone": 0.8166, "noise": 0.7754, "silence": 0.7157}, "top": "tone"}
+{"probe": "text->video", "query": "a solid red screen", "via_member": "orin", "sims": {"red": 0.7281, "blue": 0.658, "green": 0.6585}, "top": "red"}
+{"probe": "text->code", "sims": {"merge": 0.8368, "weather": 0.6149, "http": 0.6065}, "top": "merge"}
+ALL_PASS
+  Inputs are synthetic (solid colours, a 440 Hz tone vs noise vs near-silence, ffmpeg colour clips): they prove
+  each modality's path end-to-end and the ordering, NOT retrieval quality on real media — that is issue #296.
+  Directly on the Orin earlier: prompt_name echoed (CodeRetrieval), dimensions=128 -> 128-d unit vector,
+  dimensions=100 -> 400 unsupported_dimensions.
+
+## 3. Stopped lane never answers from another model (c5/h5, o5)
+
+  orin: compose stop embed-gemma2-embed
+  [orin local]     HTTP 503 {"error": {"type": "backend_unavailable", "attempts": ["gemma2-embed: [Errno -3] Temporary failure in name resolution"]}}
+  [spark via mesh] HTTP 503 {"error": {"message": "the peer hosting this model (`http://orin.tail0be7e0.ts.net:8000`) is unavailable — retry shortly", "type": "backend_unavailable", "attempts": ["peer:gemma2-embed: HTTP 503"]}}
+  (twice, 40 s apart). Restarted -> healthy.
+
+## 4. Pre-existing finding (NOT caused by this change): plain `embedder` does not resolve on the Spark
+
+  The Spark hosts no embedder (embedder.feasible False). spark2, thor and orin advertise IDENTICAL embedder
+  fingerprints (served_id Qwen/Qwen3-Embedding-0.6B, max_model_len 8192, runtime vllm, every other field
+  "unknown"), yet the Spark exposes them only as embedder-{orin,spark2,thor}. Cause, reproduced offline:
+    compare_fingerprints(fp, fp) -> (False, 'quantization: unknown')
+  i.e. the mesh's strict pool rule ("unknown never pools", lobes/gateway/_mesh_routing.py compute_role_placement,
+  since #233/#252) means two or more pooling-gear members can never form a plain pool on a box that does not
+  host the role. The Orin's embedder container and fingerprint are unchanged by this run; spark2 and thor still
+  serve plain `embedder` locally. Honesty h4's "orin stays in the agreeing pool" cannot hold under that rule for
+  ANY member — reported as a separate follow-up, not fixed here.
+
+## 5. Health and memory (c31/h23, c25/h17)
+
+  /embed-gemma2-embed restarts=0  (container recreated by the deploy steps; never restarted by a crash)
+  /model-gear-vllm-embed restarts=1 started=2026-09-13 (pre-existing, before this run)
+  /model-gear-vllm-rerank restarts=0 ; /model-gear-gateway restarts=0
+  docker stats: embed-gemma2-embed 1.99 GiB / 6 GiB (4.69 GiB peak after the h2h load); vllm-embed 5.24 GiB;
+                vllm-rerank 5.34 GiB; gateway 19.5 MiB
+  free -m: available 43,531 MiB (>= 2 GiB floor, c25)
+  kernel OOM lines since the deploy (12:58 local): 0

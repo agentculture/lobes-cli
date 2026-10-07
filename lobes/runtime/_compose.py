@@ -237,6 +237,16 @@ AUDIO_HE_TEMPLATES = {
     "fleet/Dockerfile.bluetts": "Dockerfile.bluetts",
 }
 AUDIO_HE_ENV_TEMPLATE = "fleet/env.audio-he.example"
+# Specialist embed/rerank lane overlay (orin-embedding-specialist, t13). Declares
+# one profile-gated, port-less service per registry lane (``embed-<lane>``); the
+# base fleet compose is untouched. ``lobes init --shape <shape>`` scaffolds both
+# files for any shape that hosts lanes (``orin-embed``); ``compose_file_args``
+# chains the overlay whenever it is present in the deployment dir.
+EMBED_OVERLAY = "docker-compose.embed.yml"
+EMBED_TEMPLATES = {
+    "fleet/docker-compose.embed.yml": EMBED_OVERLAY,
+    "fleet/Dockerfile.embed-st": "Dockerfile.embed-st",
+}
 _INIT_REMEDIATION = (
     "run 'lobes init --apply' to scaffold ~/.lobes, or pass --compose-dir / set LOBES_DIR"
 )
@@ -687,6 +697,11 @@ def audio_he_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / AUDIO_HE_OVERLAY).is_file()
 
 
+def embed_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the specialist-lane overlay (``docker-compose.embed.yml``) is scaffolded."""
+    return (Path(deploy_dir) / EMBED_OVERLAY).is_file()
+
+
 def local_override_present(deploy_dir: os.PathLike | str) -> bool:
     """True when an operator-authored ``docker-compose.override.yml`` sits in the deploy dir.
 
@@ -833,7 +848,13 @@ def fleet_containers(deploy_dir: os.PathLike | str) -> tuple[str, ...]:
 
 
 def compose_file_args(
-    *, audio: bool, shape: bool, local: bool, gpu: bool = False, audio_he: bool = False
+    *,
+    audio: bool,
+    shape: bool,
+    local: bool,
+    gpu: bool = False,
+    audio_he: bool = False,
+    embed: bool = False,
 ) -> list[str]:
     """The ``-f`` chain for a deployment made of the given overlays — THE single
     composition authority (issue #137). Every ``-f`` list lobes hands to
@@ -870,6 +891,11 @@ def compose_file_args(
     ``deploy``/``runtime`` on the GPU gears, never ``depends_on``, so ordering
     them before it changes nothing about that guarantee.
 
+    The specialist-lane overlay (:data:`EMBED_OVERLAY`, t13) is a deployment
+    fact like the GPU override: its services are profile-gated, port-less and
+    declare no ``depends_on``, so chaining it never starts a lane by itself. It
+    sits after the audio layers and before the shape override.
+
     :data:`LOCAL_OVERRIDE` comes after even the shape override, because that is what
     an override file MEANS to compose: last wins. Compose only auto-discovers it when
     it resolves the project itself, so passing ANY explicit ``-f`` used to drop it —
@@ -878,7 +904,7 @@ def compose_file_args(
     that re-introduces a dropped service's ``depends_on`` edge is the operator's own
     doing, and compose fails loudly rather than lobes ignoring their file.
     """
-    if not audio and not shape and not gpu:
+    if not audio and not shape and not gpu and not embed:
         # No lobes overlay: compose's own resolution already layers base + override.
         # Passing -f here would change nothing except to break that convention.
         return []
@@ -891,6 +917,8 @@ def compose_file_args(
             files += ["-f", GPU_AUDIO_OVERLAY]
         if audio_he:
             files += ["-f", AUDIO_HE_OVERLAY]
+    if embed:
+        files += ["-f", EMBED_OVERLAY]
     if shape:
         files += ["-f", SHAPE_OVERLAY]
     if local:
@@ -919,6 +947,7 @@ def _compose_files(deploy_dir: os.PathLike | str, *, audio: bool | None = None) 
         shape=shape_overlay_present(deploy_dir),
         local=local_override_present(deploy_dir),
         gpu=gpu_overlay_present(deploy_dir),
+        embed=embed_overlay_present(deploy_dir),
     )
 
 

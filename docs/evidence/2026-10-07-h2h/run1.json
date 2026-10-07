@@ -1,0 +1,38 @@
+[
+  {
+    "model": "google/embeddinggemma-2",
+    "family": "issue_to_source",
+    "ndcg_at_10": 0.5228731624287632,
+    "n": 24
+  },
+  {
+    "model": "google/embeddinggemma-2",
+    "family": "nl_to_code",
+    "ndcg_at_10": 0.9424206972071164,
+    "n": 48
+  },
+  {
+    "model": "nvidia/Nemotron-3-Embed-8B-BF16",
+    "family": "issue_to_source",
+    "ndcg_at_10": 0.6064805916460526,
+    "n": 24
+  },
+  {
+    "model": "nvidia/Nemotron-3-Embed-8B-BF16",
+    "family": "nl_to_code",
+    "ndcg_at_10": 0.9447077935837455,
+    "n": 48
+  },
+  {
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "family": "issue_to_source",
+    "ndcg_at_10": 0.5190889854335874,
+    "n": 24
+  },
+  {
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "family": "nl_to_code",
+    "ndcg_at_10": 0.9471933934507253,
+    "n": 48
+  }
+]

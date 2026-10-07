@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.84.0] - 2026-10-07
+
+### Added
+
+- The Jetson AGX Orin becomes the mesh's embedding specialist (#291), as the `orin-embed` shape. Its standard specialist lane is `gemma2-embed`: **EmbeddingGemma 2** (`google/embeddinggemma-2`), with text, code, image, video and audio in one 768-d space, served next to the unchanged 0.6B `embedder`/`reranker`. Measured live on the Orin and reached by name from every mesh member (`docs/evidence/2026-10-07-accept-orin-embed.txt`).
+- Specialist embedding lanes, which are not roles (`lobes/embed_lanes.py`):
+  - The gateway wires each lane behind `<LANE>_BASE_URL`, with no cross-lane fallback.
+  - Each lane is advertised as a top-level `/capabilities` key carrying its vector-space identity: model, dimension, MRL dims, modalities, normalization, `tested_on`.
+  - The mesh announces lanes and forwards them by name in one hop.
+  - `lobes up/status/assess <lane>` work per lane, and `lobes explain lanes` describes them.
+- EmbeddingGemma 2 Sentence-Transformers sidecar (`lobes.embed_sidecar`, `Dockerfile.embed-st`, `docker-compose.embed.yml`):
+  - text, plus image, audio and video `messages` parts (`data:` URLs only);
+  - `prompt_name`;
+  - MRL `dimensions` with re-normalization;
+  - bf16 only, with a degenerate-vector guard;
+  - the card's selective encoder load.
+- Measured catalog entries for Nemotron-3-Embed-8B (an opt-in lane), nomic-embed-code and Qwen3-VL-Embedding-8B (measured, not carried), and Qwen3-VL-Reranker-8B (excluded). Also a fine-tune lane mechanism (`EMBED_FINETUNE_LANES`) and a code-retrieval head-to-head harness (`scripts/embed_h2h`).
+- `deployments/jetson-agx-orin__orin-embed/`, the live Orin's lock and files.
+
+### Changed
+
+- The colleague contract test now requires every ROLES key to be present, plus lane keys, instead of keys == ROLES.
+- `associate` is DORMANT/unhosted mesh-wide: the Orin was its only host.
+- The gateway relays a rerank/score body that already names the served id byte-identically. A body addressed by alias is still re-encoded.
+
+### Fixed
+
+- The gateway, `lobes.embed_lanes` and the CLI each import cold in a fresh interpreter, avoiding the pre-existing roles<->gateway import cycle.
+
 ## [0.83.0] - 2026-10-07
 
 ### Added

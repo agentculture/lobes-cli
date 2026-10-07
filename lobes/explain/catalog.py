@@ -72,6 +72,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain backend`
 - `lobes explain models`
 - `lobes explain embeddings` (POST /v1/embeddings — 1024-dim Qwen3 embedder)
+- `lobes explain lanes` (specialist embed lanes such as gemma2-embed — not roles)
 - `lobes explain rerank` (POST /v1/rerank — Jina/Cohere reranking)
 - `lobes explain score` (POST /v1/score — cross-encoder raw scoring)
 - `lobes explain realtime` (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
@@ -1447,6 +1448,58 @@ See `docs/colleague-stack.md` (the full contract + client-flow example),
 (topology, tier-alias fallback, pressure policy).
 """
 
+_LANES = """\
+# lobes explain lanes — specialist embed/rerank lanes (not roles)
+
+A **lane** is a specialist model addressed by its **own name**, separate from the
+ten-role Colleague contract (adding a role is effectively irreversible; lanes are
+registry data, `lobes/embed_lanes.py`). The first deployment is the Jetson AGX
+Orin's `orin-embed` shape (`lobes init --shape orin-embed --profile orin`).
+
+## The lanes
+
+- `gemma2-embed` — `google/embeddinggemma-2`: text, code, image, video, audio in
+  one 768-d space (MRL 128/256/512/768), a Sentence-Transformers sidecar (vLLM
+  refuses the checkpoint). The only **standard** lane. MEASURED on the Orin
+  2026-10-07: 4.69 GiB resident; quality beyond code is UNVALIDATED (#296).
+- `nemotron-embed` — `nvidia/Nemotron-3-Embed-8B-BF16`, 4096-d text: a declared
+  **opt-in** candidate (best on 24 issue-to-source queries, +8.36 nDCG@10 points,
+  no CI, at ~4.4x the memory: 20.56 vs 4.69 GiB).
+- `nomic-code-embed`, `qwen3vl-embed`: measured, not carried. `qwen3vl-rerank`:
+  excluded (never served).
+
+## Using one
+
+```json
+{"model": "gemma2-embed", "input": ["text"], "dimensions": 256}
+```
+
+`model` is the lane name or the raw id (`google/embeddinggemma-2`). Optional
+`prompt_name` and a chat-style `messages` body with `image_url` / `video_url` /
+`audio_url` / `input_audio` parts (`data:` URLs only; one embedding per request).
+
+## Contract
+
+- `GET /capabilities` has a top-level key per wired lane with `lane: true`,
+  `model`, `dimension`, `mrl_dims`, `modalities`, `normalization`, `ready`
+  (+ `proxied` / `hosted_by` when mesh-forwarded).
+- Mesh members forward a lane by name (`X-Lobes-Mesh-Member`); **no cross-lane
+  fallback** — a stopped lane is 503, never another model's vector.
+- Per-lane env: `<LANE>_BASE_URL` / `_FEASIBLE` / `_MAX_ACTIVE` / `_TESTED_ON` /
+  `_MAX_MODEL_LEN` (`gemma2-embed` -> `GEMMA2_EMBED_*`). Operate with
+  `lobes up <lane>`, `lobes status`, `lobes assess <lane>`.
+- Vectors from different lanes (and the 0.6B `embedder`) are different spaces:
+  consumers (`EIDETIC_EMBED_MODEL`, `COHERENCE_EMBED_MODEL`) opt in explicitly
+  and must re-embed; none is switched implicitly.
+
+## See also
+
+- `docs/embeddinggemma-2.md`, `docs/orin-embed-deployment.md`,
+  `docs/colleague-stack.md` ("Specialist lanes (not roles)")
+- `lobes explain embeddings` — the 0.6B `embedder` role
+- `lobes explain roles` — the Colleague role contract
+"""
+
 _MESH = """\
 # lobes mesh — the mesh-brain join
 
@@ -1729,6 +1782,9 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("lock",): _LOCK,
     ("deployment-lock",): _LOCK,
     ("variations",): _LOCK,
+    ("lanes",): _LANES,
+    ("lane",): _LANES,
+    ("specialist-lanes",): _LANES,
     ("mesh",): _MESH,
     ("mesh-brain",): _MESH,
     ("mesh-join",): _MESH,

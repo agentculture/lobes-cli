@@ -28,10 +28,11 @@ import argparse
 
 from lobes import assess as _assess
 from lobes.cli import _runtime_ops
-from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_SUCCESS, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_result
+from lobes.embed_lanes import TASK_SCORE
 from lobes.roles import role_registry_from_env
-from lobes.runtime import _compose, _env
+from lobes.runtime import _compose, _env, _lanes
 
 # Roles whose `model` field the gateway resolves through its tier-alias table
 # (`lobes.catalog.TIER_ROLE`, consumed by `lobes.gateway._routing.tier_aliases`
@@ -91,6 +92,48 @@ def _cmd_assess_probes(args: argparse.Namespace, url: str, json_mode: bool) -> i
     return EXIT_SUCCESS if passed else EXIT_ENV_ERROR
 
 
+def _cmd_assess_lane(args: argparse.Namespace, json_mode: bool) -> int:
+    """``lobes assess <lane>``: probe ONE specialist embed/rerank lane.
+
+    Reuses the embedder/reranker correctness probes, each of which carries its
+    own negative control: embed passes iff the query's relevant text scores
+    above an unrelated one; rerank passes iff the one relevant document ranks
+    first. By default the probe goes through THIS box's gateway
+    (``http://localhost:<VLLM_PORT>``) addressing the lane by name, so it works
+    from the host shell on the hosting box AND on any mesh member that reaches
+    the lane by forwarding; ``<LANE>_BASE_URL`` is a container-network URL
+    (``http://embed-<lane>:8000``) the host cannot resolve. ``--endpoint`` probes
+    a lane server directly, addressing it by its raw checkpoint id.
+    """
+    lane = _lanes.lane_by_name(args.lane)
+    if lane is None:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"unknown lane '{args.lane}'",
+            remediation="valid: " + ", ".join(_lanes.LANE_SERVICE),
+        )
+    endpoint = getattr(args, "endpoint", None)
+    if endpoint:
+        url, model = endpoint, lane.catalog_id
+    else:
+        port, _deploy_dir = _runtime_ops.resolve_port_soft(args)
+        url, model = f"http://localhost:{port}", lane.name
+    timeout = float(getattr(args, "timeout", None) or _assess.DEFAULT_PROBE_TIMEOUT)
+    probe = (
+        _assess.probe_rerank_correctness
+        if lane.task == TASK_SCORE
+        else _assess.probe_embed_correctness
+    )
+    result = probe(url, model, timeout=timeout)
+    result["role"] = lane.name
+    results = {lane.name: result}
+    if json_mode:
+        emit_result({"passed": result["ok"], "probes": results}, json_mode=True)
+    else:
+        emit_result(_assess.render_role_probes(results), json_mode=False)
+    return EXIT_SUCCESS if result["ok"] else EXIT_ENV_ERROR
+
+
 def _cmd_assess_preserve_thinking(url: str, model: str | None, json_mode: bool) -> int:
     """``--preserve-thinking``: the two-turn token-delta diagnostic (issue #93).
 
@@ -145,6 +188,8 @@ def cmd_assess(args: argparse.Namespace) -> int:
     headers = _runtime_ops.gateway_auth_headers(deploy_dir)
 
     with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        if getattr(args, "lane", None):
+            return _cmd_assess_lane(args, json_mode)
         if bool(getattr(args, "probes", False)):
             return _cmd_assess_probes(args, url, json_mode)
         if bool(getattr(args, "preserve_thinking", False)):
@@ -158,6 +203,16 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "assess",
         help="Correctness probes against the served model (markdown for a per-model doc).",
+    )
+    p.add_argument(
+        "lane",
+        nargs="?",
+        default=None,
+        help="Probe ONE specialist embed/rerank lane (e.g. gemma2-embed) with a "
+        "negative control instead of the served-model correctness probes.",
+    )
+    p.add_argument(
+        "--endpoint", help="With a lane, its base URL (default: <LANE>_BASE_URL in .env)."
     )
     p.add_argument("--port", type=int, help="Host port (default: VLLM_PORT in .env, else 8000).")
     p.add_argument(

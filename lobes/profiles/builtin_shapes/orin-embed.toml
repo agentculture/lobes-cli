@@ -1,0 +1,60 @@
+# The Jetson AGX Orin 64GB EMBEDDING-SPECIALIST shape (orin-embedding-specialist
+# plan; operator decisions in docs/specs/2026-10-07-orin-embedding-specialist.md).
+#
+# Hosts the two unchanged 0.6B pooling roles (`embedder`, `reranker`) plus the
+# specialist embed LANES -- addressed by their own lane names, never as new
+# Colleague roles (lobes/embed_lanes.py):
+#   gemma2-embed    google/embeddinggemma-2, FULL multimodal (text/code/image/
+#                   video/audio, 768-d, MRL 128/256/512), Sentence-Transformers
+#                   sidecar (vLLM refuses the checkpoint) -- AND the code slot:
+#                   the head-to-head (plan t16) found no 8B candidate clearing
+#                   the committed 5-point bar on both families (c26)
+# nemotron-embed (nvidia/Nemotron-3-Embed-8B-BF16, 4096-d text) is NOT standard
+# (deviation d1, operator 2026-10-07): it beat EG2 only on 24 issue->source
+# queries (+8.4 nDCG@10, no CI) at ~4.4x the memory -- "bigger is not always
+# better". It stays a declared OPT-IN candidate: add `nemotron-embed` to
+# COMPOSE_PROFILES plus the knobs measured below to run it. The evaluation that
+# would justify any 8B lane is issue #296.
+# It hosts NO associate / cortex / senses / hand: orin-associate.toml (untouched)
+# is the alternative -- and the rollback -- for this board.
+#
+# Measured, NOT carried: nemotron-embed (above); qwen3vl-embed needs util 0.52 (~31.6 GiB) and cannot
+# co-reside with the sidecar; qwen3vl-rerank has the same profile and is
+# EXCLUDED under decision c18; nomic-code-embed serves at util 0.35 and stays a
+# declared candidate (add its compose profile + knobs to use it). See
+# docs/evidence/2026-10-07-spike-orin-embed-vllm-8b.txt and
+# docs/evidence/2026-10-07-h2h-code-retrieval-orin.txt.
+#
+# Rendering: the shape adds docker-compose.embed.yml (+ Dockerfile.embed-st) to
+# the deployment (`lobes init --shape orin-embed` scaffolds them), appends every
+# hosted lane to COMPOSE_PROFILES, and sets <LANE>_BASE_URL=http://embed-<lane>:8000
+# for the HOSTED lanes only, so the gateway wires exactly the hosted set.
+#
+# Two Jetson facts the budgets below depend on (both measured 2026-10-07):
+#   - GPU memory counts against a container's cgroup limit, so mem_limit must
+#     cover weights + KV + profiling, not host RSS alone (Qwen3-VL was
+#     OOM-killed at 30g mid weight-load).
+#   - CUDA "free" excludes page cache: after heavy file I/O vLLM can refuse to
+#     boot with plenty of memory "available"; evict the HF cache pages first
+#     (docs/orin-embed-deployment.md).
+name = "orin-embed"
+summary = "Jetson AGX Orin 64GB embedding-specialist -- embedder + reranker (0.6B) + gemma2-embed (EmbeddingGemma 2: text, code, image, video, audio), no associate/cortex/senses/hand"
+
+hosts = ["embedder", "reranker"]
+lanes = ["gemma2-embed"]
+
+# Budget (MEASURED live on the Orin, 2026-10-07):
+#   embedder 5.24 GiB + reranker 5.35 GiB (util 0.06 each, builtin/orin.toml)
+#   + gemma2-embed 4.69 GiB (sidecar)  => ~15.3 GiB of 61.34 GiB.
+#   With nemotron-embed added too (util 0.35, 20.56 GiB) 18.7 GiB stayed
+#   "available" through a full head-to-head pass -- the opt-in fits.
+#
+# nemotron-embed knobs, MEASURED (use them with its compose profile; NOT rendered):
+#   NEMOTRON_EMBED_GPU_MEM_UTIL=0.35  NEMOTRON_EMBED_MAX_MODEL_LEN=8192
+#   NEMOTRON_EMBED_MEM_LIMIT=26g      NEMOTRON_EMBED_BASE_URL=http://embed-nemotron-embed:8000
+
+[lane_knobs.gemma2-embed]
+# MEASURED: 4.69 GiB resident serving all four modalities (cap from the 4.03 GiB
+# spike peak plus headroom).
+mem_limit = "6g"
+tested_on = "jetson-agx-orin 2026-10-07"

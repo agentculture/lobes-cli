@@ -1,0 +1,31 @@
+# lobes specialist embed sidecar — Sentence-Transformers on the pinned vLLM base
+# (orin-embedding-specialist, t13). Serves google/embeddinggemma-2 (every
+# modality, bf16) as an OpenAI /v1/embeddings facade: lobes/embed_sidecar/server.py.
+#
+# The pins below are the image PROVEN on the Jetson AGX Orin
+# (docs/evidence/2026-10-07-spike-embeddinggemma2-sidecar-orin.txt): vLLM cannot
+# serve EmbeddingGemma 2, but its torch/CUDA stack plus a newer transformers and
+# sentence-transformers can. The base digest is deliberately NOT the fleet's
+# VLLM_NIGHTLY_IMAGE digest — it is the one the spike measured.
+#
+# MODEL_GEAR_VERSION pins the sidecar module to the lobes-cli release that
+# scaffolded the deployment (init writes the running version into .env). Required.
+ARG ST_BASE_IMAGE=vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+FROM ${ST_BASE_IMAGE}
+ARG MODEL_GEAR_VERSION
+# Dev lane — same contract as Dockerfile.gateway / Dockerfile.realtime: the .devN
+# wheel is fetched --no-deps from THAT index only, then the normal install
+# resolves the [embed-sidecar] deps from real PyPI. Empty = no-op.
+ARG LOBES_DEV_INDEX_URL=
+# transformers is installed --no-deps first so the base image's own pins are not
+# dragged around; sentence-transformers then resolves against it.
+RUN uv pip install --system --no-deps "transformers==5.19.0" \
+    && uv pip install --system "sentence-transformers==6.1.0" pillow torchcodec soundfile \
+    && if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        uv pip install --system --no-deps --index-url "${LOBES_DEV_INDEX_URL}" \
+            "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && uv pip install --system "lobes-cli[embed-sidecar]==${MODEL_GEAR_VERSION}"
+EXPOSE 8000
+# The base image's ENTRYPOINT is `vllm`; replace it with the sidecar.
+ENTRYPOINT ["python3", "-m", "lobes.embed_sidecar.server"]

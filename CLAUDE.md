@@ -268,6 +268,14 @@ is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
 `docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the ten-role
 contract).
 
+**Specialist lanes sit beside the roles, not among them (2026-10-07).** The
+0.6B `embedder`/`reranker` roles above are unchanged; a box can additionally
+host specialist embed lanes (`gemma2-embed`, EmbeddingGemma 2, the first),
+addressed by their own lane name and advertised as top-level `lane: true` keys
+in `GET /capabilities` — registry data in `lobes/embed_lanes.py`, never new
+roles. See the `orin-embed` paragraph in "Deployment shapes" below and
+`docs/colleague-stack.md#specialist-lanes-not-roles`.
+
 **`muse` — the seventh role, currently DORMANT/unhosted mesh-wide.**
 Checkpoint: `nvidia/Gemma-4-31B-IT-NVFP4` (Gemma 4 31B IT, NVIDIA's official
 modelopt NVFP4 export; 256K native; plain-gemma4 line, **`gemma4` tool
@@ -392,6 +400,15 @@ Re-image the front on every box that serves or proxies the role.
 > modality, different host box, opposite proxy direction. See
 > `docs/qwen3.6-35b-a3b-nvfp4.md` for that checkpoint's full history and its
 > own GDN-MTP kernel gap on the fleet's newer nightly.
+
+**Associate is being retired (2026-10-07): DORMANT/unhosted mesh-wide** once
+the Orin renders `orin-embed`, the mesh's embedding-specialist shape
+(`docs/specs/2026-10-07-orin-embedding-specialist.md`). The Orin was
+associate's only host, so `model=associate` will 404 `role_infeasible` with
+no `hosted_by` anywhere, exactly like `muse`. The role, its catalog entry and
+the `orin-associate` shape stay in-tree; `orin-associate` is the rollback
+shape. The lane had already been `Exited (1)` for ~9 days (cause not
+diagnosed). The text below is the record of what it was.
 
 **`associate` — the TENTH role (opt-in hosting), the Jetson AGX Orin's local
 generate lobe.** Checkpoint: `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4`
@@ -886,6 +903,45 @@ silently inert. Full mechanism detail, every marker header, and the complete mea
 live in `docs/gateway-fleet.md`'s Retired section (kept there, not deleted,
 for their measured numbers and because the mesh generalizes the same
 design).
+
+**`orin-embed` — the Orin as the mesh's embedding specialist (2026-10-07).**
+The Jetson AGX Orin 64GB renders `orin-embed` (plan
+`orin-embedding-specialist`, `docs/specs/2026-10-07-orin-embedding-specialist.md`),
+which hosts the two unchanged 0.6B roles (`embedder`, `reranker`) plus the
+specialist **lane** `gemma2-embed`; associate is DORMANT as a result (above) and
+`orin-associate` is the rollback shape. A **lane** is addressed by its own name,
+carries a vector-space identity in `/capabilities` (`lane: true`, `model`,
+`dimension`, `mrl_dims`, `modalities`), is mesh-forwarded by name, has **no
+cross-lane fallback** (a stopped lane is 503, never another model's vector), and
+is deliberately **not a role**: adding a role is effectively irreversible, and
+the lane set is expected to change with measurement. `gemma2-embed` is
+`google/embeddinggemma-2` — text, code, image, video and audio in one 768-d
+space (MRL 128/256/512/768), served by a Sentence-Transformers sidecar because
+vLLM refuses the checkpoint (`lobes/embed_sidecar/`, `Dockerfile.embed-st`,
+`docker-compose.embed.yml`). It is the **only standard** lane (deviation d1):
+`nvidia/Nemotron-3-Embed-8B-BF16` (`nemotron-embed`, 4096-d text) beat it only
+on 24 issue-to-source queries (+8.36 nDCG@10 points, no CI) at ~4.4x the memory
+(20.56 vs 4.69 GiB), so it is a declared **opt-in** candidate (add its compose
+profile plus `NEMOTRON_EMBED_GPU_MEM_UTIL=0.35` / `_MAX_MODEL_LEN=8192` /
+`_MEM_LIMIT=26g`); `nomic-code-embed` and `qwen3vl-embed` (util 0.52, cannot
+co-reside) are measured, not carried; `qwen3vl-rerank` never served and is
+excluded (c18). **MEASURED live on the Orin, 2026-10-07:** the sidecar holds
+4.69 GiB (spike: 744.4M params, CUDA peak 1.48 GiB, RSS 4.03 GiB), the
+code head-to-head kept EG2 in the code slot (c26; the `nl_to_code` family is
+saturated at 0.88-0.95), and `gemma2-embed` was reached by name from spark,
+spark2 and thor with per-modality negative controls passing
+(`docs/evidence/2026-10-07-spike-embeddinggemma2-sidecar-orin.txt`,
+`...-spike-orin-embed-vllm-8b.txt`, `...-h2h-code-retrieval-orin.txt`,
+`...-rollback-orin-embed-to-orin-associate.txt` — a re-render alone is NOT a
+rollback, restore the backup —, `...-accept-orin-embed.txt`). **UNVALIDATED:**
+everything beyond code retrieval — prose/docs/math, real image/video/audio
+retrieval (the probes were synthetic), MRL quality, cross-model agreement —
+is issue **#296**; the plain-`embedder`-on-the-Spark pooling finding is issue
+**#297** (a pre-existing strict-fingerprint rule, not caused by this shape). No
+consumer is switched implicitly: `EIDETIC_EMBED_MODEL` / `COHERENCE_EMBED_MODEL`
+opt in by lane id and switching means re-embedding. See
+`docs/orin-embed-deployment.md`, `docs/embeddinggemma-2.md` and `lobes explain
+lanes`.
 
 ## The deployment lock and the variation catalog
 

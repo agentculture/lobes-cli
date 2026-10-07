@@ -1,0 +1,42 @@
+{
+  "plan_slug": "orin-embedding-specialist",
+  "schema_version": 2,
+  "created": "2026-10-07T12:30:03Z",
+  "updated": "2026-10-07T12:30:03Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "orin-embed ships with EmbeddingGemma 2 (gemma2-embed) as the ONLY standard specialist lane beside the 0.6B pair; Nemotron-3-Embed-8B is NOT standard \u2014 it stays a declared opt-in candidate (catalog + overlay service + compose profile), not in the shape's hosted lanes",
+      "task_ref": "t15",
+      "reason": "Operator decision 2026-10-07 after the t16 head-to-head: Nemotron measurably beat EG2 only on 24 issue->source queries (+8.4 nDCG@10, no CI) at ~4.4x the memory (20.6 vs 4.7 GiB); NL->code was saturated; 'bigger is not always better'. Supersedes decision c17's 'EG2 + an 8B specialist resident together'.",
+      "affects": [
+        "t16",
+        "t18",
+        "c17",
+        "c23",
+        "c10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "the broader evaluation (prose/docs/articles/stories/math, real image/video/audio retrieval with human-caption labels, MRL quality, cross-model agreement, and a redone code test with git-history labels + bootstrap CIs) moves to a follow-up issue instead of this run",
+      "task_ref": "t16",
+      "reason": "Operator decision 2026-10-07: everything except code was only smoke-tested (encode paths + 2-3 toy items); the t16 code test itself has label-leakage/saturation/small-n weaknesses. A proper evaluation round is its own piece of work under #291.",
+      "affects": [
+        "c26",
+        "c10"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

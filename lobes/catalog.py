@@ -61,9 +61,18 @@ ENGINE_LLAMA_CPP = "llama.cpp"
 # task only adds the axis value itself, so `serves_with_vllm` (keyed off
 # `engine == ENGINE_VLLM`) is unchanged for every existing entry.
 ENGINE_SGLANG = "sglang"
+# A fourth engine value (orin-embedding-specialist plan t4): a checkpoint served
+# through the sentence-transformers library (no vLLM pooling runner exists for
+# it). `serves_with_vllm` is False for it, so every vLLM-only fact is skipped.
+ENGINE_SENTENCE_TRANSFORMERS = "sentence-transformers"
 
 #: Every engine a catalog entry may declare. ``tests/test_catalog.py`` pins it.
-ENGINES: tuple[str, ...] = (ENGINE_VLLM, ENGINE_LLAMA_CPP, ENGINE_SGLANG)
+ENGINES: tuple[str, ...] = (
+    ENGINE_VLLM,
+    ENGINE_LLAMA_CPP,
+    ENGINE_SGLANG,
+    ENGINE_SENTENCE_TRANSFORMERS,
+)
 
 
 @dataclass(frozen=True)
@@ -128,6 +137,16 @@ class SupportedModel:
     # currently is, and the recipe this entry documents quotes a specific
     # commit. dspark-speculation-on-the-spark-cortex plan t2.
     hf_revision: str = ""
+    # Vector-space identity (orin-embedding-specialist plan t4). Two embedding
+    # models are interoperable only if they share a vector space, so the facts
+    # that define one are recorded: the input modalities the model accepts, the
+    # Matryoshka truncation dimensions it was trained for (the full `dimension`
+    # included; () = none declared or not verified), and the normalization
+    # applied to its output ("l2", or "" when undeclared). All default empty so
+    # every pre-existing entry is unchanged.
+    modalities: tuple[str, ...] = ()
+    mrl_dims: tuple[int, ...] = ()
+    normalization: str = ""
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -528,7 +547,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # startup instead of degrading to prose. See docs/lfm2.5-1.2b-hand.md.
         role_hint="hand",
         shape="hybrid short-conv + GQA (text-only)",
-        context="32K native",
+        context=_CONTEXT_32K_NATIVE,
         native_max_model_len=32768,
         tool_parser="lfm2",
         quantization="none",
@@ -1275,6 +1294,103 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
         engine=ENGINE_SGLANG,
         hf_revision="85ef153be924f17ce4bf62726954eeaa4a73e854",
+    ),
+    SupportedModel(
+        id="google/embeddinggemma-2",
+        # Candidate, NOT the embedder role default (role_hint "candidate" so
+        # `_catalog_by_role_hint` can never let it hijack the 0.6B embedder).
+        # Facts read off the Hugging Face card/config 2026-10-07 (PUBLISHED-
+        # ELSEWHERE, #108): Apache-2.0, 740M params, one shared 768-d space
+        # across text (incl. code), image, video and audio, MRL 128/256/512/768,
+        # 8192-token window, served via sentence-transformers. MEASURED on the
+        # Jetson AGX Orin 2026-10-07 (the orin-embed shape's standard lane):
+        # docs/evidence/2026-10-07-accept-orin-embed.txt.
+        role_hint="candidate",
+        shape="multimodal embedding (text+code+image+video+audio), 768-d MRL",
+        context="8K native",
+        native_max_model_len=8192,
+        tool_parser="",
+        quantization="",
+        status="load-tested",
+        doc="embeddinggemma-2.md",
+        task="embed",
+        dimension=768,
+        engine=ENGINE_SENTENCE_TRANSFORMERS,
+        modalities=("text", "code", "image", "video", "audio"),
+        mrl_dims=(128, 256, 512, 768),
+        normalization="l2",
+    ),
+    SupportedModel(
+        id="Qwen/Qwen3-VL-Embedding-8B",
+        # Candidate. HF card 2026-10-07: Apache-2.0, 32K context, up to 4096-d
+        # with user-defined output dims 64..4096 (a continuous range, so
+        # mrl_dims is left empty rather than invented). Different vector space
+        # from the 0.6B/4B Qwen3-Embedding gears.
+        role_hint="candidate",
+        shape="multimodal embedding (text+image+video)",
+        context=_CONTEXT_32K_NATIVE,
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="load-tested",
+        doc="qwen3-vl-embedding-8b.md",
+        task="embed",
+        dimension=4096,
+        modalities=("text", "image", "video"),
+    ),
+    SupportedModel(
+        id="Qwen/Qwen3-VL-Reranker-8B",
+        # Candidate reranker (role_hint is NOT "reranker"). HF card 2026-10-07:
+        # Apache-2.0, 32K context; a scorer, so no embedding dimension.
+        role_hint="candidate",
+        shape="multimodal reranker (text+image+video)",
+        context=_CONTEXT_32K_NATIVE,
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="configured",
+        doc="qwen3-vl-reranker-8b.md",
+        task="score",
+        modalities=("text", "image", "video"),
+    ),
+    SupportedModel(
+        id="nvidia/Nemotron-3-Embed-8B-BF16",
+        # Candidate. HF card 2026-10-07: license OpenMDW-1.1 (not Apache),
+        # 4096-d text embedding via mean pooling, slicing to a shorter prefix is
+        # supported after L2 re-normalisation (no fixed ladder declared, so
+        # mrl_dims stays empty). Context: config.json max_position_embeddings is
+        # 262144 (the card quotes no separate figure and evaluates at 4096, and
+        # notes a vLLM yarn-compat field), so the config value is used as the
+        # ceiling.
+        role_hint="candidate",
+        shape="dense text embedding (Ministral3 backbone, mean pooling)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="",
+        status="load-tested",
+        doc="nemotron-3-embed-8b.md",
+        task="embed",
+        dimension=4096,
+        normalization="l2",  # card: "Embeddings are L2-normalized"
+        modalities=("text",),
+    ),
+    SupportedModel(
+        id="nomic-ai/nomic-embed-code",
+        # Candidate code-retrieval embedder. HF card/config 2026-10-07:
+        # Apache-2.0, Qwen2 backbone, hidden size 3584 (the output dimension),
+        # max_position_embeddings 32768. No MRL ladder declared.
+        role_hint="candidate",
+        shape="dense code embedding (Qwen2 backbone)",
+        context=_CONTEXT_32K_NATIVE,
+        native_max_model_len=32768,
+        tool_parser="",
+        quantization="",
+        status="load-tested",
+        doc="nomic-embed-code.md",
+        task="embed",
+        dimension=3584,
+        modalities=("text", "code"),
     ),
 )
 

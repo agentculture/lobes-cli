@@ -79,7 +79,7 @@ from lobes.profiles.shapes import (
     builtin_shape_names,
     load_builtin_shape,
 )
-from lobes.runtime import _compose, _env, _health
+from lobes.runtime import _compose, _env, _health, _lanes
 
 # role → the compose SERVICE name (the top-level key under ``services:`` — NOT the
 # container_name). ``docker compose up -d <service>`` targets exactly these, so a
@@ -132,7 +132,13 @@ GATEWAY_TARGET = GATEWAY_SERVICE
 # Every valid ``up`` target: the TEN roles (canonical order) + the bundle + the
 # gateway. Keyed off :data:`lobes.roles.ROLES` so this and the role registry
 # never drift.
-TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK, GATEWAY_TARGET)
+#
+# Specialist embed/rerank lanes (orin-embedding-specialist, t9) are targets too,
+# read from the lane registry rather than spelled here. Each is addressed by its
+# own lane name (never a role); the registry validator guarantees no collision.
+LANE_SERVICE: dict[str, str] = _lanes.LANE_SERVICE
+
+TARGETS: tuple[str, ...] = roles.ROLES + (COLLEAGUE_STACK, GATEWAY_TARGET) + tuple(LANE_SERVICE)
 
 
 # The .env keys behind innereye's two exposures. The gateway routes /v1/render
@@ -189,6 +195,8 @@ def _resolve(target: str) -> tuple[list[str], bool]:
         return [GATEWAY_SERVICE], False
     if target in ROLE_SERVICE:
         return [ROLE_SERVICE[target]], target in _AUDIO_ROLES
+    if target in LANE_SERVICE:
+        return [LANE_SERVICE[target]], False
     raise ModelGearError(
         code=EXIT_USER_ERROR,
         message=f"unknown role '{target}'",
@@ -315,6 +323,7 @@ def _compose_file_args(
     local_override: bool,
     gpu_present: bool = False,
     audio_he_present: bool = False,
+    embed_present: bool = False,
 ) -> list[str]:
     """The ``-f`` chain for the compose invocation — delegates to the single
     composition authority (:func:`lobes.runtime._compose.compose_file_args`,
@@ -343,6 +352,7 @@ def _compose_file_args(
         local=local_override,
         gpu=gpu_present,
         audio_he=audio_he_present,
+        embed=embed_present,
     )
 
 
@@ -363,6 +373,29 @@ def _audio_overlay_required(deploy_dir: Path, target: str, needs_audio: bool) ->
         remediation=(
             "re-scaffold with 'lobes init --fleet --audio --apply' to add the "
             "stt/tts overlay, then retry"
+        ),
+    )
+
+
+def _lane_defined(deploy_dir: Path, target: str, services: list[str], chain: list[str]) -> None:
+    """Raise USER_ERROR when a lane target's service is not in the deployment's compose set.
+
+    Mirrors the opt-in-role refusal: name the real gap instead of compose's
+    unexplained "no such service".
+    """
+    if target not in LANE_SERVICE:
+        return
+    if set(services) <= _lanes.declared_services(deploy_dir, chain):
+        return
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            f"lane '{target}' needs service {', '.join(services)}, which this "
+            "deployment's compose file set does not define"
+        ),
+        remediation=(
+            "scaffold the embed-lane overlay (docker-compose.embed.yml) into this "
+            "deployment and include it in the compose file set, then retry"
         ),
     )
 
@@ -411,9 +444,9 @@ def cmd_up(args: argparse.Namespace) -> int:
     shape_present = _shape_blocked_services(deploy_dir, services, target)
 
     build = _resolve_build(args, action)
-    argv = _compose.compose_service_argv(
-        action, _chain(deploy_dir, needs_audio, shape_present), services, build=build
-    )
+    chain = _chain(deploy_dir, needs_audio, shape_present)
+    _lane_defined(deploy_dir, target, services, chain)
+    argv = _compose.compose_service_argv(action, chain, services, build=build)
 
     # The card's exclusive-role guard and memory gate run after the checks
     # above, so a role this deployment can't start at all says so first.
@@ -436,6 +469,7 @@ def _chain(deploy_dir: Path, audio: bool, shape_present: bool) -> list[str]:
         _compose.local_override_present(deploy_dir),
         _compose.gpu_overlay_present(deploy_dir),
         _compose.audio_he_overlay_present(deploy_dir),
+        _compose.embed_overlay_present(deploy_dir),
     )
 
 
@@ -877,7 +911,8 @@ def register(sub: argparse._SubParsersAction) -> None:
         "role",
         metavar="ROLE",
         help="cortex | senses | muse | worker | associate | hand | embedder | "
-        "reranker | stt | tts | innereye | colleague-stack | gateway.",
+        "reranker | stt | tts | innereye | colleague-stack | gateway | a specialist "
+        "embed/rerank lane name (e.g. gemma2-embed).",
     )
     p.add_argument("--compose-dir", help="Deployment dir (default: $LOBES_DIR or ~/.lobes).")
     p.add_argument("--apply", action="store_true", help="Actually run docker compose.")

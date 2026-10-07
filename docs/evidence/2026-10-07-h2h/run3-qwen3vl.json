@@ -1,0 +1,14 @@
+[
+  {
+    "model": "Qwen/Qwen3-VL-Embedding-8B",
+    "family": "issue_to_source",
+    "ndcg_at_10": 0.571337744127354,
+    "n": 24
+  },
+  {
+    "model": "Qwen/Qwen3-VL-Embedding-8B",
+    "family": "nl_to_code",
+    "ndcg_at_10": 0.8830905013376084,
+    "n": 48
+  }
+]

@@ -1,0 +1,59 @@
+{
+  "_comment": "Per-model prompt templates. Placeholders: {q} query text, {task} per-family task text from `tasks`, {filename} chunk path, {code} chunk text. A null template means NO prefix (raw text). `verified` is true only if the template was checked against the model card; never invent a prompt - an unverifiable one is marked verified=false with a note. Verification updated by the main agent at merge (2026-10-07) from the HF cards; see each entry's source.",
+  "tasks": {
+    "nl_to_code": "Given a natural language description, retrieve the code that implements it",
+    "issue_to_source": "Given a bug report or stack trace, retrieve the source code that needs to change"
+  },
+  "models": {
+    "google/embeddinggemma-2": {
+      "query": {
+        "nl_to_code": "task: code retrieval | query: {q}",
+        "issue_to_source": "task: code retrieval | query: {q}"
+      },
+      "document": "title: {filename} | text: {code}",
+      "source": "HF config_sentence_transformers.json prompts CodeRetrieval / Document + card lines 141-151 (fetched 2026-10-07)",
+      "verified": true,
+      "note": "Card: code search query 'task: code retrieval | query: {query}', document 'title: {title or filename} | text: {code}'."
+    },
+    "Qwen/Qwen3-VL-Embedding-8B": {
+      "query": {
+        "nl_to_code": "Instruct: {task}\nQuery:{q}",
+        "issue_to_source": "Instruct: {task}\nQuery:{q}"
+      },
+      "document": null,
+      "source": "plan brief (t10): Qwen3 embedding instruct format for queries; documents carry no instruction",
+      "verified": false,
+      "note": "NOT card-verified as written: the Qwen3-VL-Embedding card (README line ~148) applies the instruction via a SYSTEM PROMPT (default \"Represent the user's input.\"), not the text 'Instruct:/Query:' prefix of the text-only Qwen3-Embedding. Through an OpenAI /v1/embeddings text input the served chat template applies the default instruction; a custom task instruction needs the messages form. Re-check how the served lane exposes the instruction before treating its scores as final (plan t16)."
+    },
+    "nvidia/Nemotron-3-Embed-8B-BF16": {
+      "query": {
+        "nl_to_code": "query: {q}",
+        "issue_to_source": "query: {q}"
+      },
+      "document": "passage: {code}",
+      "source": "HF card nvidia/Nemotron-3-Embed-8B-BF16 README line ~148 (fetched 2026-10-07): 'Add the `query: ` prefix for queries and the `passage: ` prefix for documents'",
+      "verified": true,
+      "note": "Verified against the card by the main agent at merge time."
+    },
+    "nomic-ai/nomic-embed-code": {
+      "query": {
+        "nl_to_code": "Represent this query for searching relevant code: {q}",
+        "issue_to_source": "Represent this query for searching relevant code: {q}"
+      },
+      "document": null,
+      "source": "HF card nomic-ai/nomic-embed-code README lines 72/98 (fetched 2026-10-07): queries = ['Represent this query for searching relevant code: ...'], prompt_name='query'; documents unprefixed",
+      "verified": true,
+      "note": "Query prefix verified against the card; documents carry no prefix in the card example."
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "query": {
+        "nl_to_code": "Instruct: {task}\nQuery:{q}",
+        "issue_to_source": "Instruct: {task}\nQuery:{q}"
+      },
+      "document": null,
+      "source": "Qwen3-Embedding instruct format (same family format as the 8B entry); baseline control",
+      "verified": false,
+      "note": "Card not fetched in this run."
+    }
+  }
+}
