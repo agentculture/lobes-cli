@@ -65,7 +65,8 @@ def test_up_is_registered_as_top_level_verb() -> None:
 def test_role_service_map_covers_exactly_the_eleven_roles() -> None:
     """ROLE_SERVICE must stay in lockstep with lobes.roles.ROLES (single source)."""
     assert set(up_cmd.ROLE_SERVICE) == set(roles.ROLES)
-    assert up_cmd.TARGETS == roles.ROLES + ("colleague-stack", "gateway")
+    assert up_cmd.TARGETS[: len(roles.ROLES) + 2] == roles.ROLES + ("colleague-stack", "gateway")
+    assert up_cmd.TARGETS[len(roles.ROLES) + 2 :] == tuple(up_cmd.LANE_SERVICE)
 
 
 # --- acceptance 2: a single role targets ONLY its service ------------------

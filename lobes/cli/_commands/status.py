@@ -31,7 +31,7 @@ from lobes import catalog
 from lobes.cli import _runtime_ops
 from lobes.cli._output import emit_result
 from lobes.gateway import _pressure_policy
-from lobes.runtime import _compose, _env, _health
+from lobes.runtime import _compose, _env, _health, _lanes
 from lobes.runtime import _pressure as _pressure_mod
 
 # Shown when a key is absent/empty in .env (matches _env.read_env's default).
@@ -105,6 +105,15 @@ def _cmd_status_fleet(deploy_dir, env_path, port: int, json_mode: bool) -> int:
         {"name": name, "state": _compose.inspect_state(name)}
         for name in _compose.fleet_containers(deploy_dir)
     ]
+    # Specialist embed/rerank lanes (t9): listed only for the lanes this
+    # deployment's compose set actually defines, so a box without the lane
+    # overlay reports exactly what it did before.
+    lanes = [
+        {"name": name, "service": svc, "state": _compose.inspect_state(svc)}
+        for name, svc in _lanes.defined_lane_services(
+            deploy_dir, _compose._compose_files(deploy_dir)
+        ).items()
+    ]
     report = {
         "model": _env.read_env(env_path, "VLLM_MODEL", _UNSET),
         "served_name": _env.read_env(env_path, "VLLM_SERVED_NAME", _UNSET),
@@ -116,6 +125,8 @@ def _cmd_status_fleet(deploy_dir, env_path, port: int, json_mode: bool) -> int:
         "health": "ok" if _health.is_healthy(port) else "not responding",
         "profile": _env.read_env(env_path, "LOBES_PROFILE", _UNSET),
     }
+    if lanes:
+        report["lanes"] = lanes
 
     if json_mode:
         emit_result(report, json_mode=True)
@@ -128,6 +139,8 @@ def _cmd_status_fleet(deploy_dir, env_path, port: int, json_mode: bool) -> int:
         ]
         for c in containers:
             lines.append(f"  {c['name']} — {c['state']}")
+        for lane in lanes:
+            lines.append(f"  lane {lane['name']} ({lane['service']}) — {lane['state']}")
         lines.append(f"health: {report['health']} (:{port})")
         if report["profile"] != _UNSET:
             lines.append(f"profile: {report['profile']}")
