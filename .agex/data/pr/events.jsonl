@@ -229,3 +229,13 @@
 {"ts":"2026-09-18T16:53:10.985019+00:00","type":"pr_webhook_posted","pr":279,"event":"pr_opened"}
 {"ts":"2026-09-18T16:54:14.330306+00:00","type":"readiness_arrived","pr":279,"waited_secs":60}
 {"ts":"2026-09-18T16:54:19.097277+00:00","type":"pr_read","pr":279,"comment_count":2,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-10-06T17:24:44.179997+00:00","type":"pr_opened","pr":292,"title":"mesh: per-member lanes \u2014 address any box's role as {role}-{member} (0.82.0)"}
+{"ts":"2026-10-06T17:24:45.509394+00:00","type":"pr_review_triggered","pr":292,"command":"/agentic_review"}
+{"ts":"2026-10-06T17:24:46.210540+00:00","type":"pr_webhook_posted","pr":292,"event":"pr_opened"}
+{"ts":"2026-10-06T17:25:49.923457+00:00","type":"readiness_arrived","pr":292,"waited_secs":60}
+{"ts":"2026-10-06T17:25:55.062708+00:00","type":"pr_read","pr":292,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-10-07T00:01:50.774231+00:00","type":"pr_opened","pr":293,"title":"lobes up --replace: switch cortex<->innereye with a memory gate; make serving ComfyUI a short recipe (0.83.0)"}
+{"ts":"2026-10-07T00:01:52.032145+00:00","type":"pr_review_triggered","pr":293,"command":"/agentic_review"}
+{"ts":"2026-10-07T00:01:53.296199+00:00","type":"pr_webhook_posted","pr":293,"event":"pr_opened"}
+{"ts":"2026-10-07T00:02:56.775080+00:00","type":"readiness_arrived","pr":293,"waited_secs":60}
+{"ts":"2026-10-07T00:03:01.419898+00:00","type":"pr_read","pr":293,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}

@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-07T04:45:30Z",
-  "updated": "2026-10-07T06:58:07Z",
+  "updated": "2026-10-07T13:10:21Z",
   "claims": [
     {
       "id": "c1",
@@ -963,6 +963,29 @@
       ]
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "grader-unverified",
+      "what": "committed the sidecar config_kwargs change (4521ec8 before amend) while one new test case was failing \u2014 the && chain checked tail's exit code, not pytest's; caught on the next look and amended before push",
+      "skipped_check": "pytest exit status in the commit gate",
+      "refs": [
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "n-below-claim",
+      "what": "t16 code head-to-head: queries and relevance labels were LLM-written from reading the code (identifier leakage saturated NL->code) and issue->source n=24 with no CI, yet the result fed the c26 decision",
+      "skipped_check": "independent labels + per-query bootstrap CI",
+      "refs": [
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    }
+  ],
   "obligations": []
 }
