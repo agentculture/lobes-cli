@@ -552,3 +552,137 @@ def test_capabilities_route_opens_no_probe(readiness_capabilities_gateway) -> No
         with urllib.request.urlopen(gw.base + "/capabilities", timeout=5) as r:
             assert r.status == 200
     assert len(gw.probe_calls) == seeded
+
+
+# --- specialist embed/rerank lanes (orin-embedding-specialist t7, c36/h6) ---
+#
+# Each WIRED lane (a Backend named for the lane, serving its catalog id, on its
+# task family) is one additional TOP-LEVEL /capabilities key next to the role
+# keys. The role keys are untouched; an unwired lane contributes no key at all.
+
+
+def _lane_table(env: dict[str, str], lane_names: tuple[str, ...]):
+    """``build_config(env)`` plus a directly-built Backend per named lane.
+
+    The _config.py wiring is a parallel task (t6); building the Backend here
+    pins only the shared contract (name == lane.name, served_name ==
+    lane.catalog_id, task == lane.task), never t6's env parsing.
+    """
+    import dataclasses as _dc
+
+    from lobes.embed_lanes import EMBED_LANES
+    from lobes.gateway._routing import Backend
+
+    table, cfg = build_config(env)
+    by_name = {lane.name: lane for lane in EMBED_LANES}
+    extra = tuple(
+        Backend(
+            name=name,
+            base_url=f"http://{name}:8000",
+            served_name=by_name[name].catalog_id,
+            task=by_name[name].task,
+        )
+        for name in lane_names
+    )
+    return _dc.replace(table, backends=table.backends + extra), cfg
+
+
+_ALL_LANE_NAMES = (
+    "gemma2-embed",
+    "qwen3vl-embed",
+    "qwen3vl-rerank",
+    "nemotron-embed",
+    "nomic-code-embed",
+)
+
+
+def test_capabilities_payload_adds_one_top_level_key_per_wired_lane() -> None:
+    from lobes.catalog import SUPPORTED_MODELS
+    from lobes.embed_lanes import EMBED_LANES
+
+    env = _full_env(GEMMA2_EMBED_TESTED_ON="orin", NEMOTRON_EMBED_MAX_MODEL_LEN="8192")
+    table, cfg = _lane_table(env, _ALL_LANE_NAMES)
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    assert set(payload) == set(ROLES) | set(_ALL_LANE_NAMES)
+    catalog = {m.id: m for m in SUPPORTED_MODELS}
+    for lane in EMBED_LANES:
+        entry = payload[lane.name]
+        model = catalog[lane.catalog_id]
+        assert entry["lane"] is True
+        assert entry["model"] == model.id
+        assert entry["runtime"] == model.engine
+        assert entry["task"] == lane.task
+        assert entry["endpoint"] == _GATEWAY_URL
+        expected_path = "/v1/embeddings" if lane.task == "embed" else "/v1/rerank"
+        assert entry["path"] == expected_path
+        assert entry["dimension"] == model.dimension
+        assert entry["mrl_dims"] == list(model.mrl_dims)
+        assert entry["modalities"] == list(model.modalities)
+        assert entry["normalization"] == model.normalization
+        assert entry["quant"] == model.quantization
+        assert entry["feasible"] is True
+        assert entry["loaded"] is True
+        assert entry["ready"] is True  # no live signal → falls back to loaded
+        assert entry["responsibilities"] == []
+        assert entry["forbidden_responsibilities"] == []
+        fp = entry["fingerprint"]
+        assert fp["served_id"] == model.id
+        assert fp["runtime"] == model.engine
+        assert fp["max_model_len"] == entry["context"]
+        assert "quantization" in fp
+    assert payload["gemma2-embed"]["tested_on"] == "orin"
+    assert payload["qwen3vl-embed"]["tested_on"] == ""
+    assert payload["nemotron-embed"]["context"] == 8192
+    gemma = catalog["google/embeddinggemma-2"]
+    assert payload["gemma2-embed"]["context"] == gemma.native_max_model_len
+
+
+def test_capabilities_payload_unwired_lane_produces_no_key() -> None:
+    env = _full_env()
+    table, cfg = _lane_table(env, ("gemma2-embed",))
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    assert set(payload) == set(ROLES) | {"gemma2-embed"}
+    # And with no lane wired at all the payload keeps its pre-lane key set.
+    plain_table, _ = build_config(env)
+    assert set(S.capabilities_payload(plain_table, cfg, env=env, gateway_url=_GATEWAY_URL)) == set(
+        ROLES
+    )
+
+
+def test_capabilities_payload_lane_feasible_false_and_ready_clamp() -> None:
+    env = _full_env(QWEN3VL_EMBED_FEASIBLE="false")
+    table, cfg = _lane_table(env, ("gemma2-embed", "qwen3vl-embed", "qwen3vl-rerank"))
+    payload = S.capabilities_payload(
+        table,
+        cfg,
+        env=env,
+        gateway_url=_GATEWAY_URL,
+        backend_ready={"gemma2-embed": True, "qwen3vl-embed": True, "qwen3vl-rerank": None},
+    )
+    assert payload["gemma2-embed"]["ready"] is True
+    infeasible = payload["qwen3vl-embed"]
+    assert infeasible["feasible"] is False
+    assert infeasible["loaded"] is False
+    assert infeasible["ready"] is False  # a live True never unclamps an infeasible lane
+    assert payload["qwen3vl-rerank"]["ready"] is False  # cache None → not ready (h14)
+
+
+def test_capabilities_payload_lane_never_ready_without_endpoint() -> None:
+    env = _full_env()
+    table, cfg = _lane_table(env, ("gemma2-embed",))
+    payload = S.capabilities_payload(table, cfg, env=env)  # no gateway_url, no public_url
+    assert payload["gemma2-embed"]["endpoint"] == ""
+    assert payload["gemma2-embed"]["ready"] is False
+
+
+def test_capabilities_lane_entry_is_announceable_by_the_mesh() -> None:
+    """The mesh reads lane entries exactly like a role entry (t7 shared contract)."""
+    from lobes.gateway._mesh_routes import _role_info_from_capability_entry
+
+    env = _full_env()
+    table, cfg = _lane_table(env, ("gemma2-embed",))
+    payload = S.capabilities_payload(table, cfg, env=env, gateway_url=_GATEWAY_URL)
+    info = _role_info_from_capability_entry("gemma2-embed", payload["gemma2-embed"], None)
+    assert info is not None
+    assert info.model == "google/embeddinggemma-2"
+    assert info.fingerprint.served_id == "google/embeddinggemma-2"
