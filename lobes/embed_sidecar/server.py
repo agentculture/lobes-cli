@@ -404,7 +404,7 @@ def guard_vector(vec: Sequence[float]) -> float:
     if not all(math.isfinite(x) for x in vec):
         raise _degenerate("encoder returned a non-finite (NaN/inf) embedding")
     norm = math.sqrt(math.fsum(x * x for x in vec))
-    if not norm > 0.0 or not math.isfinite(norm):
+    if norm <= 0.0 or not math.isfinite(norm):
         raise _degenerate("encoder returned an all-zero embedding")
     return norm
 
