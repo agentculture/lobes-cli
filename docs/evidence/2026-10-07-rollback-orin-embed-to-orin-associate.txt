@@ -1,0 +1,35 @@
+# ROLLBACK REHEARSAL — orin-embed -> orin-associate on a copy of the live Orin deployment
+#
+# Date:     2026-10-07, plan task t17 (orin-embedding-specialist), claim c32 / honesty h24
+# Source:   the live Orin ~/.lobes (orin-embed, gemma2-embed lane) copied to scratch; the pre-change backup
+#           ~/.lobes-bak-20261007-pre-orin-embed (taken before the orin-embed deploy) copied beside it.
+#           The re-render ran on the COPY (lobes 0.84.0 from the PR branch); the live box was not rolled back
+#           (associate was already Exited before the change, so serving it was never part of the claim).
+# Command:  lobes init <copy> --shape orin-associate --profile orin --apply --force
+#
+# RESULT: c32 holds ONLY with the backup restore. A re-render alone is NOT a complete rollback.
+#
+# Byte-compare, rendered copy vs pre-change backup (every file in the backup):
+#   SAME  docker-compose.override.yml, docker-compose.audio.yml, docker-compose.gpu-audio.yml, every Dockerfile,
+#         mg-logwrap.sh, qwen3_reranker.jinja, qwen3_thinking_tool_parser.py, the side-loaded wheels, ...
+#   DIFF  docker-compose.shape.yml  — ONLY a newer header comment; the associate-first boot edges
+#                                     (vllm-associate depends_on reset; embed/rerank wait for associate) are restored
+#   DIFF  docker-compose.yml, docker-compose.gpu.yml — the innereye/ComfyUI service (PR #270), a template change the
+#                                     Orin's 0.82 deployment predates; unrelated to orin-embed
+#
+# What a re-render does NOT undo (.env is merge-only; init never deletes files):
+#   1. ASSOCIATE_FEASIBLE=false     (added by hand on the live box so associate is honestly unhosted) — would keep
+#                                   associate OFF after a "rollback". Delete it, restore ASSOCIATE_BASE_URL.
+#   2. GEMMA2_EMBED_BASE_URL (+ _MEM_LIMIT/_TESTED_ON, NEMOTRON_* knobs) — the gateway would still advertise a
+#                                   gemma2-embed lane whose container no profile starts. Comment them out.
+#   3. docker-compose.embed.yml + Dockerfile.embed-st stay in the dir and the compose chain still includes the
+#                                   overlay. Remove them (or leave: harmless once the BASE_URLs are gone).
+#   COMPOSE_PROFILES IS rewritten by the shape render (back to "associate"); MODEL_GEAR_VERSION is re-rendered to
+#   the CLI's own version (pin it back to a published one).
+#
+# The complete rollback, in order:
+#   docker compose -p lobes <chain incl. docker-compose.embed.yml> stop embed-gemma2-embed && ... rm -f embed-gemma2-embed
+#   cp -p ~/.lobes-bak-20261007-pre-orin-embed/* ~/.lobes-bak-20261007-pre-orin-embed/.env ~/.lobes/ \
+#     && rm ~/.lobes/docker-compose.embed.yml ~/.lobes/Dockerfile.embed-st      (or the 3 manual steps above)
+#   docker compose -p lobes -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.shape.yml \
+#     -f docker-compose.override.yml up -d --build --no-deps gateway
