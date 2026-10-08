@@ -9,10 +9,10 @@
   method       : the serving machine-as-brain fleet stays up; this branch's gateway runs from source
                  on :8100 with the thor-lobe feasibility env (PRIMARY_FEASIBLE=false) against the SAME
                  live vLLM lanes (senses/embedder/reranker container IPs), peer origin operator-declared:
-                 PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 (the real peer that hosts cortex).
+                 PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001 (the real peer that hosts cortex).
 
 === check 1: GET /capabilities — dropped cortex is flagged, not hidden, and carries the referral ===
-  cortex    feasible=False ready=False hosted_by=http://spark.tail0be7e0.ts.net:8001
+  cortex    feasible=False ready=False hosted_by=http://spark.TAILNET.ts.net:8001
   senses    feasible=True ready=True hosted_by=-
   embedder  feasible=True ready=True hosted_by=-
   reranker  feasible=True ready=True hosted_by=-
@@ -23,12 +23,12 @@
   PASS  no cortex alias advertised
 
 === check 3: POST for each dropped alias -> 404 role_infeasible carrying the referral (never rerouted) ===
-  PASS  model=main -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
-        message: The model `main` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
-  PASS  model=hard -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
-        message: The model `hard` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
-  PASS  model=cortex -> 404 role_infeasible, hosted_by=http://spark.tail0be7e0.ts.net:8001
-        message: The model `cortex` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.tail0be7e0.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+  PASS  model=main -> 404 role_infeasible, hosted_by=http://spark.TAILNET.ts.net:8001
+        message: The model `main` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.TAILNET.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+  PASS  model=hard -> 404 role_infeasible, hosted_by=http://spark.TAILNET.ts.net:8001
+        message: The model `hard` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.TAILNET.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
+  PASS  model=cortex -> 404 role_infeasible, hosted_by=http://spark.TAILNET.ts.net:8001
+        message: The model `cortex` is not feasible on this machine — its backend (`primary`) is declared hardware-infeasible by this deployment's per-machine profile and will never be served here. It is hosted by the peer at `http://spark.TAILNET.ts.net:8001` — address that box directly; this gateway never proxies requests to peers.
 
 === check 4: hosted roles serve LIVE through the same gateway (advertised implies reachable) ===
   senses (model=multimodal, coolthor/gemma-4-12B-it-NVFP4A16): 'Blue'
@@ -46,7 +46,7 @@
 
 === check 5: the brain stays whole — a consumer follows the referral and reaches cortex on the peer ===
   (dialing the referral origin DIRECTLY, as the 404 message instructs — this gateway did not proxy)
-  cortex via http://spark.tail0be7e0.ts.net:8001 (model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP): 'cortex-on-spark-alive'
+  cortex via http://spark.TAILNET.ts.net:8001 (model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP): 'cortex-on-spark-alive'
   PASS  every role of the brain reachable across the two boxes (direct + referral)
 
 === check 6: shape moves are byte-for-byte restorable (scratch deployment dir, no containers) ===
@@ -62,7 +62,7 @@
 === verdict ===
   PASS — the #112 t5 Thor-side surface is live-validated on the physical Jetson AGX Thor:
     - referral: capabilities hosted_by + 404 role_infeasible referral for every dropped-cortex alias,
-      origin operator-declared (http://spark.tail0be7e0.ts.net:8001), gateway never proxies
+      origin operator-declared (http://spark.TAILNET.ts.net:8001), gateway never proxies
     - hosted lanes live through the same gateway: senses known-answer, embedder 1024-dim vector
     - whole brain across boxes: cortex answered a direct consumer request on the referral origin
     - shape moves byte-for-byte restorable (machine-as-brain -> thor-lobe -> machine-as-brain)

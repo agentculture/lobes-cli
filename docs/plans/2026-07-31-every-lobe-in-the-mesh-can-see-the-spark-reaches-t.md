@@ -45,7 +45,7 @@ slug: `every-lobe-in-the-mesh-can-see-the-spark-reaches-t` · status: `exported`
 - covers: c9, h2
 - acceptance:
   - `MUSE_PEER_ORIGIN`, `MUSE_PEER_PROXY` and `MUSE_PEER_API_KEY` are removed from ~/.lobes/.env and `MUSE_FEASIBLE` is left unset
-  - `WORKER_PEER_ORIGIN`=<http://thor.tail0be7e0.ts.net:8000> and `WORKER_PEER_PROXY`=true are set, with `WORKER_PEER_API_KEY` left EMPTY because Thor declares no inbound gate
+  - `WORKER_PEER_ORIGIN`=<http://thor.TAILNET.ts.net:8000> and `WORKER_PEER_PROXY`=true are set, with `WORKER_PEER_API_KEY` left EMPTY because Thor declares no inbound gate
   - after bring-up, GET /capabilities on the Spark reports muse with `hosted_by`=null and a model=muse request returns 404 `role_infeasible` -- NOT a proxied 503 `backend_unavailable`
   - lobes overview --list still lists the muse catalog entry and lobes init --shape thor-muse still renders, proving cite-don't-delete held
 

@@ -13,7 +13,7 @@
 #   PRIMARY_KV_CACHE_DTYPE=auto (the validated Thor divergence, #109 — not the
 #   Spark's fp8), tool parser qwen3_coder_thinking.
 # Worker/hand on this box: feasible=false + referral/proxy to the Spark
-# (WORKER_/HAND_ PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001, PROXY=true).
+# (WORKER_/HAND_ PEER_ORIGIN=http://spark.TAILNET.ts.net:8001, PROXY=true).
 # senses: unchanged referral/proxy to the Orin. Gateway rebuilt to the 0.57.1 wheel.
 
 ## The one Thor-specific change: MTP OFF
@@ -49,10 +49,10 @@ GDN decode path works on sm_110.
 
 ## Cross-box acceptance
 
-Orin repointed (PRIMARY_PEER_ORIGIN -> http://thor.tail0be7e0.ts.net:8000),
+Orin repointed (PRIMARY_PEER_ORIGIN -> http://thor.TAILNET.ts.net:8000),
 gateway recreated, live:
   model=cortex -> 200, reply "ORIN-VIA-THOR-OK",
-  X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+  X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 
 ## Honest deltas vs the Spark cortex it replaces
 

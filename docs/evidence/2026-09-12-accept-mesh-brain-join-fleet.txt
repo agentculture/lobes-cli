@@ -1,6 +1,6 @@
 # Acceptance transcript — mesh-brain join on the live fleet (t12, 2026-09-12)
 
-Fleet: DGX Spark GB10 (spark, gateway :8001, hosts cortex + reranker), Jetson AGX Thor (thor, :8000, hosts worker + embedder + reranker), Jetson AGX Orin (orin, :8000, hosts associate). Tailnet tail0be7e0.ts.net.
+Fleet: DGX Spark GB10 (spark, gateway :8001, hosts cortex + reranker), Jetson AGX Thor (thor, :8000, hosts worker + embedder + reranker), Jetson AGX Orin (orin, :8000, hosts associate). Tailnet TAILNET.ts.net.
 Branch: spec/mesh-brain-join (PR #252). Gateways: Spark/Thor on the TestPyPI dev build of the commit named per run; the Orin runs a local-wheel image of the same commit (its Dockerfile is the documented local-wheel variant).
 Baseline before any change: docs/evidence/2026-09-12-baseline-mesh-cutover.txt; backups ~/.lobes.pre-mesh-20260911T222244Z on all three boxes.
 Cutover mechanics per box (runbook, idempotent): delete every *_PEER_* key from .env; set LOBES_MESH_KEY (one mesh-wide key), LOBES_MESH_NAME, LOBES_MESH_SEEDS (the other two origins), GATEWAY_SELF_ORIGIN, LOBES_MESH_MISSED_MAX=2, RERANK_QUANTIZATION=none on the two reranker hosts; add the LOBES_MESH_* passthrough + the ./mesh:/home/gateway/mesh volume via docker-compose.override.yml (never re-scaffolding docker-compose.yml); recreate ONLY the gateway (--no-deps). Downtime per box: the gateway recreate (~20 s); the vLLM lanes were never restarted.
@@ -54,22 +54,22 @@ RESULT: PASS on all three boxes (CLI dev529 on Spark/Thor, 0.76.0 on the Orin).
 ### Signal 3 — two members serving a compatible role: 4 concurrent requests to one member's gateway
 ## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
 
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
@@ -83,7 +83,7 @@ HTTP/1.1 404 Not Found
   model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
 HTTP/1.1 429 Too Many Requests
  X-Lobes-Mesh-Member: spark
- X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
   model=cortex body={"error": {"message": "cortex is under pressure; retry shortly", "type": "server_busy", "code": "busy"}}
 - hand: 404 role_infeasible is CORRECT — no box in the fleet runs the hand lane today, so there is nobody to forward to.
 - cortex: FORWARDED to the Spark (X-Lobes-Proxied-By, X-Lobes-Mesh-Member: spark) and answered 429 server_busy by the Spark's OWN pressure policy (iowait 45–55% all night from this session's workload; 50% is the shed threshold). The mesh routed correctly; the shed is the documented pressure behaviour of the destination.
@@ -92,21 +92,21 @@ RESULT: PASS for the routing mechanism.
 ### Signals 3c/3d/3e — plain names for roles the Spark lacks, the reranker pool without suffixes, an 8-way burst (same build, minutes before the pass)
 ### extra checks on 0.76.0.dev529 (before the validate.sh Thor stop), 2026-09-12T03:10:22Z
 ## (3c) roles the Spark lacks, addressed by their PLAIN names on the Spark front
-  model=embedder -> HTTP 200 in 0.04s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
-  model=worker -> HTTP 200 in 0.24s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
-  model=associate -> HTTP 200 in 0.15s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000 
+  model=embedder -> HTTP 200 in 0.04s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 
+  model=worker -> HTTP 200 in 0.24s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 
+  model=associate -> HTTP 200 in 0.15s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.TAILNET.ts.net:8000 
 ## (3d) the reranker pool with BOTH lanes plain (Spark RERANK_QUANTIZATION now reaches its gateway): /capabilities reranker on each box
-  spark: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
-  thor: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
+  spark: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://spark.TAILNET.ts.net:8001', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
+  thor: {'feasible': True, 'ready': True, 'suffixed_lanes': None, 'replicas': [{'origin': 'http://thor.TAILNET.ts.net:8000', 'local': True, 'ready': None, 'busy': None, 'running': None, 'waiting': None, 'compatible': None, 'reason': 'not probed (offline)', 'fingerprint': {'served_id': 'Qwen/Qwen3-Reranker-0.6B', 'max_model_len': 8192, 'runtime': 'vllm', 'quantization': 'none', 'kv_cache_dtype': 'unknown', 'reasoning_parser': 'unknown', 'tool_parser': 'unknown', 'speculative_config': 'unknown'}, 'weight': 1.0, 'capacity': None, 'calibrated': False}], 'quant': ''} fp.quant= none
 ## (3e) 8 concurrent rerank requests to the Spark front (spill-over needs local load; 4 never produced it on dev525)
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
-  X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
+  X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: local-idle 
 - 3c: embedder/worker → the Thor and associate → the Orin, all by their PLAIN names on the Spark front (X-Lobes-Mesh-Member + X-Lobes-Proxied-By, sole-ready). On dev528 the plain `embedder` 404'd and only `embedder-thor` worked (fixed in 39a2412).
 - 3d: no suffixed_lanes on any box; both reranker fingerprints read quantization=none.
 - 3e: eight concurrent rerank requests were all served locally (local-idle) — same policy note as signal 3.
@@ -158,7 +158,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 113,116c113,114
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://thor.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -170,7 +170,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 144,147c142,143
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://orin.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://orin.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -178,7 +178,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 190,193c186,187
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://thor.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -217,21 +217,21 @@ Every member verified on every peer (spark: cortex+reranker = 2 roles, thor: wor
   orin: peer keys=0 doctor peer/FAIL findings=0 PASS
 ## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
 
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
@@ -242,7 +242,7 @@ HTTP/1.1 404 Not Found
   model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
 HTTP/1.1 200 OK
  X-Lobes-Mesh-Member: spark
- X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
   model=cortex body={"id":"chatcmpl-ad7802e8a61dafe3","object":"chat.completion","created":1789191510,"model":"unsloth/Qwen3.8-27B-NVFP4","c
 ## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s
   thor gateway stopped 08:38:41
@@ -275,21 +275,21 @@ RESULTS: signal 1 PASS (10 s); signal 2 PASS on all three after the CLI pin; sig
   orin: peer keys=0 doctor peer/FAIL findings=0 PASS
 ## (3) pooling: the role hosted on TWO members (reranker: Spark+Thor) — 4 concurrent requests to the Spark front
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
 HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  HTTP/1.1 200 OK
- X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001
  X-Lobes-Route-Reason: local-idle
  X-Lobes-Mesh-Member: spark
  
@@ -300,7 +300,7 @@ HTTP/1.1 404 Not Found
   model=hand body={"error": {"message": "The model `hand` is not feasible on this machine \u2014 its backend (`hand`) is declared hardware
 HTTP/1.1 200 OK
  X-Lobes-Mesh-Member: spark
- X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+ X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
   model=cortex body={"id":"chatcmpl-8bfb3f66c4f3e8e7","object":"chat.completion","created":1789193411,"model":"unsloth/Qwen3.8-27B-NVFP4","c
 ## (4) losing a member: stop the Thor gateway; others keep serving; its exclusive roles 404 within 2 intervals, never hang >10 s
   thor gateway stopped 09:10:22
@@ -342,7 +342,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 113,116c113,114
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://thor.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -354,7 +354,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 144,147c142,143
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://orin.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://orin.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -362,7 +362,7 @@ mesh routes with key unset: /mesh/detect -> HTTP 404 (expected 404)
 190,193c186,187
 <         "ready": true,
 <         "loaded": false,
-<         "hosted_by": "http://thor.tail0be7e0.ts.net:8000",
+<         "hosted_by": "http://thor.TAILNET.ts.net:8000",
 <         "proxied": true
 ---
 >         "ready": false,
@@ -411,7 +411,7 @@ def add(a, b):
 RESULT: PASS for worker (fixed calc.py through the Thor's lane in 29 s) and associate (through the Orin's lane in 66 s), both addressed at the Spark's gateway, which hosts neither. The first worker attempt 404'd role_infeasible because it ran ~60 s after signal 5 had recreated the Spark gateway, while the roster still read thor[v=False]: until the first verification pass completes a mesh-provided role answers 404 role_infeasible, not a 'not yet verified' status — recorded as a follow-up below.
 
 ### h8 — a gateway-only member (hosts=[]) boots, joins and serves every role by proxy (the previously UNCHECKED criterion)
-### gateway-only fourth member (h8), 0.76.0 from PyPI, 2026-09-12T06:17:43Z: 'lobes init --shape gateway-only --fleet --apply' into ~/.lobes-gwonly on the Spark, LOBES_MESH_NAME=spark-gw, GATEWAY_SELF_ORIGIN=http://spark.tail0be7e0.ts.net:8002, seeds = the three members; published port set via the template's ${VLLM_PORT:-8000} mapping (edited to 8002:8000 — VLLM_PORT=8002 in .env is the supported spelling); container renamed lobes-gwonly-gateway to avoid the fixed container_name clash with the Spark's own gateway; started with 'docker compose -p lobes-gwonly ... up -d --no-deps gateway' (every vllm lane parked by the shape)
+### gateway-only fourth member (h8), 0.76.0 from PyPI, 2026-09-12T06:17:43Z: 'lobes init --shape gateway-only --fleet --apply' into ~/.lobes-gwonly on the Spark, LOBES_MESH_NAME=spark-gw, GATEWAY_SELF_ORIGIN=http://spark.TAILNET.ts.net:8002, seeds = the three members; published port set via the template's ${VLLM_PORT:-8000} mapping (edited to 8002:8000 — VLLM_PORT=8002 in .env is the supported spelling); container renamed lobes-gwonly-gateway to avoid the fixed container_name clash with the Spark's own gateway; started with 'docker compose -p lobes-gwonly ... up -d --no-deps gateway' (every vllm lane parked by the shape)
   t+15s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None]] spark-gw=[-]
   t+30s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
   t+45s spark=[thor[v=True,roles=3,r=None] orin[v=True,roles=1,r=None] spark-gw[v=False,roles=0,r=None]] thor=[orin[v=True,roles=1,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] orin=[thor[v=True,roles=3,r=None] spark[v=True,roles=2,r=None] spark-gw[v=False,roles=0,r=None]] spark-gw=[thor[v=False,roles=0,r=None] orin[v=False,roles=0,r=None] spark[v=False,roles=0,r=None]]
@@ -422,11 +422,11 @@ RESULT: PASS for worker (fixed calc.py through the Thor's lane in 29 s) and asso
 ## /v1/models on the gateway-only member
   ['Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Reranker-0.6B', 'nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4', 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'unsloth/Qwen3.8-27B-NVFP4']
 ## every mesh role by PLAIN name on the gateway-only member's own front
-  model=cortex -> HTTP 200 in 0.38s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 
-  model=worker -> HTTP 200 in 0.3s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
-  model=associate -> HTTP 200 in 0.17s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000 
-  model=embedder -> HTTP 200 in 0.08s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 
-  model=reranker -> HTTP 200 in 0.03s X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 
+  model=cortex -> HTTP 200 in 0.38s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001 
+  model=worker -> HTTP 200 in 0.3s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 
+  model=associate -> HTTP 200 in 0.17s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: orin X-Lobes-Proxied-By: http://orin.TAILNET.ts.net:8000 
+  model=embedder -> HTTP 200 in 0.08s X-Lobes-Route-Reason: sole-ready X-Lobes-Mesh-Member: thor X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 
+  model=reranker -> HTTP 200 in 0.03s X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Mesh-Member: spark X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001 
 ## /capabilities on the gateway-only member: feasible/proxied/hosted_by per role
    cortex {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'spark'}
    worker {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None, 'member': 'thor'}
@@ -455,9 +455,9 @@ Advert gap on the gateway-only member: /capabilities reports every mesh-provided
 set -euo pipefail
 BOX=$1; VER=$2; KEY=$3
 case $BOX in
-  spark) NAME=spark; SELF=http://spark.tail0be7e0.ts.net:8001; SEEDS=http://thor.tail0be7e0.ts.net:8000,http://orin.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.audio.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="";;
-  thor)  NAME=thor;  SELF=http://thor.tail0be7e0.ts.net:8000;  SEEDS=http://spark.tail0be7e0.ts.net:8001,http://orin.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="env -u GATEWAY_API_KEY";;
-  orin)  NAME=orin;  SELF=http://orin.tail0be7e0.ts.net:8000;  SEEDS=http://spark.tail0be7e0.ts.net:8001,http://thor.tail0be7e0.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.override.yml"; ENVU="";;
+  spark) NAME=spark; SELF=http://spark.TAILNET.ts.net:8001; SEEDS=http://thor.TAILNET.ts.net:8000,http://orin.TAILNET.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.audio.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="";;
+  thor)  NAME=thor;  SELF=http://thor.TAILNET.ts.net:8000;  SEEDS=http://spark.TAILNET.ts.net:8001,http://orin.TAILNET.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml"; ENVU="env -u GATEWAY_API_KEY";;
+  orin)  NAME=orin;  SELF=http://orin.TAILNET.ts.net:8000;  SEEDS=http://spark.TAILNET.ts.net:8001,http://thor.TAILNET.ts.net:8000; FILES="-f docker-compose.yml -f docker-compose.override.yml"; ENVU="";;
 esac
 cd ~/.lobes
 # 1. .env: drop the retired family, add the mesh keys, pin the dev gateway build
@@ -507,7 +507,7 @@ sleep 25; P=$(docker port model-gear-gateway 8000 | head -1 | sed 's/.*://'); cu
 # t12 validation — the five success signals (c36), run from the Spark. Usage: validate.sh <join-key> [<dev-version>]
 # Prints a transcript; every check ends with PASS/FAIL and a measured value. Nothing here mutates a box except signal 4 (stop/start the Thor gateway).
 set -uo pipefail
-KEY=$1; VER=${2:-}; SPARK=http://localhost:8001; THOR=http://thor.tail0be7e0.ts.net:8000; ORIN=http://orin.tail0be7e0.ts.net:8000
+KEY=$1; VER=${2:-}; SPARK=http://localhost:8001; THOR=http://thor.TAILNET.ts.net:8000; ORIN=http://orin.TAILNET.ts.net:8000
 CK=$(grep -E '^GATEWAY_API_KEY=' ~/.lobes/.env | cut -d= -f2)
 roster() { curl -s -m 8 -H "Authorization: Bearer $KEY" "$1/mesh/roster" | python3 "$(dirname "$0")/roster_fmt.py"; }
 echo "### t12 validation $(date -u +%FT%TZ) build=$VER"

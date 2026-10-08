@@ -5,7 +5,7 @@
 # Run from an operator shell on the Orin.
 #
 # BEFORE: the box already followed the cortex referral by proxy
-# (PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001, PRIMARY_PEER_PROXY=true,
+# (PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001, PRIMARY_PEER_PROXY=true,
 # PRIMARY_PEER_API_KEY set — the 2026-07-17 #127 decision), but its mirror was
 # one generation stale: PRIMARY_MODEL=PRIMARY_SERVED_NAME=unsloth/Qwen3.6-27B-NVFP4
 # at PRIMARY_MAX_MODEL_LEN=131072. The peer-readiness probe matches the ADVERTISED
@@ -34,12 +34,12 @@ $ curl -s localhost:8000/capabilities   (cortex entry, key fields)
  "feasible": false,
  "ready": true,
  "proxied": true,
- "hosted_by": "http://spark.tail0be7e0.ts.net:8001"
+ "hosted_by": "http://spark.TAILNET.ts.net:8001"
 }
 
 $ curl -s -X POST localhost:8000/v1/chat/completions -d '{"model":"cortex","messages":[{"role":"user","content":"Reply with exactly: ORIN-PROXY-OK"}],"max_tokens":2048,"chat_template_kwargs":{"enable_thinking":false}}'
 HTTP/1.1 200 OK
-X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
 model: unsloth/Qwen3.8-27B-NVFP4 | reply: ORIN-PROXY-OK
 
 ## Notes

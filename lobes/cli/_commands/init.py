@@ -281,7 +281,7 @@ def innereye_ui_publish(value: str | None) -> str | None:
     Two accepted forms, both ending at the container's fixed ``8188``:
 
     * ``8188`` → ``127.0.0.1:8188:8188`` — a bare port binds LOOPBACK.
-    * ``100.127.105.72:8188`` → ``100.127.105.72:8188:8188`` — an explicit
+    * ``100.64.0.10:8188`` → ``100.64.0.10:8188:8188`` — an explicit
       interface binds exactly that interface (``0.0.0.0`` included, if the
       operator types it).
 

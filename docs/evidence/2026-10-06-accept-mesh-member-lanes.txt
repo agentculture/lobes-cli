@@ -46,9 +46,9 @@ have lost an in-flight request at the 18:45 recreate). AUDIO_URL verified unchan
 ================================================================================
   date_utc: 2026-10-06T17:46:28Z
   gateway localhost:8001 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
-  gateway spark2.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
-  gateway thor.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
-  gateway orin.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway spark2.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway thor.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
+  gateway orin.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev603"}
   qwen sessions running at start: 2
   === leg: A cortex-spark2 via spark gateway
   gateway: http://localhost:8001   model: cortex-spark2   requests: 10
@@ -63,25 +63,25 @@ have lost an in-flight request at the 18:45 recreate). AUDIO_URL verified unchan
   spark  engine request_success_total: 252 -> 273  (delta 21)
   spark2 engine request_success_total: 2184 -> 2184  (delta 0)
   === leg: C cortex-spark via spark2 gateway
-  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://spark2.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    404 404 404 404 404 404 404 404 404 404
   mesh member:   spark spark spark spark spark spark spark spark spark spark
   spark  engine request_success_total: 273 -> 273  (delta 0)
   spark2 engine request_success_total: 2184 -> 2184  (delta 0)
   === leg: D cortex-spark2 via spark2 gateway (self lane)
-  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  gateway: http://spark2.TAILNET.ts.net:8000   model: cortex-spark2   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
   spark  engine request_success_total: 273 -> 273  (delta 0)
   spark2 engine request_success_total: 2184 -> 2194  (delta 10)
   === leg: E cortex-spark2 via Thor gateway (non-hosting)
-  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  gateway: http://thor.TAILNET.ts.net:8000   model: cortex-spark2   requests: 10
   http codes:    508 508 508 508 508 508 508 508 508 508
   mesh member:   spark spark spark spark spark spark spark spark spark spark
   spark  engine request_success_total: 273 -> 273  (delta 0)
   spark2 engine request_success_total: 2194 -> 2194  (delta 0)
   === leg: F cortex-spark via Thor gateway (non-hosting)
-  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://thor.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark spark spark spark spark spark spark spark spark spark
   spark  engine request_success_total: 273 -> 294  (delta 21)
@@ -130,9 +130,9 @@ GET /capabilities -> cortex.member_lanes == ["cortex-spark", "cortex-spark2"] on
 ================================================================================
   date_utc: 2026-10-06T18:46:06Z
   gateway localhost:8001 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
-  gateway spark2.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
-  gateway thor.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
-  gateway orin.tail0be7e0.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway spark2.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway thor.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
+  gateway orin.TAILNET.ts.net:8000 /health: {"status": "ok", "service": "model-gear-gateway", "version": "0.82.0.dev605"}
   qwen sessions running at start: 0
   === leg: A cortex-spark2 via spark gateway
   gateway: http://localhost:8001   model: cortex-spark2   requests: 10
@@ -147,25 +147,25 @@ GET /capabilities -> cortex.member_lanes == ["cortex-spark", "cortex-spark2"] on
   spark  engine request_success_total: 363 -> 373  (delta 10)
   spark2 engine request_success_total: 2205 -> 2205  (delta 0)
   === leg: C cortex-spark via spark2 gateway
-  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://spark2.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    200 000 000 000 000 200 200 000 200 200
   mesh member:   spark     spark spark  spark spark
   spark  engine request_success_total: 373 -> 391  (delta 18)
   spark2 engine request_success_total: 2205 -> 2205  (delta 0)
   === leg: D cortex-spark2 via spark2 gateway (self lane)
-  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  gateway: http://spark2.TAILNET.ts.net:8000   model: cortex-spark2   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
   spark  engine request_success_total: 391 -> 391  (delta 0)
   spark2 engine request_success_total: 2205 -> 2215  (delta 10)
   === leg: E cortex-spark2 via Thor gateway (non-hosting)
-  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark2   requests: 10
+  gateway: http://thor.TAILNET.ts.net:8000   model: cortex-spark2   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2 spark2
   spark  engine request_success_total: 391 -> 391  (delta 0)
   spark2 engine request_success_total: 2215 -> 2225  (delta 10)
   === leg: F cortex-spark via Thor gateway (non-hosting)
-  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://thor.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    200 000 200 200 200 200 200 000 200 200
   mesh member:   spark  spark spark spark spark spark  spark spark
   spark  engine request_success_total: 391 -> 409  (delta 18)
@@ -190,13 +190,13 @@ engine afterwards, hence +18 = 10 of ours + ~8 of theirs). Re-run with a patient
   qwen sessions running at start: 2
   spark engine at start: vllm:num_requests_running{engine="0",model_name="unsloth/Qwen3.8-27B-NVFP4"}=2.0 vllm:num_requests_waiting{engine="0",model_name="unsloth/Qwen3.8-27B-NVFP4"}=0.0 
   === leg: C2 cortex-spark via spark2 gateway (600s client)
-  gateway: http://spark2.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://spark2.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark spark spark spark spark spark spark spark spark spark
   spark  engine request_success_total: 427 -> 443  (delta 16)
   spark2 engine request_success_total: 2225 -> 2225  (delta 0)
   === leg: F2 cortex-spark via Thor gateway (600s client)
-  gateway: http://thor.tail0be7e0.ts.net:8000   model: cortex-spark   requests: 10
+  gateway: http://thor.TAILNET.ts.net:8000   model: cortex-spark   requests: 10
   http codes:    200 200 200 200 200 200 200 200 200 200
   mesh member:   spark spark spark spark spark spark spark spark spark spark
   spark  engine request_success_total: 443 -> 453  (delta 10)

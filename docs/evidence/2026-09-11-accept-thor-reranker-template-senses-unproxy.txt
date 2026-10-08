@@ -201,11 +201,11 @@ The Orin does not host senses — its own GET /capabilities, 2026-09-11:
   orin senses: {'feasible': False, 'ready': False, 'proxied': None, 'hosted_by': None}
 {"error": {"message": "Invalid API key. Pass this gateway's configured key as 'Authorization: Bearer <key>'.", "type": "invalid_api_key", "code": "invalid_api_key"}}
 HTTP/1.1 401 Unauthorized
-X-Lobes-Proxied-By: http://orin.tail0be7e0.ts.net:8000
-{'feasible': False, 'ready': False, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000', 'context': 262144}
+X-Lobes-Proxied-By: http://orin.TAILNET.ts.net:8000
+{'feasible': False, 'ready': False, 'proxied': True, 'hosted_by': 'http://orin.TAILNET.ts.net:8000', 'context': 262144}
 
 Change (~/.lobes/.env, backup .env.bak-20260911-pre-senses-unproxy):
-  MULTIMODAL_PEER_ORIGIN=http://orin.tail0be7e0.ts.net:8000  -> commented out
+  MULTIMODAL_PEER_ORIGIN=http://orin.TAILNET.ts.net:8000  -> commented out
   MULTIMODAL_PEER_PROXY=true                                 -> commented out
   (MULTIMODAL_FEASIBLE=false unchanged; the stale "deviation d1" topology
    header comment rewritten to the #244 topology)
@@ -219,13 +219,13 @@ capabilities senses: {'feasible': False, 'ready': False, 'proxied': None, 'hoste
 thor /v1/models: ['nvidia/Qwen3.6-35B-A3B-NVFP4', 'Qwen/Qwen3-Embedding-0.6B', 'Qwen/Qwen3-Reranker-0.6B', 'unsloth/Qwen3.8-27B-NVFP4']
 ### regression — Thor model=cortex (-> Spark)
   'pong'
-X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
 ### regression — Spark model=worker (-> Thor)
   'pong'
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### regression — Spark model=embedder (-> Thor)
   dims: 1024
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### Thor reranker via Thor gateway /v1/rerank
   [(1, 0.995), (0, 0.0)]
 
@@ -239,7 +239,7 @@ C. HEALTH AFTER BOTH CHANGES
 lobes doctor (Thor): healthy — every check [ok], including
   scaffold_files: all 8 expected scaffold files present
   gateway_version_match: gateway and CLI both report lobes-cli 0.75.1
-LOBES_SMOKE_BASE_URL=http://thor.tail0be7e0.ts.net:8000 pytest tests/test_live_capabilities.py:
+LOBES_SMOKE_BASE_URL=http://thor.TAILNET.ts.net:8000 pytest tests/test_live_capabilities.py:
   PASSED test_advertised_ready_roles_are_reachable
   PASSED test_advertised_models_are_reachable
   PASSED test_colleague_discovers_and_dials_generate_roles

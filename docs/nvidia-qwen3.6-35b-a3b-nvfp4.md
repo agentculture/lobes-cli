@@ -97,7 +97,7 @@ COMPOSE_PROFILES=worker
 # cortex leaves this box; the SINGULAR origin is REQUIRED beside the plural
 # pool or the gateway refuses to boot (_check_pool_arming).
 PRIMARY_FEASIBLE=false
-PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001
 PRIMARY_PEER_PROXY=true
 PRIMARY_PEER_API_KEY=<the Spark's own inbound key>
 ```
@@ -354,7 +354,7 @@ The DGX Spark does not host `worker`; it forwards `model=worker` to the Thor
 
 ```bash
 WORKER_FEASIBLE=false
-WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+WORKER_PEER_ORIGIN=http://thor.TAILNET.ts.net:8000
 WORKER_PEER_PROXY=true
 WORKER_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4   # must equal the Thor's served id
 WORKER_MAX_MODEL_LEN=262144                       # advertise-only for a proxied role

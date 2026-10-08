@@ -1,7 +1,7 @@
 # Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake
 
 > Every lobe in the mesh can see: the Spark reaches Thor's multimodal worker through its own gateway, and the Qwen cortex itself gains image and video intake
-> instruction: Land in two halves. (A) Spark deployment: copy the packaged fleet compose over ~/.lobes/docker-compose.yml (the deployed copy predates `WORKER_`\* passthrough), re-pin `MODEL_GEAR_VERSION`>=0.54.7, replace the `MUSE_`\* peer block with `WORKER_PEER_ORIGIN`=<http://thor.tail0be7e0.ts.net:8000> + `WORKER_PEER_PROXY`=true + empty `WORKER_PEER_API_KEY` (Thor sets no inbound key), then rebuild the gateway ALWAYS with -f docker-compose.yml -f docker-compose.shape.yml. (B) Repo: add unsloth/Qwen3.6-27B-NVFP4 to lobes/catalog.py and point the primary compose lane at it with the worker lane's flag shape, then boot it on the Spark to measure the real budget.
+> instruction: Land in two halves. (A) Spark deployment: copy the packaged fleet compose over ~/.lobes/docker-compose.yml (the deployed copy predates `WORKER_`\* passthrough), re-pin `MODEL_GEAR_VERSION`>=0.54.7, replace the `MUSE_`\* peer block with `WORKER_PEER_ORIGIN`=<http://thor.TAILNET.ts.net:8000> + `WORKER_PEER_PROXY`=true + empty `WORKER_PEER_API_KEY` (Thor sets no inbound key), then rebuild the gateway ALWAYS with -f docker-compose.yml -f docker-compose.shape.yml. (B) Repo: add unsloth/Qwen3.6-27B-NVFP4 to lobes/catalog.py and point the primary compose lane at it with the worker lane's flag shape, then boot it on the Spark to measure the real budget.
 
 ## Audience
 

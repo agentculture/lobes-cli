@@ -319,7 +319,7 @@
     {
       "id": "c18",
       "kind": "requirement",
-      "text": "Peers must be checked before the cortex goes down, not just the local box: the Jetson AGX Orin's .env declares PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 \u2014 this Spark \u2014 from the dual-cortex era, with PRIMARY_PEER_PROXY currently false after its 2026-08-23 local-GGUF cutover. A referral origin is a live declaration even when proxy is off, so the run reads each peer's PRIMARY_PEER_* state and reports what pointed here.",
+      "text": "Peers must be checked before the cortex goes down, not just the local box: the Jetson AGX Orin's .env declares PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001 \u2014 this Spark \u2014 from the dual-cortex era, with PRIMARY_PEER_PROXY currently false after its 2026-08-23 local-GGUF cutover. A referral origin is a live declaration even when proxy is off, so the run reads each peer's PRIMARY_PEER_* state and reports what pointed here.",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [

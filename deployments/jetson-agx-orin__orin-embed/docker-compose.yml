@@ -1716,7 +1716,7 @@ services:
     # smuggled): the recipe's `--network host` is NOT inherited. Running it
     # verbatim during the 2026-08-25 spike put an uncredentialed 30B generate
     # endpoint on this box's tailnet, and within seconds two distinct tailnet
-    # peers queried it unprompted (100.127.105.72 and 100.105.216.63 — see
+    # peers queried it unprompted (100.64.0.10 and 100.64.0.11 — see
     # docs/evidence/2026-08-25-spike-lightning-vllm-orin.txt and the writeup
     # in docs/evidence/2026-08-26-associate-gateway-auth-front.txt).
     #

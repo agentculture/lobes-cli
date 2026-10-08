@@ -147,9 +147,9 @@
 #   The motivating incident was real. During the lane spike, run verbatim per
 #   NVIDIA's recipe with --network host, TWO tailnet peers reached the
 #   unauthenticated endpoint within seconds, neither initiated by the operator:
-#     INFO: 100.127.105.72:50652 - "GET /v1/models HTTP/1.1" 200 OK
-#     INFO: 100.105.216.63:55196 - "GET /v1/models HTTP/1.1" 200 OK
-#   This box is 100.81.137.121.
+#     INFO: 100.64.0.10:50652 - "GET /v1/models HTTP/1.1" 200 OK
+#     INFO: 100.64.0.11:55196 - "GET /v1/models HTTP/1.1" 200 OK
+#   This box is 100.64.0.12.
 #
 #   Measured now, against the deployed shape:
 #     GET /v1/models  no credential   -> HTTP 401

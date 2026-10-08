@@ -720,7 +720,7 @@
     },
     {
       "id": "s3",
-      "surface": "associate live probe via http://localhost:8001/v1/chat/completions (model=associate, proxied to orin.tail0be7e0.ts.net:8000)",
+      "surface": "associate live probe via http://localhost:8001/v1/chat/completions (model=associate, proxied to orin.TAILNET.ts.net:8000)",
       "finding": "Hebrew replies 1.59 s and 1.95 s wall for 56/60 completion tokens; chat_template_kwargs enable_thinking:false produced direct content with no reasoning trace; a Hebrew 'list my home dir' request with one tool returned tool_calls=[list_directory {path:/home/spark}] in 0.48 s. Hebrew quality is unofficial: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B model card omits Hebrew",
       "seeds": [
         "c8",

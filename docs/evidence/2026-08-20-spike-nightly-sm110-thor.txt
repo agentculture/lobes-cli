@@ -39,7 +39,7 @@ matmul ok: True
 - CORRECTION to the spec's before-state: PRIMARY_SERVED_NAME on this box is
   sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP — TWO generations stale, not one
   (the spec assumed unsloth/Qwen3.6-27B-NVFP4). The #186 mirror jumps straight
-  to unsloth/Qwen3.8-27B-NVFP4. PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+  to unsloth/Qwen3.8-27B-NVFP4. PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001
   is declared; PRIMARY_PEER_PROXY/_API_KEY are unset (referral-only today).
 - Disk: 247 GiB free on / — headroom for Lightning weights (~20 GiB) while
   KEEPING the Qwen checkpoint + the old 7c5a10e9 image for rollback (t7/c23).

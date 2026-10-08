@@ -64,13 +64,13 @@ RESULT: PASS.
                                                            .env backed up to .env.bak-20261007-024823-switch-to-innereye
     5. docker ps --filter name=model-gear-comfyui       -> Up 34 seconds (healthy) 0.0.0.0:8188->8188/tcp
     6. curl :8001/capabilities innereye                 -> True True
-    7. curl every `hostname -I` address :8188           -> 10.77.77.1 200, 192.168.1.157 200, 100.127.105.72 200
+    7. curl every `hostname -I` address :8188           -> 10.77.77.1 200, 192.168.1.157 200, 100.64.0.10 200
 * Work done ~2.5 min after start; process exit=0 elapsed=434s (including its summary).
 * No file read under lobes/, no hand edit of .env or compose, no subagent.
 * One stderr line during the gateway recreate: "mesh: reannounce not delivered" (the hint hit the
   gateway mid-restart; peers converge at the next heartbeat). Fixed on this branch: the switch now
   waits for the gateway's /health before the reannounce.
-* Its summary mislabeled 10.77.77.1 as the tailnet address (tailnet is 100.127.105.72 on
+* Its summary mislabeled 10.77.77.1 as the tailnet address (tailnet is 100.64.0.10 on
   tailscale0). The recipe now says how to name the interface.
 
 ================================================================================
@@ -82,9 +82,9 @@ RESULT: PASS.
   $ curl :8001/capabilities  (feasible, ready)
   innereye True True
   cortex False True
-  $ curl http://192.168.1.157:8188/ ; curl http://100.127.105.72:8188/
+  $ curl http://192.168.1.157:8188/ ; curl http://100.64.0.10:8188/
   192.168.1.157 200
-  100.127.105.72 200
+  100.64.0.10 200
   $ POST :8001/v1/chat/completions model=cortex "Reply with just: ok"
   HTTP/1.1 200 OK
   X-Lobes-Mesh-Member: spark2
