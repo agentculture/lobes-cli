@@ -505,7 +505,8 @@ class TestPlanChunks:
     RATE = 100  # 100 Hz keeps the fixtures tiny; frame = 2 samples at 20 ms
 
     def _check_cover(self, chunks, n, window) -> None:
-        assert chunks[0][0] == 0 and chunks[-1][1] == n
+        assert chunks[0][0] == 0
+        assert chunks[-1][1] == n
         for (a, b), (c, _) in zip(chunks, chunks[1:]):
             assert b == c  # contiguous, no overlap, no gap
         for a, b in chunks:
