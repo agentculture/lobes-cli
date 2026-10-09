@@ -42,6 +42,26 @@ Evidence: `docs/evidence/2026-09-hebrew-*.txt` (seven files) and
 - **An NVFP4A16 export of Gemma 4 12B damaged Hebrew** where bf16 and Google's
   QAT checkpoint did not. Check Hebrew output before promoting a quantization.
 
+### Batch transcription: formats and long clips
+
+`POST /v1/audio/transcriptions` takes any format the image's ffmpeg decodes —
+m4a/aac, mp3, ogg/opus, webm, flac, and WAV at any bit depth — not only 16-bit
+PCM WAV. A 16-bit RIFF/WAVE upload (the realtime bridge's own turn audio) is
+still read directly and never touches ffmpeg; anything else is transcoded to
+16 kHz mono PCM16 first, and an undecodable upload is a 400 `invalid_audio`.
+
+An upload longer than Whisper's 30 s window is **chunked**, not refused: each
+cut goes at the quietest 20 ms frame in the last 5 s of its window, every
+window passes the `STT_MIN_AVG_LOGPROB` gate on its own, and the non-empty
+pieces are joined with a space. `STT_MAX_AUDIO_SECONDS` (default 600) caps the
+total; past it the reply is a 413 `clip_too_long`. The upload byte cap
+(`STT_MAX_UPLOAD_BYTES`, 16 MiB) still applies first, so ten minutes of
+uncompressed 16 kHz WAV (~19 MB) needs it raised; a compressed voice note does
+not. MEASURED on the DGX Spark, 2026-10-09, with synthetic BlueTTS speech: an
+80 s m4a was transcribed in 3 windows in 3.9 s with every sentence intact at
+the seams; mp3, ogg/opus, webm, 24-bit WAV and m4a single sentences each came
+back verbatim. A real microphone recording is still UNVALIDATED (#108).
+
 ## Latency: what was built, and what it bought
 
 Measured live, a human on a reSpeaker XVF3800, from the moment the server

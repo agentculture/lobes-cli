@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.85.0] - 2026-10-09
+
+### Added
+
+- Hebrew STT (`listen_server_whisper.py`) accepts any ffmpeg-decodable upload — m4a, mp3, ogg/opus, webm, flac, non-16-bit WAV — instead of refusing everything but 16-bit PCM WAV with `invalid_wav`; an undecodable upload is a 400 `invalid_audio`.
+- Hebrew STT chunks uploads longer than the 30 s Whisper window at the quietest point near each window end and joins the pieces, instead of refusing them; `STT_MAX_AUDIO_SECONDS` (default 600) caps the total.
+
+### Changed
+
+- Hebrew STT decodes up to 440 new tokens per window (was 128), so a full 30 s window of dense speech is not truncated.
+
 ## [0.84.3] - 2026-10-07
 
 ### Changed
