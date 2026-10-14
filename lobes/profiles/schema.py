@@ -72,6 +72,14 @@ ROLES: tuple[str, ...] = (
     # the role. Its per-card gpu_mem_util is declared PER CARD, never once
     # globally: 0.06 is 7.7 GiB on a 128 GB Spark but 3.84 GiB on a 64 GB Orin.
     "hand",
+    # `decider` (orin-decision-models plan, t8) — the schema-scored decision
+    # lobe. In scope so a card can VETO it (`[roles.decider] feasible = false`,
+    # the base.toml pattern) and an `[[exclusive_roles]]` group can NAME it.
+    # Like `innereye` it carries NO vLLM budget knobs: its serving units are
+    # per-domain sidecars a hosting shape declares as `[decider_domains.<name>]`
+    # tables (lobes.profiles.shapes), so a card stays silent on it and it
+    # renders nothing beyond a `DECIDER_FEASIBLE` marker.
+    "decider",
     "embedder",
     "reranker",
     # `innereye` (issue #82) — the ComfyUI render tenant, the eleventh
