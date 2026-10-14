@@ -233,6 +233,10 @@ DECIDER_DOCKERFILES: dict[str, str] = {
     "clef-vllm": "Dockerfile.decider-vllm",
 }
 DECIDER_DOMAINS_KEY = "DECIDER_DOMAINS"
+# odm t7: each domain's checkpoint (`model[@revision]`), for the gateway's
+# /capabilities `decider.domains` advert and the mesh announcement's per-domain
+# fingerprint (lobes.roles.decider_domain_advert reads it).
+DECIDER_DOMAIN_MODELS_KEY = "DECIDER_DOMAIN_MODELS"
 #: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
 DECIDER_DEFAULT_START_PERIOD = "900s"
 
@@ -260,13 +264,22 @@ def hosted_decider_domains(shape: Shape, profile: Profile) -> tuple[str, ...]:
     return tuple(shape.decider_domains)
 
 
+def _decider_checkpoint(spec: Mapping[str, str]) -> str:
+    """``model@revision`` when the domain pins a revision, else ``model``."""
+    return f"{spec['model']}@{spec['revision']}" if spec.get("revision") else spec["model"]
+
+
 def decider_domains_env(shape: Shape, profile: Profile) -> dict[str, str]:
-    """``{"DECIDER_DOMAINS": "general=http://decider-general:8000,..."}``, or ``{}``."""
+    """``DECIDER_DOMAINS`` (``general=http://decider-general:8000,...``) and
+    ``DECIDER_DOMAIN_MODELS`` (``general=<model[@revision]>,...``), or ``{}``."""
     domains = hosted_decider_domains(shape, profile)
     if not domains:
         return {}
     value = ",".join(f"{domain}={decider_domain_url(domain)}" for domain in domains)
-    return {DECIDER_DOMAINS_KEY: value}
+    models = ",".join(
+        f"{domain}={_decider_checkpoint(shape.decider_domains[domain])}" for domain in domains
+    )
+    return {DECIDER_DOMAINS_KEY: value, DECIDER_DOMAIN_MODELS_KEY: models}
 
 
 def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:

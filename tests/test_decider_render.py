@@ -153,6 +153,13 @@ def test_declared_domains_render_the_pinned_decider_domains_contract() -> None:
     assert "decider" in env["COMPOSE_PROFILES"].split(",")
 
 
+def test_declared_domains_render_each_domains_checkpoint() -> None:
+    # odm t7: the gateway's /capabilities `decider.domains` advert and the
+    # per-domain mesh fingerprint read each domain's checkpoint from here.
+    env = shape_env(_decider_shape(_two_domains()), _card())
+    assert env["DECIDER_DOMAIN_MODELS"] == f"general={CLEF}@abc123,triage={STRANDS}"
+
+
 def test_declared_domains_are_the_services_brought_up() -> None:
     services = shape_services(_decider_shape(_two_domains()), _card())
     assert "decider-general" in services

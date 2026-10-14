@@ -2001,6 +2001,10 @@ services:
       - DECIDER_BASE_URL=${DECIDER_BASE_URL:-}
       - DECIDER_SERVED_NAME=${DECIDER_SERVED_NAME:-}
       - DECIDER_DOMAINS=${DECIDER_DOMAINS:-}
+      # Each domain's checkpoint (`name=model[@revision]`), rendered by the
+      # shape beside DECIDER_DOMAINS: the /capabilities `decider.domains`
+      # advert and the per-domain mesh fingerprint read it (odm t7).
+      - DECIDER_DOMAIN_MODELS=${DECIDER_DOMAIN_MODELS:-}
       # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
       # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
       # opt-in mechanics as muse/worker/associate above: an innereye-hosting

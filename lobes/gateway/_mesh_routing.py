@@ -1093,3 +1093,85 @@ def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str) -> Role
 def member_name_for_origin(snapshot: RoutingSnapshot, origin: str) -> str:
     """The roster name of the member at *origin*, or *origin* itself."""
     return next((m.name for m in snapshot.members if m.origin == origin), origin)
+
+
+# ---------------------------------------------------------------------------
+# Decider domains over the mesh (orin-decision-models t7)
+# ---------------------------------------------------------------------------
+#
+# A decider domain is announced under its own roster key, ``decider:<domain>``
+# (``lobes.gateway._mesh_wire.capability_entries``), and its namespace is FLAT
+# and mesh-wide: a caller names the domain, never the box. That rules out the
+# role rule above — a disagreeing member exposed as ``{role}-{member}`` — since
+# there is no member-qualified spelling of a domain. Instead a domain name must
+# be mesh-unique: verified members serving it with IDENTICAL fingerprints are
+# replicas of one domain (served by the first, in member-name order), and any
+# disagreement is a CONFLICT that is refused, never silently picked.
+
+
+@dataclass(frozen=True)
+class DomainPlacement:
+    """Where one decider domain is served in the mesh, or why it is not.
+
+    ``kind`` is ``"forward"`` (``origin``/``member`` name the one member to
+    forward to), ``"conflict"`` (``members`` name every verified member, whose
+    fingerprints disagree), ``"pending"`` (``origin``/``member`` name a member
+    that announced the domain but whose first probe has not landed) or
+    ``"none"`` (no member announces it).
+    """
+
+    kind: str
+    key: str
+    origin: str = ""
+    member: str = ""
+    members: tuple[str, ...] = ()
+
+
+def decider_domain_placement(snapshot: RoutingSnapshot | None, domain: str) -> DomainPlacement:
+    """Place one decider *domain* over the verified mesh members. Pure.
+
+    Candidates are members VERIFIED for the ``decider:<domain>`` key (an
+    announced-but-unverified fingerprint never receives a forward). One
+    candidate, or several whose fingerprints are field-for-field identical
+    (:func:`fingerprints_identical`), forward to the first by member name;
+    several that disagree are a ``conflict``. With no candidate, a member
+    still inside the boot window makes it ``pending``.
+    """
+    from lobes.gateway._routing import decider_domain_key
+
+    key = decider_domain_key(domain)
+    if snapshot is None:
+        return DomainPlacement(kind="none", key=key)
+    candidates = sorted(_collect_role_candidates(snapshot, key), key=lambda c: c[0])
+    if candidates:
+        first_name, first_origin, first_fp = candidates[0]
+        if all(fingerprints_identical(first_fp, fp) for _n, _o, fp in candidates[1:]):
+            return DomainPlacement(kind="forward", key=key, origin=first_origin, member=first_name)
+        return DomainPlacement(
+            kind="conflict", key=key, members=tuple(name for name, _o, _fp in candidates)
+        )
+    pending = _pending_origins_for_role(snapshot, key)
+    if pending:
+        origin = pending[0]
+        return DomainPlacement(
+            kind="pending",
+            key=key,
+            origin=origin,
+            member=member_name_for_origin(snapshot, origin),
+        )
+    return DomainPlacement(kind="none", key=key)
+
+
+def mesh_decider_domains(snapshot: RoutingSnapshot | None) -> tuple[str, ...]:
+    """Every decider domain any member announces, sorted. Pure."""
+    from lobes.gateway._routing import decider_domain_of_key
+
+    if snapshot is None:
+        return ()
+    found = {
+        domain
+        for member in snapshot.members
+        for key in member.announced_roles
+        if (domain := decider_domain_of_key(key)) is not None
+    }
+    return tuple(sorted(found))
