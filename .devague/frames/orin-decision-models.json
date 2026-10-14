@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T05:27:47Z",
+  "updated": "2026-10-14T05:38:28Z",
   "claims": [
     {
       "id": "c1",
@@ -278,7 +278,15 @@
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
-      "hard_questions": [],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "Do both servers actually return per-option probabilities over HTTP? Clef's card documents choice/confidence/probabilities; the strands-decider README's HTTP example shows only a noul value ({type: noul, noul: 0.8581}) and leaves choice/score HTTP fields undocumented \u2014 if the two shapes differ, does lobes pass each through as-is (c19) or normalise?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Each keeps its own format; no normalisation. Recorded as c45."
+        }
+      ],
       "links": [],
       "instruction": "",
       "revisions": []
@@ -374,21 +382,41 @@
     {
       "id": "c25",
       "kind": "success_signal",
-      "text": "On the Orin, with orin-embed still serving: Clef answers a /v1/systemone choice question through the gateway with probabilities summing to 1 (\u00b10.01) per question, top-1 matching the bf16 reference on >= 90% of a fixed probe set, and the minimum available host memory stays >= 2 GiB (orin-embed decision c25 floor); median decision latency for a <= 4096-token state is recorded (sidecar baseline, then the faster path).",
+      "text": "On the Orin, with orin-embed still serving: Clef (4-bit) answers a /v1/systemone choice question through the gateway with probabilities summing to 1 (\u00b10.01) per question, top-1 accuracy on a fixed LABELED probe set (ground-truth answers, no bf16 reference run) is recorded beside the quant card's published bf16 agreement (65/68), and the minimum available host memory stays >= 2 GiB (orin-embed decision c25 floor); median decision latency for a <= 4096-token state is recorded (sidecar baseline, then the faster path).",
       "origin": "llm",
       "status": "confirmed",
       "honesty_conditions": [
         {
           "id": "h6",
           "text": "The probe set, the bf16 reference answers and the latency numbers are all filed in a docs/evidence/ transcript; the bf16 reference is computed off-box (Spark) since bf16 Clef cannot load on the Orin.",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h23",
+          "text": "The labeled probe set, its ground-truth answers, the measured top-1 accuracy and the latency numbers are filed in a docs/evidence/ transcript; no bf16 Clef is booted anywhere for this measurement.",
           "status": "confirmed",
           "instruction": ""
         }
       ],
-      "hard_questions": [],
+      "hard_questions": [
+        {
+          "id": "q4",
+          "text": "Where does the bf16 Clef reference (~55 GB) run? A read-only probe on the Spark (2026-10-14, free -g) showed 5 GiB available with the Spark's current lanes resident, so h6's 'compute the bf16 reference on the Spark' does not fit today \u2014 spark2, a temporary lane stop, or the cloud reference (Workers AI) instead?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Moot: no bf16 reference is run; c25 measures 4-bit Clef against a labeled ground-truth probe set (h23)."
+        }
+      ],
       "links": [],
       "instruction": "",
-      "revisions": []
+      "revisions": [
+        {
+          "text": "On the Orin, with orin-embed still serving: Clef answers a /v1/systemone choice question through the gateway with probabilities summing to 1 (\u00b10.01) per question, top-1 matching the bf16 reference on >= 90% of a fixed probe set, and the minimum available host memory stays >= 2 GiB (orin-embed decision c25 floor); median decision latency for a <= 4096-token state is recorded (sidecar baseline, then the faster path).",
+          "kind": "success_signal",
+          "reason": "user: we host 4-bit on the Orin \u2014 no bf16 reference run; measure against ground truth"
+        }
+      ]
     },
     {
       "id": "c26",
@@ -441,7 +469,22 @@
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
-      "hard_questions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "The upstream /v1/systemone request has NO model field (strands-decider README: {state, questions}; the model is fixed by 'serve'), so how does a caller name decider:<domain>? Options: (a) callers add a 'model' field the gateway reads and strips before forwarding (c19's pass-through becomes 'pass-through minus model'), (b) the domain rides in the path, e.g. /v1/systemone/<domain>, or (c) a header such as X-Lobes-Model.",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Header: X-Lobes-Model: decider:<domain>; body untouched. Recorded as c41."
+        },
+        {
+          "id": "q2",
+          "text": "contradiction with c19?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "No contradiction once the domain rides in a header \u2014 c19's byte-for-byte body pass-through holds. Recorded as c41."
+        }
+      ],
       "links": [],
       "instruction": "",
       "revisions": []
@@ -543,6 +586,175 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "The decider lane's readiness probe uses a per-lane health path: strands-decider documents only POST /v1/systemone (no /health, no /v1/models), and lobes/gateway/_readiness.py probes /health then /v1/models \u2014 so a decider lane needs the probe_backend_ready health_path override the innereye lane already uses (_readiness.py:153-158), or it is advertised ready:false forever.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "A gateway test wires a decider backend that 404s /health and /v1/models but answers its configured health path, and asserts /capabilities reports it ready:true.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "boundary",
+      "text": "Decider containers publish NO host port and listen only on the compose network: the strands-decider server documents no auth, while the gateway's bearer gate covers every /v1/* path (lobes/gateway/server.py:5199) \u2014 the gateway is the only way in.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "The rendered compose for every decider service has no 'ports:' mapping (golden-checked), and an evidence transcript shows the decider port refused from another host while the gateway route answers.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Moving the Orin from orin-embed to a Clef-hosting shape keeps orin-embed as the rollback: back up ~/.lobes before the render and restore the backup to roll back \u2014 a re-render alone is NOT a rollback (docs/orin-embed-deployment.md:136-147, ...-rollback-orin-embed-to-orin-associate.txt).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The Orin acceptance transcript records the ~/.lobes backup path taken before the render, and the rollback procedure is written in the deployment doc.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "assumption",
+      "text": "Each 2B domain is its own serving process/container: the strands-decider README shows serve loading exactly one checkpoint and documents no multi-checkpoint mode, so 'one or more 2B per box' (c29) means a per-domain service list rendered from data (like HAND_LORA_MODULES drives hand's adapters), not one static compose service.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The strands-decider source (not just the README) is read to confirm whether serve can load several LoRA+head pairs over one torso; if it can, one container per box suffices.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "The mesh roster carries decider DOMAINS as a new announced dimension: today a role pools members by fingerprint and exposes a disagreeing member as {role}-{machine} (lobes/gateway/_mesh_routing.py:631-668, member_lanes :932), which cannot express c34's flat decider:<domain> namespace or its refuse-on-conflict rule \u2014 the announce/verify/route path needs a per-domain key.",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "A unit test announces decider:general from the Orin and a 2B domain from spark2 and asserts a third member routes each by domain, and that two members announcing one domain with different fingerprints are refused.",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "decision",
+      "text": "Decider domain selection rides in a request HEADER (X-Lobes-Model: decider:<domain>), so the /v1/systemone body stays exactly the upstream API \u2014 the gateway routes on the header and forwards the body byte-for-byte (keeps c19 intact).",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "A gateway test sends /v1/systemone with X-Lobes-Model: decider:<domain> and asserts the backend receives the body byte-identical, and that a missing header resolves to decider:general (c35).",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "decision",
+      "text": "Measurement work may stop any Spark lane, including experiments, to free memory; experimental/side models are never named in git history or docs.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "decision",
+      "text": "The pressure policy never sheds decider automatically \u2014 no swap/iowait 429 for any decider domain, because a silently dropped decision is invisible to the operator; decider is exempt from lobes/gateway/_pressure_policy.py shedding like hand.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "A pressure-policy test drives swap > 75% and iowait > 50% and asserts every decider:<domain> request is still forwarded (never 429).",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "non_goal",
+      "text": "Any automation that throttles or drops decider requests under load belongs to culture-rules, later \u2014 not to lobes in this frame.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "decision",
+      "text": "Each decider backend keeps its own /v1/systemone response format (Clef's and strands-decider's shapes pass through as-is); lobes does not normalise them.",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -590,6 +802,24 @@
       "resolved": true,
       "resolution": "First plan task: spike a 4-bit Clef + joint head under transformers on the Orin.",
       "resolution_claim_id": "c32"
+    },
+    {
+      "id": "v6",
+      "text": "Clef was tested on transformers 5.10.2 + torch 2.11 (card); the in-tree embed-st sidecar pins transformers 5.19.0 (lobes/templates/fleet/Dockerfile.embed-st:22) \u2014 whether joint_schema_model.py runs on the sidecar image's stack is unverified (the v5 spike settles it)",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c12",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v7",
+      "text": "Residual: the 2B's 'various tasks' domains come from the jev-factory session (c18); their count, per-domain memory, and naming are unknown to this frame until that work ships",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
     }
   ],
   "scope_entries": [
@@ -683,8 +913,123 @@
       "seeds": [
         "c3"
       ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / adjacent-systems lens: lobes/gateway/_readiness.py + strands-decider README",
+      "finding": "readiness probes /health and /v1/models; the decider server documents neither",
+      "seeds": [
+        "c36"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / security lens: lobes/gateway/server.py:5199 + strands-decider serve",
+      "finding": "gateway auth covers /v1/*; upstream server is unauthenticated, so containment is network-level",
+      "seeds": [
+        "c37"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / reversibility lens: docs/orin-embed-deployment.md:136-147",
+      "finding": "rollback on the Orin is backup-restore, not re-render",
+      "seeds": [
+        "c38"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / lifecycle lens: strands-decider README (serve)",
+      "finding": "serve shows one checkpoint per process; per-domain fan-out is a render-time list",
+      "seeds": [
+        "c39"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / unstated-assumptions lens: strands-decider README request schema + lobes/gateway/server.py:240-255 rewrite_model",
+      "finding": "gateway routing rewrites a body 'model' field; the decider wire carries none",
+      "seeds": [
+        "q2"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / counter-evidence lens: strands-decider README response example vs Cloudflare/clef card",
+      "finding": "probabilities documented for Clef, not shown for strands over HTTP",
+      "seeds": [
+        "q3"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "challenge pass / distributed-state lens: lobes/gateway/_mesh_routing.py:631-668,932",
+      "finding": "mesh keys on role fingerprint; domains need their own roster key",
+      "seeds": []
+    },
+    {
+      "id": "s19",
+      "surface": "challenge pass / operations lens: lobes/gateway/_pressure_policy.py",
+      "finding": "only hand is the never-shed floor; decider's pressure class is unstated",
+      "seeds": []
+    },
+    {
+      "id": "s20",
+      "surface": "challenge pass / cheap-probe lens: free -g on spark (2026-10-14)",
+      "finding": "Spark had ~5 GiB available at probe time; a bf16 Clef reference cannot load beside the Spark's current residents",
+      "seeds": [
+        "q4"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "challenge pass / hidden-dependency lens: lobes/templates/fleet/Dockerfile.embed-st:22",
+      "finding": "sidecar image pins transformers 5.19.0 vs Clef's tested 5.10.2",
+      "seeds": []
+    },
+    {
+      "id": "s22",
+      "surface": "challenge pass / observability lens: GET /capabilities advert",
+      "finding": "decider advert fields (checkpoint, quant, domains, ready) follow role_payload; no new gap beyond c36 readiness \u2014 examined at claim level only, serializer not read",
+      "seeds": []
+    },
+    {
+      "id": "s23",
+      "surface": "challenge pass / unexamined: deployment lock (lobes/runtime/_lock.py allowlist) and deployments/ catalog",
+      "finding": "NOT examined \u2014 the lock's [env] allowlist derives from render.py tables, so new DECIDER_* knobs will enter it automatically, but no capture of an Orin decider deployment was considered",
+      "seeds": []
+    },
+    {
+      "id": "s24",
+      "surface": "challenge pass / unexamined: licensing",
+      "finding": "NOT examined beyond Apache-2.0 on both cards; Qwen3.8/Qwen3.5 base-model terms were not read",
+      "seeds": []
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "provenance-missing",
+      "what": "Two challenge-pass links went wrong: scope entry s18 (mesh distributed-state lens) was recorded with no seed because its claim capture failed in the same batch (recaptured afterwards as c40); and s16 seeded q2 (the auto-generated 'contradiction with c19?' question) instead of q1, the wire-format question it actually grounds",
+      "skipped_check": "",
+      "refs": [
+        "challenge pass / s16, s18"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "assumption-for-measurement",
+      "what": "Strands decider's HTTP wire was read from the README only (a single noul example); the server source was not read, so the request/response shape for choice/score and the one-checkpoint-per-process reading of serve are README-derived, not code-verified",
+      "skipped_check": "read strands-decider server source",
+      "refs": [
+        "challenge pass / counter-evidence + lifecycle lenses"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": []
 }
