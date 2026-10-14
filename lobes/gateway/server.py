@@ -1415,6 +1415,7 @@ _PEER_SERVED_NAME_ENV: dict[str, str] = {
     "muse": "MUSE_SERVED_NAME",
     "worker": "WORKER_SERVED_NAME",
     "associate": "ASSOCIATE_SERVED_NAME",
+    "decider": "DECIDER_SERVED_NAME",
     # d1 reversal (2026-08-20) — hand is proxyable now; see
     # _config.NEVER_PROXIED_BACKENDS.
     "hand": "HAND_SERVED_NAME",
@@ -1458,6 +1459,7 @@ _PEER_ROLE_HINT: dict[str, str] = {
     # carrying role_hint="worker" cannot move this resolution. Mirrors
     # lobes.roles.ROLE_ROLE_HINT and catalog.BACKEND_ROLE_CATALOG_HINT.
     "associate": "associate",
+    "decider": "decider",
     "hand": "hand",  # d1 reversal — paired with _PEER_SERVED_NAME_ENV above (the 0.54.6 lesson)
     "embed": "embedding",
     "rerank": "reranker",

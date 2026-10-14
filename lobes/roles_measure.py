@@ -117,8 +117,17 @@ AUDIO_METRIC_KEYS: frozenset[str] = frozenset(
 # site) so a future render probe has an obvious place to add keys.
 RENDER_METRIC_KEYS: frozenset[str] = frozenset()
 
+# `decider`: schema-scored decision lane (POST /v1/systemone). No probe is
+# wired yet (a later task), so no metric vocabulary — see
+# :func:`_measure_decide_role`.
+DECIDE_METRIC_KEYS: frozenset[str] = frozenset()
+
 ALLOWED_METRIC_KEYS: frozenset[str] = (
-    LLM_METRIC_KEYS | EMBED_RERANK_METRIC_KEYS | AUDIO_METRIC_KEYS | RENDER_METRIC_KEYS
+    LLM_METRIC_KEYS
+    | EMBED_RERANK_METRIC_KEYS
+    | AUDIO_METRIC_KEYS
+    | RENDER_METRIC_KEYS
+    | DECIDE_METRIC_KEYS
 )
 
 _LLM_ROLES: tuple[str, ...] = ("cortex", "senses", "muse", "worker", "associate", "hand")
@@ -136,6 +145,8 @@ _FAMILY_BY_ROLE: dict[str, str] = {
     # `hand` rides the llm family: it is a chat/completions generate lane
     # like the other four, adapters or not.
     "hand": "llm",
+    # `decider`: a decide-family lane (not chat) — stub probe for now.
+    "decider": "decide",
     "embedder": "embed_rerank",
     "reranker": "embed_rerank",
     "stt": "audio",
@@ -428,6 +439,16 @@ def _measure_render_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) ->
     return {"ready": False, "metrics": _empty_metrics(RENDER_METRIC_KEYS)}
 
 
+def _measure_decide_role(info: RoleInfo, *, timeout: float = DEFAULT_TIMEOUT) -> dict:
+    """STUB probe for decider: registration only, never opens a socket.
+
+    The real /v1/systemone probe is a later task; until then, like
+    :func:`_measure_render_role`, it reports not-ready with empty metrics
+    rather than crashing the all-roles sweep.
+    """
+    return {"ready": False, "metrics": _empty_metrics(DECIDE_METRIC_KEYS)}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -439,6 +460,7 @@ _MEASURE_FN = {
     "worker": _measure_llm_role,
     "associate": _measure_llm_role,
     "hand": _measure_llm_role,
+    "decider": _measure_decide_role,
     "embedder": _measure_embed_rerank_role,
     "reranker": _measure_embed_rerank_role,
     "stt": _measure_stt_role,

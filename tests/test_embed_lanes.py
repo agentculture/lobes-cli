@@ -20,6 +20,7 @@ _EXPECTED_ROLES = (
     "worker",
     "associate",
     "hand",
+    "decider",
     "embedder",
     "reranker",
     "stt",

@@ -390,6 +390,8 @@ def test_measure_role_family_assignment_covers_all_eleven_roles() -> None:
         "worker": "llm",
         "associate": "llm",
         "hand": "llm",
+        # `decider`: decide family, stub probe (RM._measure_decide_role).
+        "decider": "decide",
         "embedder": "embed_rerank",
         "reranker": "embed_rerank",
         "stt": "audio",
@@ -595,3 +597,9 @@ def test_overview_lists_the_measure_verb(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     verbs_section = next(s for s in payload["sections"] if s["title"] == "Verbs")
     assert any("measure" in item for item in verbs_section["items"])
+
+
+def test_decider_measure_is_a_never_raising_not_ready_stub() -> None:
+    out = RM._measure_decide_role(None)  # never touches info or a socket
+    assert out == {"ready": False, "metrics": {}}
+    assert RM.DECIDE_METRIC_KEYS == frozenset()
