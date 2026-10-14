@@ -1,0 +1,142 @@
+accept-orin-decider (plan orin-decision-models, t11)
+date: 2026-10-14 (UTC times below; backup suffixes are box-local time, UTC+3)
+box: Jetson AGX Orin 64GB (sm_87, aarch64, 61.3 GiB unified, zero swap), mesh name `orin`
+shape: orin-decider (lobes/profiles/builtin_shapes/orin-decider.toml): orin-embed
+  (embedder + reranker + the gemma2-embed lane, unchanged) plus decider:general
+decider: culture-dev/clef-27b-GPTQ-W4A16-g64 @ 4daaa224c6dc553b13120bb10414a7e7de7a5a95
+  (our INT4 weight-only build, deviation d4), sidecar backend clef-vllm
+probe set: culture-dev/clef-probe-set @ cf9b911afc22d19baa535c71058630ee987b1e2a
+  (320 records / 418 questions, labelled; private dataset)
+reference: bf16 Clef on the Spark (docs/evidence/2026-10-14-verify-clef-quants.txt)
+scorer: scripts/clef_eval/compare.py; client: run_probe.py (stdlib, POST /v1/systemone)
+
+== backup BEFORE the change ==
+/home/orin/.lobes-bak-20261014-200149-pre-orin-decider   (381M, the whole ~/.lobes)
+plus .env.bak-*-pre-dev639 and docker-compose.shape.yml.bak-20261014-233849-pre-kv-pin
+(box-local time in the suffix) for the later edits.
+
+== how the render was applied ==
+The Orin has no lobes CLI. `lobes init --shape orin-decider --profile orin` was rendered
+on the Spark, from this branch, into a scratch copy of the Orin's deployment (deleted
+afterwards). From that render ONLY these were copied onto the live box:
+  docker-compose.yml        the gateway's decider passthroughs
+  docker-compose.shape.yml  the decider-general service
+  Dockerfile.decider, Dockerfile.decider-vllm
+  .env  MODEL_GEAR_VERSION=0.86.0.dev639 (TestPyPI dev wheel of this branch),
+        COMPOSE_PROFILES=decider,gemma2-embed,
+        DECIDER_DOMAINS=general=http://decider-general:8000,
+        DECIDER_DOMAIN_MODELS=general=culture-dev/clef-27b-GPTQ-W4A16-g64@4daaa224...
+Render drift, NOT applied (the live values were kept):
+  - the render rewrote GEMMA2_EMBED_MEM_LIMIT 8g -> 6g; the operator's 8g was kept
+  - it would have replaced the live docker-compose.embed.yml, which is newer
+    (parameterised) than the one this branch ships; the live file was kept
+  - it wrote MODEL_GEAR_VERSION=0.86.0, not the dev pin
+The HF cache was seeded from the verified local copy by hard links (16 files at
+4daaa224, LFS by sha256, small files by git sha1); no weights were downloaded.
+
+== boots: four failures, two fixes ==
+boot 1 (dev638), 20:05: EngineCore OOM-killed by the 32g memory cgroup during CUDA-graph
+  capture (anon-rss 32.5 GB). Cause: the sidecar's clef-vllm bundle step called
+  snapshot_download(local_dir=...), which wrote an 18 GB REAL COPY of the weights inside
+  the container; vLLM then logged "Available RAM: 0.06 GiB".
+  Fix (2c92ec3, dev639): materialize_bundle() hard-links the HF-cache blobs (copies only
+  across devices). Proven on the live box: the bundle's joint_head.safetensors and the
+  local copy share inode 25203320, 3 links. vLLM then logged "Available RAM: 11.03 GiB".
+boot 2 (dev639), 20:28: OOM-killed again at the 32g cap, at the start of CUDA-graph
+  capture (cold torch.compile, 64 s; warm-up 129 s).
+boot 3, 20:35: `docker restart`, compile cache warm (torch.compile 0.79 s, warm-up 16 s):
+  OOM-killed again at 20:37:21, same point. A cold compile is therefore NOT the cause.
+  Cgroup memory.stat at that kill: kernel 31,348,162,560 B (on the Jetson the GPU
+  allocations are charged as kernel memory), anon 3,007,512,576 B, file 102,400 B.
+  vLLM's own budget at util 0.40 is 24.54 GiB.
+  The engine arguments were identical to the plain-run container that booted
+  (non-default args compared line by line). Left to vLLM, the KV pool is sized from the
+  board's free memory, which moves with the neighbouring lanes and the page cache: the
+  plain-run container got 94,890 tokens on one boot and 131,072 on another, same
+  settings.
+  Fix (7e4f38d): new optional decider domain key kv_cache_memory_bytes ->
+  DECIDER_KV_CACHE_MEMORY_BYTES (the sidecar already read it); orin-decider pins 4 GiB.
+boot 4, 20:38:58, from a COLD compile, KV pinned: healthy 20:48 UTC.
+  torch.compile 64.25 s, warm-up 127.90 s
+  GPU KV cache size: 56,661 tokens, maximum concurrency 3.46x at 16,384 tokens
+  CUDA graphs: 172 s, 1.03 GiB; init engine 406.32 s
+  "Using MarlinLinearKernel for CompressedTensorsWNA16" (sm_87, weight-only INT4)
+  OOMKilled=false; no new kernel OOM line after 20:37:21
+
+== images ==
+decider-general  lobes-decider-general  sha256:43be8bdcdf3c98b2b49e8dd396cc498198382a3fc0b38c153380fcdb1a2a57ee
+                 vllm 0.31.0, torch 2.13.0+cu130, lobes-cli 0.86.0.dev639
+gateway          lobes-gateway          sha256:61e2fe4d28d49e197c983101e5cde495ec4317926dea42c531a4f2a8f8ea918f
+                 lobes-cli 0.86.0.dev639 (was 0.84.0.dev619), recreated alone (--no-deps)
+
+== four lanes through the Orin gateway (localhost:8000, bearer key) ==
+GET /capabilities: decider, embedder, reranker, gemma2-embed all feasible=true ready=true;
+  decider.domains.general = {checkpoint culture-dev/clef-27b-GPTQ-W4A16-g64@4daaa224...,
+  quant compressed-tensors, ready true}
+POST /v1/embeddings model=embedder       200, 1024-d
+POST /v1/embeddings model=gemma2-embed   200, 768-d
+POST /v1/rerank     model=reranker       200, relevant doc first (0.999 vs 0.0)
+POST /v1/systemone  X-Lobes-Model: decider:general   200 (first request after boot 4.66 s)
+Advert gap (not fixed here): the domain's fingerprint reads max_model_len 262144 (the
+catalog's native window) while the lane serves 16,384.
+
+== the decider is reachable only through the gateway ==
+docker port model-gear-decider-general: none published (8000/tcp expose only)
+from the Spark: orin:18080 (the plain-run port) connection refused (curl exit 7);
+  orin:8000 (the gateway) 401 without the key
+
+== probe set through the gateway (run 1, 20:49-21:01 UTC) ==
+run                    questions failed top-1 acc agreement KL mean  KL max  median/p90 ms
+bf16 / Spark (ref)         418      0     0.9354       --       --       --    444/3014
+W4A16 direct (t13)         418      0     0.9378     0.9880  0.00321  0.22434  507/3812
+W4A16 via the gateway      418      0     0.9354     0.9904  0.00308  0.25790  506/3788
+Promotable (agreement >= 0.97, no failed records): yes.
+Beside the third-party quant card's published bf16 agreement, 65/68: this build agrees
+with bf16 on 414 of 418 labelled-set questions (0.9904), on a different set.
+per-question probabilities: max |sum(p) - 1| = 0.0002 (criterion +-0.01)
+latency by input length, records (median / p90 / max ms):
+  <= 1024 tokens  (n=279)   505 /   626 /  1986
+  1025-4096       (n=13)   3748 /  3833 /  3898
+  > 4096, to 10,606 (n=28) 22171 / 22441 / 23164
+  (direct run: 505/627, 3763/3833, 22235/22524 -- the gateway hop adds nothing measurable)
+confidence vs correctness (top-1 probability bucket, questions, accuracy):
+  [0.99, 1.00]    91   1.0000
+  [0.90, 0.99)   233   0.9785
+  [0.70, 0.90)    62   0.8710
+  [0.50, 0.70)    27   0.6296
+  [0.00, 0.50)     5   0.2000
+  threshold p >= 0.70: 92.3% of questions, accuracy 0.9663
+  threshold p >= 0.90: 77.5% of questions, accuracy 0.9846
+  threshold p >= 0.99: 21.8% of questions, accuracy 1.0000
+  Confidence rises with correctness in every bucket, so thresholds are usable.
+
+== host memory (run 2, the same probe set again, sampled every 2 s) ==
+run 2, 21:01:41-21:12:39 UTC, 326 samples: 418 questions, 0 failed, top-1 0.9354,
+  agreement 0.9904, median/p90 505/3797 ms (same as run 1)
+min host MemAvailable: 13,036 MiB (criterion >= 2 GiB)
+decider container (32 GiB = 34,359,738,368 B cgroup cap):
+  memory.current peaked AT the cap (34,359,717,888 B); memory.peak 34,359,746,560 B
+  memory.stat after the run: kernel 26,102,968,320 B (GPU allocations on the Jetson),
+    anon 4,593,192,960 B, file 3,158,753,280 B
+  The cap is filled by reclaimable page cache (file); the unreclaimable part, kernel +
+  anon, is 30.70 GB, which leaves about 3.4 GiB of headroom under the cap. No OOM kill
+  during either run. This is a measured margin, not a generous one: a larger KV pin or
+  a second engine in this container would need a higher mem_limit.
+
+== another mesh member: the Jetson AGX Thor ==
+Thor gateway re-imaged to lobes-cli 0.86.0.dev641 (this branch), backups
+  .env.bak-20261015-000241-pre-decider-peer, docker-compose.override.yml.bak-20261015-000241-pre-decider-peer;
+  DECIDER_FEASIBLE=false + its passthrough added (an absent key would refuse the role
+  and never look at the mesh). The Thor hosts no decider domain.
+Thor GET /capabilities: decider feasible=false ready=true proxied=true
+  hosted_by=http://orin.<tailnet>:8000; domains.general = {checkpoint
+  culture-dev/clef-27b-GPTQ-W4A16-g64@4daaa224..., quant compressed-tensors, ready true,
+  proxied true, hosted_by the Orin}
+Thor POST /v1/systemone X-Lobes-Model: decider:general -> 200 in 1.02 s, headers
+  X-Lobes-Mesh-Member: orin, X-Lobes-Route-Reason: mesh-forwarded,
+  X-Lobes-Mesh-Verified: true, X-Lobes-Mesh-Role: decider:general; same answer as the
+  Orin (noul 0.0111 on the first probe record).
+
+== not done here ==
+No bf16 Clef was booted on the Orin. The plain-run container used for t13 is stopped and
+kept as the fallback. Non-fleet containers are not named, by rule.
