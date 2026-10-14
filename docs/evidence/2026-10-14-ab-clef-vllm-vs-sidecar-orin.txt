@@ -1,0 +1,83 @@
+ab-clef-vllm-vs-sidecar-orin (plan orin-decision-models, t13)
+date: 2026-10-14 (UTC times below)
+box: Jetson AGX Orin 64GB (sm_87, aarch64, 61.3 GiB unified, zero swap), beside the live
+     orin-embed lanes
+probe set: culture-dev/clef-probe-set @ cf9b911afc22d19baa535c71058630ee987b1e2a
+  (320 records / 418 questions; the t23 set)
+reference: bf16 Clef on the Spark (docs/evidence/2026-10-14-verify-clef-quants.txt)
+scorer: scripts/clef_eval/compare.py (adoption line: top-1 agreement with bf16 >= 0.97)
+
+== the two paths ==
+A  vLLM path (t13 main path): culture-dev/clef-27b-GPTQ-W4A16-g64 (our t19 build, INT4
+   weight-only, group 64) through the decider sidecar's clef-vllm backend.
+   image lobes-decider-vllm:odm-local
+     sha256:b4a5c9f6cb3c51304e069bfccf188085eab6c310d433173519e39495aaad55fe
+     arm64/linux; inside: vllm 0.31.0, torch 2.13.0+cu130, platform.machine() aarch64
+     (FROM vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3)
+   sm_87 confirmed by serving: "Using MarlinLinearKernel for CompressedTensorsWNA16",
+   FLASH_ATTN, util 0.40, max_model_len 16384. No third-party patch or wrapper (d4).
+   Measured over HTTP (scripts/clef_eval/run_probe.py -> POST /v1/systemone, localhost).
+B  transformers NF4 path (the t1 baseline): Aikimi/clef-nf4 @ 8296a671b4547b16b490139b6754c2b4569ef386
+   (bitsandbytes NF4, weight-only) loaded by the repo's own clef_runtime.Runner,
+   profile clef-24gb, in image odm-clef-spike:local
+     sha256:91bd0e065b5d5f63fb92c1bdaf52288071db11c28d775ba600474fd659d3683f (arm64)
+   (transformers 5.10.2, bitsandbytes 0.50.2, torch 2.11.0+cu130 -- the t1 stack).
+   Measured IN-PROCESS (scripts/clef_eval/run_nf4_probe.py, runner.decide() wall time; no
+   HTTP hop, which slightly favours B). Container --memory 28g; 2 warm-up records.
+   Run 18:53-19:10 UTC. Path A's container was stopped for the run (memory) and restarted
+   at 19:10:31.
+
+== hard limit found ==
+Path B refuses any input over 8192 tokens: clef_runtime.core.validate_request caps
+max_length at 8192, and the runtime raises rather than truncating. 15 of 320 records
+(45 of 418 questions; inputs 10,459-10,606 tokens) failed with
+"入力は<N>トークンです。上限8192を超えます。" ("input is N tokens; exceeds the 8192 limit").
+Path A served all 320 (max_model_len 16384).
+
+== results: full set (418 questions) ==
+path            questions  failed  top-1 acc  agreement  KL mean  KL max   median/p90 ms
+bf16 / Spark        418       0      0.9354       --        --       --      444/3014
+A W4A16 vLLM        418       0      0.9378     0.9880   0.00321  0.22434   507/3812
+B NF4 transf.       373      15 rec  0.9276     0.9866   0.00524  0.43721  1658/5411
+
+== results: common subset (305 records / 373 questions both paths answered) ==
+path            top-1 acc  agreement  KL mean  KL max
+bf16 / Spark      0.9410       --        --       --
+A W4A16 vLLM      0.9437     0.9920   0.00321  0.22434
+B NF4 transf.     0.9276     0.9866   0.00524  0.43721
+
+per source on the common subset: accuracy / agreement with bf16
+source          bf16    A W4A16       B NF4
+arc_challenge   1.000   1.000/1.000   0.975/0.975
+banking77       0.975   0.975/1.000   0.975/1.000
+boolq           0.900   0.900/1.000   0.900/1.000
+commonsense_qa  0.850   0.875/0.975   0.850/1.000
+go_emotions     0.900   0.867/0.967   0.867/0.967
+incident        0.990   1.000/0.990   0.981/0.990
+routing         1.000   1.000/1.000   1.000/1.000
+snli            0.880   0.880/1.000   0.840/0.960
+
+latency ms, median/p90, by input length (common subset, one request at a time)
+path            <=1024 (n=279)  1025-4096 (n=13)  4097-8192 (n=13)
+A W4A16 vLLM       505/627         3763/3934          9061/9167
+B NF4 transf.     1653/2137        9771/12195        21151/21473
+=> A is 3.3x faster on short records, 2.6x at 1-4K tokens, 2.3x at 4-8K.
+
+== memory ==
+A  "Model loading took 14.84 GiB"; KV 6.68 GiB (94,890 tokens); container 21.65 GiB
+   (the t13 boot, recorded in the t23 evidence).
+B  torch peak allocated 15.38-16.57 GiB per request (Runner's own peak_allocated_gib);
+   host 'available' (free -m, 1 s samples, 1,029 samples): 34,447 MiB before the load,
+   minimum 17,696 MiB (18:54:07, during the load), 34,881 MiB at the end. Container RSS
+   was not sampled.
+
+== verdict ==
+The vLLM path (A) is ADOPTED: top-1 agreement with bf16 0.988 on the full set (>= 0.97),
+no failed records. It is also more accurate than the NF4 baseline on the records both
+answered (0.9437 vs 0.9276), 2.3-3.3x faster, and it serves inputs up to 16384 tokens,
+which the NF4 path refuses above 8192. The NF4 path would also clear the 0.97 agreement
+line on what it can answer (0.9866); it loses on latency, on the 8192 ceiling and on
+accuracy, not on agreement.
+
+Scratch: ~/odm/probes/{nf4-orin.jsonl,nf4-orin.mem.log,compare-ab-t13.json,
+compare-ab-t13-common.json} on the Spark; ~/odm/nf4-orin.jsonl on the Orin.
