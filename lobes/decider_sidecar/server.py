@@ -24,7 +24,8 @@ Configuration (env)
 -------------------
 DECIDER_BACKEND   ``clef`` | ``strands`` | ``clef-vllm`` (anything else is a startup error)
 DECIDER_MODEL     checkpoint: HF repo id or a local path (never hardcoded here)
-DECIDER_REVISION  optional HF revision for ``clef`` / ``clef-vllm`` (snapshot_download)
+DECIDER_REVISION  optional HF revision, every backend (snapshot_download; ``strands``
+                  resolves it itself, since its loader would fetch the repo HEAD)
 DECIDER_DEVICE    torch device, default ``cuda``
 DECIDER_PORT      listen port, default 8000
 DECIDER_MAX_MODEL_LEN / DECIDER_GPU_MEM_UTIL
@@ -189,19 +190,23 @@ class ClefBackend:  # pragma: no cover — needs torch + a GPU
 class StrandsBackend:  # pragma: no cover — needs torch + strands-decider
     name = "strands"
 
-    def __init__(self, model_id: str, device: str):
-        self.model_id, self.device = model_id, device
+    def __init__(self, model_id: str, revision: str | None, device: str):
+        self.model_id, self.revision, self.device = model_id, revision, device
         self._lock = threading.Lock()
         self._engine = self._request_cls = None
 
     def load(self) -> None:
         from strands_decider.infer import EngineConfig, SystemOneEngine
-        from strands_decider.modeling import StrandsDeciderModel
+        from strands_decider.modeling import StrandsDeciderModel, checkpoint_dir
         from strands_decider.schema import SystemOneRequest
 
         name = os.path.basename(self.model_id.rstrip("/")) or self.model_id
         config = EngineConfig(device=self.device, use_prefix_cache=True, model_name=name)
-        self._engine = SystemOneEngine(StrandsDeciderModel.load(self.model_id), config)
+        # StrandsDeciderModel.load resolves a hub id with no revision (the repo
+        # HEAD), so resolve the pinned snapshot here and hand it a local dir. The
+        # base model's revision comes from the checkpoint's own provenance.json.
+        path = checkpoint_dir(self.model_id, self.revision)
+        self._engine = SystemOneEngine(StrandsDeciderModel.load(path), config)
         self._request_cls = SystemOneRequest
 
     def decide(self, body: bytes) -> dict:
@@ -245,7 +250,7 @@ def select_backend(name: str, env: Mapping[str, str]) -> Backend:
             attention_backend=env.get("DECIDER_ATTENTION_BACKEND", "").strip() or None,
             kv_cache_memory_bytes=kv_bytes,
         )
-    return StrandsBackend(model, device)
+    return StrandsBackend(model, revision, device)
 
 
 # ---------------------------------------------------------------------------

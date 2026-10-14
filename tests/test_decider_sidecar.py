@@ -97,6 +97,17 @@ def test_select_backend_requires_model_and_names_both_backends():
     )
 
 
+def test_the_strands_backend_keeps_the_pinned_revision():
+    # strands-decider's StrandsDeciderModel.load(path) resolves a hub id WITHOUT a
+    # revision (always the repo HEAD), so the sidecar must carry DECIDER_REVISION
+    # itself and resolve the pinned snapshot before loading (t12).
+    pinned = ds.select_backend(
+        "strands", {"DECIDER_MODEL": "org/strands-2b", "DECIDER_REVISION": "216d1ccb"}
+    )
+    assert pinned.revision == "216d1ccb"
+    assert ds.select_backend("strands", {"DECIDER_MODEL": "/ckpt"}).revision is None
+
+
 def test_constructing_backends_does_not_import_torch():
     ds.select_backend("clef", {"DECIDER_MODEL": "a/b", "DECIDER_REVISION": "abc"})
     ds.select_backend("strands", {"DECIDER_MODEL": "/ckpt"})
