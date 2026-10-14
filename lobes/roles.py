@@ -90,14 +90,14 @@ from __future__ import annotations
 import dataclasses
 import os
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from lobes.catalog import SUPPORTED_MODELS, SupportedModel
+from lobes.catalog import ENGINE_DECIDER_SIDECAR, SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._replicas import UNCALIBRATED_WEIGHT
 from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
 from lobes.gateway._replicas import ReplicaState
-from lobes.gateway._routing import RoutingTable
+from lobes.gateway._routing import DECIDER_ROLE, DEFAULT_DECIDER_DOMAIN, RoutingTable
 
 # The eleven first-class roles, in canonical order: generate lanes (cortex,
 # senses, muse, worker, hand), pooling lanes, the opt-in audio overlay, then
@@ -699,6 +699,15 @@ class RoleInfo:
     # declared is byte-identical to the pre-d3 contract. Serialise a RoleInfo
     # through role_payload, not a bare ``dataclasses.asdict``.
     language: str | None = None
+    # The decider role's DOMAIN inventory (orin-decision-models t7): ``{domain:
+    # {"checkpoint", "quant", "ready", "fingerprint"}}`` for every domain this
+    # box serves (``DECIDER_DOMAINS``), plus — on a box that reaches a domain
+    # only through the mesh — ``{"proxied": true, "hosted_by": <origin>}``
+    # entries (or a ``conflict`` list naming the members that disagree).
+    # ``None`` — every other role, and a box with no decider domain at all — is
+    # an ABSENT key in :func:`role_payload`, so every pre-t7 advert keeps its
+    # bytes. Excluded from hashing (a mapping is not hashable).
+    domains: dict | None = field(default=None, hash=False)
 
 
 def _catalog_by_id(model_id: str) -> SupportedModel | None:
@@ -1018,13 +1027,16 @@ def role_payload(info: RoleInfo) -> dict:
     """``info`` as the JSON-safe advert dict — THE serializer for a RoleInfo.
 
     ``dataclasses.asdict`` with the optional-when-unset keys removed: today
-    that is ``language``, absent unless an audio lane declared one. Both the
+    ``language``, absent unless an audio lane declared one, and ``domains``,
+    absent unless this box serves or reaches a decider domain. Both the
     gateway's ``GET /capabilities`` and ``lobes capabilities`` go through
     here so the two surfaces cannot disagree about which keys exist.
     """
     payload = dataclasses.asdict(info)
     if payload.get("language") is None:
         payload.pop("language", None)
+    if payload.get("domains") is None:
+        payload.pop("domains", None)
     return payload
 
 
@@ -1251,6 +1263,13 @@ def build_role_registry(
             role, table, gateway, resolved_env, signal, peer_signal, peer_ctx
         )
 
+    # The decider's per-domain inventory (odm t7) — the same RoleInfo, one
+    # more optional key; a box with no decider domain keeps `domains=None`.
+    if DECIDER_ROLE in registry:
+        domains = decider_domain_advert(table, resolved_env, registry[DECIDER_ROLE], backend_ready)
+        if domains:
+            registry[DECIDER_ROLE] = dataclasses.replace(registry[DECIDER_ROLE], domains=domains)
+
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
     # Audio roles use the gateway origin when the overlay is wired (issue #87),
@@ -1334,6 +1353,109 @@ def build_role_registry(
         peer_ready=peer_ready,
     )
     return registry
+
+
+# --- decider domains on the advert (orin-decision-models t7) ------------------
+#
+# The decider role is served by one sidecar PER DOMAIN, so its advert carries a
+# `domains` map. Each served domain names its checkpoint, quant and live
+# readiness, plus the FINGERPRINT a peer verifies before routing to it — each
+# domain is announced to the mesh under its own roster key `decider:<domain>`
+# (lobes.gateway._mesh_wire.capability_entries), because the decider namespace
+# is FLAT and mesh-wide: a caller names a domain, never a box.
+#
+# The checkpoint comes from DECIDER_DOMAIN_MODELS (`name=model[@revision]`,
+# comma-separated — rendered by a decider-hosting shape from each
+# `[decider_domains.<name>]` table, passed through to the gateway). A domain it
+# does not name falls back to the decider backend's served id for `general`
+# (DECIDER_SERVED_NAME, else the catalog's decider) and to "unknown" for any
+# other domain — never a guess.
+DECIDER_DOMAIN_MODELS_ENV = "DECIDER_DOMAIN_MODELS"
+
+
+def decider_domain_models(env: Mapping[str, str]) -> dict[str, str]:
+    """``{domain: checkpoint}`` declared in ``DECIDER_DOMAIN_MODELS``.
+
+    Malformed pairs (no ``=``, an empty side, an illegal domain name) are
+    skipped, never raised — a typo only costs that domain its checkpoint.
+    """
+    from lobes.gateway._routing import DECIDER_DOMAIN_RE
+
+    out: dict[str, str] = {}
+    for pair in (env.get(DECIDER_DOMAIN_MODELS_ENV) or "").split(","):
+        name, sep, model = pair.strip().partition("=")
+        name, model = name.strip(), model.strip()
+        if sep and model and DECIDER_DOMAIN_RE.match(name):
+            out[name] = model
+    return out
+
+
+def _decider_domain_ready(
+    key: str,
+    domain_url: str,
+    backend_url: str,
+    usable: bool,
+    backend_ready: Mapping[str, bool | None] | None,
+) -> bool:
+    """One domain's ``ready``: the role's clamp, then its own live signal.
+
+    ``backend_ready`` is the readiness cache's map; the domain's own
+    ``decider:<domain>`` key is authoritative (h14: missing/None/False = not
+    ready). The domain the ``decider`` backend itself points at also accepts
+    the backend's key, so it reads the same probe before the per-domain
+    targets are wired.
+    """
+    if not usable:
+        return False
+    if backend_ready is None:
+        return True
+    if key in backend_ready:
+        return backend_ready.get(key) is True
+    return domain_url == backend_url and backend_ready.get(DECIDER_ROLE) is True
+
+
+def decider_domain_advert(
+    table: RoutingTable,
+    env: Mapping[str, str],
+    decider: "RoleInfo",
+    backend_ready: Mapping[str, bool | None] | None,
+) -> dict[str, dict]:
+    """``{domain: {checkpoint, quant, ready, fingerprint}}`` for every served domain.
+
+    Empty when this box serves no decider domain. The fingerprint is the four
+    fields mesh verification compares (served id, quantization, window,
+    runtime); an unknown value reads ``"unknown"``, which verifies against
+    itself but never pools (``_replicas.compare_fingerprints``).
+    """
+    from lobes.gateway._routing import decider_domain_key
+
+    if not table.decider_domains:
+        return {}
+    declared = decider_domain_models(env)
+    backend = next((b for b in table.backends if b.name == ROLE_BACKEND[DECIDER_ROLE]), None)
+    backend_url = backend.base_url if backend is not None else ""
+    usable = decider.feasible and decider.loaded and bool(decider.endpoint)
+    out: dict[str, dict] = {}
+    for domain, url in table.decider_domains.items():
+        checkpoint = declared.get(domain) or (
+            decider.model if domain == DEFAULT_DECIDER_DOMAIN else ""
+        )
+        model = _catalog_by_id(checkpoint.split("@", 1)[0]) if checkpoint else None
+        quant = model.quantization if model is not None else ""
+        out[domain] = {
+            "checkpoint": checkpoint or _REPLICA_UNKNOWN,
+            "quant": quant or _REPLICA_UNKNOWN,
+            "ready": _decider_domain_ready(
+                decider_domain_key(domain), url, backend_url, usable, backend_ready
+            ),
+            "fingerprint": {
+                "served_id": checkpoint or _REPLICA_UNKNOWN,
+                "quantization": quant or _REPLICA_UNKNOWN,
+                "max_model_len": (model.native_max_model_len if model is not None else None),
+                "runtime": (model.engine if model is not None else ENGINE_DECIDER_SIDECAR),
+            },
+        }
+    return out
 
 
 def _resolve_audio_role(

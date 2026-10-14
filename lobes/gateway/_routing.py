@@ -262,6 +262,24 @@ DECIDER_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 _DECIDER_SEP = ":"
 
 
+def decider_domain_key(domain: str) -> str:
+    """``decider:<domain>`` — the header value naming a domain, which is ALSO
+    the domain's own mesh roster key and its readiness-cache key (odm t7).
+
+    One spelling for all three, so a domain announced by a peer is addressed
+    by exactly the string a caller already puts in ``X-Lobes-Model``.
+    """
+    return f"{DECIDER_ROLE}{_DECIDER_SEP}{domain}"
+
+
+def decider_domain_of_key(key: str) -> str | None:
+    """The domain a ``decider:<domain>`` roster key names, else ``None``."""
+    role, sep, domain = key.partition(_DECIDER_SEP)
+    if role != DECIDER_ROLE or not sep or not DECIDER_DOMAIN_RE.match(domain):
+        return None
+    return domain
+
+
 def is_systemone_path(path: str) -> bool:
     """True for exactly ``/v1/systemone`` (query string ignored)."""
     return path.split("?", 1)[0] == SYSTEMONE_PATH

@@ -101,6 +101,7 @@ from lobes.gateway._mesh_routes import require_self_origin as _require_self_orig
 from lobes.gateway._mesh_routes import start_mesh as _start_mesh
 from lobes.gateway._mesh_routing import (
     MESH_MEMBER_HEADER,
+    DomainPlacement,
     MemberLane,
     MeshRoutingView,
     RolePlacement,
@@ -109,10 +110,12 @@ from lobes.gateway._mesh_routing import (
     as_routing_snapshot,
     build_snapshot,
     compute_role_placement,
+    decider_domain_placement,
     find_member_lane,
     lane_for_model,
     lane_placement,
     member_name_for_origin,
+    mesh_decider_domains,
     mesh_markers,
 )
 from lobes.gateway._mesh_wire import Announcement
@@ -143,9 +146,11 @@ from lobes.gateway._routing import (
     RENDER_TASK,
     SYSTEMONE_PATH,
     Backend,
+    DeciderRoute,
     RenderRoute,
     RoutingTable,
     audio_role_for_path,
+    decider_domain_key,
     extract_job_artifacts,
     infeasible_owner,
     is_audio_path,
@@ -4023,6 +4028,123 @@ def handle_audio_request(
     return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
 
 
+def _decider_conflict_body(requested: str, members: tuple[str, ...]) -> bytes:
+    """The 409 body for a domain two mesh members serve DIFFERENTLY (odm t7)."""
+    return json.dumps(
+        {
+            "error": {
+                "message": (
+                    f"The decider domain `{requested}` is served by more than one mesh "
+                    f"member with different fingerprints ({', '.join(members)}). A domain "
+                    "name must be mesh-unique; this gateway refuses rather than pick one. "
+                    "Rename one domain or align the checkpoints."
+                ),
+                "type": "decider_domain_conflict",
+                "code": "decider_domain_conflict",
+                "members": list(members),
+            }
+        }
+    ).encode("utf-8")
+
+
+def _forward_decider_domain(
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    placement: DomainPlacement,
+    mesh_snapshot: "RoutingSnapshot",
+) -> GatewayResponse:
+    """Forward one decider request to the mesh member serving its domain.
+
+    The existing single-hop forwarder (:func:`_proxy_to_peer`): hop marker,
+    join key in place of the caller's credential, ``X-Lobes-Proxied-By`` /
+    ``X-Lobes-Mesh-Member`` on every outcome, and a 508 for an arrival that
+    already crossed one hop. The body travels VERBATIM (``rewrite=False``,
+    c45 — the decider wire has no ``model`` field to rewrite); the id the
+    peer resolves is the domain's own ``X-Lobes-Model: decider:<domain>``,
+    set explicitly so an absent header (``general``) cannot be re-read
+    differently on the far side.
+    """
+    try:
+        mesh_cfg = _build_mesh_config()
+    except MeshConfigError:
+        mesh_cfg = None
+    join_key = (mesh_cfg and mesh_cfg.enabled and mesh_cfg.key) or ""
+    target = _ForwardTarget(
+        name=DECIDER_ROLE,
+        origin=placement.origin,
+        served_name=placement.key,
+        api_key=join_key,
+    )
+    wanted = DECIDER_MODEL_HEADER.lower()
+    headers = [(k, v) for k, v in req_headers if k.lower() != wanted]
+    headers.append((DECIDER_MODEL_HEADER, placement.key))
+    return _proxy_to_peer(
+        cfg,
+        target,
+        path,
+        headers,
+        body,
+        open_upstream,
+        rewrite=False,
+        extra_response_headers=(
+            [(PROXIED_BY_HEADER, placement.origin)]
+            + mesh_markers(mesh_snapshot, placement.key, chosen_origin=placement.origin)
+            + [
+                (ROUTE_REASON_HEADER, "mesh-forwarded"),
+                (MESH_MEMBER_HEADER, placement.member),
+            ]
+        ),
+    )
+
+
+def _decider_mesh_response(
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    route: DeciderRoute,
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> GatewayResponse | None:
+    """The mesh answer for a domain this box does not serve, or ``None``.
+
+    ``None`` (fall through to the local refusal) when the mesh is off, the
+    header spelling was illegal, or no member announces the domain. A
+    conflict is 409 ``decider_domain_conflict`` with NO forward; a member
+    still inside the boot window is 503 ``role_unverified``.
+    """
+    if mesh_snapshot is None or not route.domain:
+        return None
+    placement = decider_domain_placement(mesh_snapshot, route.domain)
+    if placement.kind == "forward":
+        return _forward_decider_domain(
+            cfg, path, req_headers, body, open_upstream, placement, mesh_snapshot
+        )
+    if placement.kind == "conflict":
+        return GatewayResponse(
+            status=409,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_decider_conflict_body(route.requested, placement.members),
+        )
+    if placement.kind == "pending":
+        return _role_unverified_response(
+            mesh_snapshot,
+            placement.key,
+            RolePlacement(
+                role=placement.key,
+                plain_origins=(),
+                suffixed=(),
+                pending_origins=(placement.origin,),
+            ),
+            route.requested,
+            DECIDER_ROLE,
+        )
+    return None
+
+
 def handle_systemone(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -4030,6 +4152,8 @@ def handle_systemone(
     req_headers: Iterable[tuple[str, str]],
     body: bytes,
     open_upstream: OpenUpstream,
+    *,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
 ) -> GatewayResponse:
     """Route one ``POST /v1/systemone`` to the decider domain the header names.
 
@@ -4045,8 +4169,21 @@ def handle_systemone(
     ``model_not_found`` for an undeclared domain or a non-decider spelling,
     404 ``role_infeasible`` when no decider is wired here, and 503
     ``backend_unavailable`` (retryable) when the wired sidecar does not answer.
+
+    **Mesh (odm t7):** a domain this box does not serve goes to the verified
+    mesh member that announces it (:func:`_decider_mesh_response`) — one hop,
+    body verbatim, ``X-Lobes-Mesh-Member`` on the reply — and two members
+    serving one domain with different fingerprints is a 409 conflict, never
+    a silent pick. A domain served HERE is always served here.
     """
+    req_headers = list(req_headers)
     route = resolve_decider_route(table, _request_header(req_headers, DECIDER_MODEL_HEADER))
+    if route.kind != "local":
+        meshed = _decider_mesh_response(
+            cfg, path, req_headers, body, open_upstream, route, mesh_snapshot
+        )
+        if meshed is not None:
+            return meshed
     if route.kind == "model_not_found":
         return GatewayResponse(
             status=404,
@@ -4668,6 +4805,64 @@ def annotate_mesh_lanes(
     return payload
 
 
+def annotate_mesh_decider_domains(
+    payload: dict[str, dict],
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> dict[str, dict]:
+    """Add every decider domain this box reaches only through the mesh, in place.
+
+    For a domain some verified member serves and this box does not, the
+    ``decider`` entry's ``domains`` map gains ``{checkpoint, quant, ready,
+    proxied: true, hosted_by}`` — the checkpoint/quant the member ANNOUNCED
+    and the readiness its last probe read back. A domain the mesh disagrees
+    about is listed with ``conflict`` (the member names) and ``ready: false``,
+    so a caller sees why it is refused. A domain served here is never
+    touched, and with the mesh off (or no member announcing a domain) the
+    payload is unchanged. ``proxied``/``conflict`` entries are skipped by the
+    announcement builder (:func:`lobes.gateway._mesh_wire.capability_entries`),
+    so this box never re-announces a peer's domain.
+    """
+    decider = payload.get(DECIDER_ROLE)
+    if mesh_snapshot is None or not isinstance(decider, dict):
+        return payload
+    local = dict(decider.get("domains") or {})
+    announced = dict(mesh_snapshot.announcements)
+    added: dict[str, dict] = {}
+    for domain in mesh_decider_domains(mesh_snapshot):
+        if domain in local:
+            continue
+        placement = decider_domain_placement(mesh_snapshot, domain)
+        if placement.kind == "conflict":
+            added[domain] = {"conflict": list(placement.members), "ready": False}
+            continue
+        if placement.kind != "forward":
+            continue
+        ann = announced.get(placement.origin)
+        info = ann.roles.get(placement.key) if ann is not None else None
+        member = next((m for m in mesh_snapshot.members if m.origin == placement.origin), None)
+        added[domain] = {
+            "checkpoint": getattr(info, "model", "") or "unknown",
+            "quant": getattr(info, "quant", "") or "unknown",
+            "ready": member is not None and placement.key in member.ready_roles,
+            "proxied": True,
+            "hosted_by": placement.origin,
+        }
+    if added:
+        decider["domains"] = {**local, **added}
+    return payload
+
+
+def decider_readiness_targets(table: RoutingTable) -> dict[str, str]:
+    """``{"decider:<domain>": sidecar_url}`` — one readiness target per domain.
+
+    Fed to the :class:`ReadinessCache` beside the backends (each probed on its
+    own ``/health``, the decider sidecar's only readiness route), so every
+    domain's advertised ``ready`` is its own sidecar's, not the default
+    domain's. Empty on a box with no decider domain.
+    """
+    return {decider_domain_key(d): url for d, url in table.decider_domains.items()}
+
+
 def capabilities_payload(
     table: RoutingTable,
     cfg: ServerConfig,
@@ -4807,7 +5002,11 @@ def capabilities_payload(
     gateway = (gateway_url or (cfg.public_url or "")).rstrip("/")
     payload.update(lane_capabilities(table, resolved_env, gateway, backend_ready))
     # ... and the lanes this box reaches only through the mesh (t8).
-    return annotate_mesh_lanes(payload, resolved_env, gateway, as_routing_snapshot(mesh_snapshot))
+    payload = annotate_mesh_lanes(
+        payload, resolved_env, gateway, as_routing_snapshot(mesh_snapshot)
+    )
+    # ... and the decider domains it reaches only through the mesh (odm t7).
+    return annotate_mesh_decider_domains(payload, as_routing_snapshot(mesh_snapshot))
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to
@@ -5934,6 +6133,7 @@ class _Handler(BaseHTTPRequestHandler):
                 list(self.headers.items()),
                 body,
                 open_upstream,
+                mesh_snapshot=mesh_snapshot,
             )
         elif is_render_path(self.path):
             # /v1/render/* → path-routed to the innereye ComfyUI tenant, the
@@ -6716,8 +6916,18 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     readiness_paths = {
         b.name: _COMFY_READY_PATH for b in table.backends if b.name == _RENDER_BACKEND
     }
+    # Decider domains (odm t7): each domain's sidecar is its own readiness
+    # target, probed on /health, so the per-domain `ready` is honest.
+    decider_targets = decider_readiness_targets(table)
+    readiness_paths.update(dict.fromkeys(decider_targets, "/health"))
     readiness_cache = ReadinessCache.from_backends(
-        table.backends,
+        (
+            *table.backends,
+            *(
+                Backend(name=key, base_url=url, served_name=key, task=DECIDE_TASK)
+                for key, url in decider_targets.items()
+            ),
+        ),
         peer_specs=tuple(peer_specs.values()),
         adapter_targets=adapter_targets,
         paths=readiness_paths,

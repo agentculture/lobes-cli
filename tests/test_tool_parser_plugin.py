@@ -246,7 +246,11 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # Recomputed 2026-10-14 for the decider lane's POST /v1/systemone route
     # (odm t5): `gateway` GAINED the one DECIDER_DOMAINS passthrough line,
     # because build_config now reads it. `gateway` is the ONLY service moved.
-    "gateway": "6befe7d2fa8492fb0ad0df0a84b12929e29778e37f77c97fcf39491f50369db5",
+    #
+    # Recomputed 2026-10-14 for the decider domains advert (odm t7): `gateway`
+    # GAINED the one DECIDER_DOMAIN_MODELS passthrough line (each domain's
+    # checkpoint, read by /capabilities). `gateway` is the ONLY service moved.
+    "gateway": "780a90868e52a10634bcc0772bda80bb9a3f9c2a82b5cc6bc4384fee8e68d7c4",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

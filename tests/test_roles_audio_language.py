@@ -32,6 +32,9 @@ def test_nothing_declared_no_role_carries_the_key_and_the_payload_is_asdict_minu
         assert "language" not in payload, role
         expected = dataclasses.asdict(registry[role])
         expected.pop("language")
+        # odm t7: `domains` is the other optional-when-unset key (no decider
+        # domain is declared here), so it is absent too.
+        expected.pop("domains")
         assert payload == expected
 
 
