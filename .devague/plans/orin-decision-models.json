@@ -1,0 +1,611 @@
+{
+  "slug": "orin-decision-models",
+  "title": "orin decision models",
+  "frame_slug": "orin-decision-models",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-10-14T05:40:40Z",
+  "updated": "2026-10-14T05:54:49Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "The Jetson AGX Orin serves the mesh's decision models \u2014 Cloudflare Clef 27B (schema-scored decisions, Ampere-fit 4-bit) and, later, a fine-tuned Strands Decider 2B \u2014 through lobes, addressable from every mesh member",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "Clef answers model=decider on the Orin through the gateway with orin-embed's three lanes still serving, and a 2B decider answers from at least one other box \u2014 both shown in an acceptance transcript under docs/evidence/ (#108), not declared.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "Clef is served through a decision endpoint (the card's documented route is SGLang exposing a Jev/SystemOne-compatible POST /v1/systemone with state + questions), not the OpenAI chat surface; a plain 'vllm serve' never runs the joint head, so lobes needs a new non-chat lane type the gateway can route \u2014 nothing under lobes/ or docs/ mentions systemone today.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The gateway proxies POST /v1/systemone to the decider lane byte-for-byte (no reshaping) and 404s role_infeasible when no decider is hosted or reachable.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "Clef's 4-bit checkpoint on the Orin (Ampere sm_87) must be WEIGHT-ONLY W4A16 through Marlin: W4A4 NVFP4 needs Blackwell FP4 tensor cores and is ruled out (lobes/machines/orin.py:10-30) and FP8 W8A8 is unsupported on Ampere. Lead candidate JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8 (compressed-tensors, ~18 GB, head/ViT/lm_head bf16, vLLM 0.31.0 + a 4-line qwen3_5 embed-quant patch + clef_vllm.py pooling wrapper, 65/68 match vs bf16); second AutomatosX/AX-Clef-27B-CUDA-AXQ-NVFP4-W4A16; avoid kurcontko/simonlehmann clef-NVFP4 (W4A4) and prithivMLmods/clef-FP8.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "The served Clef build's config.json quant_method is weight-only (W4A16/WNA16 or NF4) and vLLM/transformers logs show a Marlin/weight-only kernel, never an FP4-activation path, on sm_87.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c7",
+      "kind": "boundary",
+      "text": "Neither model is the 'hand' role: hand forbids final_decision (lobes/roles.py ROLE_FORBIDDEN, hand ~:537; docs/colleague-stack.md:58 'never decides') and its LoRA serving is vLLM --enable-lora on a generate lane (lobes/templates/fleet/docker-compose.yml:790-880) \u2014 a pointer/schema head is not a generate adapter.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "decider's ROLE_FORBIDDEN and hand's stay distinct; no decider checkpoint is routed through vllm-hand's --enable-lora lane.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "Clef takes the Orin's single heavy-lobe slot: orin.toml [[exclusive_roles]] (~:117-119) allows one of cortex/senses/associate (orin-cortex/orin-lobe/orin-associate) on 61.3 GiB unified with zero swap, so a Clef-hosting shape joins that exclusive group (and tests/test_init_coresidency.py) and cannot co-reside with the GGUF cortex (~33 GiB) or associate (util 0.70).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "orin.toml exclusive_roles and tests/test_init_coresidency.py are updated so a Clef-hosting shape is refused alongside cortex/senses/associate.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Adding the 'decider' role touches every per-role surface: ROLES + ROLE_BACKEND/ROLE_ROLE_HINT/ROLE_PATH/ROLE_RESPONSIBILITIES/ROLE_FORBIDDEN/ROLE_MAX_MODEL_LEN_ENV (lobes/roles.py:113-559), COLLEAGUE_ROLES/OPT_IN_CORE_ROLES (lobes/profiles/shapes.py:92,114), schema.py role scope, render.py ROLE_ENV_PREFIX, shape_render.py + cli/_commands/up.py ROLE_SERVICE, gateway/_config.py OPT_IN_BACKENDS/FEASIBLE_ENV/*_BASE_URL, the fleet compose template, every builtin profile + shape TOML, and the ~28-40 golden .env files (tests/goldens/regen.py) \u2014 plus a /v1/systemone route the gateway proxies and mesh-forwards (no 'decider' name collides today; only a comment at lobes/roles.py:474 uses the word).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "tests/goldens/regen.py regenerates every golden with a decider line and the full suite passes; docs/colleague-stack.md records the decider role's justification for the irreversible add.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "boundary",
+      "text": "The jev-factory work (producing decider training data / retraining) runs in a separate session and is not part of this frame; this frame consumes its output only.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "No jev-factory/training code lands in this repo's PRs for this frame.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "audience",
+      "text": "Mesh agents and harnesses (culture agents, Qwen Code, reachy-mini-cli, lobes route) that need a fast, calibrated multiple-choice decision \u2014 routing, tool selection, triage, guardrails \u2014 instead of parsing a chat model's prose; and the operator deploying it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "At least one named consumer (lobes route or a culture agent) has a concrete decision it would send to /v1/systemone instead of a chat completion.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "before_state",
+      "text": "Today the fleet has no decision model: every typed decision is a chat completion whose answer must be parsed out of prose (lobes route asks the hand model for JSON, lobes/cli/_commands/route.py), with no per-option probabilities, and no lobes surface knows /v1/systemone.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "grep finds no systemone/decider surface in lobes/ on main at the time of writing (verified 2026-10-14 in the scope pass).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "why_it_matters",
+      "text": "A schema-scored decision returns calibrated probabilities over a closed option set in one forward pass \u2014 no generation, no output parsing, no hallucinated option \u2014 so callers can threshold on confidence and escalate to cortex only when the decider is unsure.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "The per-option probabilities the decider returns are usable for thresholding \u2014 the strands/clef cards' calibration claims hold on our own probe set, or the caveat is recorded.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c24",
+      "kind": "after_state",
+      "text": "Any mesh member answers model=decider on POST /v1/systemone: the Orin serves Clef 27B (4-bit, co-resident with orin-embed) and any box may host a Strands Decider 2B; GET /capabilities advertises the decider role with its checkpoint, quant and feasibility, and a box that hosts none forwards to a verified member.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "Every surface named (model=decider, /v1/systemone, /capabilities advert, mesh forwarding) exists and is exercised by a test or an evidence transcript.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "success_signal",
+      "text": "On the Orin, with orin-embed still serving: Clef (4-bit) answers a /v1/systemone choice question through the gateway with probabilities summing to 1 (\u00b10.01) per question, top-1 accuracy on a fixed LABELED probe set (ground-truth answers, no bf16 reference run) is recorded beside the quant card's published bf16 agreement (65/68), and the minimum available host memory stays >= 2 GiB (orin-embed decision c25 floor); median decision latency for a <= 4096-token state is recorded (sidecar baseline, then the faster path).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "The labeled probe set, its ground-truth answers, the measured top-1 accuracy and the latency numbers are filed in a docs/evidence/ transcript; no bf16 Clef is booted anywhere for this measurement.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "success_signal",
+      "text": "A Strands Decider 2B served bf16 on a second box (e.g. spark2) answers model=decider:<domain> from every other mesh member, with X-Lobes-Mesh-Member on the reply.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "The 2B is booted on a box other than the Orin and reached cross-box via the mesh, transcripted.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "decider role contract: responsibilities typed_decision, classification, routing_choice, triage, guardrail_check, final_decision; forbidden repo_action, security_decision \u2014 it decides over a closed option set and returns the best answer + all probabilities, but never acts on the repo or rules on security.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "lobes/roles.py ROLE_RESPONSIBILITIES/ROLE_FORBIDDEN for decider match this text and tests/test_colleague_contract.py pins it.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "Domain routing: each decider:<domain> is advertised in GET /capabilities with its checkpoint and quant and mesh-forwarded by name (like a specialist lane, docs/colleague-stack.md#specialist-lanes-not-roles); a domain name must be mesh-unique \u2014 two members announcing the same domain with different fingerprints is a refused conflict, never a silent pick; an unknown domain 404s model_not_found (mirrors hand:<domain>).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A test registers two members announcing the same domain with different fingerprints and asserts the conflict is refused; a cross-box decider:<domain> forward is shown in an evidence transcript.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "The decider lane's readiness probe uses a per-lane health path: strands-decider documents only POST /v1/systemone (no /health, no /v1/models), and lobes/gateway/_readiness.py probes /health then /v1/models \u2014 so a decider lane needs the probe_backend_ready health_path override the innereye lane already uses (_readiness.py:153-158), or it is advertised ready:false forever.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "A gateway test wires a decider backend that 404s /health and /v1/models but answers its configured health path, and asserts /capabilities reports it ready:true.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "boundary",
+      "text": "Decider containers publish NO host port and listen only on the compose network: the strands-decider server documents no auth, while the gateway's bearer gate covers every /v1/* path (lobes/gateway/server.py:5199) \u2014 the gateway is the only way in.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "The rendered compose for every decider service has no 'ports:' mapping (golden-checked), and an evidence transcript shows the decider port refused from another host while the gateway route answers.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Moving the Orin from orin-embed to a Clef-hosting shape keeps orin-embed as the rollback: back up ~/.lobes before the render and restore the backup to roll back \u2014 a re-render alone is NOT a rollback (docs/orin-embed-deployment.md:136-147, ...-rollback-orin-embed-to-orin-associate.txt).",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "The Orin acceptance transcript records the ~/.lobes backup path taken before the render, and the rollback procedure is written in the deployment doc.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "The mesh roster carries decider DOMAINS as a new announced dimension: today a role pools members by fingerprint and exposes a disagreeing member as {role}-{machine} (lobes/gateway/_mesh_routing.py:631-668, member_lanes :932), which cannot express c34's flat decider:<domain> namespace or its refuse-on-conflict rule \u2014 the announce/verify/route path needs a per-domain key.",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "A unit test announces decider:general from the Orin and a 2B domain from spark2 and asserts a third member routes each by domain, and that two members announcing one domain with different fingerprints are refused.",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Spike: load a 4-bit Clef + its joint schema head under transformers on the Orin, beside the live orin-embed shape",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-spike-clef-sidecar-orin.txt records: the exact checkpoint id + HF revision, its config.json quant_method (weight-only: W4A16/WNA16 or NF4 \u2014 never an FP4-activation path), the transformers/torch versions, resident memory, and min available host memory (>= 2 GiB) while orin-embed's three lanes keep answering",
+        "the transcript shows one /v1/systemone-shaped choice decision answered with per-option probabilities summing to 1 (\u00b10.01) and its latency for a <= 4096-token state \u2014 or a NO-GO with the failing step and error text"
+      ],
+      "deps": [],
+      "covers": [
+        "c4",
+        "h9"
+      ],
+      "instruction": "Live-box task, not a coding task. Run in a scratch container on the Orin with a hard --memory cap and HF_HUB_DISABLE_XET=1 (zero-swap board; an uncapped download OOM-killed a lane before). Evict page cache before load (posix_fadvise DONTNEED). Try in order: JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8 via transformers compressed-tensors, then a bitsandbytes NF4 build (Aikimi/clef-nf4 or jlancaster/clef-27b-nf4) \u2014 read each card first and verify the joint head files (joint_head.safetensors, joint_schema_model.py) load over the quantized backbone. Do NOT touch ~/.lobes or the live compose project. Never name non-fleet containers seen on any box in the transcript."
+    },
+    {
+      "id": "t2",
+      "summary": "Add the decider role to lobes/roles.py: ROLES and every per-role table",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/roles.py ROLES contains 'decider'; ROLE_RESPONSIBILITIES['decider'] == (typed_decision, classification, routing_choice, triage, guardrail_check, final_decision) and ROLE_FORBIDDEN['decider'] == (repo_action, security_decision), pinned by a test in tests/test_colleague_contract.py",
+        "ROLE_FORBIDDEN['hand'] is unchanged (still forbids final_decision) and ROLE_ROLE_HINT['decider'] == 'decider'; the existing role tests pass"
+      ],
+      "deps": [],
+      "covers": [
+        "c33",
+        "h15",
+        "c7",
+        "h10",
+        "c14"
+      ],
+      "instruction": "Touch only lobes/roles.py and its tests. Contract pinned for parallel tasks: role name 'decider', catalog role_hint 'decider', env prefix 'DECIDER', backend name 'decider', task family 'decide', path '/v1/systemone'. Mirror how 'associate' was added (git log -S associate -- lobes/roles.py)."
+    },
+    {
+      "id": "t3",
+      "summary": "Add catalog entries for the two decision checkpoints, with a new decide task and a sidecar engine value",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/catalog.py has an entry for the chosen 4-bit Clef build (role_hint='decider', task='decide', quantization recorded, hf_revision pinned, status='configured') and one for StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 (role_hint='candidate' or 'decider', quantization='none', bf16, status='configured'); tests/test_catalog.py::test_catalog_ids_are_unique passes",
+        "neither entry is selectable by 'lobes switch' as a generate gear (serves_with_vllm is False for them) \u2014 a test asserts it"
+      ],
+      "deps": [],
+      "covers": [
+        "c4"
+      ],
+      "instruction": "Touch only lobes/catalog.py and tests/test_catalog*.py. Add a task value 'decide' and an engine constant for the decider sidecar (e.g. ENGINE_DECIDER_SIDECAR = 'decider-sidecar'). Pin hf_revision by resolving HEAD via the HF API on the day. Comments carry provenance (card URL) and say PUBLISHED-ELSEWHERE, not measured (#108). If t1 picked a different Clef build, use that one."
+    },
+    {
+      "id": "t4",
+      "summary": "Ship the decider sidecar: a container that serves one decision checkpoint on POST /v1/systemone plus GET /health",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/decider_sidecar/ serves POST /v1/systemone forwarding the request body to the loaded model and returning its native response unchanged (Clef's and strands-decider's own shapes), and GET /health returning 200 only once the model is loaded \u2014 unit-tested with a fake model under tests/test_decider_sidecar.py",
+        "lobes/templates/fleet/Dockerfile.decider builds the sidecar for both backends selected by an env var (DECIDER_BACKEND=clef|strands); no EXPOSE-to-host or port publishing appears in it"
+      ],
+      "deps": [],
+      "covers": [
+        "c3",
+        "c37"
+      ],
+      "instruction": "Mirror lobes/embed_sidecar/ + Dockerfile.embed-st (stdlib/FastAPI server, uv pip install --system, never pip). The strands backend wraps the strands-decider package's model loader in-process rather than running its unauthenticated 'serve'. Bind 0.0.0.0 inside the container only; the compose file (t8a) decides exposure. Read the strands-decider server source to confirm one-checkpoint-per-process (c39/h17) and record the answer in the module docstring."
+    },
+    {
+      "id": "t5",
+      "summary": "Gateway: route POST /v1/systemone by the X-Lobes-Model header to the decider domain, body byte-for-byte, never shed",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a gateway test sends POST /v1/systemone with X-Lobes-Model: decider:<domain> and asserts the backend receives the body byte-identical; a request with no header resolves to decider:general",
+        "an undeclared domain returns 404 model_not_found; no decider wired or reachable returns 404 role_infeasible; with swap > 75% and iowait > 50% every decider request is still forwarded (never 429) \u2014 tests in tests/test_gateway_decider.py",
+        "the route sits behind the existing bearer gate (GATEWAY_API_KEY covers /v1/*)"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c3",
+        "h8"
+      ],
+      "instruction": "Files: lobes/gateway/server.py, _routing.py, _pressure_policy.py, _config.py (+ tests/test_gateway_decider.py). _config.py also gets decider's OPT_IN_BACKENDS / FEASIBLE_ENV (DECIDER_FEASIBLE) / DECIDER_BASE_URL entries \u2014 t8 must not touch _config.py. Domains are declared in DECIDER_DOMAINS (name=url, comma-separated, mirroring HAND_LORA_MODULES parsing in _config.py:626-670); 'general' is the default. Do NOT call rewrite_model on this path \u2014 the body never carries a model field."
+    },
+    {
+      "id": "t6",
+      "summary": "Readiness: probe decider lanes on their own health path",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "a test wires a decider backend that 404s /v1/models but answers GET /health 200 and asserts it is reported ready:true; the same backend down reports ready:false"
+      ],
+      "deps": [
+        "t2"
+      ],
+      "covers": [
+        "c36",
+        "h19"
+      ],
+      "instruction": "File: lobes/gateway/_readiness.py (+ tests/test_gateway_readiness.py). Reuse probe_backend_ready's health_path override (the innereye precedent, _readiness.py:153-158); decider lanes never probe /v1/models."
+    },
+    {
+      "id": "t7",
+      "summary": "Capabilities advert + mesh: announce decider domains as their own roster key, route by domain, refuse conflicts",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "GET /capabilities lists decider with a domains map (domain -> checkpoint, quant, ready) and the mesh announcement carries the same domains",
+        "a unit test announces decider:general from member A and decider:<x> from member B and asserts member C forwards each by domain (X-Lobes-Mesh-Member on the reply); two members announcing one domain with different fingerprints are refused, never silently picked"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c34",
+        "h16",
+        "c40",
+        "h18"
+      ],
+      "instruction": "Files: lobes/gateway/_mesh_wire.py, _mesh_roster.py, _mesh_routing.py and the capabilities serializer in server.py (after t5 lands \u2014 same file). Advert goes through lobes.roles.role_payload, never a bare asdict. Forward only via the existing single-hop mesh forwarder; send the peer's served id, not a backend name (known 404 trap)."
+    },
+    {
+      "id": "t8",
+      "summary": "Render decider lanes: profiles/shapes tables, compose template services (no host ports), up target",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "'decider' is in OPT_IN_CORE_ROLES (lobes/profiles/shapes.py) and the schema/render/shape_render/up ROLE_SERVICE tables; machine-as-brain renders nothing for it and an unwired decider renders DECIDER_FEASIBLE=false",
+        "each declared domain renders a decider-<domain> service from lobes/templates/fleet/Dockerfile.decider with no 'ports:' mapping \u2014 asserted by a golden/shape test"
+      ],
+      "deps": [
+        "t2",
+        "t3"
+      ],
+      "covers": [
+        "c14",
+        "c37",
+        "h20"
+      ],
+      "instruction": "Files: lobes/profiles/{shapes,schema,render,shape_render}.py, lobes/cli/_commands/up.py, lobes/templates/fleet/docker-compose*.yml (or a generated override for per-domain services), env.example. Service list is data (DECIDER_DOMAINS), so per-domain services belong in the generated docker-compose.shape.yml, not a static template. Every up carries --no-deps; give no service a depends_on on decider."
+    },
+    {
+      "id": "t9",
+      "summary": "Orin shape orin-decider (orin-embed + decider:general) and the exclusive heavy-lobe group; regenerate goldens",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/profiles/builtin_shapes/orin-decider.toml hosts embedder, reranker, the gemma2-embed lane and decider; orin.toml [[exclusive_roles]] lists it, and tests/test_init_coresidency.py refuses it alongside orin-cortex/orin-lobe/orin-associate",
+        "uv run python tests/goldens/regen.py regenerates every golden with the decider line and 'uv run pytest -n auto' passes"
+      ],
+      "deps": [
+        "t8"
+      ],
+      "covers": [
+        "c9",
+        "h11",
+        "h12"
+      ],
+      "instruction": "Copy orin-embed.toml and add decider; budgets stay DECLARED until t11 measures them (#108 wording). Run goldens regen last, after every render change has landed."
+    },
+    {
+      "id": "t10",
+      "summary": "Docs: decider role page, colleague-stack justification, rollback procedure, a lobes route worked example",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/decider.md covers both checkpoints, the quant answer for each (Clef: weight-only 4-bit on Ampere; Strands 2B: bf16, no quant), the X-Lobes-Model header, the pass-through response formats, the no-shed rule, and the Orin backup-restore rollback (never re-render alone)",
+        "docs/colleague-stack.md records why decider earns an irreversible role, and docs/decider.md shows lobes route's gear choice as a concrete /v1/systemone choice question (the named consumer for h2)",
+        "CLAUDE.md's role list, docs/openai-api.md and 'lobes explain' mention decider; markdownlint-cli2 passes on every touched doc"
+      ],
+      "deps": [
+        "t5",
+        "t6",
+        "t7",
+        "t9"
+      ],
+      "covers": [
+        "c21",
+        "h2",
+        "c14"
+      ],
+      "instruction": "Every claim not yet measured is marked DECLARED/UNVALIDATED (#108). Do not name experimental/side models seen on any box."
+    },
+    {
+      "id": "t11",
+      "summary": "Live Orin acceptance: back up ~/.lobes, render orin-decider, serve Clef as decider:general beside orin-embed, measure on a labeled probe set",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-accept-orin-decider.txt records the ~/.lobes backup path taken BEFORE 'lobes init --shape orin-decider --apply', and the four lanes (embedder, reranker, gemma2-embed, decider) all answering through the gateway afterwards",
+        "on a fixed labeled probe set (committed, with ground-truth answers): per-question probabilities sum to 1 (\u00b10.01), top-1 accuracy is recorded beside the quant card's 65/68 bf16 agreement, a confidence-vs-correctness table shows whether thresholds are usable, median latency for <= 4096-token states is recorded, and min available host memory stays >= 2 GiB; no bf16 Clef is booted",
+        "the decider port is refused from another host while the gateway route answers; GET /capabilities on another mesh member shows decider:general hosted by the Orin"
+      ],
+      "deps": [
+        "t1",
+        "t10",
+        "t4"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c25",
+        "h23",
+        "c23",
+        "h4",
+        "c38",
+        "h21",
+        "c24",
+        "h5",
+        "h9",
+        "h20"
+      ],
+      "instruction": "Use the lobes-deploy skill (scripts/lobes-compose.sh); never run compose in lobes/templates/. Boot order: decider first, then the gears, if the page-cache/util refusal appears. Gateway built from a TestPyPI dev wheel of this branch. Never name non-fleet containers in the transcript."
+    },
+    {
+      "id": "t12",
+      "summary": "Live second-box acceptance: serve the stock Strands Decider 2B bf16 on spark2 as a decider domain, reached cross-box from every member",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-accept-decider-2b-spark2.txt shows StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 served bf16 on spark2 as decider:<domain> and answered via X-Lobes-Model from the Orin, the Spark and the Thor gateways, each reply carrying X-Lobes-Mesh-Member: spark2",
+        "the stock checkpoint is used \u2014 no retrained adapter is required for this task (retraining is the jev-factory session's output, c18)"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [
+        "c26",
+        "h7",
+        "h1"
+      ],
+      "instruction": "spark2's login user is spark2, sudo needs a password, no Tailscale SSH. Pick a neutral domain name for the stock checkpoint (e.g. 'strands-general'); record the choice."
+    },
+    {
+      "id": "t13",
+      "summary": "Faster serving path for Clef: vLLM 0.31 pooling runner on the W4A16 quant + the external joint head, A/B against the sidecar baseline",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/evidence/<date>-ab-clef-vllm-vs-sidecar-orin.txt reports, on the same labeled probe set, median latency, top-1 accuracy and resident memory for both paths; the faster path is adopted only if it does not lose accuracy",
+        "the vLLM image used is recorded by digest and its vLLM version (>= 0.31.0) and an aarch64 + sm_87 build is confirmed \u2014 or the task records a NO-GO with the failing step"
+      ],
+      "deps": [
+        "t11"
+      ],
+      "covers": [
+        "c4"
+      ],
+      "instruction": "Apply the JRamirez card's 4-line qwen3_5 embed-quant patch and its clef_vllm.py pooling wrapper; keep the decision head in bf16. SGLang dev-clef is the fallback if no aarch64/sm_87 vLLM 0.31 exists."
+    },
+    {
+      "id": "t14",
+      "summary": "PR: version bump, CHANGELOG, scope checks, evidence + delivery summary linked, review",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "the PR diff contains no training/jev-factory code (grep for recipe.sh, training/, unsloth) and the version is bumped with a CHANGELOG entry (python3 .claude/skills/version-bump/scripts/bump.py minor)",
+        "the PR description cites the before-state check (no systemone/decider surface on main as of 2026-10-14) and links every evidence transcript; uv run afi cli doctor . --strict passes",
+        "the PR description links the delivery summary from t16 and the evidence records from t15"
+      ],
+      "deps": [
+        "t16"
+      ],
+      "covers": [
+        "c18",
+        "h13",
+        "c22",
+        "h3"
+      ],
+      "instruction": "Use the cicd skill to open and shepherd the PR; reply to and resolve every review thread before merge."
+    },
+    {
+      "id": "t15",
+      "summary": "/validate-delivery: run every confirmed obligation's behavioral test agent-side and file evidence + behavioral deltas",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "every confirmed obligation (o1-o14) has a filed 'devague evidence' record citing the test or live transcript that exercised it, with its pass/fail/partial outcome \u2014 a failing or partial outcome is filed as such, never suppressed",
+        "every behavior the run added, amended or removed beyond the obligations (e.g. a t13 NO-GO leaving the sidecar as the served path) is filed as a 'devague delta'"
+      ],
+      "deps": [
+        "t12",
+        "t13"
+      ],
+      "covers": [
+        "h5"
+      ],
+      "instruction": "Run the /validate-delivery skill after waves 0-5 have merged into the branch and before /summarize-delivery. Tests run agent-side (uv run pytest for o1-o11, the t11/t12 transcripts for o12-o14); the devague CLI only records results."
+    },
+    {
+      "id": "t16",
+      "summary": "/summarize-delivery: write the planned-vs-actual closure artifact",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/deliveries/<date>-orin-decision-models.md exists, written by the /summarize-delivery skill: planned vs actual per task, every approved deviation, evidence-backed delivery claims only (no claim without a filed evidence record), and the remaining work (e.g. retrained 2B domains from the jev-factory session, the t13 outcome)",
+        "the artifact names no experimental/side model seen on any box; markdownlint-cli2 passes on it"
+      ],
+      "deps": [
+        "t15"
+      ],
+      "covers": [],
+      "instruction": "Run the /summarize-delivery skill on complete, partial or failed outcomes alike \u2014 report a failure faithfully."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "An aarch64 + sm_87 vLLM >= 0.31 image may not exist; the faster path (t13) can end as a NO-GO, leaving the transformers sidecar as the served path",
+      "kind": "unknown_nonblocking",
+      "task_id": "t13",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "If t1 is a NO-GO for every 4-bit build, Clef cannot be served on the Orin at all; the plan stops at t1 and goes back to the user (the 2B path, t12, does not depend on Clef's quant)",
+      "kind": "unknown_nonblocking",
+      "task_id": "t1",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "Clef + orin-embed may not fit together under the 2 GiB floor; c16 makes co-residency conditional on the measurement \u2014 a misfit reopens the shape decision with the user, not a silent gear drop",
+      "kind": "unknown_nonblocking",
+      "task_id": "t11",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}
