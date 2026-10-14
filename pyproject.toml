@@ -71,8 +71,9 @@ embed-sidecar = [
 ]
 # The decider sidecar (outcome-decision-model plan, t4) —
 # lobes/decider_sidecar/server.py. torch, transformers, the Clef loader and
-# strands-decider are installed by templates/fleet/Dockerfile.decider; only the
-# HTTP shell is listed.
+# strands-decider are installed by templates/fleet/Dockerfile.decider (the
+# clef-vllm backend's vLLM + torch come from Dockerfile.decider-vllm's pinned
+# base image, t21); only the HTTP shell is listed.
 decider-sidecar = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",

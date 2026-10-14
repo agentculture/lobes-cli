@@ -22,11 +22,20 @@ the compose file's decision.
 
 Configuration (env)
 -------------------
-DECIDER_BACKEND   ``clef`` | ``strands`` (anything else is a startup error)
+DECIDER_BACKEND   ``clef`` | ``strands`` | ``clef-vllm`` (anything else is a startup error)
 DECIDER_MODEL     checkpoint: HF repo id or a local path (never hardcoded here)
-DECIDER_REVISION  optional HF revision for ``clef`` (snapshot_download)
+DECIDER_REVISION  optional HF revision for ``clef`` / ``clef-vllm`` (snapshot_download)
 DECIDER_DEVICE    torch device, default ``cuda``
 DECIDER_PORT      listen port, default 8000
+DECIDER_MAX_MODEL_LEN / DECIDER_GPU_MEM_UTIL
+                  ``clef-vllm`` only: the vLLM engine's context and GPU share
+                  (defaults 16384 — Cloudflare's ``max_length`` — and a DECLARED
+                  0.5); see :mod:`lobes.decider_sidecar.clef_vllm`.
+
+``clef-vllm`` (t21) serves the same Clef response as ``clef`` but runs the
+backbone in vLLM's pooling runner (``Dockerfile.decider-vllm``, pinned
+vllm/vllm-openai v0.31.0) and Cloudflare's joint head in bf16 beside it;
+text-only. Its design notes live in :mod:`lobes.decider_sidecar.clef_vllm`.
 
 One checkpoint per process (answer to c39/h17)
 ----------------------------------------------
@@ -57,9 +66,11 @@ import threading
 import time
 from typing import Any, Mapping, Protocol
 
+from lobes.decider_sidecar import clef_vllm
+
 SYSTEMONE_PATH = "/v1/systemone"
 HEALTH_PATH = "/health"
-BACKENDS = ("clef", "strands")
+BACKENDS = ("clef", "strands", "clef-vllm")
 DEFAULT_PORT = 8000
 DEFAULT_DEVICE = "cuda"
 
@@ -207,9 +218,22 @@ def select_backend(name: str, env: Mapping[str, str]) -> Backend:
     if not model:
         raise DeciderConfigError("DECIDER_MODEL is required (HF repo id or local path)")
     device = env.get("DECIDER_DEVICE", DEFAULT_DEVICE)
+    revision = env.get("DECIDER_REVISION", "").strip() or None
     if name == "clef":
-        revision = env.get("DECIDER_REVISION", "").strip() or None
         return ClefBackend(model, revision, device)
+    if name == clef_vllm.NAME:
+        try:
+            max_model_len, gpu_mem_util = clef_vllm.parse_knobs(env)
+        except ValueError as exc:
+            raise DeciderConfigError(str(exc)) from exc
+        return clef_vllm.ClefVllmBackend(
+            model,
+            revision,
+            device,
+            max_model_len=max_model_len,
+            gpu_mem_util=gpu_mem_util,
+            hf_home=env.get("HF_HOME", "").strip() or clef_vllm.DEFAULT_HF_HOME,
+        )
     return StrandsBackend(model, device)
 
 

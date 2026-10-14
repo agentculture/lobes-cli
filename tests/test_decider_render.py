@@ -294,3 +294,21 @@ def test_up_decider_with_no_rendered_domain_is_a_user_error(tmp_path, capsys) ->
     (tmp_path / ".env").write_text("COMPOSE_PROFILES=decider\n", encoding="utf-8")
     assert main(["up", "decider", "--compose-dir", str(tmp_path)]) != 0
     assert "decider-<domain>" in capsys.readouterr().err
+
+
+def test_a_clef_vllm_domain_builds_from_the_vllm_image() -> None:
+    domains = {"general": {"backend": "clef-vllm", "model": "org/clef-w4a16", "mem_limit": "40g"}}
+    text = init_cmd.render_shape_override(_decider_shape(domains), _card())
+    svc = _override_doc(_decider_shape(domains), _card())["services"]["decider-general"]
+    assert svc["build"]["dockerfile"] == "Dockerfile.decider-vllm"
+    assert "DECIDER_BACKEND=clef-vllm" in svc["environment"]
+    assert "ports" not in svc and "depends_on" not in svc
+    assert "Dockerfile.decider-vllm" in text
+    # A clef/strands-only shape renders byte-identically to before t21.
+    plain = init_cmd.render_shape_override(_decider_shape(_two_domains()), _card())
+    assert "decider-vllm" not in plain
+
+
+def test_decider_hosting_shape_scaffolds_the_vllm_dockerfile_too() -> None:
+    templates = init_cmd._templates(True, False, shape=_decider_shape(_two_domains()))
+    assert templates["fleet/Dockerfile.decider-vllm"] == "Dockerfile.decider-vllm"
