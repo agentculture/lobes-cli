@@ -35,10 +35,10 @@ quantized builds are our own (llm-compressor 0.14.0), published by the
   `embed_tokens`, the ViT and `linear_attn.in_proj_a/b` in bf16; 18 GB.
 - **Clef on Blackwell: NVFP4.** FP4 weights and activations, every
   `linear_attn` projection kept bf16 (deviation d5); 27 GB.
-- **Strands Decider 2B: bf16, no quant.** It is ~2B parameters (a rank-16 LoRA
-  and a ~1M-parameter pointer head on `Qwen/Qwen3.5-2B-Base`) and is meant to
-  be fine-tuned; quantizing it saves little memory and would have to be redone
-  after every fine-tune.
+- **Strands Decider 2B: bf16, no quant.** It is ~2B parameters (a rank-48 LoRA
+  and a ~3.1M-parameter fp32 pointer head on `Qwen/Qwen3.5-2B-Base`, read from
+  the release's own config) and is the fine-tune student; quantizing it saves
+  little memory and would have to be redone after every fine-tune.
 
 ### Measured (418 labelled questions, `culture-dev/clef-probe-set`)
 

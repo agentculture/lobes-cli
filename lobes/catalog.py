@@ -1499,11 +1499,16 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
         # measured here (#108). Per the plan's research brief (card NOT fetched here):
         # https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
-        # Apache-2.0; rank-16 LoRA plus a ~1M-parameter fp32 pointer head on
-        # Qwen/Qwen3.5-2B-Base; 4096-token window. bf16 (quantization "none").
+        # Apache-2.0; a LoRA plus an fp32 pointer head on Qwen/Qwen3.5-2B-Base;
+        # 4096-token window. bf16 (quantization "none"). Read from the repo's own
+        # files at hf_revision (2026-10-14): lora/adapter_config.json r=48,
+        # alpha 96 (adapter 202 MB); strands_decider_config.json pointer_dim 768;
+        # head.safetensors 12.6 MB (~3.1M fp32 params). The research brief's
+        # "rank-16, ~1M-parameter head" describes hobson-v21, not this release.
+        # This is the fine-tune student (operator, 2026-10-14).
         # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
         role_hint="candidate",
-        shape="decision model (Qwen3.5-2B-Base + rank-16 LoRA + pointer head)",
+        shape="decision model (Qwen3.5-2B-Base + rank-48 LoRA + pointer head)",
         context="4K window",
         native_max_model_len=4096,
         tool_parser="",

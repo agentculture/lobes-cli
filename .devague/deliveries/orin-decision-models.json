@@ -2,7 +2,7 @@
   "plan_slug": "orin-decision-models",
   "schema_version": 2,
   "created": "2026-10-14T06:05:06Z",
-  "updated": "2026-10-14T08:59:17Z",
+  "updated": "2026-10-14T19:44:18Z",
   "deviations": [
     {
       "id": "d1",
@@ -81,6 +81,21 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Clef is kept ONLY as the W4A16 build on the Jetson AGX Orin: t17 stage B (gateway + mesh routing of the bf16 interim on the Spark) is dropped; decider:general is served from the Orin via the orin-decider shape (t9) and its live acceptance (t11). After t11 passes, the Spark bf16 interim (model-gear-decider-general, restore ~/.lobes override.yml from its backup) and the Thor NVFP4 sidecar are stopped. t17's evidence covers stage A only.",
+      "task_ref": "t17",
+      "reason": "User decision 2026-10-14: 'When we're done with these, we can keep CLEF w4a16 only at Orin, and prepare for the fine tuning of Strandes Decider 2b', confirmed ('Confirmed'). W4A16 on the Orin was adopted in t13 (agreement 0.988).",
+      "affects": [
+        "t11",
+        "t15",
+        "t16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": null,
+      "seq": 6
     }
   ],
   "evidence": [],
