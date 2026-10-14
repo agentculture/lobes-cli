@@ -56,6 +56,8 @@ _EXPECTED_ROLES = {
     # The TENTH role (lightning-on-orin plan, t6) — worker MINUS repo_action.
     "associate",
     "hand",
+    # The TWELFTH role — schema-scored decisions on /v1/systemone.
+    "decider",
     "embedder",
     "reranker",
     "stt",
@@ -133,7 +135,7 @@ def _registry(env: dict[str, str], *, audio_ready: bool | None = None, **kw) -> 
 def test_registry_returns_exactly_the_eleven_roles() -> None:
     registry = _registry(_full_env())
     assert set(registry) == _EXPECTED_ROLES
-    assert len(registry) == 11
+    assert len(registry) == 12
     assert set(ROLES) == _EXPECTED_ROLES
 
 
@@ -706,6 +708,7 @@ def test_served_context_env_map_covers_only_gateway_fronted_roles() -> None:
         "worker",
         "associate",
         "hand",
+        "decider",
         "embedder",
         "reranker",
     }
@@ -920,6 +923,7 @@ def test_role_backend_keys_match_backend_ready_vocabulary() -> None:
         "worker",
         "associate",
         "hand",
+        "decider",
         "embed",
         "rerank",
         "stt",
@@ -946,6 +950,7 @@ def test_all_eleven_roles_expose_identical_key_set() -> None:
         "worker",
         "associate",
         "hand",
+        "decider",
         "embedder",
         "reranker",
         "stt",
@@ -1004,9 +1009,10 @@ def test_every_gateway_role_has_an_entry_in_every_gateway_role_table(table_name:
 
 
 def test_roles_has_eleven_entries_including_hand_associate_and_innereye() -> None:
-    assert len(roles_mod.ROLES) == 11
+    assert len(roles_mod.ROLES) == 12
     assert "hand" in roles_mod.ROLES
     assert "associate" in roles_mod.ROLES
+    assert "decider" in roles_mod.ROLES
     assert "innereye" in roles_mod.ROLES
 
 

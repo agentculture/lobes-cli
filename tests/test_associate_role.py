@@ -396,7 +396,7 @@ def test_a_deployment_declaring_no_associate_config_is_otherwise_unchanged() -> 
     table, _cfg = build_config(env)
     # `innereye` (issue #82, t5) joined the same unwired-opt-in infeasible
     # default after associate landed.
-    assert table.infeasible == frozenset({"muse", "worker", "associate", "innereye"})
+    assert table.infeasible == frozenset({"muse", "worker", "associate", "decider", "innereye"})
     # No associate knob declared anywhere => no peer channel armed for it.
     assert "associate" not in table.peer_origins
     assert "associate" not in table.peer_proxied

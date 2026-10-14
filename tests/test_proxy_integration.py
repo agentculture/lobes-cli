@@ -971,6 +971,31 @@ _GOLDEN_CAPABILITIES = {
         "ready": False,
         "loaded": False,
     },
+    "decider": {
+        "role": "decider",
+        # Opt-in like muse/worker/associate: unwired => infeasible, and an
+        # infeasible role no box serves advertises no window (context None).
+        "model": "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        "runtime": "vllm",
+        "endpoint": _GOLDEN_ORIGIN,
+        "path": "/v1/systemone",
+        "context": None,
+        "quant": "compressed-tensors",
+        "mtp": False,
+        "tools": False,
+        "responsibilities": [
+            "typed_decision",
+            "classification",
+            "routing_choice",
+            "triage",
+            "guardrail_check",
+            "final_decision",
+        ],
+        "forbidden_responsibilities": ["repo_action", "security_decision"],
+        "feasible": False,
+        "ready": False,
+        "loaded": False,
+    },
     "embedder": {
         "role": "embedder",
         "model": _EMBED_ID,

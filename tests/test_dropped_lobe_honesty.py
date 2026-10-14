@@ -386,6 +386,8 @@ def test_spark_cli_and_gateway_agree_on_dropped_senses() -> None:
         # no shape hosts it, so it is infeasible on both boxes.
         "associate": False,
         "hand": True,
+        # `decider` is opt-in-hosted and no shape hosts it yet: infeasible.
+        "decider": False,
         "embedder": True,
         "reranker": True,
         "stt": True,
@@ -411,6 +413,8 @@ def test_thor_cli_and_gateway_agree_on_dropped_cortex() -> None:
         # no shape hosts it, so it is infeasible on both boxes.
         "associate": False,
         "hand": True,
+        # `decider` is opt-in-hosted and no shape hosts it yet: infeasible.
+        "decider": False,
         "embedder": True,
         "reranker": True,
         "stt": True,

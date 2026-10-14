@@ -91,6 +91,7 @@ ROLE_SERVICE: dict[str, str] = {
     "worker": "vllm-worker",
     "associate": "vllm-associate",
     "hand": "vllm-hand",
+    "decider": "decider",
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",

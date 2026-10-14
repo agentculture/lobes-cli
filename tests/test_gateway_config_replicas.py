@@ -168,7 +168,7 @@ def test_no_new_knobs_env_yields_todays_config_objects() -> None:
         backends=(primary,),
         default_model=_CORTEX_ID,
         aliases=tier_aliases([primary], TIER_ROLE),
-        infeasible=frozenset({"muse", "worker", "associate", "innereye"}),
+        infeasible=frozenset({"muse", "worker", "associate", "decider", "innereye"}),
     )
     assert cfg == ServerConfig(
         host="0.0.0.0",  # nosec B104 — asserting the existing default, not binding
@@ -212,6 +212,7 @@ def test_max_active_env_mirrors_feasible_env_prefixes() -> None:
         "muse": "MUSE_MAX_ACTIVE",
         "worker": "WORKER_MAX_ACTIVE",
         "associate": "ASSOCIATE_MAX_ACTIVE",
+        "decider": "DECIDER_MAX_ACTIVE",
         "hand": "HAND_MAX_ACTIVE",
         "embed": "EMBED_MAX_ACTIVE",
         "rerank": "RERANK_MAX_ACTIVE",

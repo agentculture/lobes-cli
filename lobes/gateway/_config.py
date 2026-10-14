@@ -12,7 +12,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from lobes.catalog import TIER_ROLE, resolve_tier
+from lobes.catalog import SUPPORTED_MODELS, TIER_ROLE, resolve_tier
 from lobes.gateway._routing import RENDER_TASK, Backend, RoutingTable, tier_aliases
 from lobes.lane_keys import lane_env_key as _lane_env_key
 
@@ -85,6 +85,9 @@ _DEFAULT_WORKER = resolve_tier("worker").id
 # INFEASIBLE by default when unwired (see OPT_IN_BACKENDS). The compose
 # lane's own default (docker-compose.yml's vllm-associate) is this same id.
 _DEFAULT_ASSOCIATE = resolve_tier("associate").id
+# `decider` is not a generate tier (no TIER_ROLE entry), so look its default
+# up by role_hint directly — the first catalog entry is the canonical one.
+_DEFAULT_DECIDER = next(m.id for m in SUPPORTED_MODELS if m.role_hint == "decider")
 # The `hand` gear (LiquidAI LFM2.5-1.2B-Instruct) — the NINTH Colleague role's
 # backend and the fleet's designated fine-tuning base. Unlike muse/worker this
 # one is DEFAULT-HOSTED on every card (~2.4 GiB bf16 is cheap enough to always
@@ -126,6 +129,8 @@ FEASIBLE_ENV: dict[str, str] = {
     # The opt-in associate role (lightning-on-orin plan, t6) rides the same
     # channel as muse/worker — see OPT_IN_BACKENDS below.
     "associate": "ASSOCIATE_FEASIBLE",
+    # The opt-in decider role (schema-scored decisions) rides the same channel.
+    "decider": "DECIDER_FEASIBLE",
     # The `hand` role (hand-lobe plan, t4) rides the same channel, but is NOT
     # in OPT_IN_BACKENDS: it is default-hosted, so an ABSENT HAND_FEASIBLE
     # means feasible. That is the deliberate sleeping-lobe posture for a wheel
@@ -172,7 +177,7 @@ _FALSY_FEASIBLE = frozenset({"false", "0", "no"})
 # `innereye` joined this set with issue #82's t5: the ComfyUI render tenant is
 # opt-in-hosted like muse/worker/associate, never default-hosted like the
 # audio overlay — see FEASIBLE_ENV above.
-OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate", "innereye"})
+OPT_IN_BACKENDS: frozenset[str] = frozenset({"muse", "worker", "associate", "decider", "innereye"})
 
 # Generic truthy-token set for opt-in boolean env knobs (mirrors
 # lobes.gateway.server._OVERRIDE_TRUTHY, which does the same job for the
@@ -253,6 +258,7 @@ MAX_ACTIVE_ENV: dict[str, str] = {
     "muse": "MUSE_MAX_ACTIVE",
     "worker": "WORKER_MAX_ACTIVE",
     "associate": "ASSOCIATE_MAX_ACTIVE",
+    "decider": "DECIDER_MAX_ACTIVE",
     "hand": "HAND_MAX_ACTIVE",
     "embed": "EMBED_MAX_ACTIVE",
     "rerank": "RERANK_MAX_ACTIVE",
@@ -1028,6 +1034,17 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             name_key="ASSOCIATE_SERVED_NAME",
             default_url="http://vllm-associate:8000",
             default_name=_DEFAULT_ASSOCIATE,
+        ),
+        # The opt-in decider backend (schema-scored decisions; sidecar lane).
+        # Wired only when DECIDER_BASE_URL is present; unwired it is
+        # INFEASIBLE (OPT_IN_BACKENDS). No route is added here.
+        _optional_backend(
+            env,
+            name="decider",
+            url_key="DECIDER_BASE_URL",
+            name_key="DECIDER_SERVED_NAME",
+            default_url="http://decider:8000",
+            default_name=_DEFAULT_DECIDER,
         ),
         # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
         # role_hint="candidate" since the "support both" demotion — see

@@ -56,6 +56,32 @@
         "runtime": "vllm",
         "tools": true
       },
+      "decider": {
+        "context": null,
+        "endpoint": "http://gateway.test:8000",
+        "feasible": false,
+        "forbidden_responsibilities": [
+          "repo_action",
+          "security_decision"
+        ],
+        "loaded": false,
+        "model": "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        "mtp": false,
+        "path": "/v1/systemone",
+        "quant": "compressed-tensors",
+        "ready": false,
+        "responsibilities": [
+          "typed_decision",
+          "classification",
+          "routing_choice",
+          "triage",
+          "guardrail_check",
+          "final_decision"
+        ],
+        "role": "decider",
+        "runtime": "vllm",
+        "tools": false
+      },
       "embedder": {
         "context": 32768,
         "endpoint": "http://gateway.test:8000",

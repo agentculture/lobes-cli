@@ -123,6 +123,8 @@ ROLES: tuple[str, ...] = (
     # worker/cortex switch, and only a distinct name can carry that.
     "associate",
     "hand",
+    # `decider`: opt-in schema-scored decision lobe (POST /v1/systemone).
+    "decider",
     "embedder",
     "reranker",
     "stt",
@@ -155,6 +157,7 @@ ROLE_BACKEND: dict[str, str] = {
     # lane, ASSOCIATE_BASE_URL) — like `muse`, `worker` and `hand`.
     "associate": "associate",
     "hand": "hand",
+    "decider": "decider",
     "embedder": "embed",
     "reranker": "rerank",
     "stt": "stt",
@@ -199,6 +202,7 @@ ROLE_ROLE_HINT: dict[str, str] = {
     # mechanism a future role sharing a checkpoint could still use.
     "associate": "associate",
     "hand": "hand",
+    "decider": "decider",
     "embedder": "embedding",
     "reranker": "reranker",
 }
@@ -215,6 +219,7 @@ ROLE_PATH: dict[str, str] = {
     "worker": _CHAT_PATH,
     "associate": _CHAT_PATH,
     "hand": _CHAT_PATH,
+    "decider": "/v1/systemone",
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
@@ -461,6 +466,17 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "specialized_task",
         "tool_use",
     ),
+    # `decider`: schema-scored decision models (typed decisions, not prose).
+    # Unlike every other non-cortex lobe it MAY make the final decision; it
+    # may never act on the repo or make a security call.
+    "decider": (
+        "typed_decision",
+        "classification",
+        "routing_choice",
+        "triage",
+        "guardrail_check",
+        "final_decision",
+    ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
     # NOTE: this base tuple deliberately does NOT list the realtime/VAD
@@ -535,6 +551,7 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     # later is contract-compatible, REMOVING one is a break, so the conservative
     # list ships first. Granting it once adapters exist is issue #180.
     "hand": ("final_decision", "repo_action", "security_decision"),
+    "decider": ("repo_action", "security_decision"),
     "embedder": (),
     "reranker": (),
     "stt": (),
@@ -557,6 +574,7 @@ ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "worker": "WORKER_MAX_MODEL_LEN",
     "associate": "ASSOCIATE_MAX_MODEL_LEN",
     "hand": "HAND_MAX_MODEL_LEN",
+    "decider": "DECIDER_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
 }

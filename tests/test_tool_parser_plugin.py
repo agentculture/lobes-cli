@@ -242,7 +242,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # tests/test_gateway_env_passthrough_guard.py fails on any key the config
     # reads that compose does not plumb. Still no `comfyui` service (a later
     # task), so `gateway` remains the ONLY service that moved.
-    "gateway": "c60c2428ad2026358d5c7038e539854cf3830bebe8a7fdb78e5359ffa54fb805",
+    "gateway": "239714615b646c9a18338cd23e6a932faeb43abaf086d3322bf25ff42e932e25",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
