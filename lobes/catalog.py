@@ -1402,7 +1402,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     SupportedModel(
         id="JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
         # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
-        # measured here (#108). Card read 2026-10-14:
+        # measured here (#108). Per the plan's research brief (card NOT fetched here):
         # https://huggingface.co/JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
         # A 4-bit build of Cloudflare/clef (Apache-2.0, Qwen3_5ForConditionalGeneration
         # post-trained from Qwen3.8-27B; a decision model with a joint schema head,
@@ -1426,7 +1426,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     SupportedModel(
         id="StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
         # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
-        # measured here (#108). Card read 2026-10-14:
+        # measured here (#108). Per the plan's research brief (card NOT fetched here):
         # https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
         # Apache-2.0; rank-16 LoRA plus a ~1M-parameter fp32 pointer head on
         # Qwen/Qwen3.5-2B-Base; 4096-token window. bf16 (quantization "none").

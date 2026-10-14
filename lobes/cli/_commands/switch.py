@@ -34,6 +34,7 @@ from lobes.catalog import mtp_compose_command_items, serves_with_vllm, supported
 from lobes.cli import _runtime_ops
 from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._commands.whoami import _gpu_name
+from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env, _health, _parser
 from lobes.runtime._lock import LOCK_FILENAME
@@ -467,9 +468,23 @@ def _mtp_cap_messages(plan: dict, args: argparse.Namespace) -> list[str]:
     return []
 
 
+def _refuse_decide_gear(model_id: str) -> None:
+    """A ``task=decide`` checkpoint is served by its own decider lane, never by switch."""
+    model = _catalogued(model_id)
+    if model is not None and model.task == "decide":
+        raise ModelGearError(
+            EXIT_USER_ERROR,
+            f"{model_id} is a decider checkpoint; it is served by its own decider lane, "
+            "not by `lobes switch` (switch only configures the vLLM generate/pooling lane)",
+            "Serve it from the decider lane rendered from the machine profile + "
+            "deployment shape; see docs/colleague-stack.md.",
+        )
+
+
 def _build_plan(args: argparse.Namespace, port: int, served: str) -> tuple[dict, list[str]]:
     """Build the ``VLLM_*`` env plan + the human messages (one helper per concern:
     serve config, task/parser, quantization, context clamp, MTP cap)."""
+    _refuse_decide_gear(args.model)
     machine = _resolve_machine_name(args.machine)
     effective_task = _resolve_task(args)
     is_pooling = effective_task != "generate"
