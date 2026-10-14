@@ -101,26 +101,84 @@ def recipe_for(scheme: str):
     raise SystemExit(f"unknown scheme {scheme}")
 
 
+PACK_FORMAT = {"w4a16-g64": "pack-quantized", "nvfp4": "nvfp4-pack-quantized"}
+
+
+def compress_and_finish(model, scheme: str, src: Path, out: Path, stats: dict, t0: float) -> None:
+    """Pack a FROZEN (GPTQ-done) model with compressed-tensors and write the release dir."""
+    from compressed_tensors.compressors import ModelCompressor
+    from transformers import AutoProcessor
+
+    comp = ModelCompressor.from_pretrained_model(model, quantization_format=PACK_FORMAT[scheme])
+    comp.compress_model(model)
+    out.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(out)
+    comp.update_config(out)
+    AutoProcessor.from_pretrained(src).save_pretrained(out)
+    for f in src.iterdir():
+        if (
+            f.is_file()
+            and not f.name.startswith(SKIP_COPY)
+            # never copy source WEIGHT shards (any naming); the head's own file is the exception
+            and not (".safetensors" in f.name and f.name != "joint_head.safetensors")
+            and not (out / f.name).exists()
+        ):
+            shutil.copy2(f, out / f.name)
+    versions = {
+        p: md.version(p)
+        for p in ("llmcompressor", "compressed-tensors", "transformers", "torch", "accelerate")
+    }
+    (out / "quantization_provenance.json").write_text(
+        json.dumps(
+            {
+                "source": "Cloudflare/clef",
+                "source_revision": "2f3de3dd85f379784083b0814d997ab627200f0c",
+                "scheme": scheme,
+                "pack_format": PACK_FORMAT[scheme],
+                "keep_bf16": KEEP_W4A16 if scheme == "w4a16-g64" else KEEP_NVFP4,
+                "calibration": {"dataset": "culture-dev/clef-calibration-set", **stats},
+                "versions": versions,
+                "script": "lobes-cli scripts/clef_quant/quantize.py",
+                "wall_s": round(time.time() - t0, 1),
+            },
+            indent=1,
+        )
+    )
+    print(json.dumps({"event": "saved", "out": str(out), "versions": versions}), flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--scheme", required=True, choices=("w4a16-g64", "nvfp4"))
     ap.add_argument("--src", required=True, type=Path)
-    ap.add_argument("--calib", required=True, type=Path)
+    ap.add_argument("--calib", type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--max-tokens", type=int, default=4096)
     # On unified-memory boxes (DGX Spark GB10) the default "cpu" offload of cached
     # activations HUNG in a pinned non_blocking H2D copy (2026-10-14, stage 49/65,
     # one CPU thread at 100% for ~1 h); keeping them on the GPU avoids the copy.
     ap.add_argument("--offload-device", default="cuda:0")
+    # Recovery: pack an existing FROZEN checkpoint in a fresh process (fresh CUDA context).
+    ap.add_argument("--compress-only", type=Path, help="FROZEN checkpoint dir to pack")
     a = ap.parse_args()
 
     import torch
-    from llmcompressor import oneshot
-    from llmcompressor.utils import load_context
     from transformers import Qwen3_5ForConditionalGeneration
 
     t0 = time.time()
-    ds, processor, stats = calibration_dataset(a.src, a.calib, a.max_tokens)
+    frozen = a.out.with_name(a.out.name + "-frozen")
+    if a.compress_only:
+        model = Qwen3_5ForConditionalGeneration.from_pretrained(
+            a.compress_only, dtype=torch.bfloat16
+        )
+        stats = json.loads((a.compress_only / "calibration_stats.json").read_text())
+        compress_and_finish(model, a.scheme, a.src, a.out, stats, t0)
+        return 0
+
+    from llmcompressor import oneshot
+    from llmcompressor.utils import load_context
+
+    ds, _, stats = calibration_dataset(a.src, a.calib, a.max_tokens)
     print(json.dumps({"event": "calibration", **stats}), flush=True)
     with load_context(Qwen3_5ForConditionalGeneration):
         model = Qwen3_5ForConditionalGeneration.from_pretrained(a.src, dtype=torch.bfloat16)
@@ -134,42 +192,29 @@ def main() -> int:
         sequential_offload_device=a.offload_device,
     )
     print(json.dumps({"event": "quantized", "s": round(time.time() - t0, 1)}), flush=True)
-    a.out.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(a.out, save_compressed=True)
-    processor.save_pretrained(a.out)
-    for f in a.src.iterdir():
-        if f.is_file() and not f.name.startswith(SKIP_COPY) and not (a.out / f.name).exists():
-            shutil.copy2(f, a.out / f.name)
-    versions = {
-        p: md.version(p)
-        for p in ("llmcompressor", "compressed-tensors", "transformers", "torch", "accelerate")
-    }
-    (a.out / "quantization_provenance.json").write_text(
-        json.dumps(
-            {
-                "source": "Cloudflare/clef",
-                "source_revision": "2f3de3dd85f379784083b0814d997ab627200f0c",
-                "scheme": a.scheme,
-                "keep_bf16": KEEP_W4A16 if a.scheme == "w4a16-g64" else KEEP_NVFP4,
-                "calibration": {"dataset": "culture-dev/clef-calibration-set", **stats},
-                "versions": versions,
-                "script": "lobes-cli scripts/clef_quant/quantize.py",
-                "wall_s": round(time.time() - t0, 1),
-            },
-            indent=1,
-        )
-    )
+    # 2026-10-14: the in-process pack died with cudaErrorNotPermitted AFTER a 40-min GPTQ run
+    # and lost everything. Save the FROZEN model first (GPTQ scales + fake-quant weights), so
+    # a failed pack is recovered with --compress-only in a fresh process, never re-quantized.
+    model.save_pretrained(frozen, save_compressed=False)
+    (frozen / "calibration_stats.json").write_text(json.dumps(stats))
     print(
-        json.dumps(
-            {
-                "event": "saved",
-                "out": str(a.out),
-                "versions": versions,
-                "s": round(time.time() - t0, 1),
-            }
-        ),
+        json.dumps({"event": "frozen_saved", "dir": str(frozen), "s": round(time.time() - t0, 1)}),
         flush=True,
     )
+    try:
+        compress_and_finish(model, a.scheme, a.src, a.out, stats, t0)
+    except Exception as exc:  # noqa: BLE001 — the frozen checkpoint is the recovery path
+        print(
+            json.dumps(
+                {
+                    "event": "pack_failed",
+                    "error": repr(exc)[:300],
+                    "recover": f"--compress-only {frozen}",
+                }
+            ),
+            flush=True,
+        )
+        return 3
     return 0
 
 
