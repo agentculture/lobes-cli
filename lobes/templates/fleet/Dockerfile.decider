@@ -4,9 +4,10 @@
 # serves either (the choice is an env var, not a rebuild).
 #
 # Clef was tested on torch 2.11 + transformers 5.10.2; strands-decider requires
-# transformers>=5.15,<6, so the image pins transformers to the strands-compatible
-# line and installs strands-decider with --no-deps (its torch/transformers pins
-# are already satisfied by the base image) plus the few light deps it imports.
+# transformers>=5.15,<6 and peft caps it at 5.17, so ONE resolve pins 5.17.0 with
+# every light dep (a second resolve silently moved the pin — measured on the
+# Spark 2026-10-14: 5.19.0 -> 5.17.0). strands-decider is installed --no-deps from
+# its GitHub ARCHIVE tarball at a pinned commit, because the base image has no git.
 # The base is the same proven vLLM image digest as Dockerfile.embed-st (torch +
 # CUDA stack for Jetson); the ENTRYPOINT below replaces vLLM's.
 #
@@ -21,9 +22,10 @@ ARG LOBES_DEV_INDEX_URL=
 # Pinned to strands-decider main HEAD as resolved on 2026-10-14.
 ARG STRANDS_DECIDER_VERSION=8b6faa553038a59e73fa7f16c4081f8ceb21d27e
 ENV DECIDER_BACKEND=clef
-RUN uv pip install --system --no-deps "transformers==5.19.0" \
-    && uv pip install --system pillow "huggingface_hub>=1.5" "pydantic>=2.7" peft accelerate safetensors numpy pyyaml \
-    && uv pip install --system --no-deps "strands-decider @ git+https://github.com/strands-labs/strands-decider@${STRANDS_DECIDER_VERSION}" \
+RUN uv pip install --system "transformers==5.17.0" pillow "huggingface_hub>=1.5" "pydantic>=2.7" \
+        peft accelerate safetensors numpy pyyaml \
+    && uv pip install --system --no-deps \
+        "strands-decider @ https://github.com/strands-labs/strands-decider/archive/${STRANDS_DECIDER_VERSION}.tar.gz" \
     && if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
         uv pip install --system --no-deps --index-url "${LOBES_DEV_INDEX_URL}" \
             "lobes-cli==${MODEL_GEAR_VERSION}"; \

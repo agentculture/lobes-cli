@@ -95,3 +95,23 @@ def test_constructing_backends_does_not_import_torch():
     ds.select_backend("clef", {"DECIDER_MODEL": "a/b", "DECIDER_REVISION": "abc"})
     ds.select_backend("strands", {"DECIDER_MODEL": "/ckpt"})
     assert "torch" not in sys.modules
+
+
+def _decider_dockerfile() -> str:
+    from importlib.resources import files
+
+    return files("lobes.templates").joinpath("fleet", "Dockerfile.decider").read_text()
+
+
+def test_decider_image_needs_no_git():
+    # the vLLM base image ships no git binary (measured on the Spark, 2026-10-14)
+    text = _decider_dockerfile()
+    assert "git+" not in text
+    assert "strands-decider/archive/${STRANDS_DECIDER_VERSION}.tar.gz" in text
+
+
+def test_decider_image_pins_transformers_in_one_resolve():
+    # a second resolve silently moved a --no-deps pin (5.19.0 -> 5.17.0)
+    text = _decider_dockerfile()
+    assert text.count("transformers==") == 1
+    assert '"transformers==5.17.0" pillow' in text
