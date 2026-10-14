@@ -2,7 +2,7 @@
   "plan_slug": "orin-decision-models",
   "schema_version": 2,
   "created": "2026-10-14T06:05:06Z",
-  "updated": "2026-10-14T19:44:18Z",
+  "updated": "2026-10-14T21:38:20Z",
   "deviations": [
     {
       "id": "d1",
@@ -98,7 +98,274 @@
       "seq": 6
     }
   ],
-  "evidence": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "tests/test_gateway_decider.py::test_body_reaches_the_backend_byte_identical_and_the_answer_comes_back_unchanged; ::test_no_header_resolves_to_decider_general; tests/test_gateway_decider_mesh.py::test_member_c_forwards_each_domain_to_its_member",
+      "behavior_text": "X-Lobes-Model: decider:ops reaches only the ops backend with the body byte-identical; no header resolves to decider:general",
+      "contract_text": "gateway POST /v1/systemone routes by the X-Lobes-Model: decider:<domain> header; the backend receives the request body byte-identical; a request with no header is served by decider:general",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran 2026-10-14 at b58cf16, 29 cases passed; also exercised live: the Orin gateway and the Thor/Spark gateways forwarded decider:general bodies (docs/evidence/2026-10-14-accept-orin-decider.txt)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_gateway_decider.py::test_no_decider_wired_is_role_infeasible; ::test_decider_declared_infeasible_is_role_infeasible_even_when_wired",
+      "behavior_text": "404 role_infeasible when no decider is wired; a wired-but-declared-infeasible stub is never called",
+      "contract_text": "with no decider wired or reachable anywhere, answers 404 role_infeasible \u2014 never a fallback to cortex or a chat lane",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass. Limit: the tests assert the decider stub is never hit; none asserts a cortex stub is never called \u2014 /v1/systemone has no code path to a chat lane",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_gateway_decider.py::test_undeclared_domain_is_model_not_found_and_never_falls_back_to_general; ::test_a_header_that_is_not_a_decider_spelling_is_model_not_found",
+      "behavior_text": "an undeclared domain is 404 model_not_found and the general backend is never called",
+      "contract_text": "an undeclared domain answers 404 model_not_found, never a silent fallback to decider:general",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_gateway_decider_mesh.py::test_two_members_one_domain_different_fingerprints_is_refused; ::test_member_c_forwards_each_domain_to_its_member; ::test_a_domain_served_here_is_never_forwarded",
+      "behavior_text": "conflicting fingerprints: 409 decider_domain_conflict with no upstream call; one verified member: single-hop forward with X-Lobes-Mesh-Member",
+      "contract_text": "two members announcing the same decider domain with different fingerprints are refused (neither is routed to); a domain hosted by exactly one verified member is forwarded single-hop with X-Lobes-Mesh-Member",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass; the single-member forward was also observed live (Thor and Spark -> Orin, X-Lobes-Mesh-Member: orin)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_gateway_decider.py::test_decider_is_never_shed_under_swap_and_iowait_pressure",
+      "behavior_text": "5 decider requests all 200 under sampled swap 95 / iowait 80, while a chat request in the same state is 429 (negative control)",
+      "contract_text": "with swap > 75% and iowait > 50%, every decider request is still forwarded \u2014 never 429",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass; pressure sampled above both thresholds (95/80), not at the 75/50 edge",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "tests/test_decider_sidecar.py::test_body_passthrough_byte_identical_both_ways; ::test_dict_response_is_serialised_not_reshaped; tests/test_gateway_decider.py::test_body_reaches_the_backend_byte_identical_and_the_answer_comes_back_unchanged",
+      "behavior_text": "the backend's native answer reaches the caller unchanged at the sidecar and the gateway",
+      "contract_text": "the backend's native response (Clef's or strands-decider's own shape) reaches the caller unchanged \u2014 no field renamed, added or dropped by lobes",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_colleague_contract.py::test_decider_role_contract_is_pinned",
+      "behavior_text": "decider responsibilities end in final_decision; forbidden == (repo_action, security_decision); hand forbidden still includes final_decision",
+      "contract_text": "decider's responsibilities include final_decision and its forbidden list is exactly repo_action, security_decision; hand's contract still forbids final_decision",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass. Asserts the role tables that GET /capabilities serialises; the live Orin /capabilities was read but its forbidden list was not separately recorded",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_gateway_readiness.py::test_decider_ready_via_health_when_v1_models_404s",
+      "behavior_text": "ready:true from GET /health 200 while /v1/models 404s; only /health probed",
+      "contract_text": "a decider lane is ready:true when its GET /health answers 200, even though it serves no /v1/models",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass; live: the Orin /capabilities read decider ready=true with the sidecar serving no /v1/models",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_decider_render.py::test_each_domain_renders_a_port_less_decider_service; live check in docs/evidence/2026-10-14-accept-orin-decider.txt",
+      "behavior_text": "no decider-<domain> service renders ports:; live, docker port is empty, the old plain-run port is refused from the Spark (curl exit 7) and the gateway answers (401 without the key)",
+      "contract_text": "no decider-<domain> service has a ports: mapping; from another host the decider container port is refused while the gateway route answers",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass; plus the live Orin check",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_orin_decider_shape.py::test_a_shape_hosting_associate_and_the_decider_is_refused; ::test_the_orin_card_lists_it_in_the_exclusive_heavy_lobe_group; tests/test_init_coresidency.py::test_bare_init_refuses_on_the_declaring_card",
+      "behavior_text": "decider is in the Orin's exclusive heavy-lobe group with orin-cortex/orin-lobe/orin-associate; overcommitted_groups flags a shape hosting it with associate; init refuses on that predicate",
+      "contract_text": "orin-decider is refused alongside orin-cortex / orin-lobe / orin-associate (one heavy lobe)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass. Limit: the decider-specific refusal is tested at the predicate init calls (overcommitted_groups); the CLI refusal path itself is tested with the cortex/innereye group, not with a decider shape",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_decider_render.py::test_machine_as_brain_writes_no_decider_override; ::test_no_builtin_shape_renders_any_decider_key_or_service; tests/test_gateway_decider.py::test_no_decider_wired_is_role_infeasible",
+      "behavior_text": "machine-as-brain renders no decider service and NO DECIDER_* key; an absent DECIDER_FEASIBLE reads infeasible (decider is in OPT_IN_BACKENDS) and /v1/systemone answers 404 role_infeasible",
+      "contract_text": "renders no decider service and DECIDER_FEASIBLE=false; model selection via X-Lobes-Model 404s role_infeasible",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "ran at b58cf16, pass on the behaviour; the literal 'renders DECIDER_FEASIBLE=false' does NOT hold \u2014 no key is rendered (filed as an amended delta)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:33:19Z",
+        "commit": "b58cf16"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "live: docs/evidence/2026-10-14-accept-orin-decider.txt (probe set through the Orin gateway, runs 1 and 2)",
+      "behavior_text": "418 questions, 0 failed, max |sum(p)-1| 0.0002, top-1 0.9354, bf16 agreement 0.9904; embedder/reranker/gemma2-embed answered 200 through the same gateway; min host MemAvailable 13,036 MiB over 326 samples",
+      "contract_text": "Clef answers a choice question with per-question probabilities summing to 1 (\u00b10.01) while embedder, reranker and gemma2-embed keep answering, and min available host memory stays >= 2 GiB",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "measured live on the Orin 2026-10-14 20:49-21:12 UTC, committed as d79368b; the decider cgroup sat at its 32 GiB cap with ~3.4 GiB of unreclaimable headroom (recorded in the transcript)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:12:39Z",
+        "commit": "d79368b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o13",
+      "test_ref": "live: docs/evidence/2026-10-14-accept-orin-decider.txt (backup section)",
+      "behavior_text": "/home/orin/.lobes-bak-20261014-200149-pre-orin-decider (381M) taken before any change; later edits each backed up beside the file",
+      "contract_text": "a ~/.lobes backup exists before 'lobes init --shape orin-decider --apply' runs; rollback is restoring it",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "observed live 2026-10-14; the Orin has no lobes CLI, so the render was made on the Spark and applied by hand after the backup. Rollback by restore was not exercised",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T20:01:49Z",
+        "commit": "d79368b"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o14",
+      "test_ref": "live: docs/evidence/2026-10-14-accept-decider-2b-spark2.txt (cross-box table)",
+      "behavior_text": "decider:strands-general (stock 2610 @216d1ccb, bf16, on spark2) answered 200 via X-Lobes-Model from the Orin, Thor and Spark gateways, each reply carrying X-Lobes-Mesh-Member: spark2 and X-Lobes-Route-Reason: mesh-forwarded",
+      "contract_text": "a 2B domain hosted on spark2 answers from the Orin, Spark and Thor gateways, each reply carrying X-Lobes-Mesh-Member: spark2",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "observed live 2026-10-14 21:36 UTC with one probe record per gateway; committed with the transcript",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-14T21:36:30Z",
+        "commit": "05d41f1"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    }
+  ],
   "deltas": [
     {
       "id": "b1",
@@ -132,6 +399,88 @@
         "t7"
       ],
       "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "machine-as-brain (and every non-hosting built-in shape) renders NO DECIDER_* key rather than DECIDER_FEASIBLE=false; the absent key reads infeasible because decider is in OPT_IN_BACKENDS, so the local answer is the same 404 role_infeasible",
+      "caused_by": [
+        "c15"
+      ],
+      "evidence_refs": [
+        "e11"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "new optional decider domain key kv_cache_memory_bytes renders DECIDER_KV_CACHE_MEMORY_BYTES; orin-decider pins a 4 GiB KV pool (56,661 tokens, 3.46x at 16384) after unpinned boots were OOM-killed at the 32g cap during CUDA-graph capture (7e4f38d)",
+      "caused_by": [
+        "c25"
+      ],
+      "evidence_refs": [
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b6",
+      "kind": "amended",
+      "behavior_text": "the clef-vllm sidecar materialises its model bundle as hard links to the HF-cache blobs (copies only across devices) instead of an 18 GB snapshot_download copy whose page cache starved the 32g container (2c92ec3)",
+      "caused_by": [
+        "c25"
+      ],
+      "evidence_refs": [
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b7",
+      "kind": "removed",
+      "behavior_text": "t17 stage B: the bf16 interim on the Spark is never routed through the Spark, Orin or Thor gateways; Clef is kept only as the W4A16 build on the Orin, and the Spark interim and the Thor NVFP4 container were stopped after t11 passed",
+      "caused_by": [
+        "d6"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b8",
+      "kind": "amended",
+      "behavior_text": "the decider's /v1/systemone mesh forward does not depend on <ROLE>_FEASIBLE: a box with no decider wiring (absent DECIDER_FEASIBLE) still asks the mesh for a domain before refusing it, unlike the chat roles; the DECIDER_FEASIBLE=false lines added on the Thor and Spark gateways were not needed for routing",
+      "caused_by": [
+        "c40"
+      ],
+      "evidence_refs": [
+        "e4"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b9",
+      "kind": "amended",
+      "behavior_text": "the decider sidecar's strands backend honours DECIDER_REVISION: it resolves the pinned snapshot with strands_decider's checkpoint_dir(model, revision) instead of letting StrandsDeciderModel.load fetch the repo HEAD (b58cf16)",
+      "caused_by": [
+        "c26"
+      ],
+      "evidence_refs": [
+        "e14"
+      ],
       "origin": "llm",
       "status": "proposed",
       "superseded": false

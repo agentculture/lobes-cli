@@ -79,6 +79,21 @@ The DECIDER_FEASIBLE=false lines turned out NOT to be needed for routing: the ga
 /v1/systemone asks the mesh for a domain it does not serve before any feasibility refusal
 (read from lobes/gateway/server.py handle_systemone; not tested with the key absent).
 
+== baseline: the stock checkpoint on the Clef probe set (not an acceptance criterion) ==
+The same 320 records / 418 questions, through spark2's gateway, 21:36:50 UTC, scored by
+scripts/clef_eval/compare.py against the bf16 Clef reference. This is the starting point
+for the planned fine-tune (student = this checkpoint, teacher = Clef W4A16).
+  questions 418, failed records 0
+  top-1 accuracy 0.7560 (Clef W4A16 on the Orin: 0.9354)
+  top-1 agreement with bf16 Clef 0.7584, KL mean 0.43399, KL max 3.24834
+  latency median / p90: 47.8 / 404.8 ms
+  by source (questions, accuracy): arc_challenge 40 0.775, banking77 40 0.975,
+    boolq 50 0.880, commonsense_qa 40 0.725, go_emotions 30 0.633, incident 148 0.655,
+    routing 20 0.850, snli 50 0.800
+Long inputs are TRUNCATED, not refused: the 28 records that Clef's tokenizer counts at
+4,097-10,606 tokens were all answered, and strands-decider reported at most 4,261 input
+tokens for them (its 4096-token window). Those answers were made on a cut-down state.
+
 == not done here ==
 No adapter was trained or loaded; this is the stock checkpoint. The mesh-wide answer was
-checked with one record; the probe-set baseline for the stock checkpoint is a separate run.
+checked with one record per gateway.

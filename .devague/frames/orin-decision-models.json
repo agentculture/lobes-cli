@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T14:05:53Z",
+  "updated": "2026-10-14T21:38:36Z",
   "claims": [
     {
       "id": "c1",
@@ -1147,6 +1147,28 @@
       "skipped_check": "",
       "refs": [
         "l12"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l14",
+      "code": "assumption-for-measurement",
+      "what": "t11/t12: added DECIDER_FEASIBLE=false (+ passthrough) to the live Thor and Spark gateways on the strength of a memory note about OTHER opt-in roles (absent key skips the mesh), without first reading the decider's own /v1/systemone path; it turned out not to be needed (delta b8), and b8's 'not needed' is itself read from code, not tested with the key absent",
+      "skipped_check": "read handle_systemone / test a peer with DECIDER_FEASIBLE absent before editing live gateways",
+      "refs": [
+        "b8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l15",
+      "code": "control-absent",
+      "what": "t11: two background watchers used 'pgrep -f <pattern>' inside ssh, which matches its own remote shell, so they could never fire (one ran ~35 min); a third used 'docker logs --since HH:MM:SS', an invalid format, so it could not detect an engine failure \u2014 status at ~20:36 UTC leaned on that broken watcher until it was replaced",
+      "skipped_check": "verify a watcher can fire (negative control) before relying on it",
+      "refs": [
+        "t11"
       ],
       "origin": "llm",
       "status": "proposed"
