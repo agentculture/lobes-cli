@@ -69,6 +69,14 @@ embed-sidecar = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]
+# The decider sidecar (outcome-decision-model plan, t4) —
+# lobes/decider_sidecar/server.py. torch, transformers, the Clef loader and
+# strands-decider are installed by templates/fleet/Dockerfile.decider; only the
+# HTTP shell is listed.
+decider-sidecar = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
 
 [project.urls]
 Homepage = "https://github.com/agentculture/lobes-cli"
