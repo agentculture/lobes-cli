@@ -608,7 +608,7 @@ class ReadinessCache:
         # when this cache is using the DEFAULT probe (see ``_read``) — an
         # injected ``probe`` callable is a full stand-in for the HTTP call
         # and decides its own path, if any.
-        self._paths: dict[str, str] = {n: _HEALTH_PATH for n in _OWN_HEALTH_BACKENDS}
+        self._paths: dict[str, str] = dict.fromkeys(_OWN_HEALTH_BACKENDS, _HEALTH_PATH)
         self._paths.update(paths or {})
         self._interval = interval
         # Peer specs keyed by name (last-one-wins on a duplicate name, same

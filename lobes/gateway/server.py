@@ -762,6 +762,9 @@ class GatewayResponse:
 # audio 503 (both 5s).
 BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS: int = 5
 
+# The label an error body names when the caller sent no ``model`` at all.
+_UNSPECIFIED_MODEL = "(unspecified)"
+
 
 def _error_body(
     message: str, attempts: list[str], *, error_type: str = "upstream_unavailable"
@@ -840,7 +843,7 @@ def _role_infeasible_body(
     this body — see :func:`_proxy_to_peer`). When ``None`` (no peer config —
     the default) the body is BYTE-IDENTICAL to the pre-referral contract.
     """
-    label = requested or "(unspecified)"
+    label = requested or _UNSPECIFIED_MODEL
     message = (
         f"The model `{label}` is not feasible on this machine — its "
         f"backend (`{backend_name}`) is declared hardware-infeasible "
@@ -890,7 +893,7 @@ def _role_unverified_body(
     here. A member that WAS probed and verified nothing is a hard negative
     and still gets the 404.
     """
-    label = requested or "(unspecified)"
+    label = requested or _UNSPECIFIED_MODEL
     return json.dumps(
         {
             "error": {
@@ -4188,7 +4191,7 @@ def handle_systemone(
         return GatewayResponse(
             status=404,
             headers=[("Content-Type", _CONTENT_TYPE_JSON)],
-            body=_model_not_found_body(route.requested or "(unspecified)"),
+            body=_model_not_found_body(route.requested or _UNSPECIFIED_MODEL),
         )
     if route.kind == "role_infeasible":
         return GatewayResponse(
@@ -4805,10 +4808,38 @@ def annotate_mesh_lanes(
     return payload
 
 
+def _mesh_decider_domain_entry(
+    mesh_snapshot: "RoutingSnapshot",
+    announced: Mapping[str, Announcement],
+    domain: str,
+) -> dict | None:
+    """The ``domains`` entry for one mesh-only decider domain, or ``None``.
+
+    ``conflict`` → the member names with ``ready: false``; ``forward`` → the
+    announced checkpoint/quant plus the last probe's readiness; any other
+    placement kind adds nothing.
+    """
+    placement = decider_domain_placement(mesh_snapshot, domain)
+    if placement.kind == "conflict":
+        return {"conflict": list(placement.members), "ready": False}
+    if placement.kind != "forward":
+        return None
+    ann = announced.get(placement.origin)
+    info = ann.roles.get(placement.key) if ann is not None else None
+    member = next((m for m in mesh_snapshot.members if m.origin == placement.origin), None)
+    return {
+        "checkpoint": getattr(info, "model", "") or "unknown",
+        "quant": getattr(info, "quant", "") or "unknown",
+        "ready": member is not None and placement.key in member.ready_roles,
+        "proxied": True,
+        "hosted_by": placement.origin,
+    }
+
+
 def annotate_mesh_decider_domains(
     payload: dict[str, dict],
     mesh_snapshot: "RoutingSnapshot | None",
-) -> dict[str, dict]:
+) -> None:
     """Add every decider domain this box reaches only through the mesh, in place.
 
     For a domain some verified member serves and this box does not, the
@@ -4820,36 +4851,23 @@ def annotate_mesh_decider_domains(
     touched, and with the mesh off (or no member announcing a domain) the
     payload is unchanged. ``proxied``/``conflict`` entries are skipped by the
     announcement builder (:func:`lobes.gateway._mesh_wire.capability_entries`),
-    so this box never re-announces a peer's domain.
+    so this box never re-announces a peer's domain. Mutates ``payload`` only;
+    returns nothing.
     """
     decider = payload.get(DECIDER_ROLE)
     if mesh_snapshot is None or not isinstance(decider, dict):
-        return payload
+        return
     local = dict(decider.get("domains") or {})
     announced = dict(mesh_snapshot.announcements)
     added: dict[str, dict] = {}
     for domain in mesh_decider_domains(mesh_snapshot):
         if domain in local:
             continue
-        placement = decider_domain_placement(mesh_snapshot, domain)
-        if placement.kind == "conflict":
-            added[domain] = {"conflict": list(placement.members), "ready": False}
-            continue
-        if placement.kind != "forward":
-            continue
-        ann = announced.get(placement.origin)
-        info = ann.roles.get(placement.key) if ann is not None else None
-        member = next((m for m in mesh_snapshot.members if m.origin == placement.origin), None)
-        added[domain] = {
-            "checkpoint": getattr(info, "model", "") or "unknown",
-            "quant": getattr(info, "quant", "") or "unknown",
-            "ready": member is not None and placement.key in member.ready_roles,
-            "proxied": True,
-            "hosted_by": placement.origin,
-        }
+        entry = _mesh_decider_domain_entry(mesh_snapshot, announced, domain)
+        if entry is not None:
+            added[domain] = entry
     if added:
         decider["domains"] = {**local, **added}
-    return payload
 
 
 def decider_readiness_targets(table: RoutingTable) -> dict[str, str]:
@@ -5006,7 +5024,8 @@ def capabilities_payload(
         payload, resolved_env, gateway, as_routing_snapshot(mesh_snapshot)
     )
     # ... and the decider domains it reaches only through the mesh (odm t7).
-    return annotate_mesh_decider_domains(payload, as_routing_snapshot(mesh_snapshot))
+    annotate_mesh_decider_domains(payload, as_routing_snapshot(mesh_snapshot))
+    return payload
 
 
 # --- the unmatched-route 404 body (SonarCloud S5131, companion to

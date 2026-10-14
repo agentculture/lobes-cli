@@ -673,7 +673,8 @@ def test_decider_ready_via_health_when_v1_models_404s() -> None:
     finally:
         cache.stop()
         srv.shutdown()
-    assert seen and set(seen) == {"/health"}
+    assert seen
+    assert set(seen) == {"/health"}
 
 
 def test_decider_down_reads_not_ready() -> None:

@@ -80,4 +80,9 @@ def test_incident_gold_is_consistent_with_its_log():
 
 
 def test_incidents_are_deterministic():
-    assert bs.incident_record(1_000_001) == bs.incident_record(1_000_001)
+    # Two independent builds from one seed agree byte-for-byte; a different
+    # seed yields a different record (the seed is actually consumed).
+    first = bs.incident_record(1_000_001)
+    again = bs.incident_record(1_000_001)
+    assert first == again
+    assert bs.incident_record(1_000_002)[0] != first[0]

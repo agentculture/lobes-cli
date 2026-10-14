@@ -305,10 +305,11 @@ _DECIDER_VALUE_RE: dict[str, re.Pattern[str]] = {
     "model": _PLAIN,
     "revision": _PLAIN,
     "device": _PLAIN,
-    "mem_limit": re.compile(r"[0-9]+(\.[0-9]+)?[bkmgBKMG]?"),
-    "start_period": re.compile(r"([0-9]+(ms|s|m|h))+"),
-    "gpu_mem_util": re.compile(r"0?\.[0-9]+"),
-    "max_model_len": re.compile(r"[1-9][0-9]*"),
+    # re.ASCII keeps ``\d`` to 0-9 (no Unicode digits in a compose scalar).
+    "mem_limit": re.compile(r"\d+(\.\d+)?[bkmgBKMG]?", re.ASCII),
+    "start_period": re.compile(r"(\d+(ms|s|m|h))+", re.ASCII),
+    "gpu_mem_util": re.compile(r"0?\.\d+", re.ASCII),
+    "max_model_len": re.compile(r"[1-9]\d*", re.ASCII),
 }
 _DECIDER_VALUE_HINT: dict[str, str] = {
     "backend": f"choose one of: {', '.join(DECIDER_BACKENDS)}",

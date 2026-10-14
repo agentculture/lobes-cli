@@ -25,16 +25,19 @@ class FakeBackend:
 def test_health_503_until_loaded_then_200():
     sidecar = ds.Sidecar(FakeBackend())
     status, body, _ = sidecar.handle("GET", "/health", b"")
-    assert status == 503 and json.loads(body)["status"] == "loading"
+    assert status == 503
+    assert json.loads(body)["status"] == "loading"
     sidecar.load()
     status, body, _ = sidecar.handle("GET", "/health", b"")
-    assert status == 200 and json.loads(body)["status"] == "ok"
+    assert status == 200
+    assert json.loads(body)["status"] == "ok"
 
 
 def test_post_before_load_is_503_and_backend_untouched():
     backend = FakeBackend()
     status, _, _ = ds.Sidecar(backend).handle("POST", "/v1/systemone", b"{}")
-    assert status == 503 and backend.seen == []
+    assert status == 503
+    assert backend.seen == []
 
 
 def test_body_passthrough_byte_identical_both_ways():
@@ -44,7 +47,9 @@ def test_body_passthrough_byte_identical_both_ways():
     sidecar.load()
     raw = b'{"state": "x",  "questions":{"q":{"type":"choice"}}}'
     status, out, ctype = sidecar.handle("POST", "/v1/systemone", raw)
-    assert status == 200 and out == native and ctype == "application/json"
+    assert status == 200
+    assert out == native
+    assert ctype == "application/json"
     assert backend.seen == [raw]
 
 
@@ -72,7 +77,8 @@ def test_backend_value_error_is_422():
     sidecar = ds.Sidecar(Bad())
     sidecar.load()
     status, out, _ = sidecar.handle("POST", "/v1/systemone", b"{}")
-    assert status == 422 and "too many options" in json.loads(out)["detail"]
+    assert status == 422
+    assert "too many options" in json.loads(out)["detail"]
 
 
 def test_select_backend_rejects_invalid_value():

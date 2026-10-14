@@ -33,6 +33,11 @@ _CONTEXT_256K_NATIVE = "256K native"
 _MTP_SELF_HOSTED_N2 = '{"method": "mtp", "num_speculative_tokens": 2}'
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
+# Shared by the decider entries (orin-decision-models): the clef 27B builds'
+# ``shape`` and every decider checkpoint's ``doc``.
+_SHAPE_CLEF_27B = "decision model (Qwen3.8-27B post-train, joint schema head)"
+_DOC_DECIDER = "colleague-stack.md"
+
 # ---------------------------------------------------------------------------
 # The ENGINE axis — which inference server serves a gear
 # ---------------------------------------------------------------------------
@@ -1413,13 +1418,13 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # transformers NF4 path in docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt.
         # hf_revision = the public commit those runs used.
         role_hint="decider",
-        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        shape=_SHAPE_CLEF_27B,
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="",
         quantization="compressed-tensors",
         status="load-tested",
-        doc="colleague-stack.md",
+        doc=_DOC_DECIDER,
         task="decide",
         engine=ENGINE_DECIDER_SIDECAR,
         hf_revision="4daaa224c6dc553b13120bb10414a7e7de7a5a95",
@@ -1436,13 +1441,13 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # mis-calibrated: mean top-1 probability 0.31 vs 0.92, KL 1.01, agreement
         # 0.957-0.964; cause unidentified (attention ruled out).
         role_hint="candidate",
-        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        shape=_SHAPE_CLEF_27B,
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="",
         quantization="compressed-tensors",
         status="load-tested",
-        doc="colleague-stack.md",
+        doc=_DOC_DECIDER,
         task="decide",
         engine=ENGINE_DECIDER_SIDECAR,
         hf_revision="94093b9a819211f81aa41277570ee0d1f275ab11",
@@ -1456,13 +1461,13 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # (d4): ~60 GiB GPU, accuracy 0.9354 on the t23 probe set. Too large for
         # the Orin.
         role_hint="candidate",
-        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        shape=_SHAPE_CLEF_27B,
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="",
         quantization="none",
         status="load-tested",
-        doc="colleague-stack.md",
+        doc=_DOC_DECIDER,
         task="decide",
         engine=ENGINE_DECIDER_SIDECAR,
         hf_revision="2f3de3dd85f379784083b0814d997ab627200f0c",
@@ -1483,13 +1488,13 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # with a qwen3_5 embed-quant patch. Never booted on this repo's hardware.
         # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
         role_hint="candidate",
-        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        shape=_SHAPE_CLEF_27B,
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="",
         quantization="compressed-tensors",
         status="configured",
-        doc="colleague-stack.md",
+        doc=_DOC_DECIDER,
         task="decide",
         engine=ENGINE_DECIDER_SIDECAR,
         hf_revision="cf572fbf05f14959d5542ebbac0b15631a8d1c08",
@@ -1514,7 +1519,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         tool_parser="",
         quantization="none",
         status="configured",
-        doc="colleague-stack.md",
+        doc=_DOC_DECIDER,
         task="decide",
         engine=ENGINE_DECIDER_SIDECAR,
         hf_revision="216d1ccb46a9e9b036eb9187b248db98480f77d4",

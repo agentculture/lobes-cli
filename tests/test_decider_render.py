@@ -339,7 +339,8 @@ def test_a_clef_vllm_domain_builds_from_the_vllm_image() -> None:
     svc = _override_doc(_decider_shape(domains), _card())["services"]["decider-general"]
     assert svc["build"]["dockerfile"] == "Dockerfile.decider-vllm"
     assert "DECIDER_BACKEND=clef-vllm" in svc["environment"]
-    assert "ports" not in svc and "depends_on" not in svc
+    assert "ports" not in svc
+    assert "depends_on" not in svc
     assert "Dockerfile.decider-vllm" in text
     # A clef/strands-only shape renders byte-identically to before t21.
     plain = init_cmd.render_shape_override(_decider_shape(_two_domains()), _card())

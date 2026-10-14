@@ -182,19 +182,26 @@ def _decider_domain_entries(entry: Mapping[str, Any]) -> dict[str, dict[str, Any
             continue
         if not isinstance(domain, str) or not DECIDER_DOMAIN_RE.match(domain):
             continue
-        fp = info.get("fingerprint")
-        out[decider_domain_key(domain)] = {
-            "model": info.get("checkpoint") or "",
-            "runtime": fp.get("runtime", "") if isinstance(fp, Mapping) else "",
-            "context": (fp.get("max_model_len") if isinstance(fp, Mapping) else 0) or 0,
-            "quant": info.get("quant") or "",
-            "responsibilities": list(entry.get("responsibilities") or ()),
-            "forbidden_responsibilities": list(entry.get("forbidden_responsibilities") or ()),
-            "feasible": bool(entry.get("feasible")),
-            "ready": info.get("ready"),
-            "fingerprint": fp,
-        }
+        out[decider_domain_key(domain)] = _decider_domain_entry(entry, info)
     return out
+
+
+def _decider_domain_entry(entry: Mapping[str, Any], info: Mapping[str, Any]) -> dict[str, Any]:
+    """One served domain's roster entry: the domain's own checkpoint/quant/
+    readiness/fingerprint over the ``decider`` entry's contract fields."""
+    fp = info.get("fingerprint")
+    has_fp = isinstance(fp, Mapping)
+    return {
+        "model": info.get("checkpoint") or "",
+        "runtime": fp.get("runtime", "") if has_fp else "",
+        "context": (fp.get("max_model_len") if has_fp else 0) or 0,
+        "quant": info.get("quant") or "",
+        "responsibilities": list(entry.get("responsibilities") or ()),
+        "forbidden_responsibilities": list(entry.get("forbidden_responsibilities") or ()),
+        "feasible": bool(entry.get("feasible")),
+        "ready": info.get("ready"),
+        "fingerprint": fp,
+    }
 
 
 def capability_entries(payload: Mapping[str, Any]) -> dict[str, Any]:

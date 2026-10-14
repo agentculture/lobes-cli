@@ -109,7 +109,8 @@ def test_select_backend_picks_clef_vllm_with_model_and_revision():
     )
     assert isinstance(backend, cv.ClefVllmBackend)
     assert backend.name == "clef-vllm"
-    assert backend.model_id == "org/clef-w4a16" and backend.revision == "abc"
+    assert backend.model_id == "org/clef-w4a16"
+    assert backend.revision == "abc"
     assert "clef-vllm" in ds.BACKENDS
 
 
@@ -120,7 +121,8 @@ def test_select_backend_clef_vllm_still_requires_model():
 
 def test_constructing_clef_vllm_imports_no_vllm_or_torch():
     ds.select_backend("clef-vllm", {"DECIDER_MODEL": "a/b"})
-    assert "vllm" not in sys.modules and "torch" not in sys.modules
+    assert "vllm" not in sys.modules
+    assert "torch" not in sys.modules
 
 
 def test_engine_knobs_come_from_env_with_declared_defaults():
@@ -132,7 +134,8 @@ def test_engine_knobs_come_from_env_with_declared_defaults():
             "DECIDER_GPU_MEM_UTIL": "0.4",
         },
     )
-    assert backend.max_model_len == 8192 and backend.gpu_mem_util == 0.4
+    assert backend.max_model_len == 8192
+    assert backend.gpu_mem_util == 0.4
     default = ds.select_backend("clef-vllm", {"DECIDER_MODEL": "a/b"})
     assert default.max_model_len == cv.DEFAULT_MAX_MODEL_LEN == 16384
 
@@ -185,7 +188,8 @@ def test_response_shape_matches_cloudflare_systemone():
     sidecar, _, engine = _loaded()
     sidecar.load()
     status, body, ctype = sidecar.handle("POST", "/v1/systemone", json.dumps(REQUEST).encode())
-    assert status == 200 and ctype == "application/json"
+    assert status == 200
+    assert ctype == "application/json"
     # Cloudflare's systemone (joint_schema_model.py:565-576) returns exactly
     # {model, answers{qid: systemone_answer(question, dict(zip(option_ids, probs)))},
     #  usage{input_tokens: len(input_ids), output_tokens: 0}}.
@@ -229,7 +233,8 @@ def test_invalid_requests_are_422_and_never_reach_the_engine(mutate, fragment):
     sidecar, _, engine = _loaded()
     sidecar.load()
     status, body, _ = sidecar.handle("POST", "/v1/systemone", json.dumps(record).encode())
-    assert status == 422 and fragment in json.loads(body)["detail"]
+    assert status == 422
+    assert fragment in json.loads(body)["detail"]
     assert engine.scored == []
 
 
@@ -248,7 +253,8 @@ def test_engine_value_error_from_encoding_is_422():
     engine.encode = too_long
     sidecar.load()
     status, body, _ = sidecar.handle("POST", "/v1/systemone", json.dumps(REQUEST).encode())
-    assert status == 422 and "maximum is 16384" in json.loads(body)["detail"]
+    assert status == 422
+    assert "maximum is 16384" in json.loads(body)["detail"]
 
 
 # --- pure helpers for the joint head's lexical rows -----------------------------------
@@ -284,7 +290,8 @@ def test_compact_input_ids_index_the_compact_table_inside_option_spans():
 def test_bundle_dir_is_a_real_directory_not_the_symlinked_hf_cache():
     path = cv.bundle_dir("Cloudflare/clef", "2f3de3dd", "/root/.cache/huggingface")
     assert path.startswith("/root/.cache/huggingface/lobes-decider-bundles/")
-    assert "Cloudflare--clef" in path and path.endswith("2f3de3dd")
+    assert "Cloudflare--clef" in path
+    assert path.endswith("2f3de3dd")
     assert "snapshots" not in path
     assert cv.bundle_dir("a/b", None, "/h").endswith("a--b@main")
 
@@ -306,7 +313,8 @@ def test_dockerfile_pins_vllm_031_by_digest():
     assert any(
         re.search(r"vllm/vllm-openai@sha256:[0-9a-f]{64}", ln) for ln in froms
     ), "base image must be pinned by digest"
-    assert "v0.31.0" in text and "arm64" in text
+    assert "v0.31.0" in text
+    assert "arm64" in text
 
 
 def test_dockerfile_uses_uv_pip_only_and_publishes_no_port():
@@ -315,7 +323,8 @@ def test_dockerfile_uses_uv_pip_only_and_publishes_no_port():
     body = "\n".join(code)
     assert "uv pip install --system" in body
     assert not re.search(r"(?<!uv )\bpip3? install", body)
-    assert "EXPOSE" not in body and "-p " not in body
+    assert "EXPOSE" not in body
+    assert "-p " not in body
     assert 'ENTRYPOINT ["python3", "-m", "lobes.decider_sidecar.server"]' in body
     assert "ENV DECIDER_BACKEND=clef-vllm" in body
 
@@ -340,7 +349,8 @@ def test_materialize_bundle_hard_links_the_cache_blobs_never_copies(tmp_path):
     assert out == str(target)
     for rel, blob in (("model.safetensors", "aaa"), ("sub/config.json", "bbb")):
         made = target / rel
-        assert made.is_file() and not made.is_symlink()
+        assert made.is_file()
+        assert not made.is_symlink()
         assert made.stat().st_ino == (blobs / blob).stat().st_ino
     # Idempotent: a second call keeps the same links.
     cv.materialize_bundle(str(snap), str(target))

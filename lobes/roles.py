@@ -1265,10 +1265,7 @@ def build_role_registry(
 
     # The decider's per-domain inventory (odm t7) — the same RoleInfo, one
     # more optional key; a box with no decider domain keeps `domains=None`.
-    if DECIDER_ROLE in registry:
-        domains = decider_domain_advert(table, resolved_env, registry[DECIDER_ROLE], backend_ready)
-        if domains:
-            registry[DECIDER_ROLE] = dataclasses.replace(registry[DECIDER_ROLE], domains=domains)
+    _attach_decider_domains(registry, table, resolved_env, backend_ready)
 
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
@@ -1440,22 +1437,54 @@ def decider_domain_advert(
         checkpoint = declared.get(domain) or (
             decider.model if domain == DEFAULT_DECIDER_DOMAIN else ""
         )
-        model = _catalog_by_id(checkpoint.split("@", 1)[0]) if checkpoint else None
-        quant = model.quantization if model is not None else ""
-        out[domain] = {
-            "checkpoint": checkpoint or _REPLICA_UNKNOWN,
-            "quant": quant or _REPLICA_UNKNOWN,
-            "ready": _decider_domain_ready(
+        out[domain] = _decider_domain_entry(
+            checkpoint,
+            _decider_domain_ready(
                 decider_domain_key(domain), url, backend_url, usable, backend_ready
             ),
-            "fingerprint": {
-                "served_id": checkpoint or _REPLICA_UNKNOWN,
-                "quantization": quant or _REPLICA_UNKNOWN,
-                "max_model_len": (model.native_max_model_len if model is not None else None),
-                "runtime": (model.engine if model is not None else ENGINE_DECIDER_SIDECAR),
-            },
-        }
+        )
     return out
+
+
+def _decider_domain_entry(checkpoint: str, ready: bool) -> dict:
+    """One domain's ``{checkpoint, quant, ready, fingerprint}`` advert entry.
+
+    ``checkpoint`` may be empty (undeclared) or carry an ``@revision`` pin;
+    the catalog entry it names (if any) supplies the quant, window and
+    runtime, and every unknown value reads ``"unknown"``.
+    """
+    model = _catalog_by_id(checkpoint.split("@", 1)[0]) if checkpoint else None
+    served_id = checkpoint or _REPLICA_UNKNOWN
+    if model is None:
+        quant, max_model_len, runtime = _REPLICA_UNKNOWN, None, ENGINE_DECIDER_SIDECAR
+    else:
+        quant = model.quantization or _REPLICA_UNKNOWN
+        max_model_len, runtime = model.native_max_model_len, model.engine
+    return {
+        "checkpoint": served_id,
+        "quant": quant,
+        "ready": ready,
+        "fingerprint": {
+            "served_id": served_id,
+            "quantization": quant,
+            "max_model_len": max_model_len,
+            "runtime": runtime,
+        },
+    }
+
+
+def _attach_decider_domains(
+    registry: dict[str, "RoleInfo"],
+    table: RoutingTable,
+    env: Mapping[str, str],
+    backend_ready: Mapping[str, bool | None] | None,
+) -> None:
+    """Set the registry's ``decider`` ``domains`` in place, when it serves any."""
+    if DECIDER_ROLE not in registry:
+        return
+    domains = decider_domain_advert(table, env, registry[DECIDER_ROLE], backend_ready)
+    if domains:
+        registry[DECIDER_ROLE] = dataclasses.replace(registry[DECIDER_ROLE], domains=domains)
 
 
 def _resolve_audio_role(
