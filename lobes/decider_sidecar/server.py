@@ -31,6 +31,14 @@ DECIDER_MAX_MODEL_LEN / DECIDER_GPU_MEM_UTIL
                   ``clef-vllm`` only: the vLLM engine's context and GPU share
                   (defaults 16384 — Cloudflare's ``max_length`` — and a DECLARED
                   0.5); see :mod:`lobes.decider_sidecar.clef_vllm`.
+DECIDER_ATTENTION_BACKEND
+                  ``clef-vllm`` only, optional: vLLM's ``attention_backend``
+                  (e.g. ``TRITON_ATTN``); unset lets vLLM choose.
+DECIDER_KV_CACHE_MEMORY_BYTES
+                  ``clef-vllm`` only, optional: a fixed KV-cache size in bytes.
+                  vLLM then skips its free-memory profile, whose assert fails
+                  when the page cache is reclaimed mid-boot (Jetson AGX Thor,
+                  2026-10-14). Unset keeps the GPU_MEM_UTIL-derived size.
 
 ``clef-vllm`` (t21) serves the same Clef response as ``clef`` but runs the
 backbone in vLLM's pooling runner (``Dockerfile.decider-vllm``, pinned
