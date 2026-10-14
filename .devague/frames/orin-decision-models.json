@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T10:36:15Z",
+  "updated": "2026-10-14T13:46:20Z",
   "claims": [
     {
       "id": "c1",
@@ -1123,6 +1123,17 @@
       "code": "assumption-for-measurement",
       "what": "status update at 10:06 UTC reported the W4A16 run at 48/65 with ~20 min left; it had already been stalled at 48/65 since 09:38 (no log-timestamp check) \u2014 the hang was found only at the next tick",
       "skipped_check": "last-log-line timestamp check",
+      "refs": [
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l12",
+      "code": "assumption-for-measurement",
+      "what": "introduced a live 'docker update --cpus' thermal governor on a GPU container without checking its device-cgroup side effect; it caused cudaErrorNotPermitted twice and destroyed a finished 40-min GPTQ result",
+      "skipped_check": "known NVIDIA toolkit docker-update/device-cgroup behaviour",
       "refs": [
         "t19"
       ],
