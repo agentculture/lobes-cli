@@ -318,3 +318,30 @@ def test_dockerfile_uses_uv_pip_only_and_publishes_no_port():
     assert "EXPOSE" not in body and "-p " not in body
     assert 'ENTRYPOINT ["python3", "-m", "lobes.decider_sidecar.server"]' in body
     assert "ENV DECIDER_BACKEND=clef-vllm" in body
+
+
+def test_materialize_bundle_hard_links_the_cache_blobs_never_copies(tmp_path):
+    # t11 (2026-10-14): snapshot_download(local_dir=...) COPIED an 18 GB
+    # checkpoint inside the container, and the copy's page cache pushed the
+    # engine past its 32g memcg (OOM-killed). The bundle must be real files
+    # (not the cache's symlinks) that share the cache blobs' inodes.
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    (blobs / "aaa").write_bytes(b"weights")
+    (blobs / "bbb").write_bytes(b"{}")
+    snap = tmp_path / "snapshots" / "rev"
+    (snap / "sub").mkdir(parents=True)
+    (snap / "model.safetensors").symlink_to(blobs / "aaa")
+    (snap / "sub" / "config.json").symlink_to(blobs / "bbb")
+    target = tmp_path / "bundle"
+
+    out = cv.materialize_bundle(str(snap), str(target))
+
+    assert out == str(target)
+    for rel, blob in (("model.safetensors", "aaa"), ("sub/config.json", "bbb")):
+        made = target / rel
+        assert made.is_file() and not made.is_symlink()
+        assert made.stat().st_ino == (blobs / blob).stat().st_ino
+    # Idempotent: a second call keeps the same links.
+    cv.materialize_bundle(str(snap), str(target))
+    assert (target / "model.safetensors").stat().st_ino == (blobs / "aaa").stat().st_ino

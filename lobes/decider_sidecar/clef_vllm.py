@@ -47,10 +47,12 @@ Assumptions (DECLARED, not yet measured — t13 is the live check)
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 from typing import Any, Callable, Mapping, Protocol, Sequence
@@ -151,7 +153,7 @@ def assemble_response(
 
 
 def bundle_dir(model_id: str, revision: str | None, hf_home: str) -> str:
-    """A REAL directory (``snapshot_download(local_dir=...)``) for one repo@revision.
+    """A REAL directory (hard links, :func:`materialize_bundle`) for one repo@revision.
 
     Not the HF cache's ``snapshots/`` tree, whose files are symlinks into
     ``blobs/`` — bundle loaders that refuse symlinked files would reject it.
@@ -160,6 +162,35 @@ def bundle_dir(model_id: str, revision: str | None, hf_home: str) -> str:
     name = _UNSAFE.sub("_", model_id.replace("/", "--"))
     rev = _UNSAFE.sub("_", revision or "main")
     return os.path.join(hf_home, BUNDLE_SUBDIR, f"{name}@{rev}")
+
+
+def materialize_bundle(snapshot: str, target: str) -> str:
+    """Make ``target`` a real-file copy of an HF-cache ``snapshot`` by HARD LINKS.
+
+    The cache's ``snapshots/<rev>/`` files are symlinks into ``blobs/``; each is
+    linked into ``target`` under its own relative path, so the bundle holds real
+    files that share the blobs' inodes: no bytes copied, no extra disk, no page
+    cache written. ``snapshot_download(local_dir=...)`` copied instead, and on
+    the Jetson AGX Orin (2026-10-14, plan t11) that 18 GB copy's page cache,
+    charged to the container's memory cgroup, pushed the engine past its 32g
+    limit (OOM-killed during CUDA-graph capture). Copies only when the two paths
+    sit on different filesystems (``EXDEV``). Idempotent.
+    """
+    for root, _dirs, files in os.walk(snapshot):
+        for name in files:
+            src = os.path.join(root, name)
+            dst = os.path.join(target, os.path.relpath(src, snapshot))
+            if os.path.exists(dst):
+                continue
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            real = os.path.realpath(src)
+            try:
+                os.link(real, dst)
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                shutil.copy2(real, dst)
+    return target
 
 
 def parse_knobs(env: Mapping[str, str]) -> tuple[int, float]:
@@ -306,7 +337,8 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
         from huggingface_hub import snapshot_download
 
         target = bundle_dir(cfg.model_id, cfg.revision, os.environ.get("HF_HOME", cfg.hf_home))
-        return snapshot_download(cfg.model_id, revision=cfg.revision, local_dir=target)
+        snapshot = snapshot_download(cfg.model_id, revision=cfg.revision)
+        return materialize_bundle(snapshot, target)
 
     def encode(self, record: dict) -> Any:
         return self._jsm.encode_record(self.tokenizer, record, max_length=self.max_length)
