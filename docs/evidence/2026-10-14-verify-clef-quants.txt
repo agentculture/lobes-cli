@@ -1,0 +1,107 @@
+verify-clef-quants (plan orin-decision-models, t23; also t13/t20 serving evidence)
+date: 2026-10-14 (UTC times below)
+source model: Cloudflare/clef @ 2f3de3dd85f379784083b0814d997ab627200f0c
+probe set: culture-dev/clef-probe-set @ cf9b911afc22d19baa535c71058630ee987b1e2a
+  (320 records / 418 questions; eval splits of boolq, snli, banking77,
+  commonsense_qa, ARC-Challenge, go_emotions + synthetic incident seeds
+  + 20 hand-written routing records)
+runner: scripts/clef_eval/run_probe.py (POST /v1/systemone, 2 warm-up requests,
+  one request at a time); scorer: scripts/clef_eval/compare.py
+promotion gate (user-set): top-1 agreement with bf16 >= 0.97 and no failed records
+
+== builds ==
+bf16      Cloudflare/clef original weights (reference)
+W4A16     culture-dev/clef-27b-GPTQ-W4A16-g64 (renamed from clef-W4A16-g64)
+          INT4 symmetric, group 64, GPTQ actorder=static, compressed-tensors
+          pack-quantized; bf16 kept: lm_head, embed_tokens, visual,
+          linear_attn.in_proj_a/b. 18 GB. Calibration 481 records / 140,614 tokens.
+NVFP4     culture-dev/clef-27b-NVFP4
+          FP4 weights + activations (block 16, FP8 E4M3 block scales, FP32 global
+          scales), nvfp4-pack-quantized; bf16 kept: lm_head, embed_tokens, visual,
+          every linear_attn projection. 27 GB. Same calibration.
+Both: llm-compressor 0.14.0, compressed-tensors 0.19.0, transformers 5.17.0,
+torch 2.13.0+cu130 (scripts/clef_quant/quantize.py). Copies on each box were
+checked file by file against the Spark's sha256 lists; HF LFS oids match.
+
+== serving ==
+bf16 / Spark (DGX Spark GB10): decider sidecar, DECIDER_BACKEND=clef
+  (transformers, Cloudflare's own code), image lobes-decider:odm-local
+  sha256:bd3c10347acaaeb6cda87ab5f4f6f644ebcce3e7cd729480a62470fec1fc7df2
+  (branch wheel on vllm/vllm-openai@sha256:c1c9f6fd... v0.31.0 base).
+  GPU memory held: 60,445 MiB.
+W4A16 / Orin (Jetson AGX Orin 64GB, sm_87, L4T R39.2, driver 595.78):
+  DECIDER_BACKEND=clef-vllm, vLLM 0.31.0, image lobes-decider-vllm:odm-local
+  sha256:b4a5c9f6cb3c51304e069bfccf188085eab6c310d433173519e39495aaad55fe
+  (FROM vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3).
+  aarch64 + sm_87: torch warns its sm_80 build does not list CC 8.7; matmul,
+  softmax, SDPA and vLLM _C ran correctly on the GPU.
+  Log: "Using MarlinLinearKernel for CompressedTensorsWNA16"
+       "Using FLASH_ATTN attention backend"
+       "Model loading took 14.84 GiB memory and 34.284528 seconds"
+       "GPU KV cache size: 94,890 tokens" (util 0.40, max_model_len 16384)
+  Container memory 21.65 GiB, beside the running orin-embed lanes.
+  No third-party patch or wrapper.
+  First boot FAILED: "There is no module or parameter named 'evidence_layers'
+  in Qwen3_5ForEmbedding" -- the single-file build had no
+  model.safetensors.index.json, so vLLM also loaded joint_head.safetensors.
+  Fixed by adding the index (quantize.py now writes it; commit e64fff1).
+NVFP4 / Spark: clef-vllm, image sha256:00aa2829d72a8f4d298e48d87db68068b3f02bc16d3a9d203e00dce39abb6458
+  Log: "Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM"
+       "Using FLASH_ATTN attention backend"
+       "Model loading took 22.9 GiB"; KV 8 GiB fixed = 114,005 tokens
+NVFP4 / Thor (Jetson AGX Thor, sm_110): clef-vllm, image
+  sha256:e51124d661efbeba5030a5df0f94ff4c15c0cc0579bb25c7e542eadfe458443a
+  Log: "Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM" (FP4, not Marlin)
+  run A: DECIDER_ATTENTION_BACKEND=TRITON_ATTN; run B: default (FLASH_ATTN).
+  KV fixed at 8 GiB (DECIDER_KV_CACHE_MEMORY_BYTES, commit 80c4382): the first
+  boot failed vLLM's profile assert "Initial free memory 54.64 GiB, current
+  free memory 63.01 GiB" (free memory rose mid-profile).
+  The worker/embed/rerank lanes were stopped for these runs (user-approved).
+
+== results (418 questions each; 0 failed records in every run) ==
+run                 top-1 acc  agreement  KL mean  KL max  mean top-1 p  gate
+bf16 / Spark          0.9354       --        --       --       0.921       ref
+W4A16 / Orin          0.9378     0.9880   0.00321  0.22434     0.918      PASS
+NVFP4 / Spark         0.9330     0.9785   0.00727  0.64822     0.916      PASS
+NVFP4 / Thor A        0.9211     0.9569   1.01303  1.91687     0.310      FAIL
+NVFP4 / Thor B        0.9187     0.9641   1.01306  1.91687     0.309      FAIL
+
+per source: accuracy / agreement with bf16
+source          n    bf16    W4A16/Orin   NVFP4/Spark  NVFP4/Thor A  NVFP4/Thor B
+arc_challenge   40   1.000   1.000/1.000  1.000/1.000  0.975/0.975   0.975/0.975
+banking77       40   0.975   0.975/1.000  0.975/1.000  0.975/1.000   0.975/1.000
+boolq           50   0.900   0.900/1.000  0.900/1.000  0.900/1.000   0.900/1.000
+commonsense_qa  40   0.850   0.875/0.975  0.900/0.950  0.875/0.925   0.900/0.950
+go_emotions     30   0.900   0.867/0.967  0.867/0.967  0.800/0.900   0.800/0.900
+incident       148   0.960   0.966/0.980  0.960/0.987  0.980/0.980   0.973/0.987
+routing         20   1.000   1.000/1.000  1.000/1.000  1.000/1.000   1.000/1.000
+snli            50   0.880   0.880/1.000  0.840/0.920  0.760/0.840   0.740/0.860
+
+latency ms, median/p90, by input length (one request at a time)
+run              <=1024 (n=279)  1025-4096 (n=13)  >4096, max 10,606 (n=28)
+bf16 / Spark        441/545         2974/3035         15356/16452
+W4A16 / Orin        505/627         3763/3833         22242/22524
+NVFP4 / Spark       181/233          858/905           5029/5453
+NVFP4 / Thor A      155/203          922/966           6165/6534
+NVFP4 / Thor B      153/199          857/906           4455/4759
+
+== findings ==
+- W4A16 on the Orin passes (98.8%). Promotable.
+- NVFP4 passes on the Spark (97.85%). On the Thor the SAME files are below the
+  line on top-1 agreement by 0.6-1.3 points (95.7%, 96.4%; the user notes the 97%
+  line was an arbitrary choice), but the real defect is calibration: under both
+  attention backends, with near-identical KL (1.01303 vs 1.01306) and flattened
+  probabilities (mean top-1 p 0.31 vs 0.92). Attention is ruled out; the cause
+  is an unidentified sm_110 difference (FP4 GEMM kernel on sm_110 or the bf16
+  head under torch on sm_110 -- untested). Next isolation: W4A16 on the Thor.
+- NVFP4 is the fastest build (about 2.4x bf16 on short records).
+
+== publish decision ==
+User decision, 2026-10-14 ~18:05 UTC: "Publish both please".
+Made public 2026-10-14T18:06:10Z (hf repos settings --public); verified with
+unauthenticated requests (API 200, README 200, private=false):
+  culture-dev/clef-27b-GPTQ-W4A16-g64  commit 4daaa224c6dc553b13120bb10414a7e7de7a5a95  (16 files)
+  culture-dev/clef-27b-NVFP4           commit 94093b9a819211f81aa41277570ee0d1f275ab11  (17 files)
+Both cards carry the results above; the NVFP4 card states the Thor issue with its
+numbers. The calibration and probe datasets (culture-dev/clef-calibration-set,
+culture-dev/clef-probe-set) stay PRIVATE (no decision made on them).
