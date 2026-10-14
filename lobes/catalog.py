@@ -65,12 +65,19 @@ ENGINE_SGLANG = "sglang"
 # through the sentence-transformers library (no vLLM pooling runner exists for
 # it). `serves_with_vllm` is False for it, so every vLLM-only fact is skipped.
 ENGINE_SENTENCE_TRANSFORMERS = "sentence-transformers"
+# A fifth engine value (decider-model plan t3): the decision-model sidecar. A
+# decision checkpoint (Cloudflare Clef, Strands decider) emits a schema-shaped
+# decision from a joint head, not free-form text, so it is NOT a vLLM generate
+# gear. `serves_with_vllm` is False for it, which keeps `lobes switch` from
+# offering it as a generate gear.
+ENGINE_DECIDER_SIDECAR = "decider-sidecar"
 
 #: Every engine a catalog entry may declare. ``tests/test_catalog.py`` pins it.
 ENGINES: tuple[str, ...] = (
     ENGINE_VLLM,
     ENGINE_LLAMA_CPP,
     ENGINE_SGLANG,
+    ENGINE_DECIDER_SIDECAR,
     ENGINE_SENTENCE_TRANSFORMERS,
 )
 
@@ -111,7 +118,7 @@ class SupportedModel:
     # as a documented compose edit. See docs/qwen3.6-35b-a3b-nvfp4.md.
     moe_backend: str = ""  # vLLM --moe-backend (e.g. "marlin") for MoE models
     speculative_config: str = ""  # vLLM --speculative-config JSON (e.g. MTP draft)
-    task: str = "generate"  # "generate" | "embed" | "score"
+    task: str = "generate"  # "generate" | "embed" | "score" | "decide"
     dimension: int = 0  # embedding output dimension; 0 for non-embedding models
     hf_overrides: str = ""  # vLLM --hf-overrides JSON string
     # Per-model pooling budget override. 0.0 = "use the shared embed/score default"
@@ -1391,6 +1398,50 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="embed",
         dimension=3584,
         modalities=("text", "code"),
+    ),
+    SupportedModel(
+        id="JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
+        # measured here (#108). Card read 2026-10-14:
+        # https://huggingface.co/JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
+        # A 4-bit build of Cloudflare/clef (Apache-2.0, Qwen3_5ForConditionalGeneration
+        # post-trained from Qwen3.8-27B; a decision model with a joint schema head,
+        # no free-form generation, served on POST /v1/systemone). Quant per card:
+        # GPTQ W4A16 group 64, compressed-tensors, embeddings int8, joint
+        # head/ViT/lm_head kept bf16, ~18 GB; the card tested it on vLLM 0.31.0
+        # with a qwen3_5 embed-quant patch. Never booted on this repo's hardware.
+        # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
+        role_hint="decider",
+        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="configured",
+        doc="colleague-stack.md",
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="cf572fbf05f14959d5542ebbac0b15631a8d1c08",
+    ),
+    SupportedModel(
+        id="StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+        # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
+        # measured here (#108). Card read 2026-10-14:
+        # https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+        # Apache-2.0; rank-16 LoRA plus a ~1M-parameter fp32 pointer head on
+        # Qwen/Qwen3.5-2B-Base; 4096-token window. bf16 (quantization "none").
+        # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
+        role_hint="candidate",
+        shape="decision model (Qwen3.5-2B-Base + rank-16 LoRA + pointer head)",
+        context="4K window",
+        native_max_model_len=4096,
+        tool_parser="",
+        quantization="none",
+        status="configured",
+        doc="colleague-stack.md",
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="216d1ccb46a9e9b036eb9187b248db98480f77d4",
     ),
 )
 
