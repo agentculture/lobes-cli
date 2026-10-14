@@ -57,6 +57,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from lobes.catalog import SUPPORTED_MODELS  # noqa: E402
 from lobes.cli._commands.switch import _build_plan, _serve_notices  # noqa: E402
+from lobes.cli._errors import ModelGearError  # noqa: E402
 from lobes.profiles.loader import builtin_names, resolve_profile  # noqa: E402
 from lobes.profiles.render import profile_env  # noqa: E402
 from lobes.profiles.shape_render import render_shape  # noqa: E402
@@ -306,7 +307,13 @@ def switch_plan_text() -> str:
     lines: list[str] = []
     for model in SUPPORTED_MODELS:
         args = _switch_args(model.id)
-        plan, messages = _build_plan(args, SWITCH_GOLDEN_PORT, model.id)
+        try:
+            plan, messages = _build_plan(args, SWITCH_GOLDEN_PORT, model.id)
+        except ModelGearError as exc:
+            # A refused gear (a task=decide checkpoint) has no plan: record the refusal.
+            lines.append(f"### {model.id}")
+            lines.append(f"  refused: {exc.message}")
+            continue
         notices = _serve_notices(model.id, args)
         lines.append(f"### {model.id}")
         lines += [f"  {key}={value}" for key, value in plan.items()]

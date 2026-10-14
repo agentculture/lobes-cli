@@ -464,36 +464,6 @@
   note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
   note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
 ### JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
-  VLLM_MODEL=JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
-  VLLM_SERVED_NAME=JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
-  VLLM_PORT=8000
-  VLLM_PURPOSE=balanced
-  VLLM_MACHINE=spark
-  VLLM_MAX_MODEL_LEN=8192
-  VLLM_GPU_MEM_UTIL=0.06
-  VLLM_ATTENTION_BACKEND=flashinfer
-  VLLM_MAX_NUM_SEQS=4
-  VLLM_MAX_NUM_BATCHED_TOKENS=8192
-  VLLM_TASK=decide
-  msg: tool-call parser: skipped (task=decide)
-  msg: quantization: skipped (decider-sidecar gear — quantization is baked into the checkpoint file, not a serve flag)
-  msg: max-model-len (embed/score default): 8192
-  msg: gpu-mem-util (embed/score default): 0.06
-  note: decider-sidecar-served gear — `lobes switch` configures the vLLM lane (decider-sidecar takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/colleague-stack.md.
+  refused: JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8 is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
 ### StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
-  VLLM_MODEL=StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
-  VLLM_SERVED_NAME=StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
-  VLLM_PORT=8000
-  VLLM_PURPOSE=balanced
-  VLLM_MACHINE=spark
-  VLLM_MAX_MODEL_LEN=8192
-  VLLM_GPU_MEM_UTIL=0.06
-  VLLM_ATTENTION_BACKEND=flashinfer
-  VLLM_MAX_NUM_SEQS=4
-  VLLM_MAX_NUM_BATCHED_TOKENS=8192
-  VLLM_TASK=decide
-  msg: tool-call parser: skipped (task=decide)
-  msg: quantization: skipped (decider-sidecar gear — quantization is baked into the checkpoint file, not a serve flag)
-  msg: max-model-len (embed/score default): 8192
-  msg: gpu-mem-util (embed/score default): 0.06
-  note: decider-sidecar-served gear — `lobes switch` configures the vLLM lane (decider-sidecar takes none of these flags: no --tool-call-parser, no --reasoning-parser, no --quantization). Serve it from its own lane instead (rendered from the machine profile + deployment shape); see docs/colleague-stack.md.
+  refused: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
