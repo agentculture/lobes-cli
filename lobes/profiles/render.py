@@ -19,6 +19,7 @@ muse       MUSE
 worker     WORKER
 associate  ASSOCIATE
 hand       HAND
+decider    DECIDER
 embedder   EMBED
 reranker   RERANK
 =========  ============
@@ -97,6 +98,10 @@ ROLE_ENV_PREFIX: dict[str, str] = {
     # already established in docker-compose.yml / env.example.
     "associate": "ASSOCIATE",
     "hand": "HAND",
+    # `decider` (orin-decision-models plan, t8) — DECIDER_FEASIBLE=false is its
+    # only profile-rendered key; a hosting shape adds DECIDER_DOMAINS (see
+    # lobes.profiles.shape_render.decider_domains_env).
+    "decider": "DECIDER",
     "embedder": "EMBED",
     "reranker": "RERANK",
     # `innereye` (issue #82) — the ComfyUI render tenant. Its only rendered

@@ -26,6 +26,7 @@ def test_role_env_prefix_covers_every_profile_role() -> None:
         "worker": "WORKER",
         "associate": "ASSOCIATE",
         "hand": "HAND",
+        "decider": "DECIDER",
         "embedder": "EMBED",
         "reranker": "RERANK",
         "innereye": "INNEREYE",

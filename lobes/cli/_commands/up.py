@@ -15,7 +15,10 @@ Roles → compose services (issue #81, t7)::
     worker    → vllm-worker        (the Qwen3.6-35B-A3B fast ground-work
                                     doer — opt-in, hosted only by a
                                     worker-hosting shape)
-    embedder  → vllm-embed         (Qwen3-Embedding-0.6B pooling gear)
+    decider   → decider-<domain>   (one generated sidecar per declared domain,
+                                    in docker-compose.shape.yml — opt-in;
+                                    `up decider` targets every one of them)
+    embedder  → vllm-embed        (Qwen3-Embedding-0.6B pooling gear)
     reranker  → vllm-rerank        (Qwen3-Reranker-0.6B score gear)
     stt       → stt                (Parakeet — audio overlay, opt-in)
     tts       → chatterbox         (Chatterbox — audio overlay, opt-in)
@@ -72,8 +75,15 @@ from lobes.cli import _role_swap, _runtime_ops
 from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
-from lobes.profiles.shape_render import GATEWAY_SERVICE, OPT_IN_CORE_ACTIVATION_ENV
+from lobes.profiles.shape_render import (
+    DECIDER_SERVICE_PREFIX,
+    GATEWAY_SERVICE,
+    OPT_IN_CORE_ACTIVATION_ENV,
+    decider_service,
+)
 from lobes.profiles.shapes import (
+    DECIDER_DEFAULT_DOMAIN,
+    DECIDER_ROLE,
     DEFAULT_HOSTED_ROLES,
     OPT_IN_CORE_ROLES,
     builtin_shape_names,
@@ -91,7 +101,12 @@ ROLE_SERVICE: dict[str, str] = {
     "worker": "vllm-worker",
     "associate": "vllm-associate",
     "hand": "vllm-hand",
-    "decider": "decider",
+    # `decider` (orin-decision-models plan, t8) runs one GENERATED service per
+    # domain (decider-<domain>, in docker-compose.shape.yml). The role's
+    # nominal service is the default domain's — what the exclusive-rival check
+    # inspects — and `lobes up decider` expands to every decider-* service the
+    # deployment's compose chain declares (see _decider_services).
+    "decider": decider_service(DECIDER_DEFAULT_DOMAIN),
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -401,6 +416,38 @@ def _lane_defined(deploy_dir: Path, target: str, services: list[str], chain: lis
     )
 
 
+def _decider_services(
+    deploy_dir: Path, target: str, services: list[str], chain: list[str]
+) -> list[str]:
+    """Every ``decider-<domain>`` service the compose chain declares, for ``decider``.
+
+    The domain list is shape data rendered into ``docker-compose.shape.yml``, so
+    the target expands at run time rather than from a static table. Any other
+    target passes through unchanged. No declared domain is a USER_ERROR naming
+    the real gap instead of compose's "no such service".
+    """
+    if target != DECIDER_ROLE:
+        return services
+    declared = sorted(
+        name
+        for name in _lanes.declared_services(deploy_dir, chain)
+        if name.startswith(DECIDER_SERVICE_PREFIX)
+    )
+    if declared:
+        return declared
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            "role 'decider' has no decider-<domain> service in this deployment's "
+            f"compose file set ({_compose.SHAPE_OVERLAY} declares none)"
+        ),
+        remediation=(
+            "declare [decider_domains.<name>] tables in a decider-hosting shape and "
+            "re-scaffold with 'lobes init --shape <name> --apply'"
+        ),
+    )
+
+
 def _resolve_build(args: argparse.Namespace, action: str) -> bool:
     """``--build``, refusing the one combination that cannot mean anything.
 
@@ -447,6 +494,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     build = _resolve_build(args, action)
     chain = _chain(deploy_dir, needs_audio, shape_present)
     _lane_defined(deploy_dir, target, services, chain)
+    services = _decider_services(deploy_dir, target, services, chain)
     argv = _compose.compose_service_argv(action, chain, services, build=build)
 
     # The card's exclusive-role guard and memory gate run after the checks

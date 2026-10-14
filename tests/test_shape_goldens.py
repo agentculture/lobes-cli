@@ -62,6 +62,7 @@ from lobes.profiles.shape_render import (
     REALTIME_SERVICE,
     ROLE_SERVICE,
     compose_profile,
+    decider_service,
     render_shape,
     role_service,
     shape_env,
@@ -69,6 +70,7 @@ from lobes.profiles.shape_render import (
 )
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
+    DECIDER_DEFAULT_DOMAIN,
     DEFAULT_HOSTED_ROLES,
     OPT_IN_CORE_ROLES,
     OPT_IN_ROLES,
@@ -577,6 +579,10 @@ def test_services_cover_exactly_the_hosted_feasible_roles() -> None:
 # stays empty until a future task adds an innereye-hosting shape.
 _SERVICE_PENDING_ROLES: frozenset[str] = frozenset()
 
+# Roles whose services are GENERATED per declared domain (decider,
+# orin-decision-models plan t8) rather than declared by a shipped template.
+_GENERATED_SERVICE_ROLES: frozenset[str] = frozenset({"decider"})
+
 
 def test_role_service_constants_exist_in_compose_templates() -> None:
     """The role->service map mirrors the SHIPPED compose files (kept honest here).
@@ -593,6 +599,13 @@ def test_role_service_constants_exist_in_compose_templates() -> None:
     service_keys = set(re.findall(r"^  ([a-z][a-z0-9-]*):\s*$", combined, re.MULTILINE))
     for role, service in ROLE_SERVICE.items():
         if role in _SERVICE_PENDING_ROLES:
+            continue
+        if role in _GENERATED_SERVICE_ROLES:
+            # Per-domain services are GENERATED into docker-compose.shape.yml
+            # from shape data, never declared by a static template — the
+            # nominal service is checked against the generator instead.
+            assert service == decider_service(DECIDER_DEFAULT_DOMAIN)
+            assert service not in service_keys, f"{service!r} must not be a static service"
             continue
         assert service in service_keys, f"{service!r} (role {role}) is not a compose service"
     # ...and the exemption is SELF-RETIRING: the moment the service lands in

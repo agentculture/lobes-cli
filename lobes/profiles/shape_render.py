@@ -75,7 +75,14 @@ from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.lane_keys import lane_env_key
 from lobes.profiles.render import profile_env, role_engine
 from lobes.profiles.schema import KNOB_LANE_ROLES, ROLES, ExclusiveRoles, Profile, RoleProfile
-from lobes.profiles.shapes import AUDIO_ROLES, OPT_IN_CORE_ROLES, OPT_IN_ROLES, Shape
+from lobes.profiles.shapes import (
+    AUDIO_ROLES,
+    DECIDER_DEFAULT_DOMAIN,
+    DECIDER_ROLE,
+    OPT_IN_CORE_ROLES,
+    OPT_IN_ROLES,
+    Shape,
+)
 
 # role -> the compose SERVICE (the `services:` key the compose template
 # declares) that serves it. The five core roles and `minor` live in the base
@@ -101,6 +108,13 @@ ROLE_SERVICE: dict[str, str] = {
     # role, so the eleventh role needs an entry here from the render that
     # merely KNOWS the name. Mirrors lobes.cli._commands.up.ROLE_SERVICE.
     "innereye": "comfyui",
+    # `decider` (orin-decision-models plan, t8) has one service PER DOMAIN,
+    # generated into docker-compose.shape.yml (see decider_compose_lines) —
+    # never a static template service. The role's NOMINAL service is its
+    # default domain's, which is what the role-keyed lifecycle tables
+    # (lobes up's exclusive-rival check, _role_swap) resolve a container from;
+    # `lobes up decider` itself targets every rendered decider-* service.
+    "decider": "decider-" + DECIDER_DEFAULT_DOMAIN,
     "minor": "vllm-minor",
 }
 
@@ -181,13 +195,145 @@ OPT_IN_CORE_ACTIVATION_ENV: dict[str, dict[str, str]] = {
     "innereye": {
         "INNEREYE_BASE_URL": "http://comfyui:8188",
     },
+    # `decider` carries no FIXED activation env: its wiring is the per-domain
+    # DECIDER_DOMAINS list, derived from the shape's own [decider_domains.*]
+    # data by decider_domains_env below. The empty entry keeps this table
+    # total over OPT_IN_CORE_ROLES (shape_env indexes it with a bare [role]).
+    "decider": {},
 }
 OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
     "muse": "muse",
     "worker": "worker",
     "associate": "associate",
     "innereye": "innereye",
+    # Every generated decider-<domain> service sits behind this one profile.
+    "decider": "decider",
 }
+
+
+# --- decider domains: one sidecar service per declared domain (t8) -----------
+#
+# The decider role's serving units are data (Shape.decider_domains), so their
+# services cannot live in a static template: each domain renders a
+# `decider-<domain>` service into the GENERATED docker-compose.shape.yml, built
+# from Dockerfile.decider, publishing NO host port (`expose` only — the gateway
+# is the sole way in, the sidecar has no auth), depending on nothing and
+# depended on by nothing (issue #222), and capped by the domain's own
+# `mem_limit` (on a unified-memory Jetson the GPU allocations count against the
+# container's cgroup). The gateway learns the set from DECIDER_DOMAINS —
+# `name=http://decider-<name>:8000` pairs, comma-separated, declaration order.
+DECIDER_SERVICE_PREFIX = "decider-"
+DECIDER_PORT = 8000
+DECIDER_DOCKERFILE = "Dockerfile.decider"
+DECIDER_DOMAINS_KEY = "DECIDER_DOMAINS"
+#: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
+DECIDER_DEFAULT_START_PERIOD = "900s"
+
+
+def decider_service(domain: str) -> str:
+    """The compose service (and container suffix) serving one decider domain."""
+    return DECIDER_SERVICE_PREFIX + domain
+
+
+def decider_domain_url(domain: str) -> str:
+    """The in-network origin the gateway dials for one decider domain."""
+    return f"http://{decider_service(domain)}:{DECIDER_PORT}"  # NOSONAR python:S5332
+
+
+def hosted_decider_domains(shape: Shape, profile: Profile) -> tuple[str, ...]:
+    """The decider domains a (shape, card) pair actually serves, in declaration order.
+
+    Empty unless the shape hosts ``decider``, the card leaves it feasible (a
+    ``base.toml``-style veto wins), and the shape declares at least one domain.
+    """
+    if not shape.hosts_role(DECIDER_ROLE):
+        return ()
+    if not compose_profile(shape, profile).role(DECIDER_ROLE).feasible:
+        return ()
+    return tuple(shape.decider_domains)
+
+
+def decider_domains_env(shape: Shape, profile: Profile) -> dict[str, str]:
+    """``{"DECIDER_DOMAINS": "general=http://decider-general:8000,..."}``, or ``{}``."""
+    domains = hosted_decider_domains(shape, profile)
+    if not domains:
+        return {}
+    value = ",".join(f"{domain}={decider_domain_url(domain)}" for domain in domains)
+    return {DECIDER_DOMAINS_KEY: value}
+
+
+def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
+    service = decider_service(domain)
+    environment = [
+        f"DECIDER_BACKEND={spec['backend']}",
+        f"DECIDER_MODEL={spec['model']}",
+    ]
+    if "revision" in spec:
+        environment.append(f"DECIDER_REVISION={spec['revision']}")
+    if "device" in spec:
+        environment.append(f"DECIDER_DEVICE={spec['device']}")
+    environment += [
+        f"DECIDER_PORT={DECIDER_PORT}",
+        "HF_HOME=/root/.cache/huggingface",
+        "HF_TOKEN=${HF_TOKEN:-}",
+        # An uncapped hf-xet download OOM-killed a lane on the zero-swap Orin.
+        "HF_HUB_DISABLE_XET=1",
+        "NVIDIA_VISIBLE_DEVICES=all",
+        "NVIDIA_DISABLE_REQUIRE=1",
+    ]
+    lines = [
+        f"  {service}:",
+        "    build:",
+        "      context: .",
+        f"      dockerfile: {DECIDER_DOCKERFILE}",
+        "      args:",
+        "        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}",
+        "        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}",
+        f"    container_name: model-gear-{service}",
+        f'    profiles: ["{OPT_IN_CORE_COMPOSE_PROFILE[DECIDER_ROLE]}"]',
+        "    restart: unless-stopped",
+        f'    mem_limit: "{spec["mem_limit"]}"',
+        "    runtime: nvidia",
+        "    ipc: host",
+        "    environment:",
+    ]
+    lines += [f'      - "{entry}"' for entry in environment]
+    lines += [
+        "    volumes:",
+        "      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface",
+        "    expose:",
+        f'      - "{DECIDER_PORT}"',
+        "    healthcheck:",
+        f'      test: ["CMD", "curl", "-f", "http://localhost:{DECIDER_PORT}/health"]',
+        "      interval: 30s",
+        "      timeout: 10s",
+        "      retries: 5",
+        f"      start_period: {spec.get('start_period', DECIDER_DEFAULT_START_PERIOD)}",
+    ]
+    return lines
+
+
+def decider_compose_lines(shape: Shape, profile: Profile) -> list[str]:
+    """The ``services:`` entries for every hosted decider domain, or ``[]``.
+
+    Rendered into the generated docker-compose.shape.yml by ``lobes init``.
+    Pure. Every attribute line is indented four or more spaces, so the stdlib
+    service-key scan in :mod:`lobes.runtime._compose` reads exactly one key per
+    domain.
+    """
+    domains = hosted_decider_domains(shape, profile)
+    if not domains:
+        return []
+    lines = [
+        "  # Decider domains (orin-decision-models): one sidecar per domain, built from",
+        f"  # {DECIDER_DOCKERFILE}. NO host port (`expose` only — the sidecar has no auth,",
+        "  # the gateway is the sole way in), no depends_on either way (issue #222), and",
+        "  # a per-domain mem_limit (Jetson GPU memory counts against the cgroup). The",
+        f"  # gateway reaches them through {DECIDER_DOMAINS_KEY} in .env.",
+    ]
+    for domain in domains:
+        lines += _decider_service_lines(domain, shape.decider_domains[domain])
+    return lines
 
 
 # --- the ENGINE axis: which compose lane actually serves a role -------------
@@ -307,7 +453,12 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
-        if shape.hosts_role(role):
+        if role == DECIDER_ROLE and shape.hosts_role(role) and not shape.decider_domains:
+            # Hosted but UNWIRED: a decider-hosting shape that declares no
+            # domain has nothing to serve, so it says so explicitly instead of
+            # leaving a feasible role with no backend behind it.
+            roles[role] = RoleProfile(feasible=False)
+        elif shape.hosts_role(role):
             # Opt-in core roles take the SAME overlay as the default ones: a
             # card that is SILENT on the role leaves RoleProfile's feasible=True
             # default in place, so the shape's override lands; a card that
@@ -448,6 +599,8 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
         if shape.hosts_role(role) and composed.role(role).feasible:
             env.update(OPT_IN_CORE_ACTIVATION_ENV[role])
             compose_profiles.append(OPT_IN_CORE_COMPOSE_PROFILE[role])
+    # Decider: its wiring is the per-domain list, derived from the shape's data.
+    env.update(decider_domains_env(shape, profile))
     # Specialist embed/rerank lanes (orin-embedding-specialist): each hosted
     # lane is un-gated by its own compose profile (the overlay's service is
     # `embed-<lane>`), and wired into the gateway by its <LANE>_BASE_URL. Only
@@ -478,6 +631,10 @@ def shape_services(shape: Shape, profile: Profile) -> tuple[str, ...]:
     composed = compose_profile(shape, profile)
     for role in ROLES:
         role_profile = composed.role(role)
+        if role == DECIDER_ROLE:
+            # One generated service per hosted domain, never ROLE_SERVICE's.
+            services.update(decider_service(d) for d in hosted_decider_domains(shape, profile))
+            continue
         if shape.hosts_role(role) and role_profile.feasible:
             # Engine-aware: a role whose composed model is a non-vLLM gear runs
             # its own lane, never ROLE_SERVICE's vLLM one (see role_service).
