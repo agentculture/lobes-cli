@@ -1,0 +1,47 @@
+accept-clef-bf16-interim-spark (plan orin-decision-models, t17 — stage A only)
+date: 2026-10-14 (UTC)
+box: DGX Spark GB10 (128 GB unified)
+
+SCOPE: stage A only. Stage B (routing decider:general through the Spark,
+Orin and Thor gateways) was DROPPED by approved deviation d6: Clef is kept
+only as the W4A16 build on the Jetson AGX Orin, served through the orin-decider
+shape (t9) and its live acceptance (t11); the Spark interim is stopped after
+t11 passes. The acceptance criterion "answers through the Spark gateway and,
+via the mesh, from the Orin and Thor gateways" was therefore NOT exercised
+here and is not claimed.
+
+== what was served ==
+service    decider-general (container model-gear-decider-general), added via
+           ~/.lobes/docker-compose.override.yml (the Spark compose is hand-kept)
+backend    DECIDER_BACKEND=clef (Cloudflare's own transformers code and
+           joint_schema_model.py from the checkpoint)
+model      Cloudflare/clef @ 2f3de3dd85f379784083b0814d997ab627200f0c (bf16),
+           mounted read-only from a verified local snapshot
+image      lobes-decider:odm-local
+           sha256:bd3c10347acaaeb6cda87ab5f4f6f644ebcce3e7cd729480a62470fec1fc7df2
+           (branch wheel on vllm/vllm-openai@sha256:c1c9f6fd… v0.31.0 base)
+
+== backup before the change ==
+~/odm/backups/lobes-20261014-180402-pre-clef-interim.tgz
+~/.lobes/docker-compose.override.yml.bak-20261014-180402-pre-clef-interim
+
+== memory ==
+freed beforehand: host 'available' 9,046 -> 100,108 MiB, by stopping a
+  non-fleet container with the operator's go (not named, by rule)
+before the sidecar started (15:05 UTC): used 8,792 MiB, available 115,818 MiB
+sidecar healthy 15:10:50 UTC (load ~5 min, ~52 GB of bf16 weights)
+after load: used 62,443 MiB (+~53.7 GB), available 62,166 MiB;
+  after the probe run: used 72,110 MiB
+GPU memory held by the sidecar process: 60,445 MiB
+
+== probe (culture-dev/clef-probe-set @ cf9b911a, 320 records / 418 questions),
+   direct to the sidecar, one request at a time ==
+top-1 accuracy 0.9354, failed records 0
+per-question probabilities: max |sum(p) - 1| = 0.0002 (criterion ±0.01)
+latency by input length (median / p90):
+  <= 1024 tokens  (n=279)   441 / 545 ms
+  1025-4096       (n=13)   2974 / 3035 ms
+  > 4096 (to 10,606, n=28) 15.4 s median, 16.7 s max
+
+These bf16 results are the reference the quantized builds were scored against
+(docs/evidence/2026-10-14-verify-clef-quants.txt).
