@@ -136,8 +136,12 @@ from lobes.gateway._replicas import (
     ReplicaState,
 )
 from lobes.gateway._routing import (
+    DECIDE_TASK,
+    DECIDER_MODEL_HEADER,
+    DECIDER_ROLE,
     RENDER_PATH,
     RENDER_TASK,
+    SYSTEMONE_PATH,
     Backend,
     RenderRoute,
     RoutingTable,
@@ -146,10 +150,12 @@ from lobes.gateway._routing import (
     infeasible_owner,
     is_audio_path,
     is_render_path,
+    is_systemone_path,
     is_unknown_model,
     list_models_payload,
     order_backends,
     parse_render_route,
+    resolve_decider_route,
     resolve_model,
     supported_models_payload,
 )
@@ -4017,6 +4023,71 @@ def handle_audio_request(
     return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
 
 
+def handle_systemone(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: Iterable[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+) -> GatewayResponse:
+    """Route one ``POST /v1/systemone`` to the decider domain the header names.
+
+    The decider wire (``{state, questions}``) carries NO ``model`` field, so
+    the domain comes from ``X-Lobes-Model: decider:<name>`` (absent ⇒
+    ``general``) via :func:`lobes.gateway._routing.resolve_decider_route`, and
+    the body is forwarded **byte-identical** — no :func:`rewrite_model`, no
+    re-serialisation. The answer is relayed streamed, unchanged.
+
+    **Never shed** (:data:`lobes.gateway._pressure_policy.NEVER_SHED_ROLES`):
+    this path reads no pressure at all, so swap/iowait never turn a decision
+    into a 429. Refusals use the gateway's usual envelopes: 404
+    ``model_not_found`` for an undeclared domain or a non-decider spelling,
+    404 ``role_infeasible`` when no decider is wired here, and 503
+    ``backend_unavailable`` (retryable) when the wired sidecar does not answer.
+    """
+    route = resolve_decider_route(table, _request_header(req_headers, DECIDER_MODEL_HEADER))
+    if route.kind == "model_not_found":
+        return GatewayResponse(
+            status=404,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_model_not_found_body(route.requested or "(unspecified)"),
+        )
+    if route.kind == "role_infeasible":
+        return GatewayResponse(
+            status=404,
+            headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+            body=_role_infeasible_body(route.requested, DECIDER_ROLE),
+        )
+    backend = Backend(
+        name=DECIDER_ROLE, base_url=route.base_url, served_name=route.requested, task=DECIDE_TASK
+    )
+    try:
+        up = open_upstream(
+            backend,
+            path,
+            body,
+            filter_headers(req_headers),
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        return GatewayResponse(
+            status=503,
+            headers=[
+                ("Content-Type", _CONTENT_TYPE_JSON),
+                ("Retry-After", str(BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)),
+            ],
+            body=_error_body(
+                f"decider domain `{route.domain}` did not answer — retry shortly",
+                [str(exc)],
+                error_type="backend_unavailable",
+            ),
+            attempts=[str(exc)],
+        )
+    return GatewayResponse(status=up.status, headers=up.headers, upstream=up, streaming=True)
+
+
 def handle_audio_post(
     cfg: ServerConfig,
     path: str,
@@ -4123,6 +4194,9 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
             f"GET {RENDER_PATH}/jobs/{{job_id}}/artifacts",
             f"GET {RENDER_PATH}/jobs/{{job_id}}/artifacts/{{filename}}",
         ]
+    if table.decider_domains and DECIDER_ROLE not in table.infeasible:
+        # The decider lane — advertised only when it would actually answer.
+        eps.append(f"POST {SYSTEMONE_PATH}")
     # Per-role audio honesty (issue #129): each lane is advertised iff it is
     # answerable HERE — served by the local overlay (and not declared off) or
     # forwarded to a declared peer. A declared-off, unproxied lane 404s
@@ -5848,6 +5922,18 @@ class _Handler(BaseHTTPRequestHandler):
                     probe_audio_ready(cfg.audio_url) if cfg.audio_url else None
                 ),
                 mesh_snapshot=mesh_snapshot,
+            )
+        elif is_systemone_path(self.path):
+            # /v1/systemone → the decider lane, path-routed by the
+            # X-Lobes-Model header (no `model` field in the body). Deliberately
+            # BEFORE the pressure read below: a decider request is never shed.
+            resp = handle_systemone(
+                self.table,
+                self.server_config,
+                self.path,
+                list(self.headers.items()),
+                body,
+                open_upstream,
             )
         elif is_render_path(self.path):
             # /v1/render/* → path-routed to the innereye ComfyUI tenant, the
