@@ -166,7 +166,9 @@ _HOSTED_BUT_UNWIRED_ROLES: frozenset[str] = frozenset()
 # as the audio overlay is — /v1/models is the set of ids a caller may put in a
 # `model` field, and this is not one of them (see
 # lobes.gateway._routing.model_routed_backends).
-_PATH_ROUTED_ROLES: frozenset[str] = frozenset({"innereye"})
+# `decider` (orin-decision-models t9) is the second: its facade is POST
+# /v1/systemone, selected by the X-Lobes-Model header, never a `model` field.
+_PATH_ROUTED_ROLES: frozenset[str] = frozenset({"innereye", "decider"})
 
 
 def _peer_origin(role: str) -> str:
@@ -297,6 +299,14 @@ def test_matrix_enumerates_the_documented_reference_cells() -> None:
         ("orin-embed", "worker"),
         ("orin-embed", "associate"),
         ("orin-embed", "hand"),
+        # orin-decider (orin-decision-models t9) is orin-embed plus the
+        # decider: it drops the same six generate roles.
+        ("orin-decider", "cortex"),
+        ("orin-decider", "senses"),
+        ("orin-decider", "muse"),
+        ("orin-decider", "worker"),
+        ("orin-decider", "associate"),
+        ("orin-decider", "hand"),
         ("orin-small", "cortex"),
         ("orin-small", "senses"),
         ("orin-small", "muse"),
@@ -375,6 +385,11 @@ def _gateway_env(shape: Shape, *, peers: bool = False) -> dict[str, str]:
     for role in CORE_ROLES:
         backend = ROLE_BACKEND[role]
         if shape.hosts_role(role):
+            if role == "decider":
+                # Verbatim from shape_render.decider_domains_env (and the
+                # orin-decider goldens): one domain map, no served-name key.
+                env["DECIDER_DOMAINS"] = "general=http://decider-general:8000"
+                continue
             url_key, name_key = _WIRE_ENV[role]
             if name_key is None:
                 # innereye: the rendered key, verbatim from shape_render's

@@ -286,6 +286,8 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "orin-cortex",
         "orin-associate",
         "orin-embed",
+        # orin-embed plus decider:general (orin-decision-models t9).
+        "orin-decider",
         # The innereye/cortex co-residency "way out" (issue #268, plan
         # innereye-lobes-hosts-comfyui, t1): the DGX Spark hosts the opt-in
         # `innereye` ComfyUI tenant and drops `cortex` to a peer, because

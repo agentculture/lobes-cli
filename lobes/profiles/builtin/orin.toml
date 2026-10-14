@@ -114,9 +114,9 @@ gpu_access = "runtime"
 #                    check seeing 42.89/61.34 GiB free. Fits beside NEITHER of the
 #                    other two. docs/evidence/2026-08-25-measure-associate-budget-orin.txt
 [[exclusive_roles]]
-roles = ["cortex", "senses", "associate"]
-shapes = ["orin-cortex", "orin-lobe", "orin-associate"]
-reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB; MEASURED 2026-08-25: associate (Lightning NVFP4 at util 0.63, 128000) holds ~37.7 GiB resident (docker stats) with vLLM's startup check seeing 42.89/61.34 GiB free — against 61.34 GiB of unified memory with ZERO swap"
+roles = ["cortex", "senses", "associate", "decider"]
+shapes = ["orin-cortex", "orin-lobe", "orin-associate", "orin-decider"]
+reason = "MEASURED 2026-08-23: cortex (llama.cpp GGUF Q4_K_M at 262144) holds ~33 GiB resident and senses holds 0.45 x 61.3 = ~27.6 GiB; MEASURED 2026-08-25: associate (Lightning NVFP4 at util 0.63, 128000) holds ~37.7 GiB resident (docker stats) with vLLM's startup check seeing 42.89/61.34 GiB free; MEASURED 2026-10-14: decider (Clef W4A16, clef-vllm at util 0.40, 16384) holds 21.65 GiB — against 61.34 GiB of unified memory with ZERO swap"
 
 # --- the NVFP4 architecture line, and the engine that steps around it --------
 #

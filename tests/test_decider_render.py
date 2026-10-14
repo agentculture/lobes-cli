@@ -101,10 +101,16 @@ def test_decider_backends_mirror_the_sidecar() -> None:
 # --- machine-as-brain / non-hosting shapes render nothing ---------------------
 
 
+#: The built-in shapes that host the decider (t9). Every other one renders nothing.
+DECIDER_HOSTING_SHAPES = ("orin-decider",)
+
+
 @pytest.mark.parametrize("card", builtin_names())
 def test_no_builtin_shape_renders_any_decider_key_or_service(card: str) -> None:
     profile = resolve_profile(card)
     for name in builtin_shape_names():
+        if name in DECIDER_HOSTING_SHAPES:
+            continue
         rendered = render_shape(resolve_shape(name), profile)
         assert not [k for k in rendered.env if k.startswith("DECIDER_")], name
         assert not [s for s in rendered.services if s.startswith("decider")], name
@@ -240,6 +246,30 @@ def test_override_plan_names_the_decider_services(tmp_path) -> None:
         ({"general": {"backend": "clef", "model": "${X}", "mem_limit": "1g"}}, {}, "model"),
         ({"general": {"backend": "clef", "model": CLEF, "mem_limit": "lots"}}, {}, "mem_limit"),
         ({}, {"overrides": {"decider": {"gpu_mem_util": 0.3}}}, "decider"),
+        (
+            {
+                "general": {
+                    "backend": "clef-vllm",
+                    "model": CLEF,
+                    "mem_limit": "1g",
+                    "gpu_mem_util": "lots",
+                }
+            },
+            {},
+            "gpu_mem_util",
+        ),
+        (
+            {
+                "general": {
+                    "backend": "clef-vllm",
+                    "model": CLEF,
+                    "mem_limit": "1g",
+                    "max_model_len": "16k",
+                }
+            },
+            {},
+            "max_model_len",
+        ),
     ],
 )
 def test_malformed_decider_declarations_are_load_errors(domains, extra, fragment) -> None:
@@ -319,3 +349,30 @@ def test_a_clef_vllm_domain_builds_from_the_vllm_image() -> None:
 def test_decider_hosting_shape_scaffolds_the_vllm_dockerfile_too() -> None:
     templates = init_cmd._templates(True, False, shape=_decider_shape(_two_domains()))
     assert templates["fleet/Dockerfile.decider-vllm"] == "Dockerfile.decider-vllm"
+
+
+def test_engine_budget_keys_render_into_the_sidecar_env() -> None:
+    # t9: the clef-vllm engine's share and window are per-domain shape data;
+    # a domain that omits them keeps the sidecar's own defaults.
+    domains = {
+        "general": {
+            "backend": "clef-vllm",
+            "model": "org/clef-w4a16",
+            "mem_limit": "32g",
+            "gpu_mem_util": "0.40",
+            "max_model_len": "16384",
+        }
+    }
+    env = _override_doc(_decider_shape(domains), _card())["services"]["decider-general"][
+        "environment"
+    ]
+    assert "DECIDER_GPU_MEM_UTIL=0.40" in env
+    assert "DECIDER_MAX_MODEL_LEN=16384" in env
+    plain = _override_doc(_decider_shape(_two_domains()), _card())["services"]
+    for name, svc in plain.items():
+        if not name.startswith("decider-"):
+            continue
+        assert not any(
+            e.startswith(("DECIDER_GPU_MEM_UTIL", "DECIDER_MAX_MODEL_LEN"))
+            for e in svc["environment"]
+        )

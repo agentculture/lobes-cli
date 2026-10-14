@@ -292,6 +292,10 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
         environment.append(f"DECIDER_REVISION={spec['revision']}")
     if "device" in spec:
         environment.append(f"DECIDER_DEVICE={spec['device']}")
+    if "gpu_mem_util" in spec:
+        environment.append(f"DECIDER_GPU_MEM_UTIL={spec['gpu_mem_util']}")
+    if "max_model_len" in spec:
+        environment.append(f"DECIDER_MAX_MODEL_LEN={spec['max_model_len']}")
     environment += [
         f"DECIDER_PORT={DECIDER_PORT}",
         "HF_HOME=/root/.cache/huggingface",
@@ -347,7 +351,7 @@ def decider_compose_lines(shape: Shape, profile: Profile) -> list[str]:
     lines = [
         "  # Decider domains (orin-decision-models): one sidecar per domain, built from",
         f"  # {DECIDER_DOCKERFILE}. NO host port (`expose` only — the sidecar has no auth,",
-        "  # the gateway is the sole way in), no depends_on either way (issue #222), and",
+        "  # the gateway is the sole way in), no start-order edge either way (issue #222), and",
         "  # a per-domain mem_limit (Jetson GPU memory counts against the cgroup). The",
         f"  # gateway reaches them through {DECIDER_DOMAINS_KEY} in .env.",
     ]

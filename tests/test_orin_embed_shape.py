@@ -97,7 +97,9 @@ def test_services_do_not_include_associate() -> None:
 
 def test_shapes_without_lanes_render_no_lane_keys() -> None:
     for name in builtin_shape_names():
-        if name == _SHAPE:
+        # orin-decider (orin-decision-models t9) is orin-embed plus the decider,
+        # so it carries the same lane.
+        if name in (_SHAPE, "orin-decider"):
             continue
         shape = resolve_shape(name)
         assert shape.lanes == ()

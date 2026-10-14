@@ -260,6 +260,8 @@ def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], d
 #     mem_limit = "32g"                  # REQUIRED container memory cap
 #     device = "cuda"                    # optional (DECIDER_DEVICE)
 #     start_period = "900s"              # optional healthcheck grace (default 900s)
+#     gpu_mem_util = "0.40"              # optional, clef-vllm (DECIDER_GPU_MEM_UTIL)
+#     max_model_len = "16384"            # optional, clef-vllm (DECIDER_MAX_MODEL_LEN)
 #
 #     [decider_domains.triage]           # any further domain: model=decider:triage
 #     backend = "strands"
@@ -285,7 +287,14 @@ DECIDER_DEFAULT_DOMAIN = "general"
 DECIDER_BACKENDS: tuple[str, ...] = ("clef", "strands", "clef-vllm")
 DECIDER_DOMAIN_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 _DECIDER_REQUIRED_KEYS: tuple[str, ...] = ("backend", "model", "mem_limit")
-_DECIDER_OPTIONAL_KEYS: tuple[str, ...] = ("revision", "device", "start_period")
+_DECIDER_OPTIONAL_KEYS: tuple[str, ...] = (
+    "revision",
+    "device",
+    "start_period",
+    # clef-vllm engine budget (t9): DECIDER_GPU_MEM_UTIL / DECIDER_MAX_MODEL_LEN.
+    "gpu_mem_util",
+    "max_model_len",
+)
 _DECIDER_KEYS: tuple[str, ...] = _DECIDER_REQUIRED_KEYS + _DECIDER_OPTIONAL_KEYS
 # Values land verbatim in a generated compose file (inside double-quoted YAML
 # scalars, where compose also interpolates `$`), so each is held to a plain
@@ -298,6 +307,8 @@ _DECIDER_VALUE_RE: dict[str, re.Pattern[str]] = {
     "device": _PLAIN,
     "mem_limit": re.compile(r"[0-9]+(\.[0-9]+)?[bkmgBKMG]?"),
     "start_period": re.compile(r"([0-9]+(ms|s|m|h))+"),
+    "gpu_mem_util": re.compile(r"0?\.[0-9]+"),
+    "max_model_len": re.compile(r"[1-9][0-9]*"),
 }
 _DECIDER_VALUE_HINT: dict[str, str] = {
     "backend": f"choose one of: {', '.join(DECIDER_BACKENDS)}",
@@ -306,6 +317,8 @@ _DECIDER_VALUE_HINT: dict[str, str] = {
     "device": "a torch device, e.g. 'cuda' or 'cuda:0'",
     "mem_limit": "a compose memory size, e.g. '24g' or '4096m'",
     "start_period": "a compose duration, e.g. '900s' or '15m'",
+    "gpu_mem_util": "a fraction of GPU memory in (0, 1), e.g. '0.40'",
+    "max_model_len": "a positive token count, e.g. '16384'",
 }
 
 
