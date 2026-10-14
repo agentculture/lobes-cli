@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T08:10:08Z",
+  "updated": "2026-10-14T10:36:15Z",
   "claims": [
     {
       "id": "c1",
@@ -1114,6 +1114,17 @@
       "skipped_check": "",
       "refs": [
         "t21"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "assumption-for-measurement",
+      "what": "status update at 10:06 UTC reported the W4A16 run at 48/65 with ~20 min left; it had already been stalled at 48/65 since 09:38 (no log-timestamp check) \u2014 the hang was found only at the next tick",
+      "skipped_check": "last-log-line timestamp check",
+      "refs": [
+        "t19"
       ],
       "origin": "llm",
       "status": "proposed"
