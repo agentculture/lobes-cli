@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T06:34:54Z",
+  "updated": "2026-10-14T08:10:08Z",
   "claims": [
     {
       "id": "c1",
@@ -1092,6 +1092,28 @@
       "skipped_check": "audit third-party Python before executing it",
       "refs": [
         "t1"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "control-absent",
+      "what": "t7 agent wrote tests after the implementation and never saw them fail first (TDD red step skipped)",
+      "skipped_check": "red-before-green",
+      "refs": [
+        "t7"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "assumption-for-measurement",
+      "what": "t21 clef-vllm backend assumes vLLM 0.31's pooling runner works on hybrid GDN+attention Qwen3.5 (vLLM's own comments say no hybrid pooling models exist), that a background-thread LLM() start works, that the v0.31.0 image ships uv, and that its arm64 build carries sm_87 kernels \u2014 all unverified until t13",
+      "skipped_check": "",
+      "refs": [
+        "t21"
       ],
       "origin": "llm",
       "status": "proposed"

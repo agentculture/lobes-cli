@@ -2,7 +2,7 @@
   "plan_slug": "orin-decision-models",
   "schema_version": 2,
   "created": "2026-10-14T06:05:06Z",
-  "updated": "2026-10-14T06:42:26Z",
+  "updated": "2026-10-14T08:10:16Z",
   "deviations": [
     {
       "id": "d1",
@@ -69,6 +69,43 @@
     }
   ],
   "evidence": [],
-  "deltas": [],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "added",
+      "behavior_text": "DECIDER_BACKEND=clef-vllm refuses image/video requests with 422 (text-only), while the transformers clef backend accepts media",
+      "caused_by": [
+        "t21"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "added",
+      "behavior_text": "new gateway env key DECIDER_DOMAIN_MODELS (name=model[@revision]) rendered from [decider_domains.*] and passed through to the gateway, feeding the per-domain checkpoint/quant advert",
+      "caused_by": [
+        "t7"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "a decider domain announced by two mesh members with different fingerprints answers 409 decider_domain_conflict (no upstream call)",
+      "caused_by": [
+        "t7"
+      ],
+      "evidence_refs": [],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
