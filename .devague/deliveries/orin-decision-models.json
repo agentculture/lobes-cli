@@ -2,7 +2,7 @@
   "plan_slug": "orin-decision-models",
   "schema_version": 2,
   "created": "2026-10-14T06:05:06Z",
-  "updated": "2026-10-14T08:59:10Z",
+  "updated": "2026-10-14T08:59:17Z",
   "deviations": [
     {
       "id": "d1",
@@ -46,7 +46,7 @@
         "t11"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "classification": "needs-follow-up",
       "seq": 3
     },
