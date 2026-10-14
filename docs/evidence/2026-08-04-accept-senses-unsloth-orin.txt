@@ -173,7 +173,7 @@ config.json read from the DOWNLOADED checkpoint (not the web card):
   thor-worker's 0.45 booted first try). Record both.
 
 --- peer state verified the same day (for the t10 wiring) ---------------------
-  Thor gateway  http://100.105.216.63:8000  and  thor.tail0be7e0.ts.net:8000
+  Thor gateway  http://100.64.0.11:8000  and  thor.TAILNET.ts.net:8000
     version 0.54.6, answers KEYLESS (no Authorization header) -> HTTP 200
     worker: model=unsloth/Qwen3.6-35B-A3B-NVFP4 ready=True feasible=True
             loaded=True context=262144
@@ -404,7 +404,7 @@ cortex -> Spark  (preserved)          VERIFIED
   it means "this box does not HOST it"; proxied+ready is what says it is usable.)
 
 worker -> Thor  (new)                 WIRED, NOT YET ACTIVE
-  Peer side verified live and keyless: thor.tail0be7e0.ts.net:8000 answers
+  Peer side verified live and keyless: thor.TAILNET.ts.net:8000 answers
   a chat request with NO Authorization header, worker ready=True/feasible=True/
   loaded=True, model=unsloth/Qwen3.6-35B-A3B-NVFP4 at ctx 262144. So no
   WORKER_PEER_API_KEY is needed and none was set.

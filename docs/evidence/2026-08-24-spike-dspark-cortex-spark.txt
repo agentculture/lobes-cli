@@ -11,7 +11,7 @@
     PRIMARY_PEER_PROXY  = <unset>
     PRIMARY_FEASIBLE    = <unset>
   peer orin@orin      reachable   deploy_dir=/home/orin/.lobes
-    PRIMARY_PEER_ORIGIN = http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_ORIGIN = http://spark.TAILNET.ts.net:8001
     PRIMARY_PEER_PROXY  = false
     PRIMARY_FEASIBLE    = true
 
@@ -61,7 +61,7 @@ model-gear-vllm-primary  Up 3 days (healthy)  image=vllm/vllm-openai
     PRIMARY_PEER_PROXY  = <unset>
     PRIMARY_FEASIBLE    = <unset>
   peer orin@orin      reachable   deploy_dir=/home/orin/.lobes
-    PRIMARY_PEER_ORIGIN = http://spark.tail0be7e0.ts.net:8001
+    PRIMARY_PEER_ORIGIN = http://spark.TAILNET.ts.net:8001
     PRIMARY_PEER_PROXY  = false
     PRIMARY_FEASIBLE    = true
 

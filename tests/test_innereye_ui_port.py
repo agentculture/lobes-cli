@@ -148,7 +148,7 @@ class TestBindForms:
             ("8188", "127.0.0.1:8188:8188"),
             (" 8188 ", "127.0.0.1:8188:8188"),
             ("9000", "127.0.0.1:9000:8188"),
-            ("100.127.105.72:8188", "100.127.105.72:8188:8188"),
+            ("100.64.0.10:8188", "100.64.0.10:8188:8188"),
             ("192.168.1.157:9000", "192.168.1.157:9000:8188"),
             ("127.0.0.1:8188", "127.0.0.1:8188:8188"),
             ("0.0.0.0:8188", "0.0.0.0:8188:8188"),  # nosec B104 — the explicit opt-in
@@ -292,8 +292,8 @@ class TestValueGrammar:
         assert _overlay(target)["services"][_SERVICE]["ports"] == ["127.0.0.1:8188:8188"]
 
     def test_interface_form_binds_that_interface(self, tmp_path, monkeypatch) -> None:
-        target = _init_with_knob(tmp_path, monkeypatch, "100.127.105.72:8188")
-        assert _overlay(target)["services"][_SERVICE]["ports"] == ["100.127.105.72:8188:8188"]
+        target = _init_with_knob(tmp_path, monkeypatch, "100.64.0.10:8188")
+        assert _overlay(target)["services"][_SERVICE]["ports"] == ["100.64.0.10:8188:8188"]
 
     def test_overlay_is_scrubbed_when_the_knob_is_removed(self, tmp_path, monkeypatch) -> None:
         target = _init_with_knob(tmp_path, monkeypatch, "8188")
@@ -338,7 +338,7 @@ class TestNotAPort:
         assertion is narrowed to the resolver: no CLI verb, and no part of the
         render path, may hand ``INNEREYE_UI_PORT``'s value to ``parse_port``.
         """
-        knob = "100.127.105.72:8188"
+        knob = "100.64.0.10:8188"
         real_parse_port = _env.parse_port
 
         def _spy(value, source="VLLM_PORT"):
@@ -349,13 +349,13 @@ class TestNotAPort:
         monkeypatch.setattr(_env, "parse_port", _spy)
         target = _init_with_knob(tmp_path, monkeypatch, knob)
         assert main(["status", "--compose-dir", str(target), "--json"]) in (0, 1)
-        assert init_cmd.innereye_ui_publish(knob) == "100.127.105.72:8188:8188"
+        assert init_cmd.innereye_ui_publish(knob) == "100.64.0.10:8188:8188"
 
     def test_cli_port_resolution_ignores_the_knob(self, tmp_path, monkeypatch) -> None:
         """Setting the knob does not break any verb that resolves a port."""
-        target = _init_with_knob(tmp_path, monkeypatch, "100.127.105.72:8188")
+        target = _init_with_knob(tmp_path, monkeypatch, "100.64.0.10:8188")
         env = _env.read_env_file(target / ".env")
-        assert env[_KEY] == "100.127.105.72:8188"
+        assert env[_KEY] == "100.64.0.10:8188"
         assert main(["status", "--compose-dir", str(target), "--json"]) in (0, 1)
 
 

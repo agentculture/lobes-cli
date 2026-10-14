@@ -223,15 +223,20 @@ class TestLinearResample:
 
 class TestValidateClipDuration:
     def test_under_limit_is_ok(self, lsw) -> None:
-        assert lsw.validate_clip_duration(16000 * 29, 16000) is None
+        assert lsw.validate_clip_duration(16000 * 29, 16000, 30) is None
 
     def test_exactly_at_limit_is_ok(self, lsw) -> None:
-        assert lsw.validate_clip_duration(16000 * 30, 16000) is None
+        assert lsw.validate_clip_duration(16000 * 30, 16000, 30) is None
 
     def test_over_limit_is_refused(self, lsw) -> None:
-        msg = lsw.validate_clip_duration(16000 * 31, 16000)
+        msg = lsw.validate_clip_duration(16000 * 31, 16000, 30)
         assert msg is not None
         assert "30" in msg
+
+    def test_longer_than_one_window_is_not_refused_by_default(self, lsw) -> None:
+        # Past one Whisper window is chunked now; only the total cap refuses.
+        assert lsw.validate_clip_duration(16000 * 31, 16000) is None
+        assert lsw.validate_clip_duration(16000 * 601, 16000) is not None
 
     def test_zero_sample_rate_is_refused(self, lsw) -> None:
         assert lsw.validate_clip_duration(100, 0) is not None
@@ -405,3 +410,135 @@ class TestConfidenceGate:
         assert lsw.parse_min_avg_logprob("-0,35") == lsw.DEFAULT_MIN_AVG_LOGPROB
         assert lsw.parse_min_avg_logprob(None) == lsw.DEFAULT_MIN_AVG_LOGPROB
         assert lsw.parse_min_avg_logprob("-0.5") == -0.5
+
+
+# --------------------------------------------------------------------------
+# Non-WAV uploads (m4a, mp3, ogg, webm, ...) are transcoded by the image's
+# ffmpeg; a RIFF/WAVE upload never touches it.
+# --------------------------------------------------------------------------
+
+
+class TestIsRiffWave:
+    def test_wav_is_detected(self, lsw) -> None:
+        assert lsw.is_riff_wave(_make_wav_bytes([0, 1, 2]))
+
+    def test_m4a_is_not_wav(self, lsw) -> None:
+        assert not lsw.is_riff_wave(b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00")
+
+    def test_short_or_empty_is_not_wav(self, lsw) -> None:
+        assert not lsw.is_riff_wave(b"")
+        assert not lsw.is_riff_wave(b"RIFF")
+
+
+class TestFfmpegTranscodeCommand:
+    def test_targets_16k_mono_pcm16_wav_file(self, lsw) -> None:
+        cmd = lsw.ffmpeg_transcode_command("/t/in", "/t/out.wav", 600)
+        assert cmd[0] == "ffmpeg"
+        assert cmd[cmd.index("-i") + 1] == "/t/in"
+        assert cmd[cmd.index("-ac") + 1] == "1"
+        assert cmd[cmd.index("-ar") + 1] == "16000"
+        assert cmd[cmd.index("-c:a") + 1] == "pcm_s16le"
+        assert cmd[-1] == "/t/out.wav"  # a seekable FILE, never pipe:1
+
+    def test_decode_stops_one_second_past_the_cap(self, lsw) -> None:
+        cmd = lsw.ffmpeg_transcode_command("/t/in", "/t/out.wav", 600)
+        assert float(cmd[cmd.index("-t") + 1]) == pytest.approx(601)
+
+
+class _FakeProc:
+    def __init__(self, returncode: int, stderr: bytes = b"") -> None:
+        self.returncode = returncode
+        self.stderr = stderr
+
+
+class TestTranscodeToWav:
+    def test_success_returns_ffmpegs_output_file(self, lsw) -> None:
+        wav = _make_wav_bytes([5, -5, 7])
+        seen = {}
+
+        def runner(cmd, **kwargs):
+            src, dst = cmd[cmd.index("-i") + 1], cmd[-1]
+            seen["input"] = Path(src).read_bytes()
+            seen["timeout"] = kwargs.get("timeout")
+            Path(dst).write_bytes(wav)
+            return _FakeProc(0)
+
+        assert lsw.transcode_to_wav(b"m4a-bytes", runner=runner) == wav
+        assert seen["input"] == b"m4a-bytes"
+        assert seen["timeout"] == lsw.FFMPEG_TIMEOUT_SECONDS
+
+    def test_ffmpeg_failure_raises_with_its_last_stderr_line(self, lsw) -> None:
+        def runner(cmd, **kwargs):
+            return _FakeProc(1, b"noise\nin: Invalid data found when processing input\n")
+
+        with pytest.raises(ValueError, match="Invalid data found"):
+            lsw.transcode_to_wav(b"garbage", runner=runner)
+
+    def test_missing_ffmpeg_is_a_value_error(self, lsw) -> None:
+        def runner(cmd, **kwargs):
+            raise FileNotFoundError("ffmpeg")
+
+        with pytest.raises(ValueError, match="ffmpeg is not installed"):
+            lsw.transcode_to_wav(b"x", runner=runner)
+
+    def test_zero_exit_without_output_is_a_failure(self, lsw) -> None:
+        with pytest.raises(ValueError, match="could not decode audio"):
+            lsw.transcode_to_wav(b"x", runner=lambda cmd, **kw: _FakeProc(0))
+
+
+class TestParseMaxAudioSeconds:
+    def test_default_when_unset_empty_or_bad(self, lsw) -> None:
+        for raw in (None, "", "  ", "ten", "0", "-5", "inf", "nan"):
+            assert lsw.parse_max_audio_seconds(raw) == lsw.DEFAULT_MAX_AUDIO_SECONDS
+
+    def test_positive_value_is_used(self, lsw) -> None:
+        assert lsw.parse_max_audio_seconds("120") == 120.0
+
+
+# --------------------------------------------------------------------------
+# Chunking: longer than one Whisper window is split at the quietest point
+# near each window's end, never refused.
+# --------------------------------------------------------------------------
+
+
+class TestPlanChunks:
+    RATE = 100  # 100 Hz keeps the fixtures tiny; frame = 2 samples at 20 ms
+
+    def _check_cover(self, chunks, n, window) -> None:
+        assert chunks[0][0] == 0
+        assert chunks[-1][1] == n
+        for (a, b), (c, _) in zip(chunks, chunks[1:]):
+            assert b == c  # contiguous, no overlap, no gap
+        for a, b in chunks:
+            assert 0 < b - a <= window
+
+    def test_one_window_is_one_chunk(self, lsw) -> None:
+        assert lsw.plan_chunks([1.0] * 2000, self.RATE, 30) == [(0, 2000)]
+
+    def test_exactly_one_window_is_one_chunk(self, lsw) -> None:
+        assert lsw.plan_chunks([1.0] * 3000, self.RATE, 30) == [(0, 3000)]
+
+    def test_cut_lands_in_the_pause(self, lsw) -> None:
+        samples = [1.0] * 4500
+        samples[2700:2720] = [0.0] * 20  # a 0.2 s pause 27 s in
+        chunks = lsw.plan_chunks(samples, self.RATE, 30, 5)
+        self._check_cover(chunks, 4500, 3000)
+        assert 2700 <= chunks[0][1] <= 2720
+
+    def test_long_clip_covers_every_sample_within_windows(self, lsw) -> None:
+        samples = [((i * 7919) % 13) / 13.0 for i in range(100 * 200)]  # 200 s
+        chunks = lsw.plan_chunks(samples, self.RATE, 30, 5)
+        self._check_cover(chunks, len(samples), 3000)
+        assert len(chunks) >= 7
+
+    def test_no_pause_still_makes_progress(self, lsw) -> None:
+        chunks = lsw.plan_chunks([1.0] * 9000, self.RATE, 30, 5)
+        self._check_cover(chunks, 9000, 3000)
+
+
+class TestJoinChunkTexts:
+    def test_skips_empty_windows(self, lsw) -> None:
+        assert lsw.join_chunk_texts(["שלום", "", "  ", "עולם "]) == "שלום עולם"
+
+    def test_all_empty_is_empty(self, lsw) -> None:
+        assert lsw.join_chunk_texts(["", ""]) == ""

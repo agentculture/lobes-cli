@@ -28,7 +28,7 @@ Spark, local:
 
 Orin, by proxy:
   model=cortex -> unsloth/Qwen3.8-27B-NVFP4 | reply "ORIN-VIA-SPARK-OK"
-  X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+  X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
 
 Thor, local (unchanged):
   model=cortex -> reply "THOR-STILL-OK"

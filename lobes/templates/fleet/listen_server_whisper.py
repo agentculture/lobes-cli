@@ -14,7 +14,8 @@ GiB peak CUDA, ~0.14s per 9.35s clip, transformers 5.12.1 / torch
 from ``Dockerfile.parakeet``.
 
 Endpoints:
-    POST /v1/audio/transcriptions  - Transcribe an uploaded WAV file
+    POST /v1/audio/transcriptions  - Transcribe an uploaded audio file (WAV read
+                                      directly; m4a/mp3/ogg/webm/flac via ffmpeg)
     GET  /v1/health/ready          - Readiness (model loaded + CUDA live +
                                       a warm-up transcription succeeded)
 
@@ -53,14 +54,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
-# Whisper's attention window is 30s; clips longer than that are REFUSED (a
-# clear 4xx) rather than chunked-and-joined. Two reasons: (1) chunk-joining
-# introduces boundary artifacts/duplicated words at the seam, and (2) the
-# realtime bridge's own VAD_MAX_TURN_MS defaults to exactly 30000ms
-# (CLAUDE.md's #151 material) — a well-behaved caller never sends a clip
-# longer than this window in the first place, so refusing costs nothing in
-# practice and avoids a whole class of hallucination risk at the seam.
+# Whisper's attention window is 30s. A longer upload (a phone voice note, a
+# recording) is CHUNKED into windows of at most this length and the pieces are
+# joined. Each cut is placed at the quietest frame in the last
+# CHUNK_SEARCH_SECONDS of its window (see plan_chunks), so a seam rarely lands
+# mid-word — the boundary artefacts that made earlier versions refuse instead.
+# The realtime bridge never sends more than one window (its VAD_MAX_TURN_MS
+# defaults to 30000ms), so its turns still take the single-window path.
 MAX_CLIP_SECONDS = 30.0
+CHUNK_SEARCH_SECONDS = 5.0
+CHUNK_FRAME_MS = 20
+# Total-length cap across all chunks (STT_MAX_AUDIO_SECONDS), so one upload
+# cannot hold the GPU for an unbounded number of windows.
+DEFAULT_MAX_AUDIO_SECONDS = 600.0
+# Whisper's decoder holds 448 positions; the language/task prompt takes 4.
+# A full 30s window of dense speech can exceed the old 128-token budget.
+MAX_NEW_TOKENS = 440
 MODEL_NAME = os.environ.get("STT_MODEL", "ivrit-ai/whisper-large-v3-turbo")
 DEFAULT_LANGUAGE = "he"
 
@@ -233,21 +242,37 @@ def linear_resample(samples: Sequence[float], src_rate: int, dst_rate: int) -> l
     return out
 
 
+def parse_max_audio_seconds(raw: str | None) -> float:
+    """``STT_MAX_AUDIO_SECONDS``: a positive number of seconds; empty/unset or
+    an unparseable/non-positive value falls back to the default (a typo must
+    not silently disable the cap)."""
+    if raw is None or not raw.strip():
+        return DEFAULT_MAX_AUDIO_SECONDS
+    try:
+        parsed = float(raw.strip())
+    except ValueError:
+        return DEFAULT_MAX_AUDIO_SECONDS
+    return parsed if parsed > 0 and math.isfinite(parsed) else DEFAULT_MAX_AUDIO_SECONDS
+
+
+MAX_AUDIO_SECONDS = parse_max_audio_seconds(os.environ.get("STT_MAX_AUDIO_SECONDS"))
+
+
 def _clip_too_long_message(duration: float, max_seconds: float) -> str:
     """Shared wording for a refused clip, whichever check found it too long
     (the post-decode sample-count check, or the pre-decode WAV-header peek)."""
     return (
         f"clip too long: {duration:.1f}s exceeds the {max_seconds:.0f}s "
-        "Whisper window (refused, not chunked — see MAX_CLIP_SECONDS)"
+        "total-audio cap (STT_MAX_AUDIO_SECONDS)"
     )
 
 
 def validate_clip_duration(
-    num_samples: int, sample_rate: int, max_seconds: float = MAX_CLIP_SECONDS
+    num_samples: int, sample_rate: int, max_seconds: float = DEFAULT_MAX_AUDIO_SECONDS
 ) -> Optional[str]:
-    """Return an error message iff the clip exceeds *max_seconds*, else
-    ``None``. See the module docstring / ``MAX_CLIP_SECONDS`` comment for why
-    this refuses instead of chunking."""
+    """Return an error message iff the clip exceeds *max_seconds* (the
+    total-audio cap — longer than one Whisper window is chunked, not refused),
+    else ``None``."""
     if sample_rate <= 0:
         return "invalid sample rate"
     duration = num_samples / sample_rate
@@ -314,6 +339,130 @@ def peek_wav_duration_seconds(raw_bytes: bytes) -> Optional[float]:
     if rate <= 0:
         return None
     return frames / rate
+
+
+def is_riff_wave(raw_bytes: bytes) -> bool:
+    """True when *raw_bytes* carries a RIFF/WAVE header — the only container
+    :func:`decode_wav_pcm16` reads directly."""
+    return len(raw_bytes) >= 12 and raw_bytes[:4] == b"RIFF" and raw_bytes[8:12] == b"WAVE"
+
+
+# Bounded so a pathological upload cannot hold a request thread forever.
+FFMPEG_TIMEOUT_SECONDS = 60
+
+
+def ffmpeg_transcode_command(src: str, dst: str, max_seconds: float) -> list[str]:
+    """The ffmpeg argv that turns any decodable audio (m4a/aac, mp3, ogg/opus,
+    webm, flac, a non-16-bit WAV, ...) into 16 kHz mono PCM16 WAV.
+
+    Input and output are both FILES, not pipes: an m4a whose ``moov`` atom
+    sits at the end (the usual phone voice-note layout) cannot be demuxed from
+    a non-seekable stdin, and a WAV written to a pipe carries a placeholder
+    frame count that :func:`peek_wav_duration_seconds` would misread. ``-t``
+    stops decoding one second past the clip cap, so an over-long upload is
+    still refused as ``clip_too_long`` without decoding all of it."""
+    return [
+        "ffmpeg",
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        src,
+        "-t",
+        str(max_seconds + 1),
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        str(SAMPLE_RATE),
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        dst,
+    ]
+
+
+def transcode_to_wav(
+    raw_bytes: bytes, max_seconds: float = MAX_AUDIO_SECONDS, runner=None
+) -> bytes:
+    """Transcode a non-WAV upload to PCM16 WAV with the image's ffmpeg.
+
+    Raises :class:`ValueError` with ffmpeg's own message when the bytes are
+    not decodable audio. *runner* defaults to :func:`subprocess.run` and is
+    injectable so the offline suite needs no ffmpeg binary."""
+    import subprocess  # nosec B404 - fixed argv, no shell
+    import tempfile
+
+    run = runner or subprocess.run
+    with tempfile.TemporaryDirectory(prefix="stt-") as tmp:
+        src = os.path.join(tmp, "in")
+        dst = os.path.join(tmp, "out.wav")
+        with open(src, "wb") as fh:
+            fh.write(raw_bytes)
+        try:
+            proc = run(
+                ffmpeg_transcode_command(src, dst, max_seconds),
+                capture_output=True,
+                timeout=FFMPEG_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise ValueError("audio is not WAV and ffmpeg is not installed") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"audio decode timed out after {FFMPEG_TIMEOUT_SECONDS}s") from exc
+        if proc.returncode != 0 or not os.path.exists(dst):
+            detail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            reason = detail[-1] if detail else f"ffmpeg exited {proc.returncode}"
+            raise ValueError(f"could not decode audio: {reason}")
+        with open(dst, "rb") as fh:
+            return fh.read()
+
+
+def _frame_energy(samples: Sequence[float], start: int, length: int) -> float:
+    return sum(x * x for x in samples[start : start + length])
+
+
+def plan_chunks(
+    samples: Sequence[float],
+    sample_rate: int,
+    window_seconds: float = MAX_CLIP_SECONDS,
+    search_seconds: float = CHUNK_SEARCH_SECONDS,
+    frame_ms: int = CHUNK_FRAME_MS,
+) -> list[tuple[int, int]]:
+    """Split *samples* into contiguous ``(start, end)`` ranges no longer than
+    *window_seconds*, covering every sample exactly once.
+
+    A clip that fits one window is one range. Otherwise each cut goes at the
+    middle of the lowest-energy *frame_ms* frame in the last *search_seconds*
+    of the window — the likeliest pause — so a word is rarely split."""
+    n = len(samples)
+    window = max(1, int(window_seconds * sample_rate))
+    if n <= window:
+        return [(0, n)]
+    frame = max(1, int(sample_rate * frame_ms / 1000))
+    search = max(frame, min(window, int(search_seconds * sample_rate)))
+    chunks: list[tuple[int, int]] = []
+    start = 0
+    while n - start > window:
+        lo = start + window - search
+        best_at, best_energy = start + window, None
+        for f in range(lo, start + window - frame + 1, frame):
+            energy = _frame_energy(samples, f, frame)
+            if best_energy is None or energy < best_energy:
+                best_at, best_energy = f + frame // 2, energy
+        chunks.append((start, best_at))
+        start = best_at
+    chunks.append((start, n))
+    return chunks
+
+
+def join_chunk_texts(texts: Sequence[str]) -> str:
+    """Join per-chunk transcripts, skipping the empty ones a chunk of silence
+    (or a dropped low-confidence chunk) leaves."""
+    return " ".join(t for t in (x.strip() for x in texts) if t)
 
 
 def build_success_response(text: str) -> dict:
@@ -446,8 +595,9 @@ if _FASTAPI_AVAILABLE:
         file: UploadFile = File(...),
         language: str = Form(None),
     ):
-        """Transcribe an uploaded WAV file (PCM16 mono/stereo 16kHz — the
-        realtime bridge's own output shape). See the module docstring for the
+        """Transcribe an uploaded audio file. PCM16 WAV (the realtime bridge's
+        own output shape) is read directly; anything else is transcoded to
+        16 kHz mono PCM16 by the image's ffmpeg first. See the module docstring for the
         channel/resample/duration-limit contract."""
         content = await file.read()
 
@@ -457,23 +607,43 @@ if _FASTAPI_AVAILABLE:
                 status_code=413, content=build_error_body(size_error, "upload_too_large")
             )
 
+        if not is_riff_wave(content):
+            # m4a / mp3 / ogg / webm / flac: normalise to PCM16 WAV first.
+            import anyio
+
+            try:
+                content = await anyio.to_thread.run_sync(transcode_to_wav, content)
+            except ValueError as exc:
+                return JSONResponse(
+                    status_code=400, content=build_error_body(str(exc), "invalid_audio")
+                )
+
         header_duration = peek_wav_duration_seconds(content)
-        if header_duration is not None and header_duration > MAX_CLIP_SECONDS:
+        if header_duration is not None and header_duration > MAX_AUDIO_SECONDS:
             return JSONResponse(
                 status_code=413,
                 content=build_error_body(
-                    _clip_too_long_message(header_duration, MAX_CLIP_SECONDS), "clip_too_long"
+                    _clip_too_long_message(header_duration, MAX_AUDIO_SECONDS), "clip_too_long"
                 ),
             )
 
         try:
             samples, sample_rate, channels = decode_wav_pcm16(content)
-        except (ValueError, wave.Error) as exc:
-            return JSONResponse(status_code=400, content=build_error_body(str(exc), "invalid_wav"))
+        except (ValueError, wave.Error):
+            # A RIFF/WAVE the stdlib reader refuses (24-bit, float, ...): ffmpeg reads it.
+            import anyio
+
+            try:
+                content = await anyio.to_thread.run_sync(transcode_to_wav, content)
+                samples, sample_rate, channels = decode_wav_pcm16(content)
+            except (ValueError, wave.Error) as exc:
+                return JSONResponse(
+                    status_code=400, content=build_error_body(str(exc), "invalid_wav")
+                )
 
         samples = first_channel(samples, channels)
 
-        duration_error = validate_clip_duration(len(samples), sample_rate)
+        duration_error = validate_clip_duration(len(samples), sample_rate, MAX_AUDIO_SECONDS)
         if duration_error is not None:
             return JSONResponse(
                 status_code=413, content=build_error_body(duration_error, "clip_too_long")
@@ -496,39 +666,49 @@ if _FASTAPI_AVAILABLE:
         lang = resolve_language(language, os.environ.get("STT_LANGUAGE"), DEFAULT_LANGUAGE)
 
         model, processor = get_model_and_processor()
-        audio = np.array(floats, dtype=np.float32)
-        inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
-        input_features = inputs.input_features.to("cuda", dtype=torch.float16)
-        with torch.no_grad():
-            out = model.generate(
-                input_features,
-                language=lang,
-                task="transcribe",
-                max_new_tokens=128,
-                return_dict_in_generate=True,
-                output_scores=True,
-            )
-        n_new = len(out.scores)
-        new_ids = out.sequences[0][-n_new:] if n_new else out.sequences[0][:0]
         eot = processor.tokenizer.convert_tokens_to_ids("<|endoftext|>")
-        token_logprobs = [
-            torch.log_softmax(step[0].float(), dim=-1)[tok].item()
-            for step, tok in zip(out.scores, new_ids)
-            if tok.item() < eot  # text tokens only — specials sit at/after <|endoftext|>
-        ]
-        text = processor.batch_decode(out.sequences, skip_special_tokens=True)[0]
-        # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
-        # listen_server.py's callers never see one, so strip before filtering.
-        text = filter_non_speech_only(strip_bidi_controls(text).strip())
-        confidence = average_logprob(token_logprobs)
-        if text and is_low_confidence(confidence, MIN_AVG_LOGPROB):
-            logger.info(
-                "dropping low-confidence transcript (avg_logprob %.2f < %.2f): %r",
-                confidence,
-                MIN_AVG_LOGPROB,
-                text,
-            )
-            text = ""
+
+        def transcribe_window(window: Sequence[float]) -> str:
+            audio = np.array(window, dtype=np.float32)
+            inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
+            input_features = inputs.input_features.to("cuda", dtype=torch.float16)
+            with torch.no_grad():
+                out = model.generate(
+                    input_features,
+                    language=lang,
+                    task="transcribe",
+                    max_new_tokens=MAX_NEW_TOKENS,
+                    return_dict_in_generate=True,
+                    output_scores=True,
+                )
+            n_new = len(out.scores)
+            new_ids = out.sequences[0][-n_new:] if n_new else out.sequences[0][:0]
+            token_logprobs = [
+                torch.log_softmax(step[0].float(), dim=-1)[tok].item()
+                for step, tok in zip(out.scores, new_ids)
+                if tok.item() < eot  # text tokens only — specials sit at/after <|endoftext|>
+            ]
+            text = processor.batch_decode(out.sequences, skip_special_tokens=True)[0]
+            # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
+            # listen_server.py's callers never see one, so strip before filtering.
+            text = filter_non_speech_only(strip_bidi_controls(text).strip())
+            confidence = average_logprob(token_logprobs)
+            # Gated per window: one hallucinated silent window is dropped on
+            # its own instead of poisoning (or rescuing) its neighbours.
+            if text and is_low_confidence(confidence, MIN_AVG_LOGPROB):
+                logger.info(
+                    "dropping low-confidence transcript (avg_logprob %.2f < %.2f): %r",
+                    confidence,
+                    MIN_AVG_LOGPROB,
+                    text,
+                )
+                text = ""
+            return text
+
+        chunks = plan_chunks(floats, SAMPLE_RATE)
+        if len(chunks) > 1:
+            logger.info("transcribing %.1fs in %d windows", len(floats) / SAMPLE_RATE, len(chunks))
+        text = join_chunk_texts([transcribe_window(floats[a:b]) for a, b in chunks])
 
         return build_success_response(text)
 

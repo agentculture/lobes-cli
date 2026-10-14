@@ -140,7 +140,7 @@
     {
       "id": "c22",
       "kind": "requirement",
-      "text": "The realtime composite is today INCOMPLETE and the split is the moment to fix it: lobes/realtime/app.py's ready() probes ONLY settings.tts_url and settings.stt_url, so it reports a session consumable while (a) Silero VAD may be unavailable and (b) the generate lane may be unreachable. On this very box the voice lane's generate target is multimodal, which is MULTIMODAL_FEASIBLE=false and PROXIED to http://orin.tail0be7e0.ts.net:8000 \u2014 so a realtime session here depends on a REMOTE peer that the readiness aggregate never dials."
+      "text": "The realtime composite is today INCOMPLETE and the split is the moment to fix it: lobes/realtime/app.py's ready() probes ONLY settings.tts_url and settings.stt_url, so it reports a session consumable while (a) Silero VAD may be unavailable and (b) the generate lane may be unreachable. On this very box the voice lane's generate target is multimodal, which is MULTIMODAL_FEASIBLE=false and PROXIED to http://orin.TAILNET.ts.net:8000 \u2014 so a realtime session here depends on a REMOTE peer that the readiness aggregate never dials."
     },
     {
       "id": "h15",

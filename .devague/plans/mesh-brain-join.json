@@ -353,7 +353,7 @@
     {
       "id": "c38",
       "kind": "requirement",
-      "text": "Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce LOBES_MESH_SEEDS (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (tail0be7e0.ts.net) where multicast does not cross nodes.",
+      "text": "Bootstrap discovery: a joining box needs at least one address to detect the mesh. Introduce LOBES_MESH_SEEDS (comma-separated member origins, typed once on the joining box only); the roster fills in every other member after the first successful keyless detect. No mDNS/broadcast: the fleet lives on a Tailscale tailnet (TAILNET.ts.net) where multicast does not cross nodes.",
       "deferred": false,
       "deferred_reason": ""
     },

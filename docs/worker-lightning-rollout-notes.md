@@ -20,7 +20,7 @@
 was written ahead of the flip, when the plan still put Lightning on the Thor.
 Deviation **d1** (recorded in `.devague/deliveries/nemotron-lightning-worker.json`,
 operator-approved) swapped the topology the same day: the `worker` role now
-serves on the **DGX Spark** (`http://spark.tail0be7e0.ts.net:8001`), because
+serves on the **DGX Spark** (`http://spark.TAILNET.ts.net:8001`), because
 Lightning's Mamba-2 warmup wedges on Thor sm_110 on both the fleet nightly and
 the upstream `v0.27.1` release image
 (`docs/evidence/2026-08-20-spike-lightning-thor-no-go.txt`), while the Spark

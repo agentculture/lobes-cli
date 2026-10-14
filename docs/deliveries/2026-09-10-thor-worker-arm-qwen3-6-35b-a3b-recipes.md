@@ -110,7 +110,7 @@ Quoted verbatim from the `devague summary` skeleton:
 
 ## Remaining Work / Follow-up
 
-- **`t13` cross-box leg (`d4`)** — declare `WORKER_PEER_ORIGIN`/`_PEER_PROXY`/`_PEER_API_KEY` on the Spark (and the Orin) pointing at `http://thor.tail0be7e0.ts.net:8000`, then re-probe for `X-Lobes-Proxied-By`. **Operator action on those boxes** — this box has no SSH access.
+- **`t13` cross-box leg (`d4`)** — declare `WORKER_PEER_ORIGIN`/`_PEER_PROXY`/`_PEER_API_KEY` on the Spark (and the Orin) pointing at `http://thor.TAILNET.ts.net:8000`, then re-probe for `X-Lobes-Proxied-By`. **Operator action on those boxes** — this box has no SSH access.
 - **`thor-worker.toml` is behind deployed reality (`d5`)** — it commits `max_model_len=65536`; the box serves 262144. Re-point the shape and regenerate its goldens.
 - **The deployed compose is hand-patched (`d6`)** — reconcile `~/.lobes/docker-compose.yml` with the packaged template, or capture it as a `deployment.lock.toml` variation (#214).
 - **`hand` is unservable mesh-wide (`d3`)** — the Thor's `HAND_PEER_ORIGIN` points at the Spark, which declares it infeasible; only the Orin declares it feasible and its lane is not running. Repoint and start it, or document the floor's absence mesh-wide.

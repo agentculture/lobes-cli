@@ -38,8 +38,8 @@ t2 — LIVE BEFORE-STATE BASELINE  (captured 2026-07-31T14:12:18Z)
 ================================================================
 
 ---- [1] THOR /capabilities (via ssh thor@thor) ----
-  cortex     feasible=False ready=False proxied=None hosted_by=http://spark.tail0be7e0.ts.net:8001 model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
-  senses     feasible=False ready=True  proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000 model=coolthor/gemma-4-12B-it-NVFP4A16
+  cortex     feasible=False ready=False proxied=None hosted_by=http://spark.TAILNET.ts.net:8001 model=sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+  senses     feasible=False ready=True  proxied=True hosted_by=http://orin.TAILNET.ts.net:8000 model=coolthor/gemma-4-12B-it-NVFP4A16
   muse       feasible=False ready=False proxied=None hosted_by=None model=nvidia/Gemma-4-31B-IT-NVFP4
   worker     feasible=True  ready=True  proxied=None hosted_by=None model=unsloth/Qwen3.6-35B-A3B-NVFP4
   embedder   feasible=True  ready=True  proxied=None hosted_by=None model=Qwen/Qwen3-Embedding-0.6B
@@ -49,9 +49,9 @@ t2 — LIVE BEFORE-STATE BASELINE  (captured 2026-07-31T14:12:18Z)
 
 ---- [2] SPARK ~/.lobes/.env : the DEAD muse referral + stale version pin ----
   333:MODEL_GEAR_VERSION=0.52.3
-  349:MULTIMODAL_PEER_ORIGIN=http://orin.tail0be7e0.ts.net:8000
+  349:MULTIMODAL_PEER_ORIGIN=http://orin.TAILNET.ts.net:8000
   355:MULTIMODAL_PEER_PROXY=true
-  377:MUSE_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+  377:MUSE_PEER_ORIGIN=http://thor.TAILNET.ts.net:8000
   378:MUSE_PEER_PROXY=true
   383:MUSE_PEER_API_KEY=
   (grep for any WORKER_ line in .env:)
@@ -87,8 +87,8 @@ model-gear-vllm-embed	Up 4 days (healthy)
 
   local /capabilities — worker + muse rows:
     cortex     feasible=True  ready=True  proxied=None hosted_by=None
-    senses     feasible=False ready=True  proxied=True hosted_by=http://orin.tail0be7e0.ts.net:8000
-    muse       feasible=False ready=False proxied=True hosted_by=http://thor.tail0be7e0.ts.net:8000
+    senses     feasible=False ready=True  proxied=True hosted_by=http://orin.TAILNET.ts.net:8000
+    muse       feasible=False ready=False proxied=True hosted_by=http://thor.TAILNET.ts.net:8000
     embedder   feasible=True  ready=True  proxied=None hosted_by=None
     reranker   feasible=True  ready=True  proxied=None hosted_by=None
     stt        feasible=True  ready=True  proxied=None hosted_by=None
@@ -179,7 +179,7 @@ $ curl -X POST /v1/chat/completions -d '{"model":"cortex",...}'
 --- [4] THE RELAY: model=worker -> thor ---------------------------------
 $ curl -i -X POST /v1/chat/completions -d '{"model":"worker",...}'
 HTTP/1.1 200 OK
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 content-type: application/json
 {
     "id": "chatcmpl-b62386e59496c392",
@@ -205,13 +205,13 @@ content-type: application/json
 --- [5] MULTIMODAL through the proxy, with a negative control ------------
 $ curl -X POST ... model=worker + image_url(data:image/png;base64,<64x64 red square>)
 HTTP/1.1 200 OK
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
   served model : unsloth/Qwen3.6-35B-A3B-NVFP4
   answer       : ' red'
 
 $ curl -X POST ... model=worker + image_url(data:image/png;base64,<64x64 blue square>)
 HTTP/1.1 200 OK
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
   served model : unsloth/Qwen3.6-35B-A3B-NVFP4
   answer       : ' Blue.'
 
@@ -221,9 +221,9 @@ CONTROL CHECK: the red square answered 'red' and the blue square answered
 --- [6] capabilities + models surfaces ----------------------------------
 $ curl /capabilities
 cortex     feasible=True  ready=True  proxied=None  hosted_by=None
-senses     feasible=False ready=True  proxied=True  hosted_by=http://orin.tail0be7e0.ts.net:8000
+senses     feasible=False ready=True  proxied=True  hosted_by=http://orin.TAILNET.ts.net:8000
 muse       feasible=False ready=False proxied=None  hosted_by=None
-worker     feasible=False ready=True  proxied=True  hosted_by=http://thor.tail0be7e0.ts.net:8000
+worker     feasible=False ready=True  proxied=True  hosted_by=http://thor.TAILNET.ts.net:8000
 embedder   feasible=True  ready=True  proxied=None  hosted_by=None
 reranker   feasible=True  ready=True  proxied=None  hosted_by=None
 stt        feasible=True  ready=True  proxied=None  hosted_by=None

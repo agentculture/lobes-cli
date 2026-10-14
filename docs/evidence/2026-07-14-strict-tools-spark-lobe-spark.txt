@@ -11,7 +11,7 @@ Deployment under test
              mounted at /opt/lobes/qwen3_thinking_tool_parser.py, --tool-parser-plugin)
 - gateway  : lobes-cli 0.44.0, GATEWAY_FORCE_STRICT_TOOLS=1 (opt-in knob armed)
 - senses   : DROPPED (spark-lobe), honest referral MULTIMODAL_PEER_ORIGIN=
-             http://thor.tail0be7e0.ts.net:8000 — capabilities: feasible=false,
+             http://thor.TAILNET.ts.net:8000 — capabilities: feasible=false,
              hosted_by=<thor>; per-alias 404 role_infeasible names the peer
 - stt/tts  : declared, sleeping (feasible=true, ready=false, loaded=false)
 - embedder/reranker: co-resident, probes PASS (embed sim 0.894/0.23; rerank top_index 0)

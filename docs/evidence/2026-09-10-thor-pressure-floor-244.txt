@@ -26,16 +26,16 @@ The Thor's .env declares:
 
     HAND_FEASIBLE=false
     HAND_BASE_URL=            (unwired: this box does not serve hand)
-    HAND_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+    HAND_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001
 
 and the peer PROXY is armed for it. Probing the Thor's own gateway:
 
     POST http://127.0.0.1:8000/v1/chat/completions   {"model": "hand", ...}
 
     HTTP/1.1 404 Not Found
-    X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+    X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
     {"error": {"message": "the declared peer for this role
-      (`http://spark.tail0be7e0.ts.net:8001`) declined it as role_infeasible —
+      (`http://spark.TAILNET.ts.net:8001`) declined it as role_infeasible —
       the peer does not host this role either (a misdeclared referral/proxy
       origin); no further hop is attempted. Peer said: The model
       `LiquidAI/LFM2.5-1.2B-Instruct` is not feasible on this machine — its

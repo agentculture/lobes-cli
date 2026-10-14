@@ -178,7 +178,7 @@
     {
       "id": "c30",
       "kind": "requirement",
-      "text": "the blast radius is LARGER than c20 records: probing the live mesh, the DGX Spark declares 'embedder feasible=false, proxied=true, hosted_by=http://thor.tail0be7e0.ts.net:8000' -- the Spark proxies its EMBEDDINGS to this Thor. Taking this box down removes the Spark's embedder lane too, not just this box's cortex. The window must either be announced as embed-affecting mesh-wide, or the Spark must re-declare a local embedder first.",
+      "text": "the blast radius is LARGER than c20 records: probing the live mesh, the DGX Spark declares 'embedder feasible=false, proxied=true, hosted_by=http://thor.TAILNET.ts.net:8000' -- the Spark proxies its EMBEDDINGS to this Thor. Taking this box down removes the Spark's embedder lane too, not just this box's cortex. The window must either be announced as embed-affecting mesh-wide, or the Spark must re-declare a local embedder first.",
       "deferred": false,
       "deferred_reason": ""
     },

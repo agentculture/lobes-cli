@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.85.0] - 2026-10-09
+
+### Added
+
+- Hebrew STT (`listen_server_whisper.py`) accepts any ffmpeg-decodable upload — m4a, mp3, ogg/opus, webm, flac, non-16-bit WAV — instead of refusing everything but 16-bit PCM WAV with `invalid_wav`; an undecodable upload is a 400 `invalid_audio`.
+- Hebrew STT chunks uploads longer than the 30 s Whisper window at the quietest point near each window end and joins the pieces, instead of refusing them; `STT_MAX_AUDIO_SECONDS` (default 600) caps the total.
+
+### Changed
+
+- Hebrew STT decodes up to 440 new tokens per window (was 128), so a full 30 s window of dense speech is not truncated.
+
+## [0.84.3] - 2026-10-07
+
+### Changed
+
+- Scrub the fleet tailnet MagicDNS name (now TAILNET) and three real tailnet IPs (now 100.64.0.10-12) from committed docs, evidence, devague/eidetic records, code comments, templates and test fixtures (#301); the env.example mesh test now rejects any `*.tail<hex>.ts.net` name; the orin-embed deployment lock digest is re-captured for its comment-only change.
+
+## [0.84.2] - 2026-10-07
+
+### Added
+
+- `culture.yaml` declares the culture-rules PR fixer test gate (`uv sync`, then `uv run pytest -n auto`), so the fixer can push fixes to lobes-cli PRs once the repo is on its allow-list.
+
+## [0.84.1] - 2026-10-07
+
+### Changed
+
+- Record the orin-embedding-specialist delivery state after #295 merged: the devague delivery evidence and frame lapses (l1, l2), the current frame/plan pointers, and the matching eidetic memory and agex PR-event records.
+
 ## [0.84.0] - 2026-10-07
 
 ### Added
@@ -150,7 +179,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- `INNEREYE_UI_PORT` — an opt-in, default-OFF knob that publishes ComfyUI's own web UI. A bare port number binds loopback (`127.0.0.1:PORT:8188`); a wider bind must be typed as an explicit interface (`100.127.105.72:8188`). Rendered by `lobes init --apply` into the generated `docker-compose.shape.yml`, never a hand-written override, and never parsed into an int (issue #272). Unset, the rendered deployment is byte-identical to before the knob existed.
+- `INNEREYE_UI_PORT` — an opt-in, default-OFF knob that publishes ComfyUI's own web UI. A bare port number binds loopback (`127.0.0.1:PORT:8188`); a wider bind must be typed as an explicit interface (`100.64.0.10:8188`). Rendered by `lobes init --apply` into the generated `docker-compose.shape.yml`, never a hand-written override, and never parsed into an int (issue #272). Unset, the rendered deployment is byte-identical to before the knob existed.
 - `lobes.runtime._compose.shape_parked_service_keys` — reads the shape overlay's dropped-profile MARKER instead of bare service presence.
 
 ### Changed

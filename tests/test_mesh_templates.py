@@ -290,8 +290,9 @@ class TestEnvExampleDocumentsMesh:
 
     def test_no_real_fleet_hostname_in_the_mesh_section(self) -> None:
         section = self._mesh_section().lower()
-        for token in ("spark", "thor", "orin", "tail0be7e0"):
+        for token in ("spark", "thor", "orin"):
             assert token not in section, f"{token!r} must not appear in env.example's mesh section"
+        assert not re.search(r"\.tail[0-9a-f]+\.ts\.net", section), "a real tailnet name leaked"
 
 
 # --- .gitignore covers the runtime ledger ------------------------------------

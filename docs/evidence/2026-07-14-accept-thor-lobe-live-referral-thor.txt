@@ -54,7 +54,7 @@ Re-run with --apply to write.
 >> next: docker login nvcr.io && lobes fleet up --apply
 
 === phase 2a2: operator env overrides ===
-  PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001
+  PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001
 
 === phase 2b: dev lane — MODEL_GEAR_VERSION=0.43.0.dev239 via https://test.pypi.org/simple/ ===
 pinned (documented operator vars — see Dockerfile.gateway)
@@ -76,8 +76,8 @@ fleet healthy after 282s
   PASS  POST model=hard -> 404 role_infeasible (never rerouted)
 
 === phase 4b: honest referral (opt-in peer origins) ===
-  PASS  gateway /capabilities: cortex hosted_by http://spark.tail0be7e0.ts.net:8001
-  PASS  CLI capabilities: cortex hosted_by http://spark.tail0be7e0.ts.net:8001
+  PASS  gateway /capabilities: cortex hosted_by http://spark.TAILNET.ts.net:8001
+  PASS  CLI capabilities: cortex hosted_by http://spark.TAILNET.ts.net:8001
   PASS  POST model=cortex -> 404 body carries the referral
 
 === phase 5: correctness probes ===

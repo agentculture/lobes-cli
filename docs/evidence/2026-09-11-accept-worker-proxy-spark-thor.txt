@@ -12,7 +12,7 @@ WORKER_PEER_ORIGIN pointing at the Thor)". The Spark now declares it.
 1. Topology (Spark ~/.lobes/.env, operator-typed; secrets omitted)
 ================================================================================
 WORKER_FEASIBLE=false
-WORKER_PEER_ORIGIN=http://thor.tail0be7e0.ts.net:8000
+WORKER_PEER_ORIGIN=http://thor.TAILNET.ts.net:8000
 WORKER_PEER_PROXY=true
 WORKER_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4     # == the Thor's served id (the forwarder rewrites `model` to it)
 WORKER_MAX_MODEL_LEN=262144                           # advertise-only for a proxied role
@@ -20,7 +20,7 @@ WORKER_MAX_MODEL_LEN=262144                           # advertise-only for a pro
 COMPOSE_PROFILES=                                     # no `worker` profile -> vllm-worker never starts here
 
 Reverse direction, unchanged: the Thor proxies model=cortex to the Spark
-(PRIMARY_FEASIBLE=false, PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001).
+(PRIMARY_FEASIBLE=false, PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001).
 
 ================================================================================
 2. Baseline — both gateways on lobes-cli 0.67.0.dev457 (pre-#244 image)
@@ -75,7 +75,7 @@ lobes doctor (Thor): healthy
 4. After — GET /capabilities -> roles.worker
 ================================================================================
 spark {'model': 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'context': 262144, 'feasible': False,
-       'ready': True, 'proxied': True, 'hosted_by': 'http://thor.tail0be7e0.ts.net:8000'}
+       'ready': True, 'proxied': True, 'hosted_by': 'http://thor.TAILNET.ts.net:8000'}
 thor  {'model': 'nvidia/Qwen3.6-35B-A3B-NVFP4', 'context': 262144, 'feasible': True,
        'ready': True, 'proxied': None, 'hosted_by': None}
 both  responsibilities: [execution, ground_work, bulk_transform, drafting, action_selection,
@@ -84,7 +84,7 @@ both  responsibilities: [execution, ground_work, bulk_transform, drafting, actio
         image_understanding, video_understanding]
 both  forbidden: [final_decision, security_decision]
 thor  cortex: {'context': 262144, 'feasible': False, 'ready': True, 'proxied': True,
-               'hosted_by': 'http://spark.tail0be7e0.ts.net:8001'}
+               'hosted_by': 'http://spark.TAILNET.ts.net:8001'}
 
 (video_understanding is ADVERTISED by the #244 contract; video intake itself
 remains UNMEASURED, #108.)
@@ -94,24 +94,24 @@ remains UNMEASURED, #108.)
 ================================================================================
 ### 1. Spark model=worker (alias)
  model: nvidia/Qwen3.6-35B-A3B-NVFP4 content: 'pong'
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### 2. Spark model=nvidia/Qwen3.6-35B-A3B-NVFP4 (raw id)
  content: 'pong'
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### 3. Spark model=worker streamed tool call (stream:true, include_usage, 2 tools)
  finish: tool_calls [DONE]: True calls: [('read_file', {'absolute_path': '/etc/hostname'})]
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
    (first run on the old image: 1.8 s wall, 91 completion tokens of which 60 reasoning)
 ### 4. Spark model=worker image (64x64 solid blue PNG)
  content: 'Blue'
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### 5. Spark model=worker 115K-token needle (thinking off)
  prompt_tokens: 115429 content: 'AZURE-7731'
  wall: 69s
-X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000
+X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000
 ### 6. Thor model=cortex (reverse proxy, Thor -> Spark)
  model: unsloth/Qwen3.8-27B-NVFP4 content: 'pong'
-X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
 ### 7. Thor model=worker served locally
  content: 'pong'                                   (no proxy header — served locally)
 
@@ -141,11 +141,11 @@ Run B (0.75.1):     two bugs (add returns a - b, mul returns a + b)
 ================================================================================
 Distinct prompts (uuid nonce), thinking off, min_tokens=max_tokens=300, via the Spark:
 ### single request baseline
-  (0, 200, 0.0, 8.01, 300, 'http://thor.tail0be7e0.ts.net:8000')
+  (0, 200, 0.0, 8.01, 300, 'http://thor.TAILNET.ts.net:8000')
 ### 3 concurrent
-  req 1 status 200 sent@ 0.0 s done@ 7.92 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
-  req 2 status 200 sent@ 0.0 s done@ 15.38 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
-  req 3 status 200 sent@ 0.0 s done@ 22.91 s tokens 300 via http://thor.tail0be7e0.ts.net:8000
+  req 1 status 200 sent@ 0.0 s done@ 7.92 s tokens 300 via http://thor.TAILNET.ts.net:8000
+  req 2 status 200 sent@ 0.0 s done@ 15.38 s tokens 300 via http://thor.TAILNET.ts.net:8000
+  req 3 status 200 sent@ 0.0 s done@ 22.91 s tokens 300 via http://thor.TAILNET.ts.net:8000
 
 Concurrent requests QUEUE at the engine and complete serially (~7.5 s apart,
 = the single-request time); no 429, no timeout, no 5xx through the hop. This

@@ -30,8 +30,8 @@ AUTO-SELECT (no --moe-backend forced): SUCCESS — vLLM picks TRITON for the unq
   GET /capabilities:
     worker : feasible=True  ready=True  loaded=True  model=unsloth/Qwen3.6-35B-A3B-NVFP4  hosted_by=-
     muse   : feasible=False ready=False loaded=False hosted_by=- (DORMANT/unhosted, no referral)
-    cortex : feasible=False hosted_by=http://spark.tail0be7e0.ts.net:8001 (referred)
-    senses : feasible=False hosted_by=http://orin.tail0be7e0.ts.net:8000 (referred, proxied)
+    cortex : feasible=False hosted_by=http://spark.TAILNET.ts.net:8001 (referred)
+    senses : feasible=False hosted_by=http://orin.TAILNET.ts.net:8000 (referred, proxied)
   model=worker via gateway -> 'ROUTED' (finish=stop)  [routing works end-to-end]
   model=muse via gateway   -> HTTP 404 role_infeasible, no hosted_by  [honest, no silent fallback]
 

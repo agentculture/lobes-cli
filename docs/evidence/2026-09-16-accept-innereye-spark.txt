@@ -43,7 +43,7 @@ NEGATIVE CONTROLS, and note the FIRST ATTEMPT WAS CONFOUNDED:
   — the BARE VENV was still running and answering. The container was not
   publishing anything. The venv was stopped and the control re-run:
   host -> 127.0.0.1:8188            : REFUSED (000, nothing listening)
-  thor -> 100.127.105.72:8188       : REFUSED (000)  [over the tailnet]
+  thor -> 100.64.0.10:8188       : REFUSED (000)  [over the tailnet]
 POSITIVE CONTROL (proving the refusals are not a dead service):
   in-container -> localhost:8188/object_info : 200
   container health: healthy
@@ -97,7 +97,7 @@ There is no outward spelling of /history, /queue, or a caller-parameterised
 /view at all.
 
 == 7. CROSS-BOX: THE THOR RENDERS AND FETCHES OVER THE TAILNET ==
-Thor (100.105.216.63) -> Spark (100.127.105.72:8001), direct tailnet route.
+Thor (100.64.0.11) -> Spark (100.64.0.10:8001), direct tailnet route.
   thor: no-bearer POST /v1/render            -> 401
   thor: no-bearer GET  /v1/render/jobs/<id>  -> 401
   thor: bearer    GET  job status            -> {"state":"completed",...}

@@ -31,17 +31,17 @@
 # that file at the time of writing; the pair recurs ~40 more times through
 # the rest of the transcript):
 #
-#     (APIServer pid=1) INFO:     100.127.105.72:50652 - "GET /v1/models HTTP/1.1" 200 OK
-#     (APIServer pid=1) INFO:     100.105.216.63:55196 - "GET /v1/models HTTP/1.1" 200 OK
+#     (APIServer pid=1) INFO:     100.64.0.10:50652 - "GET /v1/models HTTP/1.1" 200 OK
+#     (APIServer pid=1) INFO:     100.64.0.11:55196 - "GET /v1/models HTTP/1.1" 200 OK
 #
-# This board holds tailnet address 100.81.137.121 (probed 2026-08-25, frame
+# This board holds tailnet address 100.64.0.12 (probed 2026-08-25, frame
 # claim c30), so for the whole life of the spike a 30B generate lane was
 # reachable, uncredentialed, by every peer in the mesh.
 #
 # Attribution, stated honestly because it sharpens the point rather than
 # softening it: both addresses are KNOWN fleet peers, not strangers —
-# 100.127.105.72 is the DGX Spark (it is this box's own AUDIO_URL host, see
-# docs/orin-profiles.md) and 100.105.216.63 is the Jetson AGX Thor gateway
+# 100.64.0.10 is the DGX Spark (it is this box's own AUDIO_URL host, see
+# docs/orin-profiles.md) and 100.64.0.11 is the Jetson AGX Thor gateway
 # (see docs/evidence/2026-08-04-accept-senses-unsloth-orin.txt).  Nothing
 # here claims a hostile party.  What it claims is the thing that matters:
 # discovery of an open generate port on this tailnet is AUTOMATIC and takes
@@ -59,7 +59,7 @@
 #
 #   CORRECTED — `--network host` is NOT inherited.  The vendor recipe runs the
 #   container in the host network namespace, which is what put port 8000 on
-#   100.81.137.121.  The shipped `vllm-associate` service uses the fleet's
+#   100.64.0.12.  The shipped `vllm-associate` service uses the fleet's
 #   ordinary bridge network and declares NO `network_mode`, and — like every
 #   other model lane in lobes/templates/fleet/docker-compose.yml — publishes
 #   NO host port at all.  It carries only `expose: 8000`, i.e. reachable at

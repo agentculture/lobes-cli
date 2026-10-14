@@ -17,7 +17,7 @@ PRIMARY_SERVED_NAME=unsloth/Qwen3.8-27B-NVFP4     # was sakamakismile/Qwen3.6-27
 PRIMARY_PEER_PROXY=true                            # arm forward (origin was already declared)
 PRIMARY_PEER_API_KEY=<REDACTED — copy of the Spark's inbound GATEWAY_API_KEY, per the O(machines) key rule>
 PRIMARY_MAX_MODEL_LEN=1048576                      # mirror the peer's served 1M YaRN window (was 131072)
-# PRIMARY_PEER_ORIGIN=http://spark.tail0be7e0.ts.net:8001 (unchanged)
+# PRIMARY_PEER_ORIGIN=http://spark.TAILNET.ts.net:8001 (unchanged)
 
 Gateway recreated with the box's full -f overlay chain (from `lobes fleet files`):
 $ docker compose -f docker-compose.yml -f docker-compose.shape.yml -f docker-compose.override.yml \
@@ -26,7 +26,7 @@ $ docker compose -f docker-compose.yml -f docker-compose.shape.yml -f docker-com
 ## Negative control (before the key landed) — proxy fired, peer's gate refused
 
 The first post-repoint request returned the SPARK's invalid_api_key error with
-X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001 already present —
+X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001 already present —
 proving the forward happens and the peer's inbound gate is armed. The keyless
 senses lane (MULTIMODAL_PEER_PROXY=true to the Orin, no key) shows per-peer
 gates differ; the key is per-peer material, never minted per pairing.
@@ -36,11 +36,11 @@ gates differ; the key is per-peer material, never minted per pairing.
 $ lobes capabilities   (cortex row)
 cortex    unsloth/Qwen3.8-27B-NVFP4                         1048576  by-proxy  http://localhost:8000
           ** infeasible on this machine — never served here **
-          proxied via this gateway from peer: http://spark.tail0be7e0.ts.net:8001
+          proxied via this gateway from peer: http://spark.TAILNET.ts.net:8001
 
 $ curl -s -X POST localhost:8000/v1/chat/completions -d '{"model":"cortex","messages":[{"role":"user","content":"Reply with exactly: THOR-PROXY-OK"}],"max_tokens":2048,"chat_template_kwargs":{"enable_thinking":false}}'
 HTTP/1.1 200 OK
-X-Lobes-Proxied-By: http://spark.tail0be7e0.ts.net:8001
+X-Lobes-Proxied-By: http://spark.TAILNET.ts.net:8001
 model: unsloth/Qwen3.8-27B-NVFP4 | reply: THOR-PROXY-OK
 
 ## Notes

@@ -23,19 +23,19 @@
 ## 1. /capabilities + by-name requests from each NON-hosting member (c14/h11, c20/h13, o8)
 
 ### spark-f8a9 (mesh name spark) gateway http://localhost:8001
-capabilities gemma2-embed: {'lane': True, 'model': 'google/embeddinggemma-2', 'dimension': 768, 'mrl_dims': [128, 256, 512, 768], 'modalities': ['text', 'code', 'image', 'video', 'audio'], 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000', 'members': None}
+capabilities gemma2-embed: {'lane': True, 'model': 'google/embeddinggemma-2', 'dimension': 768, 'mrl_dims': [128, 256, 512, 768], 'modalities': ['text', 'code', 'image', 'video', 'audio'], 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.TAILNET.ts.net:8000', 'members': None}
 capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
 POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
 POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
 POST model=embedder -> HTTP/1.1 404 Not Found | role_infeasible, suffixed_lanes ['embedder-orin', 'embedder-spark2', 'embedder-thor']   (see §4)
 ### spark-e2f0 (mesh name spark2) gateway http://localhost:8000
-capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000'}
+capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.TAILNET.ts.net:8000'}
 capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
 POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
 POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
 POST model=embedder -> HTTP/1.1 200 OK | (local) | model=Qwen/Qwen3-Embedding-0.6B 1024
 ### thor (mesh name thor) gateway http://localhost:8000
-capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.tail0be7e0.ts.net:8000'}
+capabilities gemma2-embed: {... identical identity ..., 'ready': True, 'proxied': True, 'hosted_by': 'http://orin.TAILNET.ts.net:8000'}
 capabilities embedder.model: Qwen/Qwen3-Embedding-0.6B | associate.feasible: False
 POST model=gemma2-embed -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
 POST model=google/embeddinggemma-2 -> HTTP/1.1 200 OK | X-Lobes-Mesh-Member: orin | model=google/embeddinggemma-2 768
@@ -61,7 +61,7 @@ ALL_PASS
 
   orin: compose stop embed-gemma2-embed
   [orin local]     HTTP 503 {"error": {"type": "backend_unavailable", "attempts": ["gemma2-embed: [Errno -3] Temporary failure in name resolution"]}}
-  [spark via mesh] HTTP 503 {"error": {"message": "the peer hosting this model (`http://orin.tail0be7e0.ts.net:8000`) is unavailable — retry shortly", "type": "backend_unavailable", "attempts": ["peer:gemma2-embed: HTTP 503"]}}
+  [spark via mesh] HTTP 503 {"error": {"message": "the peer hosting this model (`http://orin.TAILNET.ts.net:8000`) is unavailable — retry shortly", "type": "backend_unavailable", "attempts": ["peer:gemma2-embed: HTTP 503"]}}
   (twice, 40 s apart). Restarted -> healthy.
 
 ## 4. Pre-existing finding (NOT caused by this change): plain `embedder` does not resolve on the Spark

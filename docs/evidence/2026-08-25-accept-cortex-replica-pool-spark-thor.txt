@@ -1,61 +1,61 @@
 # t11 — LIVE ACCEPTANCE: cortex replica pool, Spark+Thor (#199)   2026-08-25T17:54:10Z   lobes-cli 0.63.0.dev428 (TestPyPI, PR #213)
-spark: MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://spark.tail0be7e0.ts.net:8001 PRIMARY_PEER_ORIGINS=http://thor.tail0be7e0.ts.net:8000 PRIMARY_PEER_API_KEYS= 
-thor:  MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://thor.tail0be7e0.ts.net:8000 PRIMARY_PEER_ORIGINS=http://spark.tail0be7e0.ts.net:8001 PRIMARY_PEER_API_KEYS=<spark key, set>
+spark: MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://spark.TAILNET.ts.net:8001 PRIMARY_PEER_ORIGINS=http://thor.TAILNET.ts.net:8000 PRIMARY_PEER_API_KEYS= 
+thor:  MODEL_GEAR_VERSION=0.63.0.dev428 GATEWAY_SELF_ORIGIN=http://thor.TAILNET.ts.net:8000 PRIMARY_PEER_ORIGINS=http://spark.TAILNET.ts.net:8001 PRIMARY_PEER_API_KEYS=<spark key, set>
 
 ## 0. Replica view on both fronts
 --- spark /capabilities cortex:
   fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'fp8', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
   replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
-  replica: {'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 0, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+  replica: {'origin': 'http://thor.TAILNET.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 0, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
 --- thor /capabilities cortex:
   fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'auto', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
   replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 0, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
-  replica: {'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': False, 'ready': True, 'busy': True, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+  replica: {'origin': 'http://spark.TAILNET.ts.net:8001', 'local': False, 'ready': True, 'busy': True, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
 
 ## 1. Spread — three concurrent model=cortex to the SPARK front while the Spark lane is loaded
   idle: spark pressure=busy running=1 waiting=0   thor pressure=warm running=0 waiting=0
   loaded: spark pressure=busy running=1 waiting=0   thor pressure=warm running=2 waiting=2
-  req A1: HTTP 200 finish=length tokens=300 wall=33.4s tok/s=9.0 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
-  req A2: HTTP 200 finish=length tokens=300 wall=35.3s tok/s=8.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
-  req A3: HTTP 200 finish=length tokens=300 wall=47.0s tok/s=6.4 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req A1: HTTP 200 finish=length tokens=300 wall=33.4s tok/s=9.0 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req A2: HTTP 200 finish=length tokens=300 wall=35.3s tok/s=8.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req A3: HTTP 200 finish=length tokens=300 wall=47.0s tok/s=6.4 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
   aggregate A1-A3: 900 tokens in 47.0s = 19.1 tok/s (baseline single owner under load: 11.0 tok/s aggregate)
 
 ## 2. Raw id vs alias from the same front (same snapshot)
-  req R2: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
-  req R1: HTTP 200 finish=length tokens=300 wall=28.7s tok/s=10.5 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready
+  req R2: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req R1: HTTP 200 finish=length tokens=300 wall=28.7s tok/s=10.5 | X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: sole-ready
 
 ## 3. Affinity — five sequential requests, X-Lobes-Affinity: sess-199
-  req F1: HTTP 200 finish=length tokens=300 wall=15.2s tok/s=19.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
-  req F2: HTTP 200 finish=length tokens=300 wall=27.8s tok/s=10.8 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
-  req F3: HTTP 200 finish=length tokens=300 wall=13.2s tok/s=22.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
-  req F4: HTTP 200 finish=length tokens=300 wall=29.0s tok/s=10.3 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
-  req F5: HTTP 200 finish=length tokens=300 wall=14.5s tok/s=20.7 | X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req F1: HTTP 200 finish=length tokens=300 wall=15.2s tok/s=19.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req F2: HTTP 200 finish=length tokens=300 wall=27.8s tok/s=10.8 | X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req F3: HTTP 200 finish=length tokens=300 wall=13.2s tok/s=22.7 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req F4: HTTP 200 finish=length tokens=300 wall=29.0s tok/s=10.3 | X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: affinity X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req F5: HTTP 200 finish=length tokens=300 wall=14.5s tok/s=20.7 | X-Lobes-Route-Reason: peer-less-loaded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
 
 ## 4. Spark busy -> Thor: current spark pressure=busy running=1 waiting=0
-  req P1: HTTP 200 finish=length tokens=300 wall=13.9s tok/s=21.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready
+  req P1: HTTP 200 finish=length tokens=300 wall=13.9s tok/s=21.5 | X-Lobes-Route-Reason: local-busy-forwarded X-Lobes-Proxied-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready
 
 ## 5. Thor front: request from the THOR side
-  req T1: HTTP 200 finish=length tokens=300 wall=13.6s tok/s=22.1 | X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req T1: HTTP 200 finish=length tokens=300 wall=13.6s tok/s=22.1 | X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
 
 ## 6. Thor gateway DOWN -> Spark keeps serving (sole-ready), no caller change
   thor gateway stopped
-  req D1: HTTP 200 finish=length tokens=300 wall=29.3s tok/s=10.2 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
-  req D2: HTTP 200 finish=length tokens=300 wall=30.7s tok/s=9.8 | X-Lobes-Served-By: http://spark.tail0be7e0.ts.net:8001 X-Lobes-Route-Reason: sole-ready
+  req D1: HTTP 200 finish=length tokens=300 wall=29.3s tok/s=10.2 | X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req D2: HTTP 200 finish=length tokens=300 wall=30.7s tok/s=9.8 | X-Lobes-Served-By: http://spark.TAILNET.ts.net:8001 X-Lobes-Route-Reason: sole-ready
   thor gateway started
-  recovered: [('http://vllm-primary:8000', True, True), ('http://thor.tail0be7e0.ts.net:8000', True, True)]
+  recovered: [('http://vllm-primary:8000', True, True), ('http://thor.TAILNET.ts.net:8000', True, True)]
 
 ## 7. Single hop — a request arriving at the Thor already marked X-Lobes-Proxied is served locally
-  req H1: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.8 | X-Lobes-Served-By: http://thor.tail0be7e0.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
+  req H1: HTTP 200 finish=length tokens=300 wall=13.8s tok/s=21.8 | X-Lobes-Served-By: http://thor.TAILNET.ts.net:8000 X-Lobes-Route-Reason: sole-ready X-Lobes-Tier: main X-Lobes-Tier-Reason: default
 
 ## Final replica view
 --- spark /capabilities cortex:
   fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'fp8', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
   replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
-  replica: {'origin': 'http://thor.tail0be7e0.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
+  replica: {'origin': 'http://thor.TAILNET.ts.net:8000', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
 --- thor /capabilities cortex:
   fingerprint: {'served_id': 'unsloth/Qwen3.8-27B-NVFP4', 'max_model_len': 262144, 'runtime': 'vllm', 'quantization': 'compressed-tensors', 'kv_cache_dtype': 'auto', 'reasoning_parser': 'unknown', 'tool_parser': 'qwen3_coder_thinking', 'speculative_config': 'unknown'}
   replica: {'origin': 'http://vllm-primary:8000', 'local': True, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= auto spec= unknown
-  replica: {'origin': 'http://spark.tail0be7e0.ts.net:8001', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
+  replica: {'origin': 'http://spark.TAILNET.ts.net:8001', 'local': False, 'ready': True, 'busy': False, 'running': 1, 'waiting': 0, 'compatible': True, 'reason': ''} kv= fp8 spec= unknown
 
 ## Deploy record
 - Spark: lobes-cli 0.63.0.dev428 gateway (TestPyPI, PR #213 run 428) via GATEWAY_PIP_EXTRA_INDEX_URL; .env gained
