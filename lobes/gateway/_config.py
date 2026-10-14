@@ -13,7 +13,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from lobes.catalog import SUPPORTED_MODELS, TIER_ROLE, resolve_tier
-from lobes.gateway._routing import RENDER_TASK, Backend, RoutingTable, tier_aliases
+from lobes.gateway._routing import (
+    DECIDE_TASK,
+    DECIDER_DOMAIN_RE,
+    DEFAULT_DECIDER_DOMAIN,
+    RENDER_TASK,
+    Backend,
+    RoutingTable,
+    tier_aliases,
+)
 from lobes.lane_keys import lane_env_key as _lane_env_key
 
 # The multimodal cortex (promoted 2026-07-31, replacing the text-only
@@ -683,6 +691,76 @@ def _hand_adapter_names(env: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(names)
 
 
+# The decider lane's DOMAIN inventory (the ``POST /v1/systemone`` route).
+# Operator-typed (rendered by a decider-hosting shape) as a comma-separated
+# ``name=url`` list, e.g. ``general=http://decider-general:8000,ops=...`` —
+# one sidecar per domain. A caller picks one with ``X-Lobes-Model:
+# decider:<name>``; no header means ``general``. Parsed exactly the way
+# ``HAND_LORA_MODULES`` is (see :func:`_hand_adapter_names`).
+DECIDER_DOMAINS_ENV = "DECIDER_DOMAINS"
+
+
+def _decider_domains(env: Mapping[str, str]) -> dict[str, str]:
+    """``{domain: base_url}`` declared in ``DECIDER_DOMAINS``, in order.
+
+    Same leniency as :func:`_hand_adapter_names`: a blank segment, a segment
+    with no ``=``, an empty url, or a name outside ``[a-z0-9][a-z0-9-]*`` is
+    skipped rather than raising — one typo must not take down a gateway that
+    serves every other domain fine. Duplicate names keep the FIRST url.
+    ``partition("=")`` so a url carrying an ``=`` keeps its full value.
+    """
+    raw = (env.get(DECIDER_DOMAINS_ENV) or "").strip()
+    domains: dict[str, str] = {}
+    for segment in raw.split(","):
+        name, sep, url = segment.strip().partition("=")
+        name, url = name.strip(), url.strip().rstrip("/")
+        if not sep or not url or not DECIDER_DOMAIN_RE.match(name):
+            continue
+        domains.setdefault(name, url)
+    return domains
+
+
+def _decider_backend(env: Mapping[str, str], domains: Mapping[str, str]) -> Backend | None:
+    """The ``decider`` backend: wired by ``DECIDER_BASE_URL`` or ``DECIDER_DOMAINS``.
+
+    ``task=DECIDE_TASK`` keeps it PATH-routed (``/v1/systemone``) — its id is
+    never a chat model nor listed on ``/v1/models``. When only
+    ``DECIDER_DOMAINS`` is set, the backend's own ``base_url`` (what
+    readiness/capabilities see) is the ``general`` domain's url, else the
+    first declared domain's.
+    """
+    backend = _optional_backend(
+        env,
+        name="decider",
+        url_key="DECIDER_BASE_URL",
+        name_key="DECIDER_SERVED_NAME",
+        default_url="http://decider:8000",
+        default_name=_DEFAULT_DECIDER,
+        task=DECIDE_TASK,
+    )
+    if backend is not None or not domains:
+        return backend
+    return Backend(
+        name="decider",
+        base_url=domains.get(DEFAULT_DECIDER_DOMAIN) or next(iter(domains.values())),
+        served_name=env.get("DECIDER_SERVED_NAME") or _DEFAULT_DECIDER,
+        task=DECIDE_TASK,
+    )
+
+
+def _table_decider_domains(declared: Mapping[str, str], backends: list[Backend]) -> dict[str, str]:
+    """The table's domain map: the declared one, else the wired backend as ``general``.
+
+    Back-compat with the single-backend wiring (``DECIDER_BASE_URL`` alone):
+    that url IS the ``general`` domain. Nothing wired and nothing declared is
+    the empty map — no decider on this box.
+    """
+    if declared:
+        return dict(declared)
+    decider = next((b for b in backends if b.name == "decider"), None)
+    return {DEFAULT_DECIDER_DOMAIN: decider.base_url} if decider is not None else {}
+
+
 def _optional_backend(
     env: Mapping[str, str],
     *,
@@ -919,6 +997,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # The primary is always present; fallback / embed / rerank are each wired only
     # when their own env pair is set (so the default gateway serves the primary
     # alone, and a pooling/fallback backend opts in independently).
+    decider_domains = _decider_domains(env)
     optional = (
         _optional_backend(
             env,
@@ -1035,17 +1114,11 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
             default_url="http://vllm-associate:8000",
             default_name=_DEFAULT_ASSOCIATE,
         ),
-        # The opt-in decider backend (schema-scored decisions; sidecar lane).
-        # Wired only when DECIDER_BASE_URL is present; unwired it is
-        # INFEASIBLE (OPT_IN_BACKENDS). No route is added here.
-        _optional_backend(
-            env,
-            name="decider",
-            url_key="DECIDER_BASE_URL",
-            name_key="DECIDER_SERVED_NAME",
-            default_url="http://decider:8000",
-            default_name=_DEFAULT_DECIDER,
-        ),
+        # The opt-in decider backend (schema-scored decisions; sidecar lane,
+        # POST /v1/systemone). Wired when DECIDER_BASE_URL or DECIDER_DOMAINS
+        # is present; unwired it is INFEASIBLE (OPT_IN_BACKENDS). Path-routed
+        # (task=decide), so it adds no model-field route — see _decider_backend.
+        _decider_backend(env, decider_domains),
         # The opt-in coder gear (Gemma 4 12B coder fine-tune, catalog
         # role_hint="candidate" since the "support both" demotion — see
         # docs/vllm-nightly-migration.md §7). Wired only when
@@ -1242,6 +1315,7 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
         infeasible=infeasible,
         self_origin=_self_origin(env),
         lane_fingerprints=_lane_fingerprints(env),
+        decider_domains=_table_decider_domains(decider_domains, backends),
     )
     server = ServerConfig(
         host=env.get("GATEWAY_HOST") or "0.0.0.0",  # nosec B104 — bind all inside the container

@@ -2000,6 +2000,7 @@ services:
       # infeasible. Gateway passthrough only; the lane service lands later.
       - DECIDER_BASE_URL=${DECIDER_BASE_URL:-}
       - DECIDER_SERVED_NAME=${DECIDER_SERVED_NAME:-}
+      - DECIDER_DOMAINS=${DECIDER_DOMAINS:-}
       # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
       # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
       # opt-in mechanics as muse/worker/associate above: an innereye-hosting

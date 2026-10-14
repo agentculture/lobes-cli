@@ -272,6 +272,23 @@ BUSY_RETRY_AFTER_SECONDS: int = 5
 
 
 # ---------------------------------------------------------------------------
+# Roles that are never shed — outside the tier ladder entirely
+# ---------------------------------------------------------------------------
+#
+# ``decider`` (the ``POST /v1/systemone`` lane) is not a generate tier, so it
+# has no rung on the ``hand < … < main`` ladder and no "servable floor" to
+# shed to. A decision request is small, bounded and usually on the critical
+# path of a caller's control loop, so a 429 there stalls the caller for no
+# memory relief worth having. The gateway's decider branch therefore never
+# consults :func:`decide` at all; this set names that fact so it is
+# auditable from this module rather than only from the route's absence of a
+# pressure read.
+
+#: Roles whose requests are forwarded under any pressure — never a 429.
+NEVER_SHED_ROLES: frozenset[str] = frozenset({"decider"})
+
+
+# ---------------------------------------------------------------------------
 # Shed signals (deviation d1) — WHICH fact justified refusing to serve
 # ---------------------------------------------------------------------------
 #
