@@ -108,6 +108,10 @@ def main() -> int:
     ap.add_argument("--calib", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--max-tokens", type=int, default=4096)
+    # On unified-memory boxes (DGX Spark GB10) the default "cpu" offload of cached
+    # activations HUNG in a pinned non_blocking H2D copy (2026-10-14, stage 49/65,
+    # one CPU thread at 100% for ~1 h); keeping them on the GPU avoids the copy.
+    ap.add_argument("--offload-device", default="cuda:0")
     a = ap.parse_args()
 
     import torch
@@ -127,6 +131,7 @@ def main() -> int:
         recipe=recipe_for(a.scheme),
         max_seq_length=a.max_tokens,
         num_calibration_samples=len(ds),
+        sequential_offload_device=a.offload_device,
     )
     print(json.dumps({"event": "quantized", "s": round(time.time() - t0, 1)}), flush=True)
     a.out.mkdir(parents=True, exist_ok=True)
