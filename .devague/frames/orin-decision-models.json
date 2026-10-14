@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T13:46:20Z",
+  "updated": "2026-10-14T14:05:53Z",
   "claims": [
     {
       "id": "c1",
@@ -1136,6 +1136,17 @@
       "skipped_check": "known NVIDIA toolkit docker-update/device-cgroup behaviour",
       "refs": [
         "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l13",
+      "code": "assumption-for-measurement",
+      "what": "l12 and my status message claimed 'docker update' CAUSED the cudaErrorNotPermitted exits; only correlation was observed (2 exits 5 s / 27 s after an update; a 0.8B repro with 9 toggles did not fail). The operator attributes the faults to overheating with the evidence lost. Cause unproven.",
+      "skipped_check": "",
+      "refs": [
+        "l12"
       ],
       "origin": "llm",
       "status": "proposed"
