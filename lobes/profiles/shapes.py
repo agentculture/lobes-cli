@@ -262,6 +262,7 @@ def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], d
 #     start_period = "900s"              # optional healthcheck grace (default 900s)
 #     gpu_mem_util = "0.40"              # optional, clef-vllm (DECIDER_GPU_MEM_UTIL)
 #     max_model_len = "16384"            # optional, clef-vllm (DECIDER_MAX_MODEL_LEN)
+#     kv_cache_memory_bytes = "4294967296"  # optional, clef-vllm (DECIDER_KV_CACHE_MEMORY_BYTES)
 #
 #     [decider_domains.triage]           # any further domain: model=decider:triage
 #     backend = "strands"
@@ -294,6 +295,9 @@ _DECIDER_OPTIONAL_KEYS: tuple[str, ...] = (
     # clef-vllm engine budget (t9): DECIDER_GPU_MEM_UTIL / DECIDER_MAX_MODEL_LEN.
     "gpu_mem_util",
     "max_model_len",
+    # A fixed KV pool (t11): unpinned, vLLM sizes it from the board's free
+    # memory, which on a unified-memory Jetson moves with its neighbours.
+    "kv_cache_memory_bytes",
 )
 _DECIDER_KEYS: tuple[str, ...] = _DECIDER_REQUIRED_KEYS + _DECIDER_OPTIONAL_KEYS
 # Values land verbatim in a generated compose file (inside double-quoted YAML
@@ -310,6 +314,7 @@ _DECIDER_VALUE_RE: dict[str, re.Pattern[str]] = {
     "start_period": re.compile(r"(\d+(ms|s|m|h))+", re.ASCII),
     "gpu_mem_util": re.compile(r"0?\.\d+", re.ASCII),
     "max_model_len": re.compile(r"[1-9]\d*", re.ASCII),
+    "kv_cache_memory_bytes": re.compile(r"[1-9]\d*", re.ASCII),
 }
 _DECIDER_VALUE_HINT: dict[str, str] = {
     "backend": f"choose one of: {', '.join(DECIDER_BACKENDS)}",
@@ -320,6 +325,7 @@ _DECIDER_VALUE_HINT: dict[str, str] = {
     "start_period": "a compose duration, e.g. '900s' or '15m'",
     "gpu_mem_util": "a fraction of GPU memory in (0, 1), e.g. '0.40'",
     "max_model_len": "a positive token count, e.g. '16384'",
+    "kv_cache_memory_bytes": "a positive byte count, e.g. '4294967296' (4 GiB)",
 }
 
 

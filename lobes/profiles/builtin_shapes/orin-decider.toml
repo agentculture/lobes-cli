@@ -37,3 +37,9 @@ revision = "4daaa224c6dc553b13120bb10414a7e7de7a5a95"
 mem_limit = "32g"
 gpu_mem_util = "0.40"
 max_model_len = "16384"
+# A fixed 4 GiB KV pool (t11). Left to vLLM, the pool is sized from the board's
+# free memory, which moves with the neighbouring lanes and the page cache: two
+# plain-run boots at the same settings got 94,890 and 131,072 tokens, and the
+# first boots FROM THIS RENDER were OOM-killed at the 32g cap during CUDA-graph
+# capture (cgroup kernel memory 31.35 GB, i.e. GPU allocations, at the kill).
+kv_cache_memory_bytes = "4294967296"

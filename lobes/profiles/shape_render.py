@@ -296,6 +296,8 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
         environment.append(f"DECIDER_GPU_MEM_UTIL={spec['gpu_mem_util']}")
     if "max_model_len" in spec:
         environment.append(f"DECIDER_MAX_MODEL_LEN={spec['max_model_len']}")
+    if "kv_cache_memory_bytes" in spec:
+        environment.append(f"DECIDER_KV_CACHE_MEMORY_BYTES={spec['kv_cache_memory_bytes']}")
     environment += [
         f"DECIDER_PORT={DECIDER_PORT}",
         "HF_HOME=/root/.cache/huggingface",

@@ -270,6 +270,18 @@ def test_override_plan_names_the_decider_services(tmp_path) -> None:
             {},
             "max_model_len",
         ),
+        (
+            {
+                "general": {
+                    "backend": "clef-vllm",
+                    "model": CLEF,
+                    "mem_limit": "1g",
+                    "kv_cache_memory_bytes": "4GiB",
+                }
+            },
+            {},
+            "kv_cache_memory_bytes",
+        ),
     ],
 )
 def test_malformed_decider_declarations_are_load_errors(domains, extra, fragment) -> None:
@@ -362,6 +374,7 @@ def test_engine_budget_keys_render_into_the_sidecar_env() -> None:
             "mem_limit": "32g",
             "gpu_mem_util": "0.40",
             "max_model_len": "16384",
+            "kv_cache_memory_bytes": "4294967296",
         }
     }
     env = _override_doc(_decider_shape(domains), _card())["services"]["decider-general"][
@@ -369,11 +382,14 @@ def test_engine_budget_keys_render_into_the_sidecar_env() -> None:
     ]
     assert "DECIDER_GPU_MEM_UTIL=0.40" in env
     assert "DECIDER_MAX_MODEL_LEN=16384" in env
+    assert "DECIDER_KV_CACHE_MEMORY_BYTES=4294967296" in env
     plain = _override_doc(_decider_shape(_two_domains()), _card())["services"]
     for name, svc in plain.items():
         if not name.startswith("decider-"):
             continue
         assert not any(
-            e.startswith(("DECIDER_GPU_MEM_UTIL", "DECIDER_MAX_MODEL_LEN"))
+            e.startswith(
+                ("DECIDER_GPU_MEM_UTIL", "DECIDER_MAX_MODEL_LEN", "DECIDER_KV_CACHE_MEMORY_BYTES")
+            )
             for e in svc["environment"]
         )

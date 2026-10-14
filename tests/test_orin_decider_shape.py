@@ -54,6 +54,10 @@ def test_the_measured_engine_budget_is_rendered() -> None:
     # max_model_len 16384, beside the orin-embed lanes.
     assert "DECIDER_GPU_MEM_UTIL=0.40" in env
     assert "DECIDER_MAX_MODEL_LEN=16384" in env
+    # t11: the KV pool is pinned (4 GiB). Unpinned, vLLM sizes it from the
+    # board's free memory, and the render's first boot OOM-killed its engine at
+    # the 32g cap during CUDA-graph capture.
+    assert "DECIDER_KV_CACHE_MEMORY_BYTES=4294967296" in env
 
 
 def test_the_gateway_is_wired_to_the_domain() -> None:
