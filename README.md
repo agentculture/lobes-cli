@@ -457,6 +457,13 @@ FutureProofHomes (Warsaw, Poland) and a fellow [Jetson AI Lab](https://www.jetso
 member, the same community shahizat's NVFP4 benchmark comes from — for sharing the
 edge-AI serving expertise that this project builds on.
 
+Clearing the host page cache before a vLLM boot and after stopping a lane
+(`sysctl -w vm.drop_caches=3`, run passwordless through one narrow sudoers rule) comes
+from **[Mjölnir](https://github.com/thor-arena/mjolnir)** (thor-arena), whose `cachectl.py`
+does exactly this on the Jetson AGX Thor. On unified-memory boxes CUDA counts page cache
+as used. On our Thor, memory that looked stuck after stopping the lanes (22 GiB free)
+came back with one clear (89 GiB free), with no reboot.
+
 ## License
 
 Apache 2.0 — see [`LICENSE`](LICENSE).
