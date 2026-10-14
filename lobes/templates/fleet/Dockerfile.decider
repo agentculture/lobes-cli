@@ -1,0 +1,32 @@
+# lobes decider sidecar — serves ONE decision checkpoint on POST /v1/systemone
+# (lobes/decider_sidecar/server.py). DECIDER_BACKEND=clef|strands selects the
+# loader at RUN time; both backends' dependencies are installed so one image
+# serves either (the choice is an env var, not a rebuild).
+#
+# Clef was tested on torch 2.11 + transformers 5.10.2; strands-decider requires
+# transformers>=5.15,<6, so the image pins transformers to the strands-compatible
+# line and installs strands-decider with --no-deps (its torch/transformers pins
+# are already satisfied by the base image) plus the few light deps it imports.
+# The base is the same proven vLLM image digest as Dockerfile.embed-st (torch +
+# CUDA stack for Jetson); the ENTRYPOINT below replaces vLLM's.
+#
+# No EXPOSE and no port publishing: the container listens on DECIDER_PORT
+# (default 8000) inside its network only; the gateway is the sole way in and the
+# compose file decides exposure. MODEL_GEAR_VERSION pins the sidecar module to
+# the lobes-cli release that scaffolded the deployment. Required.
+ARG DECIDER_BASE_IMAGE=vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9
+FROM ${DECIDER_BASE_IMAGE}
+ARG MODEL_GEAR_VERSION
+ARG LOBES_DEV_INDEX_URL=
+# Pinned to strands-decider main HEAD as resolved on 2026-10-14.
+ARG STRANDS_DECIDER_VERSION=8b6faa553038a59e73fa7f16c4081f8ceb21d27e
+ENV DECIDER_BACKEND=clef
+RUN uv pip install --system --no-deps "transformers==5.19.0" \
+    && uv pip install --system pillow "huggingface_hub>=1.5" "pydantic>=2.7" peft accelerate safetensors numpy pyyaml \
+    && uv pip install --system --no-deps "strands-decider @ git+https://github.com/strands-labs/strands-decider@${STRANDS_DECIDER_VERSION}" \
+    && if [ -n "${LOBES_DEV_INDEX_URL}" ]; then \
+        uv pip install --system --no-deps --index-url "${LOBES_DEV_INDEX_URL}" \
+            "lobes-cli==${MODEL_GEAR_VERSION}"; \
+    fi \
+    && uv pip install --system "lobes-cli[decider-sidecar]==${MODEL_GEAR_VERSION}"
+ENTRYPOINT ["python3", "-m", "lobes.decider_sidecar.server"]
