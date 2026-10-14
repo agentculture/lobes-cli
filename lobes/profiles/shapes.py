@@ -282,7 +282,7 @@ DECIDER_ROLE = "decider"
 DECIDER_DEFAULT_DOMAIN = "general"
 #: Mirrors lobes.decider_sidecar.server.BACKENDS (pinned by a test; not imported,
 #: so this module's only substrate dependency stays lobes.profiles.schema).
-DECIDER_BACKENDS: tuple[str, ...] = ("clef", "strands")
+DECIDER_BACKENDS: tuple[str, ...] = ("clef", "strands", "clef-vllm")
 DECIDER_DOMAIN_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 _DECIDER_REQUIRED_KEYS: tuple[str, ...] = ("backend", "model", "mem_limit")
 _DECIDER_OPTIONAL_KEYS: tuple[str, ...] = ("revision", "device", "start_period")

@@ -225,6 +225,13 @@ OPT_IN_CORE_COMPOSE_PROFILE: dict[str, str] = {
 DECIDER_SERVICE_PREFIX = "decider-"
 DECIDER_PORT = 8000
 DECIDER_DOCKERFILE = "Dockerfile.decider"
+#: The image each sidecar backend builds from (t21): ``clef-vllm`` needs the
+#: vLLM 0.31 pooling-runner image; ``clef``/``strands`` share the transformers one.
+DECIDER_DOCKERFILES: dict[str, str] = {
+    "clef": DECIDER_DOCKERFILE,
+    "strands": DECIDER_DOCKERFILE,
+    "clef-vllm": "Dockerfile.decider-vllm",
+}
 DECIDER_DOMAINS_KEY = "DECIDER_DOMAINS"
 #: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
 DECIDER_DEFAULT_START_PERIOD = "900s"
@@ -285,7 +292,7 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
         f"  {service}:",
         "    build:",
         "      context: .",
-        f"      dockerfile: {DECIDER_DOCKERFILE}",
+        f"      dockerfile: {DECIDER_DOCKERFILES[spec['backend']]}",
         "      args:",
         "        MODEL_GEAR_VERSION: ${MODEL_GEAR_VERSION:-}",
         "        LOBES_DEV_INDEX_URL: ${GATEWAY_PIP_EXTRA_INDEX_URL:-}",
@@ -331,6 +338,10 @@ def decider_compose_lines(shape: Shape, profile: Profile) -> list[str]:
         "  # a per-domain mem_limit (Jetson GPU memory counts against the cgroup). The",
         f"  # gateway reaches them through {DECIDER_DOMAINS_KEY} in .env.",
     ]
+    if any(spec["backend"] == "clef-vllm" for spec in shape.decider_domains.values()):
+        lines.append(
+            f"  # clef-vllm domains build from {DECIDER_DOCKERFILES['clef-vllm']} instead."
+        )
     for domain in domains:
         lines += _decider_service_lines(domain, shape.decider_domains[domain])
     return lines

@@ -253,6 +253,9 @@ EMBED_TEMPLATES = {
 # --shape <shape>` scaffolds it for any shape that hosts decider domains.
 DECIDER_TEMPLATES = {
     "fleet/Dockerfile.decider": "Dockerfile.decider",
+    # The clef-vllm backend's image (t21); scaffolded alongside so a domain can
+    # switch backend by editing the shape, never by hand-copying a Dockerfile.
+    "fleet/Dockerfile.decider-vllm": "Dockerfile.decider-vllm",
 }
 _INIT_REMEDIATION = (
     "run 'lobes init --apply' to scaffold ~/.lobes, or pass --compose-dir / set LOBES_DIR"
