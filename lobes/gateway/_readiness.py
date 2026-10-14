@@ -106,6 +106,13 @@ _PEER_PROBE_TIMEOUT: float = 3.0
 # to honestly verify a peer serves the id this box would forward to it.
 _MODELS_PATH = "/v1/models"
 
+# The decider sidecar (lobes/decider_sidecar) serves GET /health (503 until
+# loaded) and POST /v1/systemone ONLY — no /v1/models. Its readiness is its
+# own /health on every path (local probe AND the peer fallback), never the
+# model listing. Pinned here so a future default change cannot silently move it.
+_DECIDER_BACKEND = "decider"
+_OWN_HEALTH_BACKENDS: frozenset[str] = frozenset({_DECIDER_BACKEND})
+
 # A probe maps a backend base URL to its tri-state readiness. Injectable so the
 # cache is unit-testable without sockets (the ``.current()``-opens-no-socket and
 # defensive-degradation properties are proved by driving this callable).
@@ -459,6 +466,14 @@ def probe_peer_advert(
     Never raises; every failure degrades to ``PeerAdvert(ready=False)``.
     """
     entry = _peer_role_entry(origin, role, timeout, api_key, opener)
+    if entry is None and role in _OWN_HEALTH_BACKENDS:
+        # No /v1/models on this lane: an old/bare peer is ready iff /health 200s.
+        get = opener or _default_peer_opener
+        try:
+            status, _ = get(origin.rstrip("/") + _HEALTH_PATH, timeout, api_key)
+        except (OSError, http.client.HTTPException, ValueError):
+            status = 0
+        return PeerAdvert(ready=status == 200, context=None)
     if entry is None:
         return PeerAdvert(
             ready=probe_peer_ready(
@@ -593,7 +608,8 @@ class ReadinessCache:
         # when this cache is using the DEFAULT probe (see ``_read``) — an
         # injected ``probe`` callable is a full stand-in for the HTTP call
         # and decides its own path, if any.
-        self._paths: dict[str, str] = dict(paths or {})
+        self._paths: dict[str, str] = {n: _HEALTH_PATH for n in _OWN_HEALTH_BACKENDS}
+        self._paths.update(paths or {})
         self._interval = interval
         # Peer specs keyed by name (last-one-wins on a duplicate name, same
         # convention as dict.fromkeys below). A caller mutating their own

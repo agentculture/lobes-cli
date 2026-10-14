@@ -637,3 +637,67 @@ def test_readiness_cache_from_backends_forwards_paths() -> None:
         readiness_mod._default_ready_opener = original
         cache.stop()
     assert seen == ["http://comfyui:8188/object_info"]
+
+
+# --- decider lane: probed on its own /health, never /v1/models (odm t6) -----
+
+
+def _serve_decider(*, up: bool):
+    """A sidecar-shaped server: GET /health only; /v1/models 404s."""
+    import http.server
+
+    seen: list[str] = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.path)
+            self.send_response(200 if (self.path == "/health" and up) else 404)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_decider_ready_via_health_when_v1_models_404s() -> None:
+    srv, seen = _serve_decider(up=True)
+    cache = R.ReadinessCache(
+        {"decider": f"http://127.0.0.1:{srv.server_port}"}, timeout=2.0, start=False
+    )
+    try:
+        cache.refresh()
+        assert cache.current() == {"decider": True}
+    finally:
+        cache.stop()
+        srv.shutdown()
+    assert seen and set(seen) == {"/health"}
+
+
+def test_decider_down_reads_not_ready() -> None:
+    srv, seen = _serve_decider(up=False)
+    cache = R.ReadinessCache(
+        {"decider": f"http://127.0.0.1:{srv.server_port}"}, timeout=2.0, start=False
+    )
+    try:
+        cache.refresh()
+        assert cache.current() == {"decider": False}
+    finally:
+        cache.stop()
+        srv.shutdown()
+    assert "/v1/models" not in seen
+
+
+def test_decider_peer_fallback_probes_health_not_models() -> None:
+    seen: list[str] = []
+
+    def opener(url, _t, _k):
+        seen.append(url)
+        return (404, b"") if url.endswith("/capabilities") else (200, b"")
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert.ready is True
+    assert not any(u.endswith("/v1/models") for u in seen)
+    assert seen[-1] == "http://peer:9/health"
