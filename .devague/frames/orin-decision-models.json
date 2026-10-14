@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-14T05:54:49Z",
+  "updated": "2026-10-14T06:34:54Z",
   "claims": [
     {
       "id": "c1",
@@ -1026,6 +1026,72 @@
       "skipped_check": "read strands-decider server source",
       "refs": [
         "challenge pass / counter-evidence + lifecycle lenses"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "control-absent",
+      "what": "t2 (d1 widening): up.py/_config.py/measure changes were made code-first, then failing pins fixed \u2014 not test-first; only the measure stub test is new and was written after the code",
+      "skipped_check": "write failing tests first for the d1 surfaces",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "provenance-missing",
+      "what": "t3: Clef context/native_max_model_len 262144 set from the Qwen3.8-27B base by the task agent, not read off a card; the main agent's scope research did read Cloudflare/clef config.json max_position_embeddings=262144, which matches, but the catalog comment does not cite it",
+      "skipped_check": "",
+      "refs": [
+        "t3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "assumption-for-measurement",
+      "what": "t4: the Clef backend's load_release_model/systemone call signature comes from the model card, not joint_schema_model.py source; unexercised until the t1/t11 live runs",
+      "skipped_check": "read joint_schema_model.py",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "control-absent",
+      "what": "t8: implementation written before tests/test_decider_render.py (red-by-import-error confirmed after the fact); and the generated decider-* override was only yaml-checked, never run through a real 'docker compose config'",
+      "skipped_check": "docker compose config on a rendered orin-decider dir",
+      "refs": [
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "provenance-missing",
+      "what": "t8 edited lobes/cli/_commands/init.py and lobes/runtime/_compose.py, outside its brief's file list (needed: override generation + Dockerfile scaffolding live there); not a separate approved deviation",
+      "skipped_check": "",
+      "refs": [
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "control-absent",
+      "what": "t1: third-party code from Aikimi/clef-nf4 (clef_runtime/*.py, joint_schema_model.py) was EXECUTED on the Orin (container root, GPU, default bridge network, rw mount of that model's cache dir) before it was audited; the audit was done afterwards, only when the user asked whether the repo is safe",
+      "skipped_check": "audit third-party Python before executing it",
+      "refs": [
+        "t1"
       ],
       "origin": "llm",
       "status": "proposed"
