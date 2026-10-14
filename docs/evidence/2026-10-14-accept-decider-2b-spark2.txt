@@ -1,0 +1,84 @@
+accept-decider-2b-spark2 (plan orin-decision-models, t12)
+date: 2026-10-14 (UTC times below; backup suffixes are box-local time)
+box: the second DGX Spark (GB10, 128 GB unified), mesh name `spark2`
+domain: decider:strands-general (the domain name chosen for the stock checkpoint)
+checkpoint: StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 @ 216d1ccb46a9e9b036eb9187b248db98480f77d4
+  bf16, stock (no retrained adapter); base Qwen/Qwen3.5-2B-Base @ b1485b2fa6dfa1287294f269f5fb618e03d52d7c
+  (the revision the checkpoint's own provenance.json records; that file notes it was
+  "inferred: Hub main at training time; hosts did not pin it")
+
+== backup BEFORE the change ==
+~/.lobes/.env.bak-20261014-211724-pre-decider-strands
+~/.lobes/docker-compose.override.yml.bak-20261014-211724-pre-decider-strands
+
+== what changed on spark2 (hand-kept compose; no re-scaffold) ==
+docker-compose.override.yml:
+  - the gateway gains DECIDER_DOMAINS / DECIDER_DOMAIN_MODELS passthroughs (this box's
+    compose predates the decider role)
+  - a decider-strands-general service, copied from this branch's render for a strands
+    domain (`Dockerfile.decider`, mem_limit 12g, `expose` 8000, no host port), with the
+    GPU requested the way this box does it (deploy.devices) and no compose profile
+Dockerfile.decider: copied from lobes/templates/fleet/ on this branch
+.env: MODEL_GEAR_VERSION=0.86.0.dev642 (was 0.84.0.dev619),
+      DECIDER_DOMAINS=strands-general=http://decider-strands-general:8000,
+      DECIDER_DOMAIN_MODELS=strands-general=StrandsAgents/strands-decider-2B-qwen3.5-v1-2610@216d1ccb...
+
+== a fix this task needed (b58cf16, dev642) ==
+strands-decider's StrandsDeciderModel.load(path) resolves a hub id with NO revision (the
+repo HEAD), so the sidecar's strands backend silently ignored DECIDER_REVISION. It now
+resolves the pinned snapshot with strands_decider's own checkpoint_dir(model, revision)
+and loads that directory. Live proof: the HF cache on spark2 holds exactly one snapshot
+of the checkpoint, 216d1ccb46a9e9b036eb9187b248db98480f77d4.
+
+== images ==
+decider-strands-general  sha256:ac200eb5f20e4692acfad929627afae1d37e45ae3e659d8c02520ea867f05e78
+                         lobes-cli 0.86.0.dev642, torch 2.11.0+cu130, transformers 5.17.0,
+                         peft 0.21.2, strands-decider (pinned archive, see the Dockerfile)
+gateway                  sha256:3ca2c5781328076971a84c6223694e58fb23f0bf8df3888d71e27ce0779ba8a1
+                         lobes-cli 0.86.0.dev642, recreated alone (--no-deps)
+The image build's first try failed on the gateway (pip did not yet see the just-published
+dev wheel); the second try built both.
+
+== boot ==
+started 21:31:14; fetched the checkpoint (29 files, 225 MB) and the base (~4.3 GB) into
+the mounted HF cache; "Loading weights 320/320" 21:34:50; healthy 21:35:25.
+OOMKilled=false, restarts 0. docker stats after boot: 1.704 GiB / 12 GiB.
+
+== the sidecar is reachable only through the gateway ==
+docker port model-gear-decider-strands-general: none published
+from the Spark: spark2:18080 connection refused (curl exit 7)
+
+== answers ==
+probe record: the first record of culture-dev/clef-probe-set @ cf9b911a (a boolq
+question, gold "false", 255 input tokens for this tokenizer)
+spark2's own gateway (localhost:8000)  200, 0.83 s (first request after boot)
+  {"model": "strands-decider-2B-qwen3.5-v1-2610", "answers": {"answer": {"type": "noul",
+   "noul": 0.1436}}, "usage": {"input_tokens": 255, "output_tokens": 1}, ...}
+cross-box, X-Lobes-Model: decider:strands-general, each on the first try:
+  gateway      lobes-cli       status  total    X-Lobes-Mesh-Member  X-Lobes-Route-Reason
+  Orin         0.86.0.dev639   200     0.082 s  spark2               mesh-forwarded
+  Thor         0.86.0.dev641   200     0.089 s  spark2               mesh-forwarded
+  Spark        0.86.0.dev642   200     0.107 s  spark2               mesh-forwarded
+  Every reply also carried X-Lobes-Mesh-Verified: true and
+  X-Lobes-Mesh-Role: decider:strands-general, and the same answer (noul 0.1436).
+Orin GET /capabilities, decider.domains:
+  general          culture-dev/clef-27b-GPTQ-W4A16-g64@4daaa224..., compressed-tensors,
+                   ready true (served on the Orin)
+  strands-general  StrandsAgents/strands-decider-2B-qwen3.5-v1-2610@216d1ccb..., quant none,
+                   ready true, proxied true, hosted_by spark2's gateway
+So one gateway serves one domain locally and forwards the other by name.
+
+== gateway changes on the other members (for this task and t11) ==
+Thor:  0.84.0.dev619 -> 0.86.0.dev641; DECIDER_FEASIBLE=false + passthrough
+       (backups .env/.override.yml .bak-20261015-000241-pre-decider-peer)
+Spark: 0.84.0.dev619 -> 0.86.0.dev642, re-imaged through lobes-compose.sh so the audio
+       overlay stayed (AUDIO_URL kept); DECIDER_FEASIBLE=false + passthrough in the
+       hand-kept override (backups .bak-20261015-001801-pre-decider-peer)
+Orin:  0.86.0.dev639 (t11)
+The DECIDER_FEASIBLE=false lines turned out NOT to be needed for routing: the gateway's
+/v1/systemone asks the mesh for a domain it does not serve before any feasibility refusal
+(read from lobes/gateway/server.py handle_systemone; not tested with the key absent).
+
+== not done here ==
+No adapter was trained or loaded; this is the stock checkpoint. The mesh-wide answer was
+checked with one record; the probe-set baseline for the stock checkpoint is a separate run.
