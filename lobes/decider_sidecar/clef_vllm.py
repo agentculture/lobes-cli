@@ -51,6 +51,7 @@ import importlib.util
 import json
 import os
 import re
+import sys
 import threading
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
@@ -357,5 +358,8 @@ def _import_joint_schema_model(path: str) -> Any:  # pragma: no cover — import
     if spec is None or spec.loader is None:
         raise RuntimeError(f"{path} ships no joint_schema_model.py")
     module = importlib.util.module_from_spec(spec)
+    # Registered BEFORE exec: its frozen dataclasses (with postponed annotations)
+    # look themselves up in sys.modules — measured: AttributeError otherwise.
+    sys.modules["joint_schema_model"] = module
     spec.loader.exec_module(module)
     return module

@@ -49,8 +49,11 @@ SKIP_COPY = ("model-", "model.safetensors.index.json", "config.json", ".cache", 
 
 
 def _load_clef_code(src: Path):
-    spec = importlib.util.spec_from_file_location("joint_schema_model", src / "joint_schema_model.py")
+    spec = importlib.util.spec_from_file_location(
+        "joint_schema_model", src / "joint_schema_model.py"
+    )
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["joint_schema_model"] = mod  # its dataclasses resolve via sys.modules
     spec.loader.exec_module(mod)
     return mod
 
@@ -84,7 +87,9 @@ def recipe_for(scheme: str):
         from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
         from llmcompressor.modifiers.gptq import GPTQModifier
 
-        weights = QuantizationArgs(num_bits=4, type="int", symmetric=True, strategy="group", group_size=64)
+        weights = QuantizationArgs(
+            num_bits=4, type="int", symmetric=True, strategy="group", group_size=64
+        )
         return GPTQModifier(
             config_groups={"group_0": QuantizationScheme(targets=["Linear"], weights=weights)},
             ignore=KEEP_W4A16,
@@ -130,7 +135,10 @@ def main() -> int:
     for f in a.src.iterdir():
         if f.is_file() and not f.name.startswith(SKIP_COPY) and not (a.out / f.name).exists():
             shutil.copy2(f, a.out / f.name)
-    versions = {p: md.version(p) for p in ("llmcompressor", "compressed-tensors", "transformers", "torch", "accelerate")}
+    versions = {
+        p: md.version(p)
+        for p in ("llmcompressor", "compressed-tensors", "transformers", "torch", "accelerate")
+    }
     (a.out / "quantization_provenance.json").write_text(
         json.dumps(
             {
@@ -146,7 +154,17 @@ def main() -> int:
             indent=1,
         )
     )
-    print(json.dumps({"event": "saved", "out": str(a.out), "versions": versions, "s": round(time.time() - t0, 1)}), flush=True)
+    print(
+        json.dumps(
+            {
+                "event": "saved",
+                "out": str(a.out),
+                "versions": versions,
+                "s": round(time.time() - t0, 1),
+            }
+        ),
+        flush=True,
+    )
     return 0
 
 
