@@ -181,6 +181,9 @@ def test_switch_uncatalogued_quantization_none_surfaces_remove_notice(tmp_path, 
     [
         "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
         "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+        "Cloudflare/clef",
+        "culture-dev/clef-27b-GPTQ-W4A16-g64",
+        "culture-dev/clef-27b-NVFP4",
     ],
 )
 def test_switch_refuses_a_decide_task_gear(tmp_path, capsys, model_id) -> None:

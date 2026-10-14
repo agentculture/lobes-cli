@@ -1400,7 +1400,78 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         modalities=("text", "code"),
     ),
     SupportedModel(
+        id="culture-dev/clef-27b-GPTQ-W4A16-g64",
+        # The DEFAULT decider (orin-decision-models t19/t22, d4): our own INT4
+        # weight-only build of Cloudflare/clef@2f3de3dd — GPTQ W4A16, group 64,
+        # actorder=static, compressed-tensors pack-quantized; lm_head,
+        # embed_tokens, the ViT and linear_attn.in_proj_a/b kept bf16; 18 GB.
+        # Built for the Jetson AGX Orin (Ampere sm_87: Marlin WNA16 kernel).
+        # MEASURED: served on the Orin through the decider sidecar's clef-vllm
+        # backend (vLLM 0.31.0), 418 labelled questions, top-1 agreement with
+        # bf16 0.988, accuracy 0.9378, 0 failed records
+        # (docs/evidence/2026-10-14-verify-clef-quants.txt); adopted over the
+        # transformers NF4 path in docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt.
+        # hf_revision = the public commit those runs used.
+        role_hint="decider",
+        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="load-tested",
+        doc="colleague-stack.md",
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="4daaa224c6dc553b13120bb10414a7e7de7a5a95",
+    ),
+    SupportedModel(
+        id="culture-dev/clef-27b-NVFP4",
+        # Our own NVFP4 (W4A4) build of Cloudflare/clef@2f3de3dd for Blackwell
+        # (orin-decision-models t20/t22, d4/d5): FP4 weights + activations, block
+        # 16; lm_head, embed_tokens, the ViT and EVERY linear_attn projection kept
+        # bf16 (d5); 27 GB. FP4 activations rule out Ampere — never the Orin.
+        # MEASURED (docs/evidence/2026-10-14-verify-clef-quants.txt): DGX Spark
+        # GB10, agreement with bf16 0.9785, accuracy 0.9330, ~2.4x bf16 speed on
+        # short records. On the Jetson AGX Thor (sm_110) the same files are
+        # mis-calibrated: mean top-1 probability 0.31 vs 0.92, KL 1.01, agreement
+        # 0.957-0.964; cause unidentified (attention ruled out).
+        role_hint="candidate",
+        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="load-tested",
+        doc="colleague-stack.md",
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="94093b9a819211f81aa41277570ee0d1f275ab11",
+    ),
+    SupportedModel(
+        id="Cloudflare/clef",
+        # Cloudflare's original bf16 Clef (Apache-2.0), the source of both builds
+        # above and the reference they are scored against. Served as the interim
+        # decider:general on the DGX Spark through the decider sidecar's `clef`
+        # backend (Cloudflare's own transformers code), orin-decision-models t17
+        # (d4): ~60 GiB GPU, accuracy 0.9354 on the t23 probe set. Too large for
+        # the Orin.
+        role_hint="candidate",
+        shape="decision model (Qwen3.8-27B post-train, joint schema head)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="none",
+        status="load-tested",
+        doc="colleague-stack.md",
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="2f3de3dd85f379784083b0814d997ab627200f0c",
+    ),
+    SupportedModel(
         id="JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        # DEMOTED to candidate by deviation d4 (orin-decision-models): no
+        # third-party Clef quant is served; culture-dev/clef-27b-GPTQ-W4A16-g64
+        # above replaces it. Kept, not deleted (cite-don't-delete).
         # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
         # measured here (#108). Per the plan's research brief (card NOT fetched here):
         # https://huggingface.co/JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
@@ -1411,7 +1482,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # head/ViT/lm_head kept bf16, ~18 GB; the card tested it on vLLM 0.31.0
         # with a qwen3_5 embed-quant patch. Never booted on this repo's hardware.
         # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
-        role_hint="decider",
+        role_hint="candidate",
         shape="decision model (Qwen3.8-27B post-train, joint schema head)",
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,

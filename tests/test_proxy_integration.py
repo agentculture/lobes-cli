@@ -975,7 +975,7 @@ _GOLDEN_CAPABILITIES = {
         "role": "decider",
         # Opt-in like muse/worker/associate: unwired => infeasible, and an
         # infeasible role no box serves advertises no window (context None).
-        "model": "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        "model": "culture-dev/clef-27b-GPTQ-W4A16-g64",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/systemone",

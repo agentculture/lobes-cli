@@ -463,6 +463,12 @@
   msg: gpu-mem-util (embed/score default): 0.06
   note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
   note: embed/score gear — the TURNKEY path is the fleet: `lobes init --fleet` + `lobes fleet up` serves it via the dedicated vllm-embed-deep service (already task-aware). To solo-serve on the single-model template instead, ADD these `command:` list items —\n      - --runner=pooling\n      - --convert=embed\n      - '--hf-overrides='\n    and REMOVE the chat/MTP flags the single-model template bakes in (they break or are ignored by a pooling model): --quantization, --reasoning-parser, --enable-auto-tool-choice, --tool-call-parser, and the 4 MTP lines (--speculative-config / --trust-remote-code / --language-model-only / --tokenizer). VLLM_TASK in .env is a record only; the single-model template does not consume it.
+### culture-dev/clef-27b-GPTQ-W4A16-g64
+  refused: culture-dev/clef-27b-GPTQ-W4A16-g64 is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
+### culture-dev/clef-27b-NVFP4
+  refused: culture-dev/clef-27b-NVFP4 is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
+### Cloudflare/clef
+  refused: Cloudflare/clef is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
 ### JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
   refused: JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8 is a decider checkpoint; it is served by its own decider lane, not by `lobes switch` (switch only configures the vLLM generate/pooling lane)
 ### StrandsAgents/strands-decider-2B-qwen3.5-v1-2610

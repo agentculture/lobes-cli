@@ -65,7 +65,7 @@
           "security_decision"
         ],
         "loaded": false,
-        "model": "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        "model": "culture-dev/clef-27b-GPTQ-W4A16-g64",
         "mtp": false,
         "path": "/v1/systemone",
         "quant": "compressed-tensors",

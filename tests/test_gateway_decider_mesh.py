@@ -42,7 +42,7 @@ ORIN = "http://orin:8000"
 SPARK2 = "http://spark2:8000"
 THOR = "http://thor:8000"
 
-CLEF = "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8"
+CLEF = "culture-dev/clef-27b-GPTQ-W4A16-g64"  # the default decider (odm-t22)
 STRANDS = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"
 
 # Byte-exact, deliberately not what json.dumps would emit: a forward that
