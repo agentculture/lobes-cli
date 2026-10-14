@@ -146,6 +146,20 @@ def test_attention_backend_is_an_optional_env_knob():
     assert ds.select_backend("clef-vllm", {"DECIDER_MODEL": "a/b"}).attention_backend is None
 
 
+def test_kv_cache_bytes_is_an_optional_env_knob():
+    # Unified-memory boxes can release memory mid-profiling and trip vLLM's
+    # free-memory assert (Thor, 2026-10-14); a fixed KV size skips that profile.
+    fixed = ds.select_backend(
+        "clef-vllm", {"DECIDER_MODEL": "a/b", "DECIDER_KV_CACHE_MEMORY_BYTES": "8589934592"}
+    )
+    assert fixed.kv_cache_memory_bytes == 8589934592
+    assert ds.select_backend("clef-vllm", {"DECIDER_MODEL": "a/b"}).kv_cache_memory_bytes is None
+    with pytest.raises(ds.DeciderConfigError):
+        ds.select_backend(
+            "clef-vllm", {"DECIDER_MODEL": "a/b", "DECIDER_KV_CACHE_MEMORY_BYTES": "8G"}
+        )
+
+
 @pytest.mark.parametrize(
     "env",
     [{"DECIDER_MAX_MODEL_LEN": "lots"}, {"DECIDER_GPU_MEM_UTIL": "1.5"}],

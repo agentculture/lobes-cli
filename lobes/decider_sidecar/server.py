@@ -224,6 +224,7 @@ def select_backend(name: str, env: Mapping[str, str]) -> Backend:
     if name == clef_vllm.NAME:
         try:
             max_model_len, gpu_mem_util = clef_vllm.parse_knobs(env)
+            kv_bytes = clef_vllm.parse_kv_bytes(env)
         except ValueError as exc:
             raise DeciderConfigError(str(exc)) from exc
         return clef_vllm.ClefVllmBackend(
@@ -234,6 +235,7 @@ def select_backend(name: str, env: Mapping[str, str]) -> Backend:
             gpu_mem_util=gpu_mem_util,
             hf_home=env.get("HF_HOME", "").strip() or clef_vllm.DEFAULT_HF_HOME,
             attention_backend=env.get("DECIDER_ATTENTION_BACKEND", "").strip() or None,
+            kv_cache_memory_bytes=kv_bytes,
         )
     return StrandsBackend(model, device)
 

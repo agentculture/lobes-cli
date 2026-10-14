@@ -181,6 +181,22 @@ def parse_knobs(env: Mapping[str, str]) -> tuple[int, float]:
     return max_len, util
 
 
+def parse_kv_bytes(env: Mapping[str, str]) -> int | None:
+    """``DECIDER_KV_CACHE_MEMORY_BYTES`` (a positive integer) or None; ``ValueError`` if bad."""
+    raw = env.get("DECIDER_KV_CACHE_MEMORY_BYTES", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(
+            f"DECIDER_KV_CACHE_MEMORY_BYTES must be an integer number of bytes; got {raw!r}"
+        ) from None
+    if value <= 0:
+        raise ValueError(f"DECIDER_KV_CACHE_MEMORY_BYTES must be positive; got {value}")
+    return value
+
+
 # ---------------------------------------------------------------------------
 # the backend
 # ---------------------------------------------------------------------------
@@ -201,12 +217,16 @@ class ClefVllmBackend:
         gpu_mem_util: float = DEFAULT_GPU_MEM_UTIL,
         hf_home: str = DEFAULT_HF_HOME,
         attention_backend: str | None = None,
+        kv_cache_memory_bytes: int | None = None,
         engine_factory: Callable[["ClefVllmBackend"], Engine] | None = None,
     ):
         self.model_id, self.revision, self.device = model_id, revision, device
         self.max_model_len, self.gpu_mem_util, self.hf_home = max_model_len, gpu_mem_util, hf_home
         # None = vLLM picks; the Thor (sm_110) needs TRITON_ATTN for pooling (#105).
         self.attention_backend = attention_backend
+        # None = vLLM profiles free memory; a fixed size skips that profile, which a
+        # unified-memory box can trip by releasing memory mid-profile (Thor, 2026-10-14).
+        self.kv_cache_memory_bytes = kv_cache_memory_bytes
         self._engine_factory = engine_factory or _VllmClefEngine
         self._engine: Engine | None = None
         # One forward at a time, like the clef/strands backends.
@@ -264,6 +284,11 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
             enable_prefix_caching=False,
             language_model_only=True,
             **({"attention_backend": cfg.attention_backend} if cfg.attention_backend else {}),
+            **(
+                {"kv_cache_memory_bytes": cfg.kv_cache_memory_bytes}
+                if cfg.kv_cache_memory_bytes
+                else {}
+            ),
         )
 
         # The head goes on the device only AFTER the engine is up, so this
