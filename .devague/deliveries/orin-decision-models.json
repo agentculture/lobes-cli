@@ -2,7 +2,7 @@
   "plan_slug": "orin-decision-models",
   "schema_version": 2,
   "created": "2026-10-14T06:05:06Z",
-  "updated": "2026-10-14T08:10:16Z",
+  "updated": "2026-10-14T08:30:49Z",
   "deviations": [
     {
       "id": "d1",
@@ -66,6 +66,21 @@
       "status": "approved",
       "classification": "needs-follow-up",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "t20's NVFP4 build keeps EVERY linear_attn (GatedDeltaNet) projection bf16, not the Orin build's narrower keep-list (in_proj_a/b only): llm-compressor 0.14.0's own Qwen3.5 NVFP4 recipe documents the fused GDN projections as incompatible with NVFP4. Also: t19/t20 run on the Spark BEFORE the t17 interim (user decision 2026-10-14: 'Spark first, then interim'), since quantization and the bf16 interim cannot co-reside.",
+      "task_ref": "t20",
+      "reason": "upstream NVFP4 constraint on GatedDeltaNet; Spark memory (quant ~55 GB + interim ~56 GB > ~94 GB free)",
+      "affects": [
+        "t20",
+        "t17",
+        "t19"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],
