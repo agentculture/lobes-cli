@@ -233,6 +233,7 @@ def select_backend(name: str, env: Mapping[str, str]) -> Backend:
             max_model_len=max_model_len,
             gpu_mem_util=gpu_mem_util,
             hf_home=env.get("HF_HOME", "").strip() or clef_vllm.DEFAULT_HF_HOME,
+            attention_backend=env.get("DECIDER_ATTENTION_BACKEND", "").strip() or None,
         )
     return StrandsBackend(model, device)
 

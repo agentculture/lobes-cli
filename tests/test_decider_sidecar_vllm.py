@@ -137,6 +137,15 @@ def test_engine_knobs_come_from_env_with_declared_defaults():
     assert default.max_model_len == cv.DEFAULT_MAX_MODEL_LEN == 16384
 
 
+def test_attention_backend_is_an_optional_env_knob():
+    # sm_110 (Jetson AGX Thor) pooling needs TRITON_ATTN (#105); unset = vLLM's choice.
+    forced = ds.select_backend(
+        "clef-vllm", {"DECIDER_MODEL": "a/b", "DECIDER_ATTENTION_BACKEND": "TRITON_ATTN"}
+    )
+    assert forced.attention_backend == "TRITON_ATTN"
+    assert ds.select_backend("clef-vllm", {"DECIDER_MODEL": "a/b"}).attention_backend is None
+
+
 @pytest.mark.parametrize(
     "env",
     [{"DECIDER_MAX_MODEL_LEN": "lots"}, {"DECIDER_GPU_MEM_UTIL": "1.5"}],

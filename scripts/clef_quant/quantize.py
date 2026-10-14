@@ -102,6 +102,34 @@ def recipe_for(scheme: str):
 
 
 PACK_FORMAT = {"w4a16-g64": "pack-quantized", "nvfp4": "nvfp4-pack-quantized"}
+INDEX = "model.safetensors.index.json"
+
+
+def write_weight_index(out: Path) -> None:
+    """Give a single-file build an index that names only the backbone shard.
+
+    Without one, vLLM loads EVERY *.safetensors in the dir, joint_head.safetensors
+    included, and refuses to boot ('no module or parameter named evidence_layers';
+    measured on the Orin, 2026-10-14). A multi-shard save already has its own index.
+    """
+    import struct
+
+    single = out / "model.safetensors"
+    if (out / INDEX).exists() or not single.exists():
+        return
+    with open(single, "rb") as f:
+        header = json.loads(f.read(struct.unpack("<Q", f.read(8))[0]))
+    header.pop("__metadata__", None)
+    total = sum(v["data_offsets"][1] - v["data_offsets"][0] for v in header.values())
+    (out / INDEX).write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": total},
+                "weight_map": {k: single.name for k in sorted(header)},
+            },
+            indent=2,
+        )
+    )
 
 
 def compress_and_finish(model, scheme: str, src: Path, out: Path, stats: dict, t0: float) -> None:
@@ -114,6 +142,7 @@ def compress_and_finish(model, scheme: str, src: Path, out: Path, stats: dict, t
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(out)
     comp.update_config(out)
+    write_weight_index(out)
     AutoProcessor.from_pretrained(src).save_pretrained(out)
     for f in src.iterdir():
         if (

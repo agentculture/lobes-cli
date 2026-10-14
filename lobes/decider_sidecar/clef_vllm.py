@@ -200,10 +200,13 @@ class ClefVllmBackend:
         max_model_len: int = DEFAULT_MAX_MODEL_LEN,
         gpu_mem_util: float = DEFAULT_GPU_MEM_UTIL,
         hf_home: str = DEFAULT_HF_HOME,
+        attention_backend: str | None = None,
         engine_factory: Callable[["ClefVllmBackend"], Engine] | None = None,
     ):
         self.model_id, self.revision, self.device = model_id, revision, device
         self.max_model_len, self.gpu_mem_util, self.hf_home = max_model_len, gpu_mem_util, hf_home
+        # None = vLLM picks; the Thor (sm_110) needs TRITON_ATTN for pooling (#105).
+        self.attention_backend = attention_backend
         self._engine_factory = engine_factory or _VllmClefEngine
         self._engine: Engine | None = None
         # One forward at a time, like the clef/strands backends.
@@ -260,6 +263,7 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
             gpu_memory_utilization=cfg.gpu_mem_util,
             enable_prefix_caching=False,
             language_model_only=True,
+            **({"attention_backend": cfg.attention_backend} if cfg.attention_backend else {}),
         )
 
         # The head goes on the device only AFTER the engine is up, so this
