@@ -268,6 +268,18 @@ is no `lobes train` verb. See `docs/qwen3-embedding-0.6b.md`,
 `docs/gateway-fleet.md`, and `docs/colleague-stack.md` (the ten-role
 contract).
 
+**`decider` — the twelfth role, schema-scored decisions (orin-decision-models,
+2026-10-14).** `POST /v1/systemone` with a `{state, questions}` body returns a
+probability for every option of every question; the domain is chosen by the
+`X-Lobes-Model: decider:<name>` header (absent → `general`), the body is
+forwarded byte-identical, and the path is never shed. Served by per-domain
+decider sidecars (`lobes/decider_sidecar/`). The default checkpoint is our own
+`culture-dev/clef-27b-GPTQ-W4A16-g64` (Clef 27B, weight-only 4-bit for the Orin's
+Ampere), MEASURED 0.988 top-1 agreement with bf16 on 418 labelled questions; the
+`orin-decider` shape renders it beside `orin-embed` (render DECLARED/UNVALIDATED
+until its live acceptance, #108). Responsibilities include `final_decision`;
+forbidden `repo_action`, `security_decision`. See `docs/decider.md`.
+
 **Specialist lanes sit beside the roles, not among them (2026-10-07).** The
 0.6B `embedder`/`reranker` roles above are unchanged; a box can additionally
 host specialist embed lanes (`gemma2-embed`, EmbeddingGemma 2, the first),

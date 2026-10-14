@@ -73,6 +73,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain models`
 - `lobes explain embeddings` (POST /v1/embeddings — 1024-dim Qwen3 embedder)
 - `lobes explain lanes` (specialist embed lanes such as gemma2-embed — not roles)
+- `lobes explain decider` (POST /v1/systemone — schema-scored decisions)
 - `lobes explain rerank` (POST /v1/rerank — Jina/Cohere reranking)
 - `lobes explain score` (POST /v1/score — cross-encoder raw scoring)
 - `lobes explain realtime` (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
@@ -1448,6 +1449,33 @@ See `docs/colleague-stack.md` (the full contract + client-flow example),
 (topology, tier-alias fallback, pressure policy).
 """
 
+_DECIDER = """\
+# lobes explain decider — schema-scored decisions (POST /v1/systemone)
+
+`decider` answers typed questions with a probability for every option, not prose.
+
+```http
+POST /v1/systemone
+X-Lobes-Model: decider:general
+{"model": "clef", "state": "...", "questions": {"q": {"type": "choice", ...}}}
+```
+
+- Question types: `choice` (pick + confidence + full distribution), `noul`
+  (probability of true), `score`.
+- The domain comes from the `X-Lobes-Model` header (absent → `general`); the body
+  is forwarded byte-identical and the answer passes through unchanged.
+- Never shed: no `429` under memory pressure. `404 model_not_found` for an
+  undeclared domain, `404 role_infeasible` when none is wired, `503` + `Retry-After`
+  when the sidecar does not answer.
+- Default checkpoint: `culture-dev/clef-27b-GPTQ-W4A16-g64` (Clef 27B, W4A16) on the
+  Jetson AGX Orin via `lobes init --shape orin-decider --profile orin`. MEASURED
+  0.988 top-1 agreement with bf16 (418 questions); the render is DECLARED until its
+  live acceptance (#108).
+- Strands Decider 2B: bf16, no quant; DECLARED/UNVALIDATED.
+
+See `docs/decider.md`.
+"""
+
 _LANES = """\
 # lobes explain lanes — specialist embed/rerank lanes (not roles)
 
@@ -1783,6 +1811,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("deployment-lock",): _LOCK,
     ("variations",): _LOCK,
     ("lanes",): _LANES,
+    ("decider",): _DECIDER,
+    ("systemone",): _DECIDER,
     ("lane",): _LANES,
     ("specialist-lanes",): _LANES,
     ("mesh",): _MESH,

@@ -19,6 +19,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/audio/transcriptions` | POST | Parakeet STT via the realtime bridge | multipart `file` upload → `{"text": ...}` |
 | `/v1/audio/speech` | POST | Chatterbox TTS via the realtime bridge | text → audio bytes (24 kHz) |
 | `/v1/realtime` | GET (WebSocket upgrade) | realtime bridge, tunneled through the gateway | server_vad session; base64 PCM16 mono LE JSON events both ways, 24000 Hz default / 16000 Hz accepted. Transcription-only by default; opt in with `response.create` for a spoken, interruptible reply on the same socket (issues #149, #151) — see below |
+| `/v1/systemone` | POST | the decider domain named by `X-Lobes-Model: decider:<name>` (absent → `general`) | not OpenAI: a `{state, questions}` decision request forwarded byte-identical; returns a probability for every option of every question. Never shed (no `429`). See [`decider.md`](decider.md) |
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
 | `/capabilities` | GET | gateway | the nine-role Colleague contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
