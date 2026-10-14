@@ -1,0 +1,71 @@
+SPIKE — Clef 27B, 4-bit, under transformers on the Jetson AGX Orin (plan orin-decision-models, task t1)
+Date: 2026-10-14 (UTC times below)   Box: Jetson AGX Orin 64GB (sm_87, 61.3 GiB unified, zero swap)
+Verdict: GO (sidecar stage). A 4-bit Clef + its joint schema head loads and answers next to the
+live orin-embed shape, with all three orin-embed lanes answering before and after.
+
+CHECKPOINT
+  repo      Aikimi/clef-nf4 @ 8296a671b4547b16b490139b6754c2b4569ef386 (17.6 GiB on disk)
+  source    Cloudflare/clef @ 2f3de3dd85f379784083b0814d997ab627200f0c (complete.json "repo"/"revision")
+  quant     config.json quantization_config.quant_method = "bitsandbytes"
+            load_in_4bit=true, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=true,
+            bnb_4bit_compute_dtype="bfloat16", llm_int8_skip_modules=["visual","lm_head"]
+            => WEIGHT-ONLY 4-bit decoder weights, bf16 activations/compute; vision tower and joint
+               head bf16. No FP4-activation path is involved (c4/h9).
+  loader    the repo's own clef_runtime.runtime.Runner, profile "clef-24gb" (decoder on CUDA,
+            output vocabulary rows gathered on demand); joint_schema_model.py + joint_head.safetensors
+            from the repo.
+  rejected  JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8 for THIS stage: its card lists the
+            transformers numbers as "transformers (dequantized copy)" — under transformers it
+            dequantizes to bf16 (~54 GB), which cannot load beside orin-embed. It stays the
+            candidate for the vLLM 0.31 stage (t13).
+
+STACK
+  image     odm-clef-spike:local (sha256:91bd0e06…) = lobes-embed-gemma2-embed (sha256:dfc92400…,
+            the in-tree embed-st sidecar image, vllm base digest 7c5a10e9…) + a scratch layer:
+            transformers 5.10.2, tokenizers <=0.23.0, bitsandbytes 0.50.2, accelerate 1.15.0,
+            safetensors 0.8.0 (the NF4 card's validated set)
+  runtime   torch 2.11.0+cu130, CUDA 13.0, device capability (8, 7); bitsandbytes 0.50.2
+            manylinux_2_24_aarch64 wheel ran its NF4 kernels on sm_87
+  container docker run --runtime nvidia --memory 28g --memory-swap 28g, HF_HUB_OFFLINE=1,
+            download done earlier in a --memory 1g container with HF_HUB_DISABLE_XET=1
+  traps     (1) the bundle loader refuses files whose resolved path leaves the bundle dir, and the
+            HF cache snapshot is all symlinks into blobs/ -> a hard-linked flat copy was made as
+            root inside the container (cp -rlL snapshots/<sha> <repo>/odm-flat); a serving
+            sidecar must download with snapshot_download(local_dir=...) instead.
+            (2) transformers 5.10.2 needs tokenizers <=0.23.0 (the base image ships 0.23.2).
+            Load report: lm_head.weight UNEXPECTED on Qwen3_5Model (expected: the runtime loads
+            the output vocabulary from lm-head.safetensors itself).
+
+PROBE (spike script: two questions per request — a 4-way 'choice' lane question with criteria,
+       and a 'noul' urgency question; English state grown with a repeated log line; 3 reps each)
+  load time                   48.8 s (warm page cache)
+  input_tokens  latency_ms (rep0/rep1/rep2)        peak_allocated_gib  prob sum (choice)
+     316        2708.2 / 2176.1 / 2174.8           15.39-15.40         1.0001
+     756        3930.2 / 3919.6 / 3921.6           15.44               1.0000
+    2076        12729.3 / 12711.6 / 12712.5        15.82               1.0000
+    3836        19319.9 / 19156.9 / 19147.6        16.34               0.9999
+  => per-question probabilities sum to 1 within ±0.0001 (criterion ±0.01).
+  => median latency at <=4096 tokens: 19.16 s at 3836 tokens (~200 tok/s prefill); 2.18 s at 316.
+  => answers were deterministic across reps (lane=cortex p≈0.96-0.97; urgent noul≈0.92-0.94).
+     These are NOT accuracy measurements — no labelled set was used here (that is t11).
+
+HOST MEMORY (free -m 'available', sampled every 1 s for the whole run, 172 samples)
+  before load   42,916 MiB
+  minimum       20,734 MiB (06:26:39 UTC)   floor is 2 GiB -> held with ~18.7 GiB margin
+  after exit    35,085 MiB (page cache from the weight read not yet reclaimed)
+  dmesg         no OOM lines
+
+ORIN-EMBED LANES THROUGH THE GATEWAY (embedder /v1/embeddings, reranker /v1/rerank,
+gemma2-embed /v1/embeddings; bearer key read from ~/.lobes/.env, never printed)
+  06:24:50 UTC  embedder=200 reranker=200 gemma2-embed=200   (before)
+  06:27:42 UTC  embedder=200 reranker=200 gemma2-embed=200   (after)
+
+NOT TOUCHED: ~/.lobes, the live compose project. Scratch: ~/odm-spike/, ~/odm_clef_spike.py,
+~/odm_gears.sh, <hf-cache>/models--Aikimi--clef-nf4/odm-flat (hard links, no extra bytes).
+
+OPEN (carried to later tasks)
+  - Latency: ~19 s per decision at ~4K tokens is the transformers baseline; t13 measures the
+    vLLM 0.31 path (vllm/vllm-openai:v0.31.0 publishes an arm64 image) against it.
+  - The sidecar's clef backend (t4) calls Cloudflare's load_release_model (a bf16 loader); this
+    NF4 build needs the repo's clef_runtime.Runner + a flat (non-symlink) download instead.
+  - Image/video decisions were not exercised.
