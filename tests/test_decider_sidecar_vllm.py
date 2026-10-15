@@ -244,6 +244,27 @@ def test_non_json_body_is_422():
     assert sidecar.handle("POST", "/v1/systemone", b"not json")[0] == 422
 
 
+def test_lexical_rows_refuse_an_encoding_with_no_option_spans():
+    # torch.stack([]) on an empty row list was an opaque RuntimeError -> 500.
+    enc = FakeEncoded(
+        input_ids=(5, 9, 7),
+        questions=(FakeQuestion("a", 1, (0, 1), (), ()),),
+    )
+    with pytest.raises(ValueError, match="no option-span tokens"):
+        cv.lexical_rows(enc)
+
+
+def test_an_encoding_with_no_option_spans_is_422_not_500():
+    sidecar, _, engine = _loaded()
+    empty = FakeEncoded(input_ids=(1, 2, 3), questions=(FakeQuestion("outage", 0, (0, 1), (), ()),))
+    engine.encode = lambda record: empty
+    engine.score = lambda encoded: cv.lexical_rows(encoded) and []
+    sidecar.load()
+    status, body, _ = sidecar.handle("POST", "/v1/systemone", json.dumps(REQUEST).encode())
+    assert status == 422
+    assert "no option-span tokens" in json.loads(body)["detail"]
+
+
 def test_engine_value_error_from_encoding_is_422():
     sidecar, _, engine = _loaded()
 
@@ -288,12 +309,41 @@ def test_compact_input_ids_index_the_compact_table_inside_option_spans():
 
 
 def test_bundle_dir_is_a_real_directory_not_the_symlinked_hf_cache():
-    path = cv.bundle_dir("Cloudflare/clef", "2f3de3dd", "/root/.cache/huggingface")
+    snap = "/root/.cache/huggingface/hub/models--Cloudflare--clef/snapshots/2f3de3dd"
+    path = cv.bundle_dir("Cloudflare/clef", snap, "/root/.cache/huggingface")
     assert path.startswith("/root/.cache/huggingface/lobes-decider-bundles/")
     assert "Cloudflare--clef" in path
     assert path.endswith("2f3de3dd")
     assert "snapshots" not in path
-    assert cv.bundle_dir("a/b", None, "/h").endswith("a--b@main")
+
+
+def test_bundle_dir_is_keyed_by_the_resolved_commit_not_the_revision():
+    # An unpinned DECIDER_REVISION used to key the bundle "@main" forever, so a
+    # moved HEAD mixed old and new files into one directory.
+    old = cv.bundle_dir("a/b", "/h/hub/models--a--b/snapshots/1111aaaa/", "/h")
+    new = cv.bundle_dir("a/b", "/h/hub/models--a--b/snapshots/2222bbbb", "/h")
+    assert old.endswith("a--b@1111aaaa")
+    assert new.endswith("a--b@2222bbbb")
+
+
+def test_prepare_bundle_downloads_then_links_under_the_snapshot_commit(tmp_path):
+    blobs = tmp_path / "blobs"
+    blobs.mkdir()
+    (blobs / "aaa").write_bytes(b"weights")
+    snap = tmp_path / "hub" / "snapshots" / "c0ffee12"
+    snap.mkdir(parents=True)
+    (snap / "model.safetensors").symlink_to(blobs / "aaa")
+    calls = []
+
+    def download(model_id, revision):
+        calls.append((model_id, revision))
+        return str(snap)
+
+    out = cv.prepare_bundle("org/m", None, str(tmp_path), download=download)
+    assert calls == [("org/m", None)]
+    assert out == cv.bundle_dir("org/m", str(snap), str(tmp_path))
+    assert out.endswith("org--m@c0ffee12")
+    assert (tmp_path / out / "model.safetensors").stat().st_ino == (blobs / "aaa").stat().st_ino
 
 
 # --- the image variant ------------------------------------------------------------
@@ -355,3 +405,86 @@ def test_materialize_bundle_hard_links_the_cache_blobs_never_copies(tmp_path):
     # Idempotent: a second call keeps the same links.
     cv.materialize_bundle(str(snap), str(target))
     assert (target / "model.safetensors").stat().st_ino == (blobs / "aaa").stat().st_ino
+
+
+def _snapshot_with(tmp_path, data=b"weights"):
+    blobs = tmp_path / "blobs"
+    blobs.mkdir(exist_ok=True)
+    (blobs / "aaa").write_bytes(data)
+    snap = tmp_path / "snapshots" / "rev"
+    snap.mkdir(parents=True, exist_ok=True)
+    link = snap / "model.safetensors"
+    if not link.is_symlink():
+        link.symlink_to(blobs / "aaa")
+    return blobs, snap, tmp_path / "bundle"
+
+
+def _no_hard_links(monkeypatch):
+    import errno as _errno
+    import os as _os
+
+    def exdev(src, dst):
+        raise OSError(_errno.EXDEV, _os.strerror(_errno.EXDEV))
+
+    monkeypatch.setattr(cv.os, "link", exdev)
+
+
+def test_materialize_bundle_replaces_a_stale_destination(tmp_path):
+    blobs, snap, target = _snapshot_with(tmp_path)
+    target.mkdir()
+    (target / "model.safetensors").write_bytes(b"old weights from a previous HEAD")
+    cv.materialize_bundle(str(snap), str(target))
+    made = target / "model.safetensors"
+    assert made.stat().st_ino == (blobs / "aaa").stat().st_ino
+    assert made.read_bytes() == b"weights"
+    assert sorted(p.name for p in target.iterdir()) == ["model.safetensors"]
+
+
+def test_materialize_bundle_keeps_a_same_inode_destination(tmp_path, monkeypatch):
+    blobs, snap, target = _snapshot_with(tmp_path)
+    cv.materialize_bundle(str(snap), str(target))
+    calls = []
+    monkeypatch.setattr(cv.os, "link", lambda *a: calls.append(a))
+    monkeypatch.setattr(cv.os, "replace", lambda *a: calls.append(a))
+    cv.materialize_bundle(str(snap), str(target))
+    assert calls == []
+    assert (target / "model.safetensors").stat().st_ino == (blobs / "aaa").stat().st_ino
+
+
+def test_materialize_bundle_copy_path_repairs_a_truncated_copy(tmp_path, monkeypatch):
+    _no_hard_links(monkeypatch)
+    _, snap, target = _snapshot_with(tmp_path)
+    target.mkdir()
+    (target / "model.safetensors").write_bytes(b"wei")  # a truncated earlier copy
+    cv.materialize_bundle(str(snap), str(target))
+    made = target / "model.safetensors"
+    assert made.read_bytes() == b"weights"
+    assert not made.is_symlink()
+    assert sorted(p.name for p in target.iterdir()) == ["model.safetensors"]
+
+
+def test_materialize_bundle_copy_path_keeps_a_same_size_copy(tmp_path, monkeypatch):
+    _no_hard_links(monkeypatch)
+    _, snap, target = _snapshot_with(tmp_path)
+    target.mkdir()
+    (target / "model.safetensors").write_bytes(b"WEIGHTS")  # same size: trusted
+    monkeypatch.setattr(cv.shutil, "copy2", lambda *a: pytest.fail("re-copied"))
+    cv.materialize_bundle(str(snap), str(target))
+    assert (target / "model.safetensors").read_bytes() == b"WEIGHTS"
+
+
+def test_materialize_bundle_copy_is_atomic(tmp_path, monkeypatch):
+    # A crash mid-copy must never leave a truncated file at the final path.
+    _no_hard_links(monkeypatch)
+    _, snap, target = _snapshot_with(tmp_path)
+
+    def crash(src, dst):
+        with open(dst, "wb") as handle:
+            handle.write(b"wei")
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(cv.shutil, "copy2", crash)
+    with pytest.raises(OSError, match="disk went away"):
+        cv.materialize_bundle(str(snap), str(target))
+    assert not (target / "model.safetensors").exists()
+    assert list(target.iterdir()) == []

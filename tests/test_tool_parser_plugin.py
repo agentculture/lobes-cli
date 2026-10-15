@@ -250,7 +250,12 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # Recomputed 2026-10-14 for the decider domains advert (odm t7): `gateway`
     # GAINED the one DECIDER_DOMAIN_MODELS passthrough line (each domain's
     # checkpoint, read by /capabilities). `gateway` is the ONLY service moved.
-    "gateway": "780a90868e52a10634bcc0772bda80bb9a3f9c2a82b5cc6bc4384fee8e68d7c4",
+    #
+    # Recomputed 2026-10-15 for the decider's served window (PR #305 review,
+    # finding 4): `gateway` GAINED the one DECIDER_DOMAIN_CONTEXTS passthrough
+    # line (each domain's max_model_len, read by /capabilities in place of the
+    # catalog's native ceiling). `gateway` is the ONLY service moved.
+    "gateway": "218baf57f135f893dd33d4b871a297a132d364c0a8477adba433dc009ad6d4d3",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

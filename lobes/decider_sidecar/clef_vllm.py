@@ -117,6 +117,9 @@ def lexical_rows(encoded: Any) -> list[int]:
         for start, end in question.option_spans
         for pos in range(start, end)
     }
+    if not rows:
+        # The head has nothing to score, and torch.stack([]) would be an opaque 500.
+        raise ValueError("the encoded request has no option-span tokens to score")
     return sorted(rows)
 
 
@@ -152,16 +155,27 @@ def assemble_response(
     }
 
 
-def bundle_dir(model_id: str, revision: str | None, hf_home: str) -> str:
-    """A REAL directory (hard links, :func:`materialize_bundle`) for one repo@revision.
+def bundle_dir(model_id: str, snapshot: str, hf_home: str) -> str:
+    """A REAL directory (hard links, :func:`materialize_bundle`) for one repo@commit.
 
     Not the HF cache's ``snapshots/`` tree, whose files are symlinks into
     ``blobs/`` — bundle loaders that refuse symlinked files would reject it.
-    Lives under ``HF_HOME`` so the compose volume keeps it across restarts.
+    Keyed by the RESOLVED commit (``snapshot``'s basename), never the requested
+    revision: an unpinned revision keyed "main" forever, so a moved HEAD mixed
+    two commits' files in one directory. Lives under ``HF_HOME`` so the compose
+    volume keeps it across restarts.
     """
     name = _UNSAFE.sub("_", model_id.replace("/", "--"))
-    rev = _UNSAFE.sub("_", revision or "main")
-    return os.path.join(hf_home, BUNDLE_SUBDIR, f"{name}@{rev}")
+    commit = _UNSAFE.sub("_", os.path.basename(snapshot.rstrip("/")))
+    return os.path.join(hf_home, BUNDLE_SUBDIR, f"{name}@{commit}")
+
+
+def prepare_bundle(
+    model_id: str, revision: str | None, hf_home: str, *, download: Callable[..., str]
+) -> str:
+    """Fetch ``model_id@revision`` (``download`` is ``snapshot_download``) and bundle it."""
+    snapshot = download(model_id, revision=revision)
+    return materialize_bundle(snapshot, bundle_dir(model_id, snapshot, hf_home))
 
 
 def materialize_bundle(snapshot: str, target: str) -> str:
@@ -174,23 +188,41 @@ def materialize_bundle(snapshot: str, target: str) -> str:
     the Jetson AGX Orin (2026-10-14, plan t11) that 18 GB copy's page cache,
     charged to the container's memory cgroup, pushed the engine past its 32g
     limit (OOM-killed during CUDA-graph capture). Copies only when the two paths
-    sit on different filesystems (``EXDEV``). Idempotent.
+    sit on different filesystems (``EXDEV``). Idempotent: an existing file is
+    kept only if it IS the blob (same inode) or, on the copy path, has the
+    blob's size; anything else is replaced. Every write lands at a temp name and
+    is ``os.replace``d in, so a crash never leaves a truncated final file.
     """
     for root, _dirs, files in os.walk(snapshot):
         for name in files:
             src = os.path.join(root, name)
             dst = os.path.join(target, os.path.relpath(src, snapshot))
-            if os.path.exists(dst):
+            real = os.path.realpath(src)
+            if os.path.exists(dst) and os.path.samefile(real, dst):
                 continue
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            real = os.path.realpath(src)
-            try:
-                os.link(real, dst)
-            except OSError as exc:
-                if exc.errno != errno.EXDEV:
-                    raise
-                shutil.copy2(real, dst)
+            _place(real, dst)
     return target
+
+
+def _place(real: str, dst: str) -> None:
+    """Hard-link (or, across filesystems, copy) ``real`` to ``dst`` atomically."""
+    tmp = f"{dst}.lobes-tmp"
+    try:
+        if os.path.lexists(tmp):
+            os.remove(tmp)  # a previous run's leftover
+        try:
+            os.link(real, tmp)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(real):
+                return
+            shutil.copy2(real, tmp)
+        os.replace(tmp, dst)
+    finally:
+        if os.path.lexists(tmp):
+            os.remove(tmp)
 
 
 def parse_knobs(env: Mapping[str, str]) -> tuple[int, float]:
@@ -336,9 +368,8 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
             return cfg.model_id
         from huggingface_hub import snapshot_download
 
-        target = bundle_dir(cfg.model_id, cfg.revision, os.environ.get("HF_HOME", cfg.hf_home))
-        snapshot = snapshot_download(cfg.model_id, revision=cfg.revision)
-        return materialize_bundle(snapshot, target)
+        hf_home = os.environ.get("HF_HOME", cfg.hf_home)
+        return prepare_bundle(cfg.model_id, cfg.revision, hf_home, download=snapshot_download)
 
     def encode(self, record: dict) -> Any:
         return self._jsm.encode_record(self.tokenizer, record, max_length=self.max_length)
@@ -352,6 +383,8 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
 
         torch = self._torch
         ids = list(encoded.input_ids)
+        # First: an encoding with no option spans is a 422, before any forward pass.
+        rows = lexical_rows(encoded)
         out = self.llm.encode(
             [TokensPrompt(prompt_token_ids=ids)],
             PoolingParams(use_activation=False),
@@ -363,7 +396,6 @@ class _VllmClefEngine:  # pragma: no cover — needs vllm, torch and a GPU
             raise RuntimeError(
                 f"pooling runner returned {hidden.shape[0]} hidden rows for {len(ids)} tokens"
             )
-        rows = lexical_rows(encoded)
         with torch.inference_mode():
             weight = self._lm_head.rows(rows).to(device=self.device, dtype=torch.bfloat16)
             logits = self.head(

@@ -263,6 +263,16 @@ ROLE_PATH: dict[str, str] = {
 # its sole consumer.
 MESH_UNFORWARDABLE_ROLES: frozenset[str] = frozenset({"innereye"})
 
+# Roles that take no ``{role}-{member}`` member lane (mesh-pool-load-sharing):
+# the ones reached by PATH rather than by ``model`` — the stt/tts audio lanes,
+# and ``decider``, which answers only on ``POST /v1/systemone`` (a
+# ``decider-<member>`` chat request would reach the sidecar's
+# ``/v1/chat/completions`` and 404 there) — plus the one the mesh never
+# forwards (``innereye``). The single source both the gateway's routing
+# (:func:`lobes.gateway.server.member_lane_ids`) and the ``/capabilities``
+# ``member_lanes`` annotation read, so the listing and the router agree.
+MEMBER_LANE_EXCLUDED_ROLES: frozenset[str] = frozenset({"stt", "tts", "innereye", "decider"})
+
 # The two audio-overlay sidecars — hardcoded here (as in the gateway/realtime
 # code) because they are NOT in the switchable catalog (lobes/catalog.py): they
 # are fixed GPU sidecars behind the /v1/audio/* facade, activated together by
@@ -769,6 +779,10 @@ def _declared_context(role: str, env: Mapping[str, str]) -> int | None:
         return None
     raw = env.get(key)
     if not raw:
+        # The decider's window is per DOMAIN; the role advertises its default
+        # domain's (DECIDER_DOMAIN_CONTEXTS), the one a header-less request hits.
+        if role == DECIDER_ROLE:
+            return decider_domain_contexts(env).get(DEFAULT_DECIDER_DOMAIN)
         return None
     try:
         return int(raw)
@@ -1387,6 +1401,39 @@ def decider_domain_models(env: Mapping[str, str]) -> dict[str, str]:
     return out
 
 
+# Each domain's SERVED window (`name=max_model_len`, comma-separated), rendered
+# by a decider-hosting shape beside DECIDER_DOMAIN_MODELS from each domain's
+# `max_model_len` and passed through to the gateway. The sidecar's own
+# DECIDER_MAX_MODEL_LEN lives only in its service env, so without this key the
+# advert fell back to the catalog's NATIVE ceiling (262144 against a 16384
+# lane on orin-decider). A domain it does not name keeps that fallback.
+DECIDER_DOMAIN_CONTEXTS_ENV = "DECIDER_DOMAIN_CONTEXTS"
+
+
+def decider_domain_contexts(env: Mapping[str, str]) -> dict[str, int]:
+    """``{domain: served max_model_len}`` declared in ``DECIDER_DOMAIN_CONTEXTS``.
+
+    Malformed pairs (no ``=``, an illegal domain name, a value that is not a
+    positive integer) are skipped, never raised — a typo only costs that
+    domain its served window, which then reads the catalog's native ceiling.
+    """
+    from lobes.gateway._routing import DECIDER_DOMAIN_RE
+
+    out: dict[str, int] = {}
+    for pair in (env.get(DECIDER_DOMAIN_CONTEXTS_ENV) or "").split(","):
+        name, sep, raw = pair.strip().partition("=")
+        name, raw = name.strip(), raw.strip()
+        if not (sep and DECIDER_DOMAIN_RE.match(name)):
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            out[name] = value
+    return out
+
+
 def _decider_domain_ready(
     key: str,
     domain_url: str,
@@ -1429,6 +1476,7 @@ def decider_domain_advert(
     if not table.decider_domains:
         return {}
     declared = decider_domain_models(env)
+    contexts = decider_domain_contexts(env)
     backend = next((b for b in table.backends if b.name == ROLE_BACKEND[DECIDER_ROLE]), None)
     backend_url = backend.base_url if backend is not None else ""
     usable = decider.feasible and decider.loaded and bool(decider.endpoint)
@@ -1442,16 +1490,19 @@ def decider_domain_advert(
             _decider_domain_ready(
                 decider_domain_key(domain), url, backend_url, usable, backend_ready
             ),
+            contexts.get(domain),
         )
     return out
 
 
-def _decider_domain_entry(checkpoint: str, ready: bool) -> dict:
+def _decider_domain_entry(checkpoint: str, ready: bool, served_context: int | None = None) -> dict:
     """One domain's ``{checkpoint, quant, ready, fingerprint}`` advert entry.
 
     ``checkpoint`` may be empty (undeclared) or carry an ``@revision`` pin;
     the catalog entry it names (if any) supplies the quant, window and
-    runtime, and every unknown value reads ``"unknown"``.
+    runtime, and every unknown value reads ``"unknown"``. ``served_context``
+    (the domain's ``DECIDER_DOMAIN_CONTEXTS`` entry) is the window the lane
+    actually serves and outranks the catalog's native ceiling.
     """
     model = _catalog_by_id(checkpoint.split("@", 1)[0]) if checkpoint else None
     served_id = checkpoint or _REPLICA_UNKNOWN
@@ -1460,6 +1511,8 @@ def _decider_domain_entry(checkpoint: str, ready: bool) -> dict:
     else:
         quant = model.quantization or _REPLICA_UNKNOWN
         max_model_len, runtime = model.native_max_model_len, model.engine
+    if served_context is not None:
+        max_model_len = served_context
     return {
         "checkpoint": served_id,
         "quant": quant,
@@ -2117,7 +2170,7 @@ def annotate_mesh_naming(
         # member_lanes (mesh-pool-load-sharing, t3): every routable
         # "{role}-{member}" name — this box's own lane included when it
         # hosts the role, so a hosting box publishes its pin targets too.
-        if role not in {"stt", "tts", "innereye"}:
+        if role not in MEMBER_LANE_EXCLUDED_ROLES:
             names = sorted(
                 lane.name
                 for lane in member_lanes(

@@ -74,7 +74,14 @@ from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.lane_keys import lane_env_key
 from lobes.profiles.render import profile_env, role_engine
-from lobes.profiles.schema import KNOB_LANE_ROLES, ROLES, ExclusiveRoles, Profile, RoleProfile
+from lobes.profiles.schema import (
+    GPU_ACCESS_RUNTIME,
+    KNOB_LANE_ROLES,
+    ROLES,
+    ExclusiveRoles,
+    Profile,
+    RoleProfile,
+)
 from lobes.profiles.shapes import (
     AUDIO_ROLES,
     DECIDER_DEFAULT_DOMAIN,
@@ -237,6 +244,13 @@ DECIDER_DOMAINS_KEY = "DECIDER_DOMAINS"
 # /capabilities `decider.domains` advert and the mesh announcement's per-domain
 # fingerprint (lobes.roles.decider_domain_advert reads it).
 DECIDER_DOMAIN_MODELS_KEY = "DECIDER_DOMAIN_MODELS"
+# Each domain's SERVED window (`name=max_model_len`, only the domains that
+# declare one), rendered beside DECIDER_DOMAIN_MODELS for the gateway: the
+# sidecar's own DECIDER_MAX_MODEL_LEN lives in its service env, which the
+# gateway never sees, so without this the /capabilities `decider.context` and
+# each domain's fingerprint `max_model_len` reported the catalog's native
+# ceiling (lobes.roles.decider_domain_contexts reads it).
+DECIDER_DOMAIN_CONTEXTS_KEY = "DECIDER_DOMAIN_CONTEXTS"
 #: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
 DECIDER_DEFAULT_START_PERIOD = "900s"
 
@@ -270,8 +284,10 @@ def _decider_checkpoint(spec: Mapping[str, str]) -> str:
 
 
 def decider_domains_env(shape: Shape, profile: Profile) -> dict[str, str]:
-    """``DECIDER_DOMAINS`` (``general=http://decider-general:8000,...``) and
-    ``DECIDER_DOMAIN_MODELS`` (``general=<model[@revision]>,...``), or ``{}``."""
+    """``DECIDER_DOMAINS`` (``general=http://decider-general:8000,...``),
+    ``DECIDER_DOMAIN_MODELS`` (``general=<model[@revision]>,...``) and — only
+    when some domain declares ``max_model_len`` — ``DECIDER_DOMAIN_CONTEXTS``
+    (``general=16384,...``), or ``{}``."""
     domains = hosted_decider_domains(shape, profile)
     if not domains:
         return {}
@@ -279,10 +295,40 @@ def decider_domains_env(shape: Shape, profile: Profile) -> dict[str, str]:
     models = ",".join(
         f"{domain}={_decider_checkpoint(shape.decider_domains[domain])}" for domain in domains
     )
-    return {DECIDER_DOMAINS_KEY: value, DECIDER_DOMAIN_MODELS_KEY: models}
+    env = {DECIDER_DOMAINS_KEY: value, DECIDER_DOMAIN_MODELS_KEY: models}
+    contexts = ",".join(
+        f"{domain}={shape.decider_domains[domain]['max_model_len']}"
+        for domain in domains
+        if "max_model_len" in shape.decider_domains[domain]
+    )
+    if contexts:
+        env[DECIDER_DOMAIN_CONTEXTS_KEY] = contexts
+    return env
 
 
-def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
+def _decider_gpu_lines(gpu_access: str) -> list[str]:
+    """How a generated decider service asks for the GPU, per the card's ``gpu_access``.
+
+    The same two forms every other GPU lane ends up with: the shipped
+    templates' ``deploy.resources.reservations.devices`` request by default,
+    and ``runtime: nvidia`` on a csv-mode card (``gpu_access = "runtime"``),
+    which refuses the devices request at container create. The base lanes get
+    the second form from the generated GPU override (``!reset`` deploy); a
+    decider service is itself generated, so it is rendered in its final form
+    here rather than patched afterwards.
+    """
+    if gpu_access == GPU_ACCESS_RUNTIME:
+        return ["    runtime: nvidia"]
+    return [
+        "    deploy:",
+        "      resources:",
+        "        reservations:",
+        "          devices:",
+        "            - { driver: nvidia, count: all, capabilities: [gpu] }",
+    ]
+
+
+def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str) -> list[str]:
     service = decider_service(domain)
     environment = [
         f"DECIDER_BACKEND={spec['backend']}",
@@ -319,7 +365,7 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str]) -> list[str]:
         f'    profiles: ["{OPT_IN_CORE_COMPOSE_PROFILE[DECIDER_ROLE]}"]',
         "    restart: unless-stopped",
         f'    mem_limit: "{spec["mem_limit"]}"',
-        "    runtime: nvidia",
+        *_decider_gpu_lines(gpu_access),
         "    ipc: host",
         "    environment:",
     ]
@@ -362,7 +408,7 @@ def decider_compose_lines(shape: Shape, profile: Profile) -> list[str]:
             f"  # clef-vllm domains build from {DECIDER_DOCKERFILES['clef-vllm']} instead."
         )
     for domain in domains:
-        lines += _decider_service_lines(domain, shape.decider_domains[domain])
+        lines += _decider_service_lines(domain, shape.decider_domains[domain], profile.gpu_access)
     return lines
 
 

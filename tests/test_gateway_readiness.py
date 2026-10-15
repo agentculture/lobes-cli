@@ -691,7 +691,26 @@ def test_decider_down_reads_not_ready() -> None:
     assert "/v1/models" not in seen
 
 
-def test_decider_peer_fallback_probes_health_not_models() -> None:
+def test_decider_peer_without_a_decider_entry_is_not_ready() -> None:
+    """Code review (finding 5): the peer origin is a GATEWAY, so its /health is
+    the gateway's liveness, not the decider sidecar's. A peer whose
+    /capabilities carries no decider entry is not a ready decider — even when
+    that gateway is up — and neither /health nor /v1/models is asked."""
+    seen: list[str] = []
+
+    def opener(url, _t, _k):
+        seen.append(url)
+        if url.endswith("/capabilities"):
+            return 200, b'{"cortex": {"ready": true, "context": 4096}}'
+        return 200, b""
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert.ready is False
+    assert advert.context is None
+    assert seen == ["http://peer:9/capabilities"]
+
+
+def test_decider_peer_with_unreadable_capabilities_is_not_ready() -> None:
     seen: list[str] = []
 
     def opener(url, _t, _k):
@@ -699,6 +718,13 @@ def test_decider_peer_fallback_probes_health_not_models() -> None:
         return (404, b"") if url.endswith("/capabilities") else (200, b"")
 
     advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
-    assert advert.ready is True
-    assert not any(u.endswith("/v1/models") for u in seen)
-    assert seen[-1] == "http://peer:9/health"
+    assert advert.ready is False
+    assert not any(u.endswith(("/health", "/v1/models")) for u in seen)
+
+
+def test_decider_peer_entry_is_relayed() -> None:
+    def opener(url, _t, _k):
+        return 200, b'{"decider": {"ready": true, "context": 16384}}'
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert == R.PeerAdvert(ready=True, context=16384)

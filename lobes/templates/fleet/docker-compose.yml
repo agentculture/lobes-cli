@@ -2005,6 +2005,11 @@ services:
       # shape beside DECIDER_DOMAINS: the /capabilities `decider.domains`
       # advert and the per-domain mesh fingerprint read it (odm t7).
       - DECIDER_DOMAIN_MODELS=${DECIDER_DOMAIN_MODELS:-}
+      # Each domain's SERVED window (`name=max_model_len`), rendered beside
+      # DECIDER_DOMAIN_MODELS: the advertised `decider.context` and each
+      # domain's fingerprint `max_model_len` read it instead of the catalog's
+      # native ceiling. Empty = the native ceiling, as before.
+      - DECIDER_DOMAIN_CONTEXTS=${DECIDER_DOMAIN_CONTEXTS:-}
       # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
       # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
       # opt-in mechanics as muse/worker/associate above: an innereye-hosting

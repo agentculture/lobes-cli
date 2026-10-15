@@ -132,3 +132,76 @@ def test_decider_image_pins_transformers_in_one_resolve():
     text = _decider_dockerfile()
     assert text.count("transformers==") == 1
     assert '"transformers==5.17.0" pillow' in text
+
+
+def test_load_failure_reports_failed_never_loading():
+    # A load that raises in the daemon thread used to leave /health at 503
+    # "loading" forever, so the restart policy never fired.
+    class Broken(FakeBackend):
+        def load(self):
+            raise RuntimeError("CUDA out of memory")
+
+    backend = Broken()
+    sidecar = ds.Sidecar(backend)
+    with pytest.raises(RuntimeError):
+        sidecar.load()
+    status, body, _ = sidecar.handle("GET", "/health", b"")
+    assert status == 500
+    payload = json.loads(body)
+    assert payload["status"] == "failed"
+    assert "CUDA out of memory" in payload["error"]
+    status, body, _ = sidecar.handle("POST", "/v1/systemone", b"{}")
+    assert status == 500
+    assert json.loads(body)["status"] == "failed"
+    assert backend.seen == []
+
+
+def test_load_or_exit_exits_nonzero_on_a_failed_load():
+    class Broken(FakeBackend):
+        def load(self):
+            raise RuntimeError("bad checkpoint")
+
+    exits = []
+    sidecar = ds.Sidecar(Broken())
+    ds.load_or_exit(sidecar, exit_=exits.append)
+    assert exits == [1]
+    assert sidecar.handle("GET", "/health", b"")[0] == 500
+
+
+def test_load_or_exit_does_not_exit_on_success():
+    exits = []
+    sidecar = ds.Sidecar(FakeBackend())
+    ds.load_or_exit(sidecar, exit_=exits.append)
+    assert exits == []
+    assert sidecar.handle("GET", "/health", b"")[0] == 200
+
+
+def test_health_answers_while_a_decision_is_running():
+    # The FastAPI shell's route is async: a blocking decide() on the event loop
+    # would stall /health for the whole forward pass.
+    import asyncio
+    import threading
+
+    started, release = threading.Event(), threading.Event()
+
+    class Slow(FakeBackend):
+        def decide(self, body):
+            started.set()
+            assert release.wait(5)
+            return super().decide(body)
+
+    sidecar = ds.Sidecar(Slow())
+    sidecar.load()
+
+    async def scenario():
+        decision = asyncio.ensure_future(ds.respond(sidecar, "POST", "/v1/systemone", b"{}"))
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        health = await asyncio.wait_for(ds.respond(sidecar, "GET", "/health", b""), 1)
+        assert not decision.done()
+        release.set()
+        return health, await decision
+
+    health, decision = asyncio.run(scenario())
+    assert health[0] == 200
+    assert decision[0] == 200

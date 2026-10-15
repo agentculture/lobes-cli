@@ -21,6 +21,7 @@ import json
 
 import pytest
 
+from lobes.catalog import SUPPORTED_MODELS
 from lobes.gateway import server as S
 from lobes.gateway._config import build_config
 from lobes.gateway._mesh_config import MeshConfig
@@ -34,7 +35,12 @@ from lobes.gateway._mesh_routing import (
 )
 from lobes.gateway._mesh_wire import capability_entries, decode, encode
 from lobes.gateway._routing import DECIDER_MODEL_HEADER, SYSTEMONE_PATH
-from lobes.roles import build_role_registry, decider_domain_models, role_payload
+from lobes.roles import (
+    build_role_registry,
+    decider_domain_contexts,
+    decider_domain_models,
+    role_payload,
+)
 from tests.test_mesh_routing_wiring import _FakeUpstream
 
 JOIN_KEY = "sk-mesh-join-key"
@@ -388,3 +394,37 @@ def test_member_c_capabilities_lists_a_conflict_not_a_pick():
         "conflict": ["orin", "spark2"],
         "ready": False,
     }
+
+
+# --- the served window reaches the advert (code review, finding 4) -------------
+
+
+def test_a_declared_domain_context_is_advertised_and_fingerprinted():
+    """The shape renders each domain's served window into DECIDER_DOMAIN_CONTEXTS;
+    without it the advert carried the catalog's native 262144 against a 16384
+    lane."""
+    env = {
+        "DECIDER_DOMAINS": "general=http://decider-general:8000,triage=http://decider-triage:8000",
+        "DECIDER_DOMAIN_MODELS": f"triage={STRANDS}",
+        "DECIDER_DOMAIN_CONTEXTS": "general=16384,triage=8192",
+    }
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env, gateway_url=ORIN)
+    decider = payload["decider"]
+    assert decider["context"] == 16384
+    assert decider["domains"]["general"]["fingerprint"]["max_model_len"] == 16384
+    assert decider["domains"]["triage"]["fingerprint"]["max_model_len"] == 8192
+
+
+def test_without_domain_contexts_the_advert_is_unchanged():
+    env = {"DECIDER_DOMAINS": "general=http://decider-general:8000"}
+    table, cfg = build_config(env)
+    payload = S.capabilities_payload(table, cfg, env, gateway_url=ORIN)
+    native = next(m for m in SUPPORTED_MODELS if m.id == CLEF).native_max_model_len
+    assert payload["decider"]["context"] == native
+    assert payload["decider"]["domains"]["general"]["fingerprint"]["max_model_len"] == native
+
+
+def test_domain_contexts_env_skips_malformed_pairs():
+    env = {"DECIDER_DOMAIN_CONTEXTS": "general=16384, bad, ops=x, Up=5, triage=0, a=-1,b=2048"}
+    assert decider_domain_contexts(env) == {"general": 16384, "b": 2048}

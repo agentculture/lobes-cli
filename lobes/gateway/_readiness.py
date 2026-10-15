@@ -107,9 +107,13 @@ _PEER_PROBE_TIMEOUT: float = 3.0
 _MODELS_PATH = "/v1/models"
 
 # The decider sidecar (lobes/decider_sidecar) serves GET /health (503 until
-# loaded) and POST /v1/systemone ONLY — no /v1/models. Its readiness is its
-# own /health on every path (local probe AND the peer fallback), never the
-# model listing. Pinned here so a future default change cannot silently move it.
+# loaded) and POST /v1/systemone ONLY — no /v1/models. LOCALLY its readiness is
+# its own /health, never the model listing. Across a box boundary the peer
+# origin is a GATEWAY, whose /health is the gateway's liveness, not the
+# sidecar's — so a peer's decider is ready only when the peer's /capabilities
+# says so; no decider entry there means not ready (never a /health or
+# /v1/models fallback). Pinned here so a future default change cannot silently
+# move either.
 _DECIDER_BACKEND = "decider"
 _OWN_HEALTH_BACKENDS: frozenset[str] = frozenset({_DECIDER_BACKEND})
 
@@ -462,18 +466,18 @@ def probe_peer_advert(
     bare vLLM someone pointed a peer origin at — still gets the ``/v1/models``
     check, so no working deployment loses its readiness signal. Such a peer
     yields ``context=None``: unknown, and the caller keeps its local answer.
+    The ``decider`` role gets NO fallback: its lane serves no ``/v1/models``,
+    and the peer origin's ``/health`` is the peer GATEWAY's liveness — it
+    answers 200 while that box's decider is down or unhosted. A peer that does
+    not advertise a decider entry is therefore not a ready decider.
 
     Never raises; every failure degrades to ``PeerAdvert(ready=False)``.
     """
     entry = _peer_role_entry(origin, role, timeout, api_key, opener)
     if entry is None and role in _OWN_HEALTH_BACKENDS:
-        # No /v1/models on this lane: an old/bare peer is ready iff /health 200s.
-        get = opener or _default_peer_opener
-        try:
-            status, _ = get(origin.rstrip("/") + _HEALTH_PATH, timeout, api_key)
-        except (OSError, http.client.HTTPException, ValueError):
-            status = 0
-        return PeerAdvert(ready=status == 200, context=None)
+        # No /v1/models on this lane, and the origin's /health is the peer
+        # gateway's, not the sidecar's: no advertised entry ⇒ not ready.
+        return PeerAdvert(ready=False, context=None)
     if entry is None:
         return PeerAdvert(
             ready=probe_peer_ready(

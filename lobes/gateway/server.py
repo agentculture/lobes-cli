@@ -957,18 +957,17 @@ def _role_unverified_response(
 
 # --- member lanes (mesh-pool-load-sharing, t4) --------------------------------
 #
-# "{role}-{member}" pins a request to ONE mesh member. Roles reached by path
-# rather than by `model` (the stt/tts audio lanes) and roles the mesh never
-# forwards (innereye) take no member suffix at all, so such a name falls
-# through to the ordinary unknown-model 404 instead of reaching a peer.
-_MEMBER_LANE_EXCLUDED_ROLES = frozenset({"stt", "tts", "innereye"})
+# "{role}-{member}" pins a request to ONE mesh member. The roles that take no
+# member suffix (path-routed stt/tts/decider, never-forwarded innereye) are
+# :data:`lobes.roles.MEMBER_LANE_EXCLUDED_ROLES`, so such a name falls through
+# to the ordinary unknown-model 404 instead of reaching a peer.
 MEMBER_LANE_ROUTE_REASON = "member-lane"
 
 
 def _member_lane_roles() -> tuple[str, ...]:
-    from lobes.roles import ROLES
+    from lobes.roles import MEMBER_LANE_EXCLUDED_ROLES, ROLES
 
-    return tuple(r for r in ROLES if r not in _MEMBER_LANE_EXCLUDED_ROLES)
+    return tuple(r for r in ROLES if r not in MEMBER_LANE_EXCLUDED_ROLES)
 
 
 def _mesh_self_name() -> str:
@@ -4167,8 +4166,9 @@ def handle_systemone(
     re-serialisation. The answer is relayed streamed, unchanged.
 
     **Never shed** (:data:`lobes.gateway._pressure_policy.NEVER_SHED_ROLES`):
-    this path reads no pressure at all, so swap/iowait never turn a decision
-    into a 429. Refusals use the gateway's usual envelopes: 404
+    this path reads no pressure, and :func:`decide` itself refuses to shed a
+    role in that set, so swap/iowait never turn a decision into a 429 however
+    the routes in ``do_POST`` are ordered. Refusals use the gateway's usual envelopes: 404
     ``model_not_found`` for an undeclared domain or a non-decider spelling,
     404 ``role_infeasible`` when no decider is wired here, and 503
     ``backend_unavailable`` (retryable) when the wired sidecar does not answer.

@@ -393,3 +393,30 @@ def test_engine_budget_keys_render_into_the_sidecar_env() -> None:
             )
             for e in svc["environment"]
         )
+
+
+# --- GPU access follows the card (code review, finding 9) ----------------------
+
+
+def test_a_devices_card_requests_the_gpu_by_device_reservation() -> None:
+    """Every other GPU lane asks via `deploy.resources.reservations.devices` on a
+    card that takes the default gpu_access; the decider sidecars must too."""
+    spark = resolve_profile("spark")
+    assert spark.gpu_access == "devices"
+    services = _override_doc(_decider_shape(_two_domains()), spark)["services"]
+    for name in ("decider-general", "decider-triage"):
+        svc = services[name]
+        assert "runtime" not in svc, name
+        assert svc["deploy"]["resources"]["reservations"]["devices"] == [
+            {"driver": "nvidia", "count": "all", "capabilities": ["gpu"]}
+        ], name
+
+
+def test_a_runtime_card_asks_for_the_nvidia_runtime() -> None:
+    orin = _card()
+    assert orin.gpu_access == "runtime"
+    services = _override_doc(_decider_shape(_two_domains()), orin)["services"]
+    for name in ("decider-general", "decider-triage"):
+        svc = services[name]
+        assert svc["runtime"] == "nvidia", name
+        assert "deploy" not in svc, name

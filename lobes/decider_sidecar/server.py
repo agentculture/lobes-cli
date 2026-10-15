@@ -9,11 +9,15 @@ the FastAPI shell are ``# pragma: no cover``; the HTTP decisions are the pure
 HTTP contract
 -------------
 GET  /health          503 ``{"status":"loading"}`` until the backend has loaded,
-                      then 200 ``{"status":"ok","backend":...,"model":...}``.
+                      then 200 ``{"status":"ok","backend":...,"model":...}``. A
+                      load that raised answers 500 ``{"status":"failed","error":...}``
+                      (and the process exits, so the restart policy retries).
 POST /v1/systemone    the request body bytes go to the backend UNCHANGED and the
                       backend's native response comes back UNCHANGED (Clef's and
                       strands-decider's own shapes — lobes never reshapes it).
-                      A backend ``ValueError`` is a caller error: 422.
+                      A backend ``ValueError`` is a caller error: 422. The
+                      decision runs in a worker thread, so ``/health`` still
+                      answers during a long forward pass.
 anything else         404 (known path, wrong method: 405).
 
 No auth here by design: the container publishes no host port and the gateway is
@@ -69,11 +73,13 @@ engine call runs at a time (a lock), since overlapping calls crash the device.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import threading
 import time
-from typing import Any, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol
 
 from lobes.decider_sidecar import clef_vllm
 
@@ -85,6 +91,7 @@ DEFAULT_DEVICE = "cuda"
 
 Response = tuple[int, bytes, str]
 _JSON = "application/json"
+_LOG = logging.getLogger("lobes.decider_sidecar")
 
 
 class DeciderConfigError(ValueError):
@@ -112,14 +119,25 @@ class Sidecar:
     def __init__(self, backend: Backend):
         self.backend = backend
         self.ready = False
+        #: Set when load() raised: never "loading" again, so /health tells the truth.
+        self.error: str | None = None
 
     def load(self) -> None:
-        self.backend.load()
+        try:
+            self.backend.load()
+        except Exception as exc:
+            self.error = f"{type(exc).__name__}: {exc}"
+            raise
         self.ready = True
+
+    def _not_ready(self) -> Response:
+        if self.error is not None:
+            return _json(500, {"status": "failed", "error": self.error})
+        return _json(503, {"status": "loading"})
 
     def _health(self) -> Response:
         if not self.ready:
-            return _json(503, {"status": "loading"})
+            return self._not_ready()
         return _json(
             200,
             {
@@ -131,7 +149,7 @@ class Sidecar:
 
     def _systemone(self, body: bytes) -> Response:
         if not self.ready:
-            return _json(503, {"status": "loading"})
+            return self._not_ready()
         try:
             out = self.backend.decide(body)
         except ValueError as exc:
@@ -147,6 +165,33 @@ class Sidecar:
         if method != routes[path]:
             return _json(405, {"detail": "method not allowed"})
         return self._health() if path == HEALTH_PATH else self._systemone(body)
+
+
+async def respond(sidecar: Sidecar, method: str, path: str, body: bytes) -> Response:
+    """:meth:`Sidecar.handle` for an async route without blocking the event loop.
+
+    A decision is a full forward pass, so it runs in a worker thread; everything
+    else (health, 404/405) is cheap and answers inline, never queued behind a
+    pool full of decisions waiting on the backend's lock.
+    """
+    if path == SYSTEMONE_PATH and method == "POST":
+        return await asyncio.to_thread(sidecar.handle, method, path, body)
+    return sidecar.handle(method, path, body)
+
+
+def load_or_exit(sidecar: Sidecar, exit_: Callable[[int], Any] = os._exit) -> None:
+    """The startup thread's body: load, or log and EXIT so the restart policy retries.
+
+    The load runs in a daemon thread; a swallowed exception there left the
+    process up and ``/health`` at "loading" forever, so ``restart:
+    unless-stopped`` never fired. ``os._exit`` because ``sys.exit`` in a
+    thread only ends that thread.
+    """
+    try:
+        sidecar.load()
+    except Exception:
+        _LOG.exception("decider backend failed to load; exiting")
+        exit_(1)
 
 
 # ---------------------------------------------------------------------------
@@ -269,10 +314,11 @@ def build_app(sidecar: Sidecar):  # pragma: no cover — needs the [decider-side
     @app.on_event("startup")
     def _start_load() -> None:
         # Load off the event loop so /health answers 503 while weights load.
-        _t.Thread(target=sidecar.load, daemon=True).start()
+        _t.Thread(target=load_or_exit, args=(sidecar,), daemon=True).start()
 
     async def _dispatch(request: Request) -> HttpResponse:
-        status, body, ctype = sidecar.handle(request.method, request.url.path, await request.body())
+        body_in = await request.body()
+        status, body, ctype = await respond(sidecar, request.method, request.url.path, body_in)
         return HttpResponse(content=body, status_code=status, media_type=ctype)
 
     app.add_route(HEALTH_PATH, _dispatch, methods=["GET", "POST"])

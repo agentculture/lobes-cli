@@ -85,3 +85,10 @@ def test_a_shape_hosting_associate_and_the_decider_is_refused() -> None:
         },
     )
     assert overcommitted_groups(both, resolve_profile("orin"))
+
+
+def test_the_gateway_learns_each_domains_served_window() -> None:
+    # Code review (finding 4): the sidecar's DECIDER_MAX_MODEL_LEN never reaches
+    # the gateway, so /capabilities advertised the catalog's native 262144.
+    env = shape_env(_shape(), resolve_profile("orin"))
+    assert env["DECIDER_DOMAIN_CONTEXTS"] == "general=16384"

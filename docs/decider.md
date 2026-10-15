@@ -154,7 +154,8 @@ re-render to `orin-embed` alone is **not** a complete rollback, for the reason
 the `orin-embed` rollback rehearsal recorded
 (`docs/evidence/2026-10-07-rollback-orin-embed-to-orin-associate.txt`): `.env`
 is merge-only and `lobes init` never deletes files, so `DECIDER_DOMAINS`,
-`DECIDER_DOMAIN_MODELS` and `decider` in `COMPOSE_PROFILES` would stay behind
+`DECIDER_DOMAIN_MODELS`, `DECIDER_DOMAIN_CONTEXTS` and `decider` in
+`COMPOSE_PROFILES` would stay behind
 and the gateway would keep advertising a domain nothing starts. In order:
 
 1. Stop and remove the sidecar: `stop decider-general`, then `rm -f
