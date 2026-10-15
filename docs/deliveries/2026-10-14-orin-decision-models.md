@@ -59,7 +59,7 @@ All work is on branch `scope/orin-decision-models` (draft PR #305, lobes-cli 0.8
 | `t12` | delivered | The stock Strands 2B (216d1ccb, bf16) on spark2 as `decider:strands-general` (`docs/evidence/2026-10-14-accept-decider-2b-spark2.txt`, 05d41f1). Answered from the Orin, Thor and Spark gateways, each with `X-Lobes-Mesh-Member: spark2`. Found one bug: the strands backend ignored `DECIDER_REVISION`, fixed in b58cf16. The image measured in t12 predates that fix (dev642 = 7e4f38d), so the run does not exercise it; the pinned revision equals the repo head. |
 | `t13` | delivered | vLLM W4A16 adopted over the NF4 transformers path: agreement 0.988, 2.3-3.3x faster, serves past 8,192 tokens where NF4 refuses (240b6cf). |
 | `t14` | partial | Version 0.86.0, CHANGELOG, Sonar fixes (bfbc8b5) and a draft PR #305 are done. Marking it ready, the review loop and the merge are still open. |
-| `t15` | delivered | 14 evidence records (e1-e14, one per obligation, all `pass`) and deltas b4-b9 filed; all approved by the operator (2026-10-15), with lapses l1-l15. o11 passed on behaviour but not on its wording (delta b4). |
+| `t15` | delivered | 14 evidence records (e1-e14, one per obligation, all `pass`) and deltas b4-b9 filed; all approved by the operator (2026-10-15), with lapses l1-l15; l16 approved later the same day. o11 passed on behaviour but not on its wording (delta b4). |
 | `t16` | delivered | This file. |
 | `t17` | partial | Stage A delivered: bf16 Clef served on the Spark (`docs/evidence/2026-10-14-accept-clef-bf16-interim-spark.txt`). Stage B dropped by `d6`; the interim was stopped after t11 and its override restored. |
 | `t18` | delivered | Calibration set and disjoint labelled probe set, published privately to culture-dev (4a41e55; `docs/evidence/2026-10-14-build-clef-sets.txt`). |
@@ -115,7 +115,7 @@ Other decisions made during the run, not covered by a deviation:
 
 ## Delivery Claims
 
-Evidence e1-e14, deltas b1-b9 and lapses l1-l15 were approved by the operator on 2026-10-15. Confidence is capped where a lapse or a stated limit applies.
+Evidence e1-e14, deltas b1-b9 and lapses l1-l16 were approved by the operator on 2026-10-15 (l16 in a later round). Confidence is capped where a lapse or a stated limit applies.
 
 | Claim | Confidence | Evidence |
 |-------|------------|----------|
@@ -153,8 +153,9 @@ Lapse ledger evidence:
 | `l13` | `assumption-for-measurement` | l12 and my status message claimed 'docker update' CAUSED the cudaErrorNotPermitted exits; only correlation was observed (2 exits 5 s / 27 s after an update; a 0.8B repro with 9 toggles did not fail). The operator attributes the faults to overheating with the evidence lost. Cause unproven. |
 | `l14` | `assumption-for-measurement` | t11/t12: added `DECIDER_FEASIBLE`=false (+ passthrough) to the live Thor and Spark gateways on the strength of a memory note about OTHER opt-in roles (absent key skips the mesh), without first reading the decider's own /v1/systemone path; it turned out not to be needed (delta b8), and b8's 'not needed' is itself read from code, not tested with the key absent |
 | `l15` | `control-absent` | t11: two background watchers used `pgrep -f <pattern>` inside ssh, which matches its own remote shell, so they could never fire (one ran ~35 min); a third used 'docker logs --since HH:MM:SS', an invalid format, so it could not detect an engine failure — status at ~20:36 UTC leaned on that broken watcher until it was replaced |
+| `l16` | `provenance-missing` | t12: the t12 evidence called spark2's one-snapshot HF cache 'live proof' of the strands DECIDER_REVISION fix, but the measured image was the dev642 wheel, built from 7e4f38d, one commit BEFORE the fix (b58cf16 = dev643); the dev number was assumed to map to the latest push without checking the publish run. The pinned revision equals the repo HEAD, so the run could not tell fixed from unfixed code |
 
-How the approved lapses cap the claims above: `l4` (Clef's 262144 context taken from the base model) is the likely source of the advert gap in the Drift table. `l14` touches c26/c40 only through delta b8, which rests on reading the code, not on a test. `l2` and `l5` (wire formats read from docs) were retired by the live runs in t11 and t12, which exercised both backends end to end.
+How the approved lapses cap the claims above: `l4` (Clef's 262144 context taken from the base model) is the likely source of the advert gap in the Drift table. `l14` touches c26/c40 only through delta b8, which rests on reading the code, not on a test. `l16` means the pinned-revision loading of the strands backend is proven by a unit test only, not live (the evidence was corrected). `l2` and `l5` (wire formats read from docs) were retired by the live runs in t11 and t12, which exercised both backends end to end.
 
 ## Remaining Work / Follow-up
 
