@@ -120,6 +120,7 @@ class TestKeyEnumerationCoversAllElevenPrefixes:
             "WORKER",
             "ASSOCIATE",
             "HAND",
+            "DECIDER",
             "EMBED",
             "RERANK",
             "STT",

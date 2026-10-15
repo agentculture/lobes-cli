@@ -242,7 +242,20 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # tests/test_gateway_env_passthrough_guard.py fails on any key the config
     # reads that compose does not plumb. Still no `comfyui` service (a later
     # task), so `gateway` remains the ONLY service that moved.
-    "gateway": "c60c2428ad2026358d5c7038e539854cf3830bebe8a7fdb78e5359ffa54fb805",
+    #
+    # Recomputed 2026-10-14 for the decider lane's POST /v1/systemone route
+    # (odm t5): `gateway` GAINED the one DECIDER_DOMAINS passthrough line,
+    # because build_config now reads it. `gateway` is the ONLY service moved.
+    #
+    # Recomputed 2026-10-14 for the decider domains advert (odm t7): `gateway`
+    # GAINED the one DECIDER_DOMAIN_MODELS passthrough line (each domain's
+    # checkpoint, read by /capabilities). `gateway` is the ONLY service moved.
+    #
+    # Recomputed 2026-10-15 for the decider's served window (PR #305 review,
+    # finding 4): `gateway` GAINED the one DECIDER_DOMAIN_CONTEXTS passthrough
+    # line (each domain's max_model_len, read by /capabilities in place of the
+    # catalog's native ceiling). `gateway` is the ONLY service moved.
+    "gateway": "218baf57f135f893dd33d4b871a297a132d364c0a8477adba433dc009ad6d4d3",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

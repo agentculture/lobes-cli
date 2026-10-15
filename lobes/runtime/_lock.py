@@ -141,6 +141,11 @@ def lock_keys() -> frozenset[str]:
        :data:`lobes.profiles.shape_render.OPT_IN_CORE_ACTIVATION_ENV`);
     4. the specialist embed-lane knobs
        (:data:`lobes.profiles.shape_render.LANE_KNOB_SUFFIXES` per lane).
+    5. the decider-domain keys a decider-hosting shape renders
+       (:data:`lobes.profiles.shape_render.DECIDER_DOMAINS_KEY` /
+       :data:`~lobes.profiles.shape_render.DECIDER_DOMAIN_MODELS_KEY` /
+       :data:`~lobes.profiles.shape_render.DECIDER_DOMAIN_CONTEXTS_KEY`) — all
+       derived from the shape's own ``[decider_domains.*]`` data, secret-free.
 
     :func:`is_excluded` then narrows the result — see
     :data:`EXCLUDED_RENDERED_KEYS` / :data:`EXCLUDED_KEY_SUFFIXES`.
@@ -167,6 +172,14 @@ def lock_keys() -> frozenset[str]:
     from lobes.profiles.shape_render import LANE_KNOB_SUFFIXES, lane_key
 
     keys |= {lane_key(lane.name, sfx) for lane in EMBED_LANES for sfx in LANE_KNOB_SUFFIXES}
+    # 5. the decider-domain keys (orin-decision-models t9).
+    from lobes.profiles.shape_render import (
+        DECIDER_DOMAIN_CONTEXTS_KEY,
+        DECIDER_DOMAIN_MODELS_KEY,
+        DECIDER_DOMAINS_KEY,
+    )
+
+    keys |= {DECIDER_DOMAINS_KEY, DECIDER_DOMAIN_MODELS_KEY, DECIDER_DOMAIN_CONTEXTS_KEY}
     return frozenset(key for key in keys if not is_excluded(key))
 
 

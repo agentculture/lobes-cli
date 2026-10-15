@@ -102,6 +102,7 @@ def test_colleague_roles_is_profile_roles_plus_audio_roles() -> None:
         "worker",
         "associate",
         "hand",
+        "decider",
         "embedder",
         "reranker",
         "innereye",
@@ -122,7 +123,7 @@ def test_default_hosted_roles_is_colleague_roles_minus_opt_in_core() -> None:
     # `innereye` (issue #82) joined on the same terms again: the ComfyUI
     # render tenant draws from the same card budget the gears do, so only an
     # explicit innereye-hosting shape may host it.
-    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate", "innereye")
+    assert OPT_IN_CORE_ROLES == ("muse", "worker", "associate", "innereye", "decider")
     assert DEFAULT_HOSTED_ROLES == tuple(
         role for role in COLLEAGUE_ROLES if role not in OPT_IN_CORE_ROLES
     )
@@ -153,6 +154,7 @@ def test_shape_roles_is_colleague_roles_plus_opt_in_roles() -> None:
         "worker",
         "associate",
         "hand",
+        "decider",
         "embedder",
         "reranker",
         "innereye",
@@ -284,6 +286,8 @@ def test_builtin_shape_names_lists_every_shipped_shape() -> None:
         "orin-cortex",
         "orin-associate",
         "orin-embed",
+        # orin-embed plus decider:general (orin-decision-models t9).
+        "orin-decider",
         # The innereye/cortex co-residency "way out" (issue #268, plan
         # innereye-lobes-hosts-comfyui, t1): the DGX Spark hosts the opt-in
         # `innereye` ComfyUI tenant and drops `cortex` to a peer, because

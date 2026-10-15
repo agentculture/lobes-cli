@@ -1,0 +1,45 @@
+# The Jetson AGX Orin 64GB DECIDER shape (orin-decision-models plan t9).
+#
+# orin-embed (embedder + reranker + the gemma2-embed lane, unchanged) PLUS the
+# decider role's default domain, `decider:general`, served by the decider
+# sidecar's clef-vllm backend (Dockerfile.decider-vllm, vLLM 0.31.0):
+#   culture-dev/clef-27b-GPTQ-W4A16-g64 -- our own INT4 weight-only build of
+#   Cloudflare/clef@2f3de3dd (deviation d4; the catalog's default decider). It is
+#   weight-only, so the Orin's Ampere sm_87 serves it with the Marlin kernel.
+#
+# MEASURED, but NOT through this render (#108): the values below are the ones a
+# plain `docker run` of the same image used on the Orin beside the live
+# orin-embed lanes (docs/evidence/2026-10-14-verify-clef-quants.txt and
+# docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt):
+#   gpu_mem_util 0.40, max_model_len 16384 -> weights 14.84 GiB, KV 6.68 GiB
+#   (94,890 tokens), container 21.65 GiB under a 32g cap; top-1 agreement with
+#   bf16 0.988 on 418 labelled questions. Booting it FROM THIS RENDER is t11.
+#
+# The decider joins the card's one-heavy-lobe group (builtin/orin.toml
+# [[exclusive_roles]]): it never co-resides with cortex, senses or associate.
+# orin-embed stays the rollback shape -- restore the ~/.lobes backup taken before
+# the switch; a re-render alone is not a rollback.
+name = "orin-decider"
+summary = "Jetson AGX Orin 64GB -- orin-embed (embedder + reranker + gemma2-embed) plus decider:general (Clef 27B W4A16, clef-vllm)"
+
+hosts = ["embedder", "reranker", "decider"]
+lanes = ["gemma2-embed"]
+
+[lane_knobs.gemma2-embed]
+# Same as orin-embed: MEASURED 4.69 GiB resident.
+mem_limit = "6g"
+tested_on = "jetson-agx-orin 2026-10-07"
+
+[decider_domains.general]
+backend = "clef-vllm"
+model = "culture-dev/clef-27b-GPTQ-W4A16-g64"
+revision = "4daaa224c6dc553b13120bb10414a7e7de7a5a95"
+mem_limit = "32g"
+gpu_mem_util = "0.40"
+max_model_len = "16384"
+# A fixed 4 GiB KV pool (t11). Left to vLLM, the pool is sized from the board's
+# free memory, which moves with the neighbouring lanes and the page cache: two
+# plain-run boots at the same settings got 94,890 and 131,072 tokens, and the
+# first boots FROM THIS RENDER were OOM-killed at the 32g cap during CUDA-graph
+# capture (cgroup kernel memory 31.35 GB, i.e. GPU allocations, at the kill).
+kv_cache_memory_bytes = "4294967296"

@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.86.0] - 2026-10-14
+
+### Added
+
+- The `decider` role (twelfth Colleague role): schema-scored decisions on `POST /v1/systemone`, routed by the `X-Lobes-Model: decider:<domain>` header, body forwarded byte-identical, never shed under pressure; mesh-forwarded by domain (`docs/decider.md`).
+- The decider sidecar (`lobes/decider_sidecar/`) with `clef`, `strands` and `clef-vllm` backends (`Dockerfile.decider`, `Dockerfile.decider-vllm` on vLLM 0.31.0), plus optional `DECIDER_ATTENTION_BACKEND` and `DECIDER_KV_CACHE_MEMORY_BYTES` knobs.
+- The `orin-decider` shape: orin-embed plus `decider:general` serving our own Clef 27B W4A16 build on the Jetson AGX Orin; decider domains accept `gpu_mem_util` / `max_model_len`; the Orin's one-heavy-lobe group now includes `decider`.
+- Catalog entries for `culture-dev/clef-27b-GPTQ-W4A16-g64` (the default decider), `culture-dev/clef-27b-NVFP4` and `Cloudflare/clef`; Clef quantization scripts (`scripts/clef_quant/`) and probe/eval scripts (`scripts/clef_eval/`).
+- Evidence: Clef quant verification (W4A16 on the Orin 0.988 top-1 agreement with bf16; NVFP4 0.9785 on the Spark, mis-calibrated on the Thor) and the Orin vLLM-vs-NF4 A/B.
+
+### Changed
+
+- The third-party `JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8` entry is demoted to candidate (deviation d4).
+- The deployment lock allowlist admits the shape-derived `DECIDER_DOMAINS` / `DECIDER_DOMAIN_MODELS` keys.
+
 ## [0.85.0] - 2026-10-09
 
 ### Added

@@ -33,6 +33,11 @@ _CONTEXT_256K_NATIVE = "256K native"
 _MTP_SELF_HOSTED_N2 = '{"method": "mtp", "num_speculative_tokens": 2}'
 _SHAPE_GEMMA4_UNIFIED = "unified multimodal (text+image+audio)"
 
+# Shared by the decider entries (orin-decision-models): the clef 27B builds'
+# ``shape`` and every decider checkpoint's ``doc``.
+_SHAPE_CLEF_27B = "decision model (Qwen3.8-27B post-train, joint schema head)"
+_DOC_DECIDER = "colleague-stack.md"
+
 # ---------------------------------------------------------------------------
 # The ENGINE axis — which inference server serves a gear
 # ---------------------------------------------------------------------------
@@ -65,12 +70,19 @@ ENGINE_SGLANG = "sglang"
 # through the sentence-transformers library (no vLLM pooling runner exists for
 # it). `serves_with_vllm` is False for it, so every vLLM-only fact is skipped.
 ENGINE_SENTENCE_TRANSFORMERS = "sentence-transformers"
+# A fifth engine value (decider-model plan t3): the decision-model sidecar. A
+# decision checkpoint (Cloudflare Clef, Strands decider) emits a schema-shaped
+# decision from a joint head, not free-form text, so it is NOT a vLLM generate
+# gear. `serves_with_vllm` is False for it, which keeps `lobes switch` from
+# offering it as a generate gear.
+ENGINE_DECIDER_SIDECAR = "decider-sidecar"
 
 #: Every engine a catalog entry may declare. ``tests/test_catalog.py`` pins it.
 ENGINES: tuple[str, ...] = (
     ENGINE_VLLM,
     ENGINE_LLAMA_CPP,
     ENGINE_SGLANG,
+    ENGINE_DECIDER_SIDECAR,
     ENGINE_SENTENCE_TRANSFORMERS,
 )
 
@@ -111,7 +123,7 @@ class SupportedModel:
     # as a documented compose edit. See docs/qwen3.6-35b-a3b-nvfp4.md.
     moe_backend: str = ""  # vLLM --moe-backend (e.g. "marlin") for MoE models
     speculative_config: str = ""  # vLLM --speculative-config JSON (e.g. MTP draft)
-    task: str = "generate"  # "generate" | "embed" | "score"
+    task: str = "generate"  # "generate" | "embed" | "score" | "decide"
     dimension: int = 0  # embedding output dimension; 0 for non-embedding models
     hf_overrides: str = ""  # vLLM --hf-overrides JSON string
     # Per-model pooling budget override. 0.0 = "use the shared embed/score default"
@@ -1391,6 +1403,126 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="embed",
         dimension=3584,
         modalities=("text", "code"),
+    ),
+    SupportedModel(
+        id="culture-dev/clef-27b-GPTQ-W4A16-g64",
+        # The DEFAULT decider (orin-decision-models t19/t22, d4): our own INT4
+        # weight-only build of Cloudflare/clef@2f3de3dd — GPTQ W4A16, group 64,
+        # actorder=static, compressed-tensors pack-quantized; lm_head,
+        # embed_tokens, the ViT and linear_attn.in_proj_a/b kept bf16; 18 GB.
+        # Built for the Jetson AGX Orin (Ampere sm_87: Marlin WNA16 kernel).
+        # MEASURED: served on the Orin through the decider sidecar's clef-vllm
+        # backend (vLLM 0.31.0), 418 labelled questions, top-1 agreement with
+        # bf16 0.988, accuracy 0.9378, 0 failed records
+        # (docs/evidence/2026-10-14-verify-clef-quants.txt); adopted over the
+        # transformers NF4 path in docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt.
+        # hf_revision = the public commit those runs used.
+        role_hint="decider",
+        shape=_SHAPE_CLEF_27B,
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="load-tested",
+        doc=_DOC_DECIDER,
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="4daaa224c6dc553b13120bb10414a7e7de7a5a95",
+    ),
+    SupportedModel(
+        id="culture-dev/clef-27b-NVFP4",
+        # Our own NVFP4 (W4A4) build of Cloudflare/clef@2f3de3dd for Blackwell
+        # (orin-decision-models t20/t22, d4/d5): FP4 weights + activations, block
+        # 16; lm_head, embed_tokens, the ViT and EVERY linear_attn projection kept
+        # bf16 (d5); 27 GB. FP4 activations rule out Ampere — never the Orin.
+        # MEASURED (docs/evidence/2026-10-14-verify-clef-quants.txt): DGX Spark
+        # GB10, agreement with bf16 0.9785, accuracy 0.9330, ~2.4x bf16 speed on
+        # short records. On the Jetson AGX Thor (sm_110) the same files are
+        # mis-calibrated: mean top-1 probability 0.31 vs 0.92, KL 1.01, agreement
+        # 0.957-0.964; cause unidentified (attention ruled out).
+        role_hint="candidate",
+        shape=_SHAPE_CLEF_27B,
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="load-tested",
+        doc=_DOC_DECIDER,
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="94093b9a819211f81aa41277570ee0d1f275ab11",
+    ),
+    SupportedModel(
+        id="Cloudflare/clef",
+        # Cloudflare's original bf16 Clef (Apache-2.0), the source of both builds
+        # above and the reference they are scored against. Served as the interim
+        # decider:general on the DGX Spark through the decider sidecar's `clef`
+        # backend (Cloudflare's own transformers code), orin-decision-models t17
+        # (d4): ~60 GiB GPU, accuracy 0.9354 on the t23 probe set. Too large for
+        # the Orin.
+        role_hint="candidate",
+        shape=_SHAPE_CLEF_27B,
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="none",
+        status="load-tested",
+        doc=_DOC_DECIDER,
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="2f3de3dd85f379784083b0814d997ab627200f0c",
+    ),
+    SupportedModel(
+        id="JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        # DEMOTED to candidate by deviation d4 (orin-decision-models): no
+        # third-party Clef quant is served; culture-dev/clef-27b-GPTQ-W4A16-g64
+        # above replaces it. Kept, not deleted (cite-don't-delete).
+        # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
+        # measured here (#108). Per the plan's research brief (card NOT fetched here):
+        # https://huggingface.co/JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8
+        # A 4-bit build of Cloudflare/clef (Apache-2.0, Qwen3_5ForConditionalGeneration
+        # post-trained from Qwen3.8-27B; a decision model with a joint schema head,
+        # no free-form generation, served on POST /v1/systemone). Quant per card:
+        # GPTQ W4A16 group 64, compressed-tensors, embeddings int8, joint
+        # head/ViT/lm_head kept bf16, ~18 GB; the card tested it on vLLM 0.31.0
+        # with a qwen3_5 embed-quant patch. Never booted on this repo's hardware.
+        # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
+        role_hint="candidate",
+        shape=_SHAPE_CLEF_27B,
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="",
+        quantization="compressed-tensors",
+        status="configured",
+        doc=_DOC_DECIDER,
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="cf572fbf05f14959d5542ebbac0b15631a8d1c08",
+    ),
+    SupportedModel(
+        id="StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+        # Decision checkpoint, NOT a generate gear. PUBLISHED-ELSEWHERE, not
+        # measured here (#108). Per the plan's research brief (card NOT fetched here):
+        # https://huggingface.co/StrandsAgents/strands-decider-2B-qwen3.5-v1-2610
+        # Apache-2.0; a LoRA plus an fp32 pointer head on Qwen/Qwen3.5-2B-Base;
+        # 4096-token window. bf16 (quantization "none"). Read from the repo's own
+        # files at hf_revision (2026-10-14): lora/adapter_config.json r=48,
+        # alpha 96 (adapter 202 MB); strands_decider_config.json pointer_dim 768;
+        # head.safetensors 12.6 MB (~3.1M fp32 params). The research brief's
+        # "rank-16, ~1M-parameter head" describes hobson-v21, not this release.
+        # This is the fine-tune student (operator, 2026-10-14).
+        # hf_revision = repo HEAD resolved via the HF API on 2026-10-14.
+        role_hint="candidate",
+        shape="decision model (Qwen3.5-2B-Base + rank-48 LoRA + pointer head)",
+        context="4K window",
+        native_max_model_len=4096,
+        tool_parser="",
+        quantization="none",
+        status="configured",
+        doc=_DOC_DECIDER,
+        task="decide",
+        engine=ENGINE_DECIDER_SIDECAR,
+        hf_revision="216d1ccb46a9e9b036eb9187b248db98480f77d4",
     ),
 )
 

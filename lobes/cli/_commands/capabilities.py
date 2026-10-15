@@ -160,7 +160,9 @@ _ROLE_INFO_FIELDS = {f.name for f in dataclasses.fields(RoleInfo)}
 # ``language`` (approved deviation d3) is additive in a stronger sense: it is
 # ABSENT by design whenever an audio lane declares none — i.e. on every
 # non-audio role and every English deployment, at ANY gateway version.
-_ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible", "language"})
+# ``domains`` (orin-decision-models t7) likewise: present only on the
+# ``decider`` entry of a box that serves or reaches a decider domain.
+_ADDITIVE_ROLE_FIELDS = frozenset({"tools", "feasible", "language", "domains"})
 
 # What a body must carry to be trusted as a real gateway response.
 _ROLE_INFO_REQUIRED_FIELDS = _ROLE_INFO_FIELDS - _ADDITIVE_ROLE_FIELDS

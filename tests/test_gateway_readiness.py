@@ -637,3 +637,94 @@ def test_readiness_cache_from_backends_forwards_paths() -> None:
         readiness_mod._default_ready_opener = original
         cache.stop()
     assert seen == ["http://comfyui:8188/object_info"]
+
+
+# --- decider lane: probed on its own /health, never /v1/models (odm t6) -----
+
+
+def _serve_decider(*, up: bool):
+    """A sidecar-shaped server: GET /health only; /v1/models 404s."""
+    import http.server
+
+    seen: list[str] = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            seen.append(self.path)
+            self.send_response(200 if (self.path == "/health" and up) else 404)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen
+
+
+def test_decider_ready_via_health_when_v1_models_404s() -> None:
+    srv, seen = _serve_decider(up=True)
+    cache = R.ReadinessCache(
+        {"decider": f"http://127.0.0.1:{srv.server_port}"}, timeout=2.0, start=False
+    )
+    try:
+        cache.refresh()
+        assert cache.current() == {"decider": True}
+    finally:
+        cache.stop()
+        srv.shutdown()
+    assert seen
+    assert set(seen) == {"/health"}
+
+
+def test_decider_down_reads_not_ready() -> None:
+    srv, seen = _serve_decider(up=False)
+    cache = R.ReadinessCache(
+        {"decider": f"http://127.0.0.1:{srv.server_port}"}, timeout=2.0, start=False
+    )
+    try:
+        cache.refresh()
+        assert cache.current() == {"decider": False}
+    finally:
+        cache.stop()
+        srv.shutdown()
+    assert "/v1/models" not in seen
+
+
+def test_decider_peer_without_a_decider_entry_is_not_ready() -> None:
+    """Code review (finding 5): the peer origin is a GATEWAY, so its /health is
+    the gateway's liveness, not the decider sidecar's. A peer whose
+    /capabilities carries no decider entry is not a ready decider — even when
+    that gateway is up — and neither /health nor /v1/models is asked."""
+    seen: list[str] = []
+
+    def opener(url, _t, _k):
+        seen.append(url)
+        if url.endswith("/capabilities"):
+            return 200, b'{"cortex": {"ready": true, "context": 4096}}'
+        return 200, b""
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert.ready is False
+    assert advert.context is None
+    assert seen == ["http://peer:9/capabilities"]
+
+
+def test_decider_peer_with_unreadable_capabilities_is_not_ready() -> None:
+    seen: list[str] = []
+
+    def opener(url, _t, _k):
+        seen.append(url)
+        return (404, b"") if url.endswith("/capabilities") else (200, b"")
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert.ready is False
+    assert not any(u.endswith(("/health", "/v1/models")) for u in seen)
+
+
+def test_decider_peer_entry_is_relayed() -> None:
+    def opener(url, _t, _k):
+        return 200, b'{"decider": {"ready": true, "context": 16384}}'
+
+    advert = R.probe_peer_advert("http://peer:9", "decider", "decider", opener=opener)
+    assert advert == R.PeerAdvert(ready=True, context=16384)

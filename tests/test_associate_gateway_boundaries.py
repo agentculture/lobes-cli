@@ -183,7 +183,7 @@ def test_per_backend_channel_is_additive_only_over_the_nine_pre_existing_backend
     entry for it — it has no catalog role_hint to peer on), so filtering it
     out of the other two dicts here is a harmless no-op.
     """
-    filtered = {k: v for k, v in actual.items() if k not in ("associate", "innereye")}
+    filtered = {k: v for k, v in actual.items() if k not in ("associate", "decider", "innereye")}
     assert filtered == expected, f"{name} changed for a pre-existing backend"
 
 
@@ -192,7 +192,7 @@ def test_opt_in_backends_only_gained_associate() -> None:
     # lobes.roles's module docstring for why it defaults infeasible like
     # muse/worker/associate rather than the audio overlay's sleeping-lobe
     # posture.
-    assert OPT_IN_BACKENDS - {"associate", "innereye"} == {"muse", "worker"}
+    assert OPT_IN_BACKENDS - {"associate", "decider", "innereye"} == {"muse", "worker"}
 
 
 def test_never_proxied_backends_is_still_empty() -> None:

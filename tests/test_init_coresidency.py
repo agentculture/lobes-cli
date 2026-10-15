@@ -96,7 +96,9 @@ def test_the_declared_group_is_the_measured_heavy_generate_lobes() -> None:
     group = groups[0]
     # associate joined 2026-08-25 (t8): the board hosts AT MOST ONE heavy
     # generate lobe, expressed as ONE group rather than pairwise clashes.
-    assert set(group.roles) == {"cortex", "senses", "associate"}
+    # decider joined 2026-10-14 (orin-decision-models t9): Clef W4A16 holds
+    # ~21.65 GiB, so it shares the one-heavy-lobe budget too.
+    assert set(group.roles) == {"cortex", "senses", "associate", "decider"}
     assert set(group.roles) <= set(ROLES)
     # The refusal quotes the reason back at the operator; an empty one would
     # make the error unverifiable.
@@ -168,7 +170,8 @@ def test_default_shape_over_hosts_the_declaring_card() -> None:
     # role the card marks feasible = false, and an infeasible member is not a
     # clash (see test_an_infeasible_member_is_not_a_clash below). The group is
     # reported whole so the refusal can name every shape that resolves it.
-    assert [tuple(g.roles) for g in over] == [("cortex", "senses", "associate")]
+    # decider (t9) is likewise an opt-in core role machine-as-brain never hosts.
+    assert [tuple(g.roles) for g in over] == [("cortex", "senses", "associate", "decider")]
 
 
 @pytest.mark.parametrize(
@@ -380,7 +383,7 @@ def test_init_refuses_when_the_resolved_default_shape_hosts_both_cortex_and_inne
 # --- `lobes init`: what still works -----------------------------------------
 
 
-@pytest.mark.parametrize("shape", ["orin-cortex", "orin-lobe"])
+@pytest.mark.parametrize("shape", ["orin-cortex", "orin-lobe", "orin-decider"])
 def test_a_resolving_shape_scaffolds_normally(tmp_path, monkeypatch, capsys, shape) -> None:
     _patch_detect(monkeypatch, _DECLARING_CARD)
     target = tmp_path / shape

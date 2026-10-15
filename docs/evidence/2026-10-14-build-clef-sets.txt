@@ -1,0 +1,40 @@
+BUILD — Clef calibration set + disjoint labelled probe set (plan orin-decision-models, task t18)
+Date: 2026-10-14   Builder: scripts/clef_sets/build_sets.py (this branch)   Box: DGX Spark (network fetch only)
+
+PUBLISHED (private, culture-dev)
+  culture-dev/clef-calibration-set @ 98ecdbeb10f3adcac3f53c694ab62e8c8e177d0c   530 records, 678 questions
+  culture-dev/clef-probe-set       @ cf9b911afc22d19baa535c71058630ee987b1e2a   320 records, 418 questions
+  Contents: manifest.jsonl (source row, gold answer, content sha256 per record), sources.json,
+  mesh_authored.jsonl (incident + routing records in full), builder/ (this directory's scripts),
+  README.md (per-source revision + licence table). Third-party text is NOT re-hosted;
+  'build_sets.py materialize OUT_DIR' rebuilds every record from the pinned upstream revisions and
+  refuses on any sha256 mismatch (it ran clean on 2026-10-14).
+
+  INCIDENT: 'hf repo create --private' failed (the CLI renamed it to 'hf repos create') and the
+  following 'hf upload' auto-created both repos PUBLIC. Both were set private ~1 minute later
+  (HfApi.update_repo_settings private=True; anonymous GET /api/datasets/culture-dev/clef-probe-set
+  -> 401 afterwards). Exposed content was manifests + mesh-authored records only (no third-party text,
+  no private mesh data).
+
+SOURCES (pinned)                                     licence        calibration (train)  probe (eval split)
+  google/boolq @35b264d0...                           cc-by-sa-3.0   90                   50 (validation)
+  stanfordnlp/snli @cdb5c3d5...                       cc-by-sa-4.0   90                   50 (validation)
+  legacy-datasets/banking77 @f5412156...              cc-by-4.0      80                   40 (test)
+  tau/commonsense_qa @94630fe3...                     mit            70                   40 (validation)
+  allenai/ai2_arc ARC-Challenge @210d026f...          cc-by-sa-4.0   70                   40 (test)
+  google-research-datasets/go_emotions @add49224...   apache-2.0     50                   30 (validation)
+  incident (mesh-authored synthetic logs, seeded)     apache-2.0     80 (seeds 2,000,000+) 50 (seeds 1,000,000+)
+  routing (mesh-authored, hand-labelled judgment)     apache-2.0     0                    20
+  Full revisions: scripts/clef_sets/build_sets.py SOURCES.
+
+QUESTION MIX   calibration: choice 428, noul 170, score 80   probe: choice 268, noul 100, score 50
+  Longest state ~20.4K characters (incident logs with 300 filler lines) — exercises long prefill.
+
+DISJOINTNESS   tests/test_clef_sets.py (8 tests, offline over the committed manifests):
+  no shared record id, no shared content sha256, calibration rows only from train splits,
+  mesh-authored records rebuild bit-identically. 'build_sets.py check' -> ok.
+  The probe set is for evaluation only; the calibration set is never used for evaluation.
+
+CAVEAT  routing labels are the author's judgment on deliberately clear-cut requests; report that
+  source separately. go_emotions single-label items are inherently ambiguous; agreement-with-bf16
+  (t23) is the promotion metric, not absolute accuracy.

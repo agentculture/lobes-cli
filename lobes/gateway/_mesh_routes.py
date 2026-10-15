@@ -992,8 +992,11 @@ def announcement_from_capabilities(
     announcement from any other source is how the first live cutover ended up
     announcing all six roles with empty served ids (2026-09-12).
     """
+    from lobes.gateway._mesh_wire import capability_entries
+
     roles: dict[str, RoleInfo] = {}
-    for role, entry in payload.items():
+    # Decider domains ride as their own `decider:<domain>` keys (odm t7).
+    for role, entry in capability_entries(payload).items():
         if not isinstance(entry, Mapping):
             continue
         info = _role_info_from_capability_entry(role, entry, local_capacities)
@@ -1931,7 +1934,11 @@ def _probe_member_capabilities(
         # response this way; reading ``payload.get("roles", {})`` here
         # found nothing on every real gateway response, so no member was
         # ever verified.
-        roles_data = payload if isinstance(payload, dict) else {}
+        # odm t7: the decider's served domains are read back under the same
+        # `decider:<domain>` keys the announcement carried them as.
+        from lobes.gateway._mesh_wire import capability_entries
+
+        roles_data = capability_entries(payload) if isinstance(payload, dict) else {}
 
         # Build the probed_roles dict per the verify_member_roles signature.
         probed_roles: dict[str, dict] = {}

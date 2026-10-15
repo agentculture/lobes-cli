@@ -372,3 +372,35 @@ def test_member_lane_ids_skip_a_peer_lane_whose_probe_was_not_ready(mesh_env):
     ids = S.member_lane_ids(table, snap, ready={b.name: True for b in table.backends})
     assert "cortex-spark2" in ids
     assert "hand-spark2" not in ids
+
+
+# --- decider is path-routed: no member lanes (code review, finding 3) ---------
+
+
+def test_no_decider_member_lane_is_listed(mesh_env):
+    """`decider` answers on POST /v1/systemone, never by `model`, so a
+    `decider-<member>` id would reach the sidecar's chat route and 404 there."""
+    table, _cfg = build_config({"DECIDER_DOMAINS": "general=http://decider-general:8000"})
+    snap = _snap(_member("spark2", SPARK2, verified=("cortex", "decider")))
+    ids = S.member_lane_ids(table, snap)
+    assert "cortex-spark2" in ids  # the control: member lanes are on
+    assert not any(i.startswith("decider-") for i in ids)
+
+
+@pytest.mark.parametrize("model", ["decider-spark2", "decider-spark"])
+def test_a_decider_member_lane_is_not_routable(mesh_env, model):
+    table, cfg = build_config({"DECIDER_DOMAINS": "general=http://decider-general:8000"})
+    rec = _Recorder()
+    snap = _snap(_member("spark2", SPARK2, verified=("cortex", "decider")))
+    resp = _post(table, cfg, model, rec, snap=snap)
+    assert resp.status == 404
+    assert json.loads(resp.body)["error"]["type"] == "model_not_found"
+    assert rec.calls == []
+
+
+def test_capabilities_lists_no_decider_member_lanes(mesh_env):
+    table, cfg = build_config({"DECIDER_DOMAINS": "general=http://decider-general:8000"})
+    snap = _snap(_member("spark2", SPARK2, verified=("cortex", "decider")))
+    payload = S.capabilities_payload(table, cfg, {}, mesh_snapshot=snap)
+    decider = payload["decider"] if "decider" in payload else payload["roles"]["decider"]
+    assert "member_lanes" not in decider

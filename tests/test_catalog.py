@@ -4,12 +4,14 @@ drift from the docs, the parser inference, and the gateway's default primary."""
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from lobes.catalog import (
+    ENGINE_DECIDER_SIDECAR,
     ENGINE_LLAMA_CPP,
     ENGINE_SGLANG,
     ENGINE_VLLM,
@@ -230,7 +232,7 @@ def test_mtp_command_items_match_packaged_templates() -> None:
 # New-field contract: task / dimension / hf_overrides (issue #44)
 # ---------------------------------------------------------------------------
 
-_VALID_TASKS = {"generate", "embed", "score"}
+_VALID_TASKS = {"generate", "embed", "score", "decide"}
 _EMBEDDER_ID = "Qwen/Qwen3-Embedding-0.6B"
 _RERANKER_ID = "Qwen/Qwen3-Reranker-0.6B"
 
@@ -969,6 +971,8 @@ def test_qat_w4a16_doc_records_the_honesty_bar() -> None:
 _GGUF_ID = "unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M"
 _RADIXARK_TARGET_ID = "RadixArk/Qwen3.8-27B-NVFP4"
 _RADIXARK_DRAFTER_ID = "RadixArk/Qwen3.8-27B-DSpark"
+_CLEF_ID = "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8"
+_STRANDS_ID = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"
 _RADIXARK_TARGET_REVISION = "52d1adc5f38aa5ebf099c29ed7025ba34cfbb854"
 
 
@@ -1016,12 +1020,17 @@ def test_serves_with_vllm_unchanged_for_every_current_catalog_entry() -> None:
         _RADIXARK_TARGET_ID,
         _RADIXARK_DRAFTER_ID,
         "google/embeddinggemma-2",  # sentence-transformers (oes-t4)
+        _CLEF_ID,  # decider sidecar (odm-t3)
+        _STRANDS_ID,  # decider sidecar (odm-t3)
+        "Cloudflare/clef",  # decider sidecar (odm-t22)
+        "culture-dev/clef-27b-GPTQ-W4A16-g64",  # decider sidecar (odm-t22)
+        "culture-dev/clef-27b-NVFP4",  # decider sidecar (odm-t22)
     }
     vllm_ids = {m.id for m in SUPPORTED_MODELS if serves_with_vllm(m)}
     assert _GGUF_ID not in vllm_ids
     assert _RADIXARK_TARGET_ID not in vllm_ids
     assert _RADIXARK_DRAFTER_ID not in vllm_ids
-    assert len(vllm_ids) == len(SUPPORTED_MODELS) - 4
+    assert len(vllm_ids) == len(SUPPORTED_MODELS) - 9
 
 
 def test_exactly_one_llama_cpp_gear_and_it_is_the_gguf_cortex() -> None:
@@ -1179,3 +1188,67 @@ def test_exactly_one_associate_gear_detects_an_injected_duplicate() -> None:
     models_with_duplicate = list(SUPPORTED_MODELS) + [duplicate]
 
     assert _count_role_hint(models_with_duplicate, "associate") == 2
+
+
+# ---------------------------------------------------------------------------
+# The decision checkpoints (decider-model plan t3) — PUBLISHED-ELSEWHERE, #108
+# ---------------------------------------------------------------------------
+
+
+def test_decider_entries_declare_the_decide_task_and_sidecar_engine() -> None:
+    clef = next(m for m in SUPPORTED_MODELS if m.id == _CLEF_ID)
+    # Demoted by d4 (orin-decision-models): no third-party Clef quant is served.
+    assert clef.role_hint == "candidate"
+    assert clef.task == "decide"
+    assert clef.quantization
+    assert clef.status == "configured"
+    assert re.fullmatch(r"[0-9a-f]{40}", clef.hf_revision)
+    strands = next(m for m in SUPPORTED_MODELS if m.id == _STRANDS_ID)
+    assert strands.role_hint in ("candidate", "decider")
+    assert strands.task == "decide"
+    assert strands.quantization == "none"
+    assert strands.status == "configured"
+    assert re.fullmatch(r"[0-9a-f]{40}", strands.hf_revision)
+    for m in (clef, strands):
+        assert m.engine == ENGINE_DECIDER_SIDECAR
+        assert ENGINE_DECIDER_SIDECAR in ENGINES
+
+
+_CLEF_BF16_ID = "Cloudflare/clef"
+_CLEF_W4A16_ID = "culture-dev/clef-27b-GPTQ-W4A16-g64"
+_CLEF_NVFP4_ID = "culture-dev/clef-27b-NVFP4"
+_OWN_CLEF_IDS = (_CLEF_BF16_ID, _CLEF_W4A16_ID, _CLEF_NVFP4_ID)
+
+
+def test_own_clef_builds_are_catalogued_with_pinned_revisions() -> None:
+    # orin-decision-models t22 (d4): Cloudflare's bf16 original (the Spark
+    # interim) and our two culture-dev builds, each pinned to the commit the
+    # t23/t13 evidence measured.
+    by_id = {m.id: m for m in SUPPORTED_MODELS}
+    expected = {
+        _CLEF_BF16_ID: ("2f3de3dd85f379784083b0814d997ab627200f0c", "none"),
+        _CLEF_W4A16_ID: ("4daaa224c6dc553b13120bb10414a7e7de7a5a95", "compressed-tensors"),
+        _CLEF_NVFP4_ID: ("94093b9a819211f81aa41277570ee0d1f275ab11", "compressed-tensors"),
+    }
+    for mid, (revision, quant) in expected.items():
+        model = by_id[mid]
+        assert model.task == "decide"
+        assert model.engine == ENGINE_DECIDER_SIDECAR
+        assert model.hf_revision == revision
+        assert model.quantization == quant
+        # Each was served and scored on this repo's hardware (t17/t23/t13).
+        assert model.status == "load-tested"
+
+
+def test_the_default_decider_is_our_orin_w4a16_build() -> None:
+    # role_hint="decider" is single-occupancy: the gateway's default decider
+    # id is the first entry carrying it.
+    deciders = [m.id for m in SUPPORTED_MODELS if m.role_hint == "decider"]
+    assert deciders == [_CLEF_W4A16_ID]
+
+
+def test_decider_entries_are_not_selectable_generate_gears() -> None:
+    for mid in (_CLEF_ID, _STRANDS_ID, *_OWN_CLEF_IDS):
+        model = next(m for m in SUPPORTED_MODELS if m.id == mid)
+        assert serves_with_vllm(model) is False
+        assert model not in _vllm_generate_models()

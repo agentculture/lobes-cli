@@ -639,3 +639,23 @@ class TestPooledCarveOut:
         assert plain == pooled
         assert plain["mode"] == "warm"
         assert plain["shed"] is False
+
+
+# --- NEVER_SHED_ROLES is load-bearing (code review, finding 10) -------------
+
+
+@pytest.mark.parametrize("swap,iowait", [(95.0, 0.0), (0.0, 95.0), (99.0, 99.0)])
+def test_a_never_shed_role_is_not_shed_under_any_pressure(swap: float, iowait: float) -> None:
+    """``decide`` itself honours NEVER_SHED_ROLES — the guarantee does not rest
+    on where the gateway's /v1/systemone branch sits in do_POST."""
+    from lobes.gateway._pressure_policy import NEVER_SHED_ROLES
+
+    assert NEVER_SHED_ROLES  # the set is not vacuous
+    for role in NEVER_SHED_ROLES:
+        d = decide(swap, iowait, role)
+        assert d["shed"] is False
+        assert d["reason"] == "default"
+        assert d["shed_signal"] == ""
+        assert d["mode"] == "busy"  # the host verdict stays honest
+        assert d["requested_tier"] == role
+        assert d["servable_tier"] == role

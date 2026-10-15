@@ -400,3 +400,47 @@ def test_activation_error_carries_a_profile_load_warning(box, capsys) -> None:
     )
     assert _up(box, "innereye") != 0
     assert "card profile 'nosuchcard' did not load" in capsys.readouterr().err
+
+
+# --- decider: every running decider-<domain> service is the role (finding 8) ---
+
+_DECIDER_SHAPE_OVERLAY = """services:
+  decider-general:
+    profiles: ["decider"]
+    image: x
+  decider-triage:
+    profiles: ["decider"]
+    image: x
+"""
+
+
+def _orin_with_deciders(box) -> None:
+    (box["dir"] / ".env").write_text(
+        _env(box)
+        .replace("LOBES_PROFILE=spark", "LOBES_PROFILE=orin")
+        .replace("COMPOSE_PROFILES=", "COMPOSE_PROFILES=decider"),
+        encoding="utf-8",
+    )
+    (box["dir"] / _compose.SHAPE_OVERLAY).write_text(_DECIDER_SHAPE_OVERLAY, encoding="utf-8")
+
+
+def test_a_running_non_general_decider_domain_is_the_running_rival(box, capsys) -> None:
+    """Only decider-triage runs: cortex must still be refused on the Orin, whose
+    card declares cortex and decider exclusive."""
+    _orin_with_deciders(box)
+    box["running"] = {"model-gear-decider-triage"}
+    assert _up(box, "cortex", "--apply") != 0
+    assert "can't run beside decider" in capsys.readouterr().err
+    assert box["calls"] == []
+
+
+def test_replace_stops_every_running_decider_domain_with_its_profile(box, capsys) -> None:
+    _orin_with_deciders(box)
+    box["running"] = {"model-gear-decider-general", "model-gear-decider-triage"}
+    assert _up(box, "cortex", "--replace", "--apply") == 0
+    stops = [" ".join(c) for c in box["calls"] if "stop" in c]
+    assert len(stops) == 2
+    assert all("--profile decider" in s for s in stops)
+    assert {s.rsplit(" ", 1)[-1] for s in stops} == {"decider-general", "decider-triage"}
+    assert "DECIDER_FEASIBLE=false" in _env(box)
+    assert "decider, decider" not in capsys.readouterr().err

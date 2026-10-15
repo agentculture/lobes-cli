@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from lobes.cli import main
 from lobes.runtime import _compose
 
@@ -167,3 +169,27 @@ def test_switch_uncatalogued_quantization_none_surfaces_remove_notice(tmp_path, 
     assert any(
         "REMOVE" in line and "--quantization" in line for line in note_lines
     ), f"expected REMOVE --quantization NOTE (uncatalogued --quantization none); got: {note_lines}"
+
+
+# ---------------------------------------------------------------------------
+# decide-task gears are refused (decider-model plan t3, deviation d1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model_id",
+    [
+        "JRamirez-UAB/clef-GPTQ-W4A16-g64-embed-int8",
+        "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610",
+        "Cloudflare/clef",
+        "culture-dev/clef-27b-GPTQ-W4A16-g64",
+        "culture-dev/clef-27b-NVFP4",
+    ],
+)
+def test_switch_refuses_a_decide_task_gear(tmp_path, capsys, model_id) -> None:
+    _scaffold(tmp_path)
+    rc = main(["switch", model_id, "--compose-dir", str(tmp_path)])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "decider lane" in captured.err
+    assert "VLLM_MODEL=" not in captured.out

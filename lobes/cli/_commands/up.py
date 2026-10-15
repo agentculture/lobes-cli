@@ -15,7 +15,10 @@ Roles → compose services (issue #81, t7)::
     worker    → vllm-worker        (the Qwen3.6-35B-A3B fast ground-work
                                     doer — opt-in, hosted only by a
                                     worker-hosting shape)
-    embedder  → vllm-embed         (Qwen3-Embedding-0.6B pooling gear)
+    decider   → decider-<domain>   (one generated sidecar per declared domain,
+                                    in docker-compose.shape.yml — opt-in;
+                                    `up decider` targets every one of them)
+    embedder  → vllm-embed        (Qwen3-Embedding-0.6B pooling gear)
     reranker  → vllm-rerank        (Qwen3-Reranker-0.6B score gear)
     stt       → stt                (Parakeet — audio overlay, opt-in)
     tts       → chatterbox         (Chatterbox — audio overlay, opt-in)
@@ -72,8 +75,15 @@ from lobes.cli import _role_swap, _runtime_ops
 from lobes.cli._commands.mesh import trigger_reannounce
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
-from lobes.profiles.shape_render import GATEWAY_SERVICE, OPT_IN_CORE_ACTIVATION_ENV
+from lobes.profiles.shape_render import (
+    DECIDER_SERVICE_PREFIX,
+    GATEWAY_SERVICE,
+    OPT_IN_CORE_ACTIVATION_ENV,
+    decider_service,
+)
 from lobes.profiles.shapes import (
+    DECIDER_DEFAULT_DOMAIN,
+    DECIDER_ROLE,
     DEFAULT_HOSTED_ROLES,
     OPT_IN_CORE_ROLES,
     builtin_shape_names,
@@ -91,6 +101,13 @@ ROLE_SERVICE: dict[str, str] = {
     "worker": "vllm-worker",
     "associate": "vllm-associate",
     "hand": "vllm-hand",
+    # `decider` (orin-decision-models plan, t8) runs one GENERATED service per
+    # domain (decider-<domain>, in docker-compose.shape.yml). The role's
+    # nominal service is the default domain's; `lobes up decider` expands to
+    # every decider-* service the deployment's compose chain declares (see
+    # _decider_services), and the exclusive-rival check and --replace treat
+    # every one of them as the decider (see _role_services).
+    "decider": decider_service(DECIDER_DEFAULT_DOMAIN),
     "embedder": "vllm-embed",
     "reranker": "vllm-rerank",
     "stt": "stt",
@@ -400,6 +417,38 @@ def _lane_defined(deploy_dir: Path, target: str, services: list[str], chain: lis
     )
 
 
+def _decider_services(
+    deploy_dir: Path, target: str, services: list[str], chain: list[str]
+) -> list[str]:
+    """Every ``decider-<domain>`` service the compose chain declares, for ``decider``.
+
+    The domain list is shape data rendered into ``docker-compose.shape.yml``, so
+    the target expands at run time rather than from a static table. Any other
+    target passes through unchanged. No declared domain is a USER_ERROR naming
+    the real gap instead of compose's "no such service".
+    """
+    if target != DECIDER_ROLE:
+        return services
+    declared = sorted(
+        name
+        for name in _lanes.declared_services(deploy_dir, chain)
+        if name.startswith(DECIDER_SERVICE_PREFIX)
+    )
+    if declared:
+        return declared
+    raise ModelGearError(
+        code=EXIT_USER_ERROR,
+        message=(
+            "role 'decider' has no decider-<domain> service in this deployment's "
+            f"compose file set ({_compose.SHAPE_OVERLAY} declares none)"
+        ),
+        remediation=(
+            "declare [decider_domains.<name>] tables in a decider-hosting shape and "
+            "re-scaffold with 'lobes init --shape <name> --apply'"
+        ),
+    )
+
+
 def _resolve_build(args: argparse.Namespace, action: str) -> bool:
     """``--build``, refusing the one combination that cannot mean anything.
 
@@ -446,6 +495,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     build = _resolve_build(args, action)
     chain = _chain(deploy_dir, needs_audio, shape_present)
     _lane_defined(deploy_dir, target, services, chain)
+    services = _decider_services(deploy_dir, target, services, chain)
     argv = _compose.compose_service_argv(action, chain, services, build=build)
 
     # The card's exclusive-role guard and memory gate run after the checks
@@ -553,10 +603,13 @@ def _apply(
 class _Swap:
     """What the exclusive-role guard and the memory gate decided for one ``up``."""
 
-    def __init__(self) -> None:
+    def __init__(self, deploy_dir: Path | None = None) -> None:
+        self.deploy_dir = deploy_dir
         self.card = _role_swap.Card()
         self.excl = _role_swap.Exclusivity()
-        # (role, service) for each exclusive rival with a running container.
+        # (role, service) for each running container of an exclusive rival — one
+        # entry PER service, so a role served by several (decider-<domain>)
+        # contributes each of them.
         self.running: list[tuple[str, str]] = []
         self.memory: _role_swap.MemoryVerdict | None = None
         self.check_memory = False
@@ -564,8 +617,12 @@ class _Swap:
         self.compose_files: list[str] = []
         self.gateway_files: list[str] = []
 
+    def rival_roles(self) -> list[str]:
+        """The running rivals' role names, once each, in order."""
+        return list(dict.fromkeys(role for role, _ in self.running))
+
     def rival_names(self) -> str:
-        return ", ".join(role for role, _ in self.running)
+        return ", ".join(self.rival_roles())
 
 
 def _replace_requested(args: argparse.Namespace, target: str, action: str) -> bool:
@@ -592,11 +649,34 @@ def _replace_requested(args: argparse.Namespace, target: str, action: str) -> bo
 _PRESENT_STATES = frozenset({"running", "restarting", "paused"})
 
 
-def _running_service(role: str) -> str | None:
-    for service in _role_swap.role_services(role):
-        if _compose.container_status(_role_swap.container_for(service)) in _PRESENT_STATES:
-            return service
-    return None
+def _role_services(role: str, deploy_dir: Path | None) -> list[str]:
+    """Every compose service that can serve ``role`` on this deployment.
+
+    The static table names one service per role, but ``decider`` runs one
+    GENERATED ``decider-<domain>`` service per declared domain, so its
+    candidates also include every ``decider-*`` service the deployment's
+    compose chain declares — a running ``decider-triage`` is the decider just
+    as much as ``decider-general`` is.
+    """
+    services = _role_swap.role_services(role)
+    if role == DECIDER_ROLE and deploy_dir is not None:
+        chain = _chain(deploy_dir, False, _compose.shape_overlay_present(deploy_dir))
+        declared = sorted(
+            name
+            for name in _lanes.declared_services(deploy_dir, chain)
+            if name.startswith(DECIDER_SERVICE_PREFIX)
+        )
+        services = list(dict.fromkeys([*services, *declared]))
+    return services
+
+
+def _running_services(role: str, deploy_dir: Path | None) -> list[str]:
+    """The services of ``role`` whose container is present (see _PRESENT_STATES)."""
+    return [
+        service
+        for service in _role_services(role, deploy_dir)
+        if _compose.container_status(_role_swap.container_for(service)) in _PRESENT_STATES
+    ]
 
 
 def _plan_swap(
@@ -608,7 +688,7 @@ def _plan_swap(
     was not given. Under ``--replace`` with a running rival, the memory verdict
     is only final after the rival stops, so it is deferred to :func:`_run_swap`.
     """
-    swap = _Swap()
+    swap = _Swap(Path(deploy_dir))
     if action != "up" or (target not in ROLE_SERVICE and target != COLLEAGUE_STACK):
         return swap
     env_path = Path(deploy_dir) / _compose.ENV_FILE
@@ -641,8 +721,7 @@ def _guard_rivals(target: str, swap: _Swap, replace: bool) -> None:
         )
     swap.running = []
     for rival in swap.excl.rivals:
-        service = _running_service(rival)
-        if service:
+        for service in _running_services(rival, swap.deploy_dir):
             swap.running.append((rival, service))
     if swap.running and not replace:
         raise _rival_error(target, swap)
@@ -688,7 +767,7 @@ def _check_memory(args: argparse.Namespace, target: str, swap: _Swap) -> None:
     swap.check_memory = (
         not getattr(args, "override_memory", False)
         and _role_swap.gate_applies(swap.card, target)
-        and _running_service(target) is None
+        and not _running_services(target, swap.deploy_dir)
     )
     if not swap.check_memory:
         return
@@ -798,7 +877,7 @@ def _swap_plan(
         steps.append(" ".join(gateway))
     return {
         "target": target,
-        "replace": [role for role, _ in swap.running],
+        "replace": swap.rival_roles(),
         "env_changes": changes,
         "memory": memory_line,
         "steps": steps,
@@ -814,7 +893,7 @@ def _restart_rivals(deploy_dir: Path, swap: _Swap) -> list[str]:
         emit_diagnostic(f">> restarting {rival} ({service})")
         if _compose.run_compose(deploy_dir, restart).returncode != 0:
             failed.append(rival)
-    return failed
+    return list(dict.fromkeys(failed))
 
 
 def _rollback_note(deploy_dir: Path, swap: _Swap) -> str:

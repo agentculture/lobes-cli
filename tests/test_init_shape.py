@@ -212,8 +212,8 @@ def test_unknown_shape_is_user_error_naming_valid_shapes(tmp_path, capsys) -> No
     err = capsys.readouterr().err
     assert "unknown shape" in err
     assert (
-        "machine-as-brain, orin-associate, orin-cortex, orin-embed, orin-lobe, orin-small, "
-        "spark-innereye, spark-lobe" in err
+        "machine-as-brain, orin-associate, orin-cortex, orin-decider, orin-embed, "
+        "orin-lobe, orin-small, spark-innereye, spark-lobe" in err
     )
     assert not target.exists()  # aborts before any scaffolding
 
@@ -234,6 +234,7 @@ def test_builtin_shape_names_are_sorted() -> None:
         "machine-as-brain",
         "orin-associate",
         "orin-cortex",
+        "orin-decider",
         "orin-embed",
         "orin-lobe",
         "orin-small",

@@ -24,6 +24,19 @@ compatibility (served_id, quantization, max_model_len, runtime).  This module
 reuses that exact set at import time so the wire schema and the replica pool
 stay in lock-step (spec c5 / c45 / h36).
 
+Decider domains (orin-decision-models t7)
+-----------------------------------------
+The ``decider`` role is served one sidecar PER DOMAIN, and its namespace is
+flat and mesh-wide: a caller names ``decider:<domain>``, never a box. So each
+domain a member serves rides the wire as its OWN roster key —
+``roles["decider:<domain>"]`` — with that domain's checkpoint, quant and
+fingerprint, verified and placed exactly like any role key. No schema change:
+it is one more key in ``roles``, so an older peer simply carries it unread.
+:func:`capability_entries` is the ONE place a ``/capabilities`` payload's
+``decider.domains`` map is flattened into those keys — the announcement
+builder and the verification probe both read through it, so what a member
+announces and what a peer reads back are the same entries by construction.
+
 Versioning
 ----------
 ``schema_version`` is a dotted-major string (e.g. ``"1.0.0"``).  During
@@ -36,6 +49,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -144,6 +158,64 @@ class Announcement:
             schema_version=self.schema_version,
             roles=clean_roles,
         )
+
+
+# ---------------------------------------------------------------------------
+# Decider domains as roster keys
+# ---------------------------------------------------------------------------
+
+
+def _decider_domain_entries(entry: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """``{"decider:<domain>": capability-entry}`` for each domain *entry* SERVES.
+
+    A domain this box reaches only through the mesh (``proxied``) or one the
+    mesh disagrees about (``conflict``) is not served here and yields nothing.
+    """
+    from lobes.gateway._routing import DECIDER_DOMAIN_RE, decider_domain_key
+
+    domains = entry.get("domains")
+    if not isinstance(domains, Mapping):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for domain, info in domains.items():
+        if not isinstance(info, Mapping) or info.get("proxied") or info.get("conflict"):
+            continue
+        if not isinstance(domain, str) or not DECIDER_DOMAIN_RE.match(domain):
+            continue
+        out[decider_domain_key(domain)] = _decider_domain_entry(entry, info)
+    return out
+
+
+def _decider_domain_entry(entry: Mapping[str, Any], info: Mapping[str, Any]) -> dict[str, Any]:
+    """One served domain's roster entry: the domain's own checkpoint/quant/
+    readiness/fingerprint over the ``decider`` entry's contract fields."""
+    fp = info.get("fingerprint")
+    has_fp = isinstance(fp, Mapping)
+    return {
+        "model": info.get("checkpoint") or "",
+        "runtime": fp.get("runtime", "") if has_fp else "",
+        "context": (fp.get("max_model_len") if has_fp else 0) or 0,
+        "quant": info.get("quant") or "",
+        "responsibilities": list(entry.get("responsibilities") or ()),
+        "forbidden_responsibilities": list(entry.get("forbidden_responsibilities") or ()),
+        "feasible": bool(entry.get("feasible")),
+        "ready": info.get("ready"),
+        "fingerprint": fp,
+    }
+
+
+def capability_entries(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """A ``/capabilities`` payload's entries, with decider domains as their own keys.
+
+    Every top-level key is kept as-is; the ``decider`` entry's served
+    ``domains`` are ADDED as ``decider:<domain>`` keys (see the module
+    docstring). A payload with no ``domains`` map comes back unchanged.
+    """
+    out: dict[str, Any] = dict(payload)
+    decider = payload.get("decider")
+    if isinstance(decider, Mapping):
+        out.update(_decider_domain_entries(decider))
+    return out
 
 
 # ---------------------------------------------------------------------------

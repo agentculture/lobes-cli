@@ -272,6 +272,24 @@ BUSY_RETRY_AFTER_SECONDS: int = 5
 
 
 # ---------------------------------------------------------------------------
+# Roles that are never shed — outside the tier ladder entirely
+# ---------------------------------------------------------------------------
+#
+# ``decider`` (the ``POST /v1/systemone`` lane) is not a generate tier, so it
+# has no rung on the ``hand < … < main`` ladder and no "servable floor" to
+# shed to. A decision request is small, bounded and usually on the critical
+# path of a caller's control loop, so a 429 there stalls the caller for no
+# memory relief worth having. :func:`decide` honours this set itself — a role
+# named here is never shed, whatever the pressure — so the guarantee does not
+# rest on where the gateway's ``/v1/systemone`` branch happens to sit in
+# ``do_POST`` (that branch reads no pressure today, and would still never shed
+# a decision if it began to).
+
+#: Roles whose requests are forwarded under any pressure — never a 429.
+NEVER_SHED_ROLES: frozenset[str] = frozenset({"decider"})
+
+
+# ---------------------------------------------------------------------------
 # Shed signals (deviation d1) — WHICH fact justified refusing to serve
 # ---------------------------------------------------------------------------
 #
@@ -371,7 +389,9 @@ def decide(
     requested_tier:
         The capability tier the caller asked for.  One of the new-vocabulary
         tiers (``"main"`` / ``"minor"`` / ``"multimodal"`` / ``"muse"``) or a
-        back-compat alias (``"cheap"`` / ``"normal"`` / ``"hard"``).
+        back-compat alias (``"cheap"`` / ``"normal"`` / ``"hard"``) — or a
+        role in :data:`NEVER_SHED_ROLES`, which is outside the tier ladder and
+        is never shed (``servable_tier``/``requested_tier`` echo it verbatim).
     pooled:
         ``True`` when this role has replicas on other boxes AND a live snapshot
         of them (deviation ``d1``).  A pooled request is not shed on host
@@ -426,8 +446,6 @@ def decide(
     exactly equal to a threshold does **not** trigger busy mode.  For
     example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` is busy.
     """
-    normalized = normalize_tier(requested_tier)  # validates + maps to new vocab
-
     swap_thrash = swap_used_percent > SWAP_DEGRADED_THRESHOLD
     iowait_high = iowait_percent > IOWAIT_DEGRADED_THRESHOLD
 
@@ -435,6 +453,20 @@ def decide(
     # honest observations of it. Only the shed band below narrowed.
     under_pressure = swap_thrash or iowait_high
     mode = "busy" if under_pressure else "warm"
+
+    if requested_tier in NEVER_SHED_ROLES:
+        # Outside the tier ladder: no rung, no floor to shed to — forwarded
+        # under any pressure. `mode` still reports the host honestly.
+        return {
+            "mode": mode,
+            "shed": False,
+            "reason": "default",
+            "servable_tier": requested_tier,
+            "requested_tier": requested_tier,
+            "shed_signal": SHED_SIGNAL_NONE,
+        }
+
+    normalized = normalize_tier(requested_tier)  # validates + maps to new vocab
 
     # The shed band, most-authoritative signal first (the order is also the
     # reporting priority, so a paging box says "swap" even when its engine is

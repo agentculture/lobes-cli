@@ -597,3 +597,29 @@ def test_colleague_superset_parser_resolves_every_seat_with_lane_keys(
             }, seat
     # The embedder seat still resolves to the ROLE, never to a lane.
     assert resolved["embedder"]["model"] == _EMBED_ID
+
+
+def test_decider_role_contract_is_pinned() -> None:
+    """The opt-in `decider` role (schema-scored decisions on /v1/systemone)."""
+    from lobes import roles
+
+    assert "decider" in roles.ROLES
+    assert roles.ROLE_BACKEND["decider"] == "decider"
+    assert roles.ROLE_ROLE_HINT["decider"] == "decider"
+    assert roles.ROLE_PATH["decider"] == "/v1/systemone"
+    assert roles.ROLE_MAX_MODEL_LEN_ENV["decider"] == "DECIDER_MAX_MODEL_LEN"
+    assert roles.ROLE_RESPONSIBILITIES["decider"] == (
+        "typed_decision",
+        "classification",
+        "routing_choice",
+        "triage",
+        "guardrail_check",
+        "final_decision",
+    )
+    assert roles.ROLE_FORBIDDEN["decider"] == ("repo_action", "security_decision")
+    # `hand` stays a non-deciding lobe.
+    assert roles.ROLE_FORBIDDEN["hand"] == (
+        "final_decision",
+        "repo_action",
+        "security_decision",
+    )

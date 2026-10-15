@@ -47,6 +47,7 @@ only defines and loads the shape itself.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from importlib.resources import files
@@ -89,7 +90,12 @@ COLLEAGUE_ROLES: tuple[str, ...] = PROFILE_ROLES + AUDIO_ROLES
 # shape may make that trade. Being here is what keeps machine-as-brain
 # byte-identical: a non-hosted opt-in core role renders nothing, and the
 # gateway's OPT_IN_BACKENDS unwired-by-default rule carries the honesty.
-OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker", "associate", "innereye")
+# `decider` (orin-decision-models plan, t8) joined for the HOSTING reason too:
+# a 27B decision model cannot sit beside the default cortex+senses duo, and its
+# serving units are per-DOMAIN sidecars declared as data
+# (:attr:`Shape.decider_domains`), so only an explicit decider-hosting shape
+# that names its domains brings any of them up.
+OPT_IN_CORE_ROLES: tuple[str, ...] = ("muse", "worker", "associate", "innereye", "decider")
 
 # The "whole brain" set machine-as-brain hosts exactly -- the identity-shape
 # invariant (see shape_render.py's module docstring and
@@ -239,6 +245,155 @@ def _parse_lanes(name: str, data: Mapping[str, Any]) -> tuple[tuple[str, ...], d
     return lanes, knobs
 
 
+# --- decider domains (orin-decision-models plan, t8) --------------------------
+#
+# The `decider` role is served by one sidecar PER DOMAIN (one checkpoint per
+# process — see lobes/decider_sidecar/server.py's "One checkpoint per process"),
+# so a decider-hosting shape declares its domains as DATA, one table each:
+#
+#     hosts = ["embedder", "reranker", "decider"]
+#
+#     [decider_domains.general]          # the default domain: plain `decider`
+#     backend = "clef"                   # clef | strands (DECIDER_BACKEND)
+#     model = "Cloudflare/clef"          # HF repo id or local path (DECIDER_MODEL)
+#     revision = "<sha>"                 # optional (DECIDER_REVISION)
+#     mem_limit = "32g"                  # REQUIRED container memory cap
+#     device = "cuda"                    # optional (DECIDER_DEVICE)
+#     start_period = "900s"              # optional healthcheck grace (default 900s)
+#     gpu_mem_util = "0.40"              # optional, clef-vllm (DECIDER_GPU_MEM_UTIL)
+#     max_model_len = "16384"            # optional, clef-vllm (DECIDER_MAX_MODEL_LEN)
+#     kv_cache_memory_bytes = "4294967296"  # optional, clef-vllm (DECIDER_KV_CACHE_MEMORY_BYTES)
+#
+#     [decider_domains.triage]           # any further domain: model=decider:triage
+#     backend = "strands"
+#     model = "StrandsAgents/strands-decider-2B-qwen3.5-v1-2610"
+#     mem_limit = "8g"
+#
+# A domain name matches [a-z0-9][a-z0-9-]*; `general` is the default domain.
+# A shape that hosts `decider` but declares no domain renders
+# DECIDER_FEASIBLE=false (hosted, unwired); `decider` may not appear in
+# `overrides` (it has no vLLM budget knobs to override).
+#
+# Each domain renders a `decider-<name>` compose service (Dockerfile.decider,
+# no host port) in the generated docker-compose.shape.yml, and one
+# `<name>=http://decider-<name>:8000` pair in DECIDER_DOMAINS. `mem_limit` is
+# required, never defaulted: on a unified-memory Jetson the GPU allocations
+# count against the container's cgroup, so an uncapped sidecar on a zero-swap
+# board can OOM-kill a neighbouring lane.
+DECIDER_ROLE = "decider"
+#: The default domain — plain ``model=decider`` resolves to ``decider:general``.
+DECIDER_DEFAULT_DOMAIN = "general"
+#: Mirrors lobes.decider_sidecar.server.BACKENDS (pinned by a test; not imported,
+#: so this module's only substrate dependency stays lobes.profiles.schema).
+DECIDER_BACKENDS: tuple[str, ...] = ("clef", "strands", "clef-vllm")
+DECIDER_DOMAIN_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
+_DECIDER_REQUIRED_KEYS: tuple[str, ...] = ("backend", "model", "mem_limit")
+_DECIDER_OPTIONAL_KEYS: tuple[str, ...] = (
+    "revision",
+    "device",
+    "start_period",
+    # clef-vllm engine budget (t9): DECIDER_GPU_MEM_UTIL / DECIDER_MAX_MODEL_LEN.
+    "gpu_mem_util",
+    "max_model_len",
+    # A fixed KV pool (t11): unpinned, vLLM sizes it from the board's free
+    # memory, which on a unified-memory Jetson moves with its neighbours.
+    "kv_cache_memory_bytes",
+)
+_DECIDER_KEYS: tuple[str, ...] = _DECIDER_REQUIRED_KEYS + _DECIDER_OPTIONAL_KEYS
+# Values land verbatim in a generated compose file (inside double-quoted YAML
+# scalars, where compose also interpolates `$`), so each is held to a plain
+# charset rather than escaped.
+_PLAIN = re.compile(r"[A-Za-z0-9._/:@+-]+")
+_DECIDER_VALUE_RE: dict[str, re.Pattern[str]] = {
+    "backend": _PLAIN,
+    "model": _PLAIN,
+    "revision": _PLAIN,
+    "device": _PLAIN,
+    # re.ASCII keeps ``\d`` to 0-9 (no Unicode digits in a compose scalar).
+    "mem_limit": re.compile(r"\d+(\.\d+)?[bkmgBKMG]?", re.ASCII),
+    "start_period": re.compile(r"(\d+(ms|s|m|h))+", re.ASCII),
+    "gpu_mem_util": re.compile(r"0?\.\d+", re.ASCII),
+    "max_model_len": re.compile(r"[1-9]\d*", re.ASCII),
+    "kv_cache_memory_bytes": re.compile(r"[1-9]\d*", re.ASCII),
+}
+_DECIDER_VALUE_HINT: dict[str, str] = {
+    "backend": f"choose one of: {', '.join(DECIDER_BACKENDS)}",
+    "model": "an HF repo id or a local path: letters, digits and . _ / : @ + -",
+    "revision": "an HF revision (commit sha, tag or branch): letters, digits and . _ / : @ + -",
+    "device": "a torch device, e.g. 'cuda' or 'cuda:0'",
+    "mem_limit": "a compose memory size, e.g. '24g' or '4096m'",
+    "start_period": "a compose duration, e.g. '900s' or '15m'",
+    "gpu_mem_util": "a fraction of GPU memory in (0, 1), e.g. '0.40'",
+    "max_model_len": "a positive token count, e.g. '16384'",
+    "kv_cache_memory_bytes": "a positive byte count, e.g. '4294967296' (4 GiB)",
+}
+
+
+def _parse_decider_domain(name: str, domain: str, table: Any) -> dict[str, str]:
+    where = f"shape {name!r} decider_domains.{domain}"
+    if not DECIDER_DOMAIN_RE.fullmatch(domain):
+        raise _shape_error(
+            message=f"shape {name!r}: decider domain {domain!r} is not a valid domain name",
+            remediation="a domain name matches [a-z0-9][a-z0-9-]* (e.g. 'general', 'triage')",
+        )
+    if not isinstance(table, Mapping):
+        raise _shape_error(
+            message=f"{where} must be a table",
+            remediation=f"known keys: {', '.join(_DECIDER_KEYS)}",
+        )
+    unknown = set(table) - set(_DECIDER_KEYS)
+    if unknown:
+        raise _shape_error(
+            message=f"unknown key(s) {sorted(unknown)!r} in {where}",
+            remediation=f"known keys: {', '.join(_DECIDER_KEYS)}",
+        )
+    missing = [key for key in _DECIDER_REQUIRED_KEYS if key not in table]
+    if missing:
+        raise _shape_error(
+            message=f"{where} is missing required key(s) {missing!r}",
+            remediation=(
+                "declare backend, model and mem_limit for every domain (mem_limit is "
+                "the container memory cap — required, see docs/orin-embed-deployment.md)"
+            ),
+        )
+    for key, value in table.items():
+        if not isinstance(value, str) or not value.strip():
+            raise _shape_error(
+                message=f"{where}.{key} must be a non-empty string",
+                remediation=f'e.g. {key} = "..."',
+            )
+    for key, value in table.items():
+        if not _DECIDER_VALUE_RE[key].fullmatch(value):
+            raise _shape_error(
+                message=f"{where}.{key} = {value!r} is not a valid {key}",
+                remediation=_DECIDER_VALUE_HINT[key],
+            )
+    if table["backend"] not in DECIDER_BACKENDS:
+        raise _shape_error(
+            message=f"{where}.backend {table['backend']!r} is not a decider backend",
+            remediation=f"choose one of: {', '.join(DECIDER_BACKENDS)}",
+        )
+    return dict(table)
+
+
+def _parse_decider_domains(
+    name: str, data: Mapping[str, Any], hosts: tuple[str, ...]
+) -> dict[str, dict[str, str]]:
+    """Validate a shape's ``[decider_domains.<name>]`` tables (see the block above)."""
+    raw = data.get("decider_domains", {})
+    if not isinstance(raw, Mapping):
+        raise _shape_error(
+            message=f"shape {name!r}: 'decider_domains' must be a table/mapping",
+            remediation="declare domains as [decider_domains.<name>] tables",
+        )
+    if raw and DECIDER_ROLE not in hosts:
+        raise _shape_error(
+            message=f"shape {name!r} declares decider_domains but does not host 'decider'",
+            remediation="add 'decider' to 'hosts' or drop the [decider_domains.*] tables",
+        )
+    return {domain: _parse_decider_domain(name, domain, table) for domain, table in raw.items()}
+
+
 @dataclass(frozen=True)
 class Shape:
     """A named deployment shape -- the role subset one box hosts.
@@ -267,6 +422,11 @@ class Shape:
     # predates the specialist lanes, so their renders stay byte-identical.
     lanes: tuple[str, ...] = ()
     lane_knobs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # Decider domains (orin-decision-models plan, t8): domain name -> its
+    # sidecar declaration (backend / model / revision / device / mem_limit /
+    # start_period), in declaration order. Empty for every shape that does not
+    # host `decider`, so their renders stay byte-identical.
+    decider_domains: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", tuple(self.hosts))
@@ -276,6 +436,13 @@ class Shape:
             self,
             "lane_knobs",
             MappingProxyType({k: MappingProxyType(dict(v)) for k, v in self.lane_knobs.items()}),
+        )
+        object.__setattr__(
+            self,
+            "decider_domains",
+            MappingProxyType(
+                {k: MappingProxyType(dict(v)) for k, v in self.decider_domains.items()}
+            ),
         )
 
     def hosts_role(self, role: str) -> bool:
@@ -304,6 +471,8 @@ class Shape:
         if self.lanes:  # absent for pre-lane shapes: their dict view is unchanged
             out["lanes"] = list(self.lanes)
             out["lane_knobs"] = {k: dict(v) for k, v in self.lane_knobs.items()}
+        if self.decider_domains:  # absent for non-decider shapes: dict view unchanged
+            out["decider_domains"] = {k: dict(v) for k, v in self.decider_domains.items()}
         return out
 
     @staticmethod
@@ -318,7 +487,15 @@ class Shape:
         a silently ignored value, matching
         :meth:`~lobes.profiles.schema.Profile.from_dict`'s contract exactly.
         """
-        known_top = {"name", "summary", "hosts", "overrides", "lanes", "lane_knobs"}
+        known_top = {
+            "name",
+            "summary",
+            "hosts",
+            "overrides",
+            "lanes",
+            "lane_knobs",
+            "decider_domains",
+        }
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
             raise _shape_error(
@@ -367,12 +544,21 @@ class Shape:
                 remediation="only the Profile-machinery core roles may appear in overrides: "
                 f"{', '.join(PROFILE_ROLES)}",
             )
+        if DECIDER_ROLE in raw_overrides:
+            raise _shape_error(
+                message=(
+                    f"shape {name!r} 'overrides' names 'decider', whose serving units are "
+                    "per-domain sidecars with no vLLM budget knobs"
+                ),
+                remediation="declare each domain as a [decider_domains.<name>] table instead",
+            )
         overrides = {
             role: RoleProfile.from_dict(role, role_data)
             for role, role_data in raw_overrides.items()
         }
 
         lanes, lane_knobs = _parse_lanes(name, data)
+        decider_domains = _parse_decider_domains(name, data, tuple(raw_hosts))
 
         # declared-name wins over an embedded "name" field (the loader passes
         # the filename stem, which is the source of truth for a shape's
@@ -394,6 +580,7 @@ class Shape:
             overrides=overrides,
             lanes=lanes,
             lane_knobs=lane_knobs,
+            decider_domains=decider_domains,
         )
 
 

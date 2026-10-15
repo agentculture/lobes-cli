@@ -90,14 +90,14 @@ from __future__ import annotations
 import dataclasses
 import os
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from lobes.catalog import SUPPORTED_MODELS, SupportedModel
+from lobes.catalog import ENGINE_DECIDER_SIDECAR, SUPPORTED_MODELS, SupportedModel
 from lobes.gateway._config import ServerConfig, build_config
 from lobes.gateway._replicas import UNCALIBRATED_WEIGHT
 from lobes.gateway._replicas import UNKNOWN as _REPLICA_UNKNOWN
 from lobes.gateway._replicas import ReplicaState
-from lobes.gateway._routing import RoutingTable
+from lobes.gateway._routing import DECIDER_ROLE, DEFAULT_DECIDER_DOMAIN, RoutingTable
 
 # The eleven first-class roles, in canonical order: generate lanes (cortex,
 # senses, muse, worker, hand), pooling lanes, the opt-in audio overlay, then
@@ -123,6 +123,8 @@ ROLES: tuple[str, ...] = (
     # worker/cortex switch, and only a distinct name can carry that.
     "associate",
     "hand",
+    # `decider`: opt-in schema-scored decision lobe (POST /v1/systemone).
+    "decider",
     "embedder",
     "reranker",
     "stt",
@@ -155,6 +157,7 @@ ROLE_BACKEND: dict[str, str] = {
     # lane, ASSOCIATE_BASE_URL) — like `muse`, `worker` and `hand`.
     "associate": "associate",
     "hand": "hand",
+    "decider": "decider",
     "embedder": "embed",
     "reranker": "rerank",
     "stt": "stt",
@@ -199,6 +202,7 @@ ROLE_ROLE_HINT: dict[str, str] = {
     # mechanism a future role sharing a checkpoint could still use.
     "associate": "associate",
     "hand": "hand",
+    "decider": "decider",
     "embedder": "embedding",
     "reranker": "reranker",
 }
@@ -215,6 +219,7 @@ ROLE_PATH: dict[str, str] = {
     "worker": _CHAT_PATH,
     "associate": _CHAT_PATH,
     "hand": _CHAT_PATH,
+    "decider": "/v1/systemone",
     "embedder": "/v1/embeddings",
     "reranker": "/v1/rerank",
     "stt": "/v1/audio/transcriptions",
@@ -257,6 +262,16 @@ ROLE_PATH: dict[str, str] = {
 # see :func:`lobes.gateway._mesh_routes._role_info_from_capability_entry`,
 # its sole consumer.
 MESH_UNFORWARDABLE_ROLES: frozenset[str] = frozenset({"innereye"})
+
+# Roles that take no ``{role}-{member}`` member lane (mesh-pool-load-sharing):
+# the ones reached by PATH rather than by ``model`` — the stt/tts audio lanes,
+# and ``decider``, which answers only on ``POST /v1/systemone`` (a
+# ``decider-<member>`` chat request would reach the sidecar's
+# ``/v1/chat/completions`` and 404 there) — plus the one the mesh never
+# forwards (``innereye``). The single source both the gateway's routing
+# (:func:`lobes.gateway.server.member_lane_ids`) and the ``/capabilities``
+# ``member_lanes`` annotation read, so the listing and the router agree.
+MEMBER_LANE_EXCLUDED_ROLES: frozenset[str] = frozenset({"stt", "tts", "innereye", "decider"})
 
 # The two audio-overlay sidecars — hardcoded here (as in the gateway/realtime
 # code) because they are NOT in the switchable catalog (lobes/catalog.py): they
@@ -461,6 +476,17 @@ ROLE_RESPONSIBILITIES: dict[str, tuple[str, ...]] = {
         "specialized_task",
         "tool_use",
     ),
+    # `decider`: schema-scored decision models (typed decisions, not prose).
+    # Unlike every other non-cortex lobe it MAY make the final decision; it
+    # may never act on the repo or make a security call.
+    "decider": (
+        "typed_decision",
+        "classification",
+        "routing_choice",
+        "triage",
+        "guardrail_check",
+        "final_decision",
+    ),
     "embedder": ("vectorization", "memory_retrieval_input"),
     "reranker": ("retrieval_ordering", "relevance_refinement"),
     # NOTE: this base tuple deliberately does NOT list the realtime/VAD
@@ -535,6 +561,7 @@ ROLE_FORBIDDEN: dict[str, tuple[str, ...]] = {
     # later is contract-compatible, REMOVING one is a break, so the conservative
     # list ships first. Granting it once adapters exist is issue #180.
     "hand": ("final_decision", "repo_action", "security_decision"),
+    "decider": ("repo_action", "security_decision"),
     "embedder": (),
     "reranker": (),
     "stt": (),
@@ -557,6 +584,7 @@ ROLE_MAX_MODEL_LEN_ENV: dict[str, str] = {
     "worker": "WORKER_MAX_MODEL_LEN",
     "associate": "ASSOCIATE_MAX_MODEL_LEN",
     "hand": "HAND_MAX_MODEL_LEN",
+    "decider": "DECIDER_MAX_MODEL_LEN",
     "embedder": "EMBED_MAX_MODEL_LEN",
     "reranker": "RERANK_MAX_MODEL_LEN",
 }
@@ -681,6 +709,15 @@ class RoleInfo:
     # declared is byte-identical to the pre-d3 contract. Serialise a RoleInfo
     # through role_payload, not a bare ``dataclasses.asdict``.
     language: str | None = None
+    # The decider role's DOMAIN inventory (orin-decision-models t7): ``{domain:
+    # {"checkpoint", "quant", "ready", "fingerprint"}}`` for every domain this
+    # box serves (``DECIDER_DOMAINS``), plus — on a box that reaches a domain
+    # only through the mesh — ``{"proxied": true, "hosted_by": <origin>}``
+    # entries (or a ``conflict`` list naming the members that disagree).
+    # ``None`` — every other role, and a box with no decider domain at all — is
+    # an ABSENT key in :func:`role_payload`, so every pre-t7 advert keeps its
+    # bytes. Excluded from hashing (a mapping is not hashable).
+    domains: dict | None = field(default=None, hash=False)
 
 
 def _catalog_by_id(model_id: str) -> SupportedModel | None:
@@ -742,6 +779,10 @@ def _declared_context(role: str, env: Mapping[str, str]) -> int | None:
         return None
     raw = env.get(key)
     if not raw:
+        # The decider's window is per DOMAIN; the role advertises its default
+        # domain's (DECIDER_DOMAIN_CONTEXTS), the one a header-less request hits.
+        if role == DECIDER_ROLE:
+            return decider_domain_contexts(env).get(DEFAULT_DECIDER_DOMAIN)
         return None
     try:
         return int(raw)
@@ -1000,13 +1041,16 @@ def role_payload(info: RoleInfo) -> dict:
     """``info`` as the JSON-safe advert dict — THE serializer for a RoleInfo.
 
     ``dataclasses.asdict`` with the optional-when-unset keys removed: today
-    that is ``language``, absent unless an audio lane declared one. Both the
+    ``language``, absent unless an audio lane declared one, and ``domains``,
+    absent unless this box serves or reaches a decider domain. Both the
     gateway's ``GET /capabilities`` and ``lobes capabilities`` go through
     here so the two surfaces cannot disagree about which keys exist.
     """
     payload = dataclasses.asdict(info)
     if payload.get("language") is None:
         payload.pop("language", None)
+    if payload.get("domains") is None:
+        payload.pop("domains", None)
     return payload
 
 
@@ -1233,6 +1277,10 @@ def build_role_registry(
             role, table, gateway, resolved_env, signal, peer_signal, peer_ctx
         )
 
+    # The decider's per-domain inventory (odm t7) — the same RoleInfo, one
+    # more optional key; a box with no decider domain keeps `domains=None`.
+    _attach_decider_domains(registry, table, resolved_env, backend_ready)
+
     audio_url = (server.audio_url or "").rstrip("/")
     audio_configured = bool(audio_url)
     # Audio roles use the gateway origin when the overlay is wired (issue #87),
@@ -1316,6 +1364,180 @@ def build_role_registry(
         peer_ready=peer_ready,
     )
     return registry
+
+
+# --- decider domains on the advert (orin-decision-models t7) ------------------
+#
+# The decider role is served by one sidecar PER DOMAIN, so its advert carries a
+# `domains` map. Each served domain names its checkpoint, quant and live
+# readiness, plus the FINGERPRINT a peer verifies before routing to it — each
+# domain is announced to the mesh under its own roster key `decider:<domain>`
+# (lobes.gateway._mesh_wire.capability_entries), because the decider namespace
+# is FLAT and mesh-wide: a caller names a domain, never a box.
+#
+# The checkpoint comes from DECIDER_DOMAIN_MODELS (`name=model[@revision]`,
+# comma-separated — rendered by a decider-hosting shape from each
+# `[decider_domains.<name>]` table, passed through to the gateway). A domain it
+# does not name falls back to the decider backend's served id for `general`
+# (DECIDER_SERVED_NAME, else the catalog's decider) and to "unknown" for any
+# other domain — never a guess.
+DECIDER_DOMAIN_MODELS_ENV = "DECIDER_DOMAIN_MODELS"
+
+
+def decider_domain_models(env: Mapping[str, str]) -> dict[str, str]:
+    """``{domain: checkpoint}`` declared in ``DECIDER_DOMAIN_MODELS``.
+
+    Malformed pairs (no ``=``, an empty side, an illegal domain name) are
+    skipped, never raised — a typo only costs that domain its checkpoint.
+    """
+    from lobes.gateway._routing import DECIDER_DOMAIN_RE
+
+    out: dict[str, str] = {}
+    for pair in (env.get(DECIDER_DOMAIN_MODELS_ENV) or "").split(","):
+        name, sep, model = pair.strip().partition("=")
+        name, model = name.strip(), model.strip()
+        if sep and model and DECIDER_DOMAIN_RE.match(name):
+            out[name] = model
+    return out
+
+
+# Each domain's SERVED window (`name=max_model_len`, comma-separated), rendered
+# by a decider-hosting shape beside DECIDER_DOMAIN_MODELS from each domain's
+# `max_model_len` and passed through to the gateway. The sidecar's own
+# DECIDER_MAX_MODEL_LEN lives only in its service env, so without this key the
+# advert fell back to the catalog's NATIVE ceiling (262144 against a 16384
+# lane on orin-decider). A domain it does not name keeps that fallback.
+DECIDER_DOMAIN_CONTEXTS_ENV = "DECIDER_DOMAIN_CONTEXTS"
+
+
+def decider_domain_contexts(env: Mapping[str, str]) -> dict[str, int]:
+    """``{domain: served max_model_len}`` declared in ``DECIDER_DOMAIN_CONTEXTS``.
+
+    Malformed pairs (no ``=``, an illegal domain name, a value that is not a
+    positive integer) are skipped, never raised — a typo only costs that
+    domain its served window, which then reads the catalog's native ceiling.
+    """
+    from lobes.gateway._routing import DECIDER_DOMAIN_RE
+
+    out: dict[str, int] = {}
+    for pair in (env.get(DECIDER_DOMAIN_CONTEXTS_ENV) or "").split(","):
+        name, sep, raw = pair.strip().partition("=")
+        name, raw = name.strip(), raw.strip()
+        if not (sep and DECIDER_DOMAIN_RE.match(name)):
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            continue
+        if value > 0:
+            out[name] = value
+    return out
+
+
+def _decider_domain_ready(
+    key: str,
+    domain_url: str,
+    backend_url: str,
+    usable: bool,
+    backend_ready: Mapping[str, bool | None] | None,
+) -> bool:
+    """One domain's ``ready``: the role's clamp, then its own live signal.
+
+    ``backend_ready`` is the readiness cache's map; the domain's own
+    ``decider:<domain>`` key is authoritative (h14: missing/None/False = not
+    ready). The domain the ``decider`` backend itself points at also accepts
+    the backend's key, so it reads the same probe before the per-domain
+    targets are wired.
+    """
+    if not usable:
+        return False
+    if backend_ready is None:
+        return True
+    if key in backend_ready:
+        return backend_ready.get(key) is True
+    return domain_url == backend_url and backend_ready.get(DECIDER_ROLE) is True
+
+
+def decider_domain_advert(
+    table: RoutingTable,
+    env: Mapping[str, str],
+    decider: "RoleInfo",
+    backend_ready: Mapping[str, bool | None] | None,
+) -> dict[str, dict]:
+    """``{domain: {checkpoint, quant, ready, fingerprint}}`` for every served domain.
+
+    Empty when this box serves no decider domain. The fingerprint is the four
+    fields mesh verification compares (served id, quantization, window,
+    runtime); an unknown value reads ``"unknown"``, which verifies against
+    itself but never pools (``_replicas.compare_fingerprints``).
+    """
+    from lobes.gateway._routing import decider_domain_key
+
+    if not table.decider_domains:
+        return {}
+    declared = decider_domain_models(env)
+    contexts = decider_domain_contexts(env)
+    backend = next((b for b in table.backends if b.name == ROLE_BACKEND[DECIDER_ROLE]), None)
+    backend_url = backend.base_url if backend is not None else ""
+    usable = decider.feasible and decider.loaded and bool(decider.endpoint)
+    out: dict[str, dict] = {}
+    for domain, url in table.decider_domains.items():
+        checkpoint = declared.get(domain) or (
+            decider.model if domain == DEFAULT_DECIDER_DOMAIN else ""
+        )
+        out[domain] = _decider_domain_entry(
+            checkpoint,
+            _decider_domain_ready(
+                decider_domain_key(domain), url, backend_url, usable, backend_ready
+            ),
+            contexts.get(domain),
+        )
+    return out
+
+
+def _decider_domain_entry(checkpoint: str, ready: bool, served_context: int | None = None) -> dict:
+    """One domain's ``{checkpoint, quant, ready, fingerprint}`` advert entry.
+
+    ``checkpoint`` may be empty (undeclared) or carry an ``@revision`` pin;
+    the catalog entry it names (if any) supplies the quant, window and
+    runtime, and every unknown value reads ``"unknown"``. ``served_context``
+    (the domain's ``DECIDER_DOMAIN_CONTEXTS`` entry) is the window the lane
+    actually serves and outranks the catalog's native ceiling.
+    """
+    model = _catalog_by_id(checkpoint.split("@", 1)[0]) if checkpoint else None
+    served_id = checkpoint or _REPLICA_UNKNOWN
+    if model is None:
+        quant, max_model_len, runtime = _REPLICA_UNKNOWN, None, ENGINE_DECIDER_SIDECAR
+    else:
+        quant = model.quantization or _REPLICA_UNKNOWN
+        max_model_len, runtime = model.native_max_model_len, model.engine
+    if served_context is not None:
+        max_model_len = served_context
+    return {
+        "checkpoint": served_id,
+        "quant": quant,
+        "ready": ready,
+        "fingerprint": {
+            "served_id": served_id,
+            "quantization": quant,
+            "max_model_len": max_model_len,
+            "runtime": runtime,
+        },
+    }
+
+
+def _attach_decider_domains(
+    registry: dict[str, "RoleInfo"],
+    table: RoutingTable,
+    env: Mapping[str, str],
+    backend_ready: Mapping[str, bool | None] | None,
+) -> None:
+    """Set the registry's ``decider`` ``domains`` in place, when it serves any."""
+    if DECIDER_ROLE not in registry:
+        return
+    domains = decider_domain_advert(table, env, registry[DECIDER_ROLE], backend_ready)
+    if domains:
+        registry[DECIDER_ROLE] = dataclasses.replace(registry[DECIDER_ROLE], domains=domains)
 
 
 def _resolve_audio_role(
@@ -1948,7 +2170,7 @@ def annotate_mesh_naming(
         # member_lanes (mesh-pool-load-sharing, t3): every routable
         # "{role}-{member}" name — this box's own lane included when it
         # hosts the role, so a hosting box publishes its pin targets too.
-        if role not in {"stt", "tts", "innereye"}:
+        if role not in MEMBER_LANE_EXCLUDED_ROLES:
             names = sorted(
                 lane.name
                 for lane in member_lanes(

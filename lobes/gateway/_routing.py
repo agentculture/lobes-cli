@@ -161,6 +161,15 @@ class RoutingTable:
     # all. This task only PARSES the field — no cross-replica consistency
     # check runs yet. Defaults to empty.
     lane_fingerprints: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # Decider DOMAIN -> the base URL of the sidecar that answers it (the
+    # ``POST /v1/systemone`` lane). Populated by
+    # :func:`lobes.gateway._config.build_config` from ``DECIDER_DOMAINS``
+    # (comma-separated ``name=url``), or — when that is empty but the
+    # ``decider`` backend is wired via ``DECIDER_BASE_URL`` — the single entry
+    # ``{"general": <that url>}``. A caller picks a domain with the
+    # ``X-Lobes-Model: decider:<name>`` header (see
+    # :func:`resolve_decider_route`). Defaults to empty: no decider here.
+    decider_domains: Mapping[str, str] = field(default_factory=dict)
 
 
 # The per-endpoint audio ROLE map (issue #129): /v1/audio/speech is the tts
@@ -216,10 +225,117 @@ RENDER_PATH: str = "/v1/render"
 #: The task family of a PATH-routed tenant that is not an OpenAI model.
 RENDER_TASK: str = "render"
 
+#: The task family of the decider backend (catalog ``task="decide"``) — the
+#: ``POST /v1/systemone`` lane, path-routed like render (see below).
+DECIDE_TASK: str = "decide"
+
 # Task families that are NOT addressable through a request's ``model`` field.
 # Kept as a set (rather than an ``== RENDER_TASK`` check) so a second such
 # tenant joins by naming its task here and nowhere else.
-_PATH_ROUTED_TASKS: frozenset[str] = frozenset({RENDER_TASK})
+_PATH_ROUTED_TASKS: frozenset[str] = frozenset({RENDER_TASK, DECIDE_TASK})
+
+# --- the /v1/systemone decider lane -----------------------------------------
+#
+# A decision model (Cloudflare Clef, the Strands decider) answers the upstream
+# ``/v1/systemone`` wire: a ``{state, questions}`` JSON body with NO ``model``
+# field. So the lane is PATH-routed (its backend carries ``task="decide"``,
+# which keeps it out of every model-routed surface via _PATH_ROUTED_TASKS
+# above), and the caller picks WHICH decider answers — the domain — with a
+# header rather than the body. The body is never parsed or rewritten on this
+# path; it reaches the sidecar byte-identical.
+
+#: The single path the decider lane serves (:data:`lobes.roles.ROLE_PATH`).
+SYSTEMONE_PATH: str = "/v1/systemone"
+
+#: The request header naming the decider domain: ``decider:<name>``.
+DECIDER_MODEL_HEADER: str = "X-Lobes-Model"
+
+#: The role prefix of a header value, and the domain a bare/absent header means.
+DECIDER_ROLE: str = "decider"
+DEFAULT_DECIDER_DOMAIN: str = "general"
+
+#: A legal domain name — lowercase, digits and dashes, not starting with a dash.
+DECIDER_DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+# The separator between the role and the domain (``decider:ops``) — the same
+# colon ``hand:<domain>`` uses, for the same reason (model ids use ``/``).
+_DECIDER_SEP = ":"
+
+
+def decider_domain_key(domain: str) -> str:
+    """``decider:<domain>`` — the header value naming a domain, which is ALSO
+    the domain's own mesh roster key and its readiness-cache key (odm t7).
+
+    One spelling for all three, so a domain announced by a peer is addressed
+    by exactly the string a caller already puts in ``X-Lobes-Model``.
+    """
+    return f"{DECIDER_ROLE}{_DECIDER_SEP}{domain}"
+
+
+def decider_domain_of_key(key: str) -> str | None:
+    """The domain a ``decider:<domain>`` roster key names, else ``None``."""
+    role, sep, domain = key.partition(_DECIDER_SEP)
+    if role != DECIDER_ROLE or not sep or not DECIDER_DOMAIN_RE.match(domain):
+        return None
+    return domain
+
+
+def is_systemone_path(path: str) -> bool:
+    """True for exactly ``/v1/systemone`` (query string ignored)."""
+    return path.split("?", 1)[0] == SYSTEMONE_PATH
+
+
+@dataclass(frozen=True)
+class DeciderRoute:
+    """Where one ``/v1/systemone`` request goes, or why it goes nowhere.
+
+    ``kind`` is ``"local"`` (forward to ``base_url``), ``"model_not_found"``
+    (the header names no declared domain — never a silent fall-back to
+    ``general``) or ``"role_infeasible"`` (no decider is wired here, or it is
+    declared infeasible). A remote-member target (mesh forwarding) is a later
+    ``kind`` on this same shape.
+    """
+
+    kind: str
+    requested: str
+    domain: str = ""
+    base_url: str = ""
+
+
+def _decider_domain(header_value: str | None) -> str | None:
+    """The domain a header value names, or ``None`` for an illegal spelling.
+
+    Absent/blank and the bare role name both mean ``general``.
+    """
+    value = (header_value or "").strip()
+    if not value or value == DECIDER_ROLE:
+        return DEFAULT_DECIDER_DOMAIN
+    role, sep, domain = value.partition(_DECIDER_SEP)
+    if role != DECIDER_ROLE or not sep or not DECIDER_DOMAIN_RE.match(domain):
+        return None
+    return domain
+
+
+def resolve_decider_route(table: RoutingTable, header_value: str | None) -> DeciderRoute:
+    """Resolve the ``X-Lobes-Model`` header to a decider target. Pure.
+
+    Order matters: an illegal spelling is ``model_not_found`` regardless of
+    wiring (it is not part of the contract anywhere); a box with no decider is
+    ``role_infeasible`` for every legal spelling (it cannot know which domains
+    some other box declares); only then is an undeclared domain
+    ``model_not_found``.
+    """
+    domain = _decider_domain(header_value)
+    if domain is None:
+        return DeciderRoute(kind="model_not_found", requested=(header_value or "").strip())
+    requested = f"{DECIDER_ROLE}{_DECIDER_SEP}{domain}"
+    if DECIDER_ROLE in table.infeasible or not table.decider_domains:
+        return DeciderRoute(kind="role_infeasible", requested=requested, domain=domain)
+    base_url = table.decider_domains.get(domain)
+    if base_url is None:
+        return DeciderRoute(kind="model_not_found", requested=requested, domain=domain)
+    return DeciderRoute(kind="local", requested=requested, domain=domain, base_url=base_url)
+
 
 # A gateway-issued job id is 32 hex chars; a bound this generous still refuses
 # anything that could be a path segment attack, and the artifact name is

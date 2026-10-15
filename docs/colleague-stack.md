@@ -1,14 +1,16 @@
-# The Colleague stack: eleven roles, one contract
+# The Colleague stack: twelve roles, one contract
 
-> The eleven first-class, Colleague-facing roles lobes exposes over the fleet —
+> The twelve first-class, Colleague-facing roles lobes exposes over the fleet —
 > `cortex` / `senses` / `muse` / `worker` / `associate` / `hand` / `embedder` /
-> `reranker` / `stt` / `tts` / `innereye` — how a caller discovers them, drives
+> `reranker` / `stt` / `tts` / `innereye` / `decider` — how a caller discovers them, drives
 > them, measures them, and the before→after context migration that shipped
 > alongside this contract (issue #81; `muse` joined as the seventh,
 > opt-in-hosted role, `worker` as the eighth, thor-worker-lobe plan, `hand` as
 > the ninth, hand-lobe plan, `associate` as the tenth, lightning-on-orin plan,
 > and `innereye` as the eleventh, issue #82/#268 — the ComfyUI image-render
-> tenant, the first role that is not a vLLM lane at all).
+> tenant, the first role that is not a vLLM lane at all, and `decider` as the
+> twelfth, orin-decision-models plan — schema-scored decisions on
+> `POST /v1/systemone`; see [`docs/decider.md`](decider.md)).
 > **`muse` is currently DORMANT/unhosted mesh-wide.** **`innereye` is
 > DECLARED/UNVALIDATED per #108 — see
 > [`docs/comfyui-innereye.md`](comfyui-innereye.md) for the reference doc and
@@ -46,7 +48,7 @@ serves. Renaming or re-quantizing the underlying checkpoint is then an
 operator-side change with **zero client-code change** — see "Client flow"
 below.
 
-## The eleven roles
+## The twelve roles
 
 | Role | Backend / service | Endpoint path | What it's for |
 |---|---|---|---|
@@ -61,6 +63,7 @@ below.
 | `stt` | Parakeet (audio overlay, opt-in) | `POST /v1/audio/transcriptions` | Speech-to-text. |
 | `tts` | Chatterbox (audio overlay, opt-in) | `POST /v1/audio/speech` | Text-to-speech. |
 | `innereye` | `innereye` (ComfyUI, **opt-in hosting**, runtime `comfyui` — not vLLM) | `POST /v1/render` | Image generation via ComfyUI, job-scoped submit/status/artifact facade. Never decides or acts on the repo. **DECLARED/UNVALIDATED (#108)** — see [`docs/comfyui-innereye.md`](comfyui-innereye.md). |
+| `decider` | `decider-<domain>` sidecars (**opt-in hosting**, runtime `decider-sidecar` — not a generate lane) | `POST /v1/systemone` (domain via `X-Lobes-Model: decider:<name>`) | Typed decisions: a probability for every option of every question the caller defines (choice / yes-no / score). May make the final decision over that closed set; never acts on the repo or makes a security call. Never shed under pressure. See [`docs/decider.md`](decider.md). |
 
 **`cortex` is the final decision authority, not the only lobe that acts.**
 Since `worker` joined as the eighth role, two lobes may act on the repo:
@@ -366,8 +369,22 @@ first and `agentculture/lobes-cli#180` tracks granting it once adapters exist.
 > operator decision (claim `c15`) accepted the same irreversibility cost as
 > every prior role — see [`docs/comfyui-innereye.md`](comfyui-innereye.md)
 > for the full reference doc, and note its status: DECLARED/UNVALIDATED
-> per #108 until the live acceptance transcript lands. A twelfth should
-> expect the same scrutiny. If what you want is a different
+> per #108 until the live acceptance transcript lands.
+>
+> **The twelfth, `decider`, landed 2026-10-14** (orin-decision-models plan,
+> decision recorded in `docs/specs/2026-10-14-orin-decision-models.md`). None of
+> the three escapes below could express it. A catalog change could not: no
+> existing lane speaks its wire — `POST /v1/systemone` with a `{state,
+> questions}` body, no routable `model` field, the domain carried in a header —
+> and none returns a probability distribution instead of prose. A
+> profile/shape change could not: it is a new kind of container (a backbone
+> plus a scoring head in the decider sidecar), not a different budget for an
+> existing one. A responsibilities token could not: the only candidate host,
+> `hand`, is a generate lane whose LoRA inventory cannot carry a scoring head,
+> and its contract forbids `final_decision`, which `decider` must hold over
+> the closed option sets it answers. It is also the first role that is never
+> shed under pressure. The cost accepted is the same as for every prior role.
+> A thirteenth should expect the same scrutiny. If what you want is a different
 > checkpoint, that is a catalog change; if it is a different budget, that is a
 > profile or shape change; if it is a different behaviour on an existing lane,
 > that is a responsibilities token. Reach for a new role only when none of

@@ -1,6 +1,6 @@
 [project]
 name = "lobes-cli"
-version = "0.85.0"
+version = "0.86.0"
 description = "lobes — run, assess, and switch the local vLLM model."
 readme = "README.md"
 license = "Apache-2.0"
@@ -66,6 +66,15 @@ bluetts = [
 # installed by the sidecar's own Dockerfile (Jetson torch wheels need a specific
 # index), not listed here; only the HTTP shell is.
 embed-sidecar = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+]
+# The decider sidecar (outcome-decision-model plan, t4) —
+# lobes/decider_sidecar/server.py. torch, transformers, the Clef loader and
+# strands-decider are installed by templates/fleet/Dockerfile.decider (the
+# clef-vllm backend's vLLM + torch come from Dockerfile.decider-vllm's pinned
+# base image, t21); only the HTTP shell is listed.
+decider-sidecar = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
 ]

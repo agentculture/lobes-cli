@@ -41,6 +41,10 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "worker",
         "associate",
         "hand",
+        # `decider` (orin-decision-models t8): vetoable and nameable by an
+        # [[exclusive_roles]] group; its serving units are shape-declared
+        # per-domain sidecars, so it declares no knobs either.
+        "decider",
         "embedder",
         "reranker",
         # `innereye` (issue #82) is a Profile-machinery role so an
