@@ -1,6 +1,6 @@
 # Delivery Summary — orin decision models
 
-plan: `orin-decision-models` · run: `partial` (every build and live task delivered; t14 — review and merge of PR #305 — still open) · date: `2026-10-14`
+plan: `orin-decision-models` · run: `complete` (every task delivered; PR #305 squash-merged to main as ed4aea6 on 2026-10-15) · date: `2026-10-14`
 baseline: `devague summary skeleton`
 
 ## Intent
@@ -58,7 +58,7 @@ All work is on branch `scope/orin-decision-models` (draft PR #305, lobes-cli 0.8
 | `t11` | delivered | Live on the Orin (`docs/evidence/2026-10-14-accept-orin-decider.txt`, d79368b). The first four boots failed and needed two fixes: the hard-linked bundle (2c92ec3) and the KV pin (7e4f38d). Through the gateway: 418 questions, 0 failed, top-1 0.9354, agreement with bf16 0.9904, min host memory 13,036 MiB. The Thor and Spark gateways forward to it with `X-Lobes-Mesh-Member: orin`. |
 | `t12` | delivered | The stock Strands 2B (216d1ccb, bf16) on spark2 as `decider:strands-general` (`docs/evidence/2026-10-14-accept-decider-2b-spark2.txt`, 05d41f1). Answered from the Orin, Thor and Spark gateways, each with `X-Lobes-Mesh-Member: spark2`. Found one bug: the strands backend ignored `DECIDER_REVISION`, fixed in b58cf16. The image measured in t12 predates that fix (dev642 = 7e4f38d), so the run does not exercise it; the pinned revision equals the repo head. |
 | `t13` | delivered | vLLM W4A16 adopted over the NF4 transformers path: agreement 0.988, 2.3-3.3x faster, serves past 8,192 tokens where NF4 refuses (240b6cf). |
-| `t14` | partial | Version 0.86.0, CHANGELOG, Sonar fixes (bfbc8b5) and a draft PR #305 are done. Marking it ready, the review loop and the merge are still open. |
+| `t14` | delivered | Version 0.86.0, CHANGELOG, Sonar fixes (bfbc8b5), the 10 `/code-review` fixes (634c158), ready for review with CI and Sonar green, squash-merged by the operator as ed4aea6 on 2026-10-15. |
 | `t15` | delivered | 14 evidence records (e1-e14, one per obligation, all `pass`) and deltas b4-b9 filed; all approved by the operator (2026-10-15), with lapses l1-l15; l16 approved later the same day. o11 passed on behaviour but not on its wording (delta b4). |
 | `t16` | delivered | This file. |
 | `t17` | partial | Stage A delivered: bf16 Clef served on the Spark (`docs/evidence/2026-10-14-accept-clef-bf16-interim-spark.txt`). Stage B dropped by `d6`; the interim was stopped after t11 and its override restored. |
@@ -99,8 +99,8 @@ Other decisions made during the run, not covered by a deviation:
 | `t17` (`d6`) | User decision 2026-10-14: 'When we're done with these, we can keep CLEF w4a16 only at Orin, and prepare for the fine tuning of Strandes Decider 2b', confirmed ('Confirmed'). W4A16 on the Orin was adopted in t13 (agreement 0.988). | `acceptable` |
 | `t9` / `t11` (no deviation) | The shape as first merged did not boot from its own render: the bundle copy and the unpinned KV pool each OOM-killed the engine at the 32 GiB cap. Fixed inside t11's scope (2c92ec3, 7e4f38d). Measured headroom under the cap is about 3.4 GiB of unreclaimable memory. | `risky` |
 | `o11` (no deviation) | The obligation says machine-as-brain renders `DECIDER_FEASIBLE=false`; it renders no decider key at all. The absent key still reads infeasible, so the local answer is the same 404 (delta b4). | `acceptable` |
-| `t10` / `t11` (no deviation) | The Orin's `/capabilities` reports the decider domain's fingerprint `max_model_len` as 262144, the catalog's native window, while the lane serves 16,384. | `needs-follow-up` |
-| `t14` (no deviation) | The PR is still a draft; reviews, ready-for-review and merge are open. | `needs-follow-up` |
+| `t10` / `t11` (no deviation) | The Orin's `/capabilities` reported the decider domain's fingerprint `max_model_len` as 262144, the catalog's native window, while the lane serves 16,384. Fixed by `DECIDER_DOMAIN_CONTEXTS` (634c158) and verified live at dev647: it now reports 16384. | `acceptable` |
+| `t14` (no deviation) | Merged as one squash commit (ed4aea6); no review threads were opened (Qodo paused). | `acceptable` |
 
 `d4`'s `needs-follow-up` stands for the NVFP4 build on the Jetson AGX Thor: it gives flattened probabilities there, cause not identified. Under `d6` it is not served.
 
@@ -159,8 +159,6 @@ How the approved lapses cap the claims above: `l4` (Clef's 262144 context taken 
 
 ## Remaining Work / Follow-up
 
-- **PR #305 (t14):** mark ready, wait for the Qodo, Copilot and Sonar reviews, fix or answer every thread, then merge — the operator.
-- **Advert gap:** the decider domain's fingerprint `max_model_len` should report the served window (16,384 on the Orin), not the catalog's 262144 — follow-up issue.
 - **Thin margin on the Orin:** the decider container runs at its 32 GiB cap with about 3.4 GiB of unreclaimable headroom. A larger KV pin or a second engine there needs a higher `mem_limit` — keep in mind before changing the shape.
 - **NVFP4 on the Thor:** flattened probabilities, cause not identified. Not served (`d6`); only matters if a Blackwell Clef is wanted again.
 - **Strands 2B fine-tune (outside this plan):** student `strands-decider-2B-qwen3.5-v1-2610`, teacher Clef W4A16 on the Orin. The stock baseline on the same probe set is top-1 0.756 against Clef's 0.9354, weakest on the `incident` source at 0.655. It silently truncates inputs past its 4,096-token window. The work needs jev-factory retargeted from v21 to 2610, plus an nvsh `tool_jev` adapter for `/v1/systemone`.
