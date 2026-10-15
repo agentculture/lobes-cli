@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.86.1] - 2026-10-15
+
+### Changed
+
+- orin-decision-models delivery summary marked run complete: t14 delivered, advert-gap row fixed by DECIDER_DOMAIN_CONTEXTS (verified live at 16384), PR #305 follow-ups removed
+
 ## [0.86.0] - 2026-10-14
 
 ### Added
