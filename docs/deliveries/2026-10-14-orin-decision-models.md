@@ -59,7 +59,7 @@ All work is on branch `scope/orin-decision-models` (draft PR #305, lobes-cli 0.8
 | `t12` | delivered | The stock Strands 2B (216d1ccb, bf16) on spark2 as `decider:strands-general` (`docs/evidence/2026-10-14-accept-decider-2b-spark2.txt`, 05d41f1). Answered from the Orin, Thor and Spark gateways, each with `X-Lobes-Mesh-Member: spark2`. Needed one fix: the strands backend now honours `DECIDER_REVISION` (b58cf16). |
 | `t13` | delivered | vLLM W4A16 adopted over the NF4 transformers path: agreement 0.988, 2.3-3.3x faster, serves past 8,192 tokens where NF4 refuses (240b6cf). |
 | `t14` | partial | Version 0.86.0, CHANGELOG, Sonar fixes (bfbc8b5) and a draft PR #305 are done. Marking it ready, the review loop and the merge are still open. |
-| `t15` | delivered | 14 evidence records (e1-e14, one per obligation, all `pass`) and deltas b4-b9 filed; all `proposed`, awaiting the operator's adjudication. o11 passed on behaviour but not on its wording (delta b4). |
+| `t15` | delivered | 14 evidence records (e1-e14, one per obligation, all `pass`) and deltas b4-b9 filed; all approved by the operator (2026-10-15), with lapses l1-l15. o11 passed on behaviour but not on its wording (delta b4). |
 | `t16` | delivered | This file. |
 | `t17` | partial | Stage A delivered: bf16 Clef served on the Spark (`docs/evidence/2026-10-14-accept-clef-bf16-interim-spark.txt`). Stage B dropped by `d6`; the interim was stopped after t11 and its override restored. |
 | `t18` | delivered | Calibration set and disjoint labelled probe set, published privately to culture-dev (4a41e55; `docs/evidence/2026-10-14-build-clef-sets.txt`). |
@@ -115,7 +115,7 @@ Other decisions made during the run, not covered by a deviation:
 
 ## Delivery Claims
 
-Every claim's evidence record is `proposed` (filed by the agent), so none is yet adjudicated evidence; the confidence column is the agent's reading, capped where a lapse or a limit applies.
+Evidence e1-e14, deltas b1-b9 and lapses l1-l15 were approved by the operator on 2026-10-15. Confidence is capped where a lapse or a stated limit applies.
 
 | Claim | Confidence | Evidence |
 |-------|------------|----------|
@@ -136,14 +136,29 @@ Every claim's evidence record is `proposed` (filed by the agent), so none is yet
 
 Lapse ledger evidence:
 
-pending approval (not yet evidence): `l1`, `l2`, `l3`, `l4`, `l5`, `l6`, `l7`, `l8`, `l9`, `l10`, `l11`, `l12`, `l13`, `l14`, `l15`
+| Lapse | Code | What |
+|-------|------|------|
+| `l1` | `provenance-missing` | Two challenge-pass links went wrong: scope entry s18 (mesh distributed-state lens) was recorded with no seed because its claim capture failed in the same batch (recaptured afterwards as c40); and s16 seeded q2 (the auto-generated 'contradiction with c19?' question) instead of q1, the wire-format question it actually grounds |
+| `l2` | `assumption-for-measurement` | Strands decider's HTTP wire was read from the README only (a single noul example); the server source was not read, so the request/response shape for choice/score and the one-checkpoint-per-process reading of serve are README-derived, not code-verified |
+| `l3` | `control-absent` | t2 (d1 widening): up.py/`_config.py`/measure changes were made code-first, then failing pins fixed — not test-first; only the measure stub test is new and was written after the code |
+| `l4` | `provenance-missing` | t3: Clef context/`native_max_model_len` 262144 set from the Qwen3.8-27B base by the task agent, not read off a card; the main agent's scope research did read Cloudflare/clef config.json `max_position_embeddings`=262144, which matches, but the catalog comment does not cite it |
+| `l5` | `assumption-for-measurement` | t4: the Clef backend's `load_release_model`/systemone call signature comes from the model card, not `joint_schema_model.py` source; unexercised until the t1/t11 live runs |
+| `l6` | `control-absent` | t8: implementation written before tests/`test_decider_render.py` (red-by-import-error confirmed after the fact); and the generated decider-\* override was only yaml-checked, never run through a real 'docker compose config' |
+| `l7` | `provenance-missing` | t8 edited lobes/cli/`_commands`/init.py and lobes/runtime/`_compose.py`, outside its brief's file list (needed: override generation + Dockerfile scaffolding live there); not a separate approved deviation |
+| `l8` | `control-absent` | t1: third-party code from Aikimi/clef-nf4 (`clef_runtime`/\*.py, `joint_schema_model.py`) was EXECUTED on the Orin (container root, GPU, default bridge network, rw mount of that model's cache dir) before it was audited; the audit was done afterwards, only when the user asked whether the repo is safe |
+| `l9` | `control-absent` | t7 agent wrote tests after the implementation and never saw them fail first (TDD red step skipped) |
+| `l10` | `assumption-for-measurement` | t21 clef-vllm backend assumes vLLM 0.31's pooling runner works on hybrid GDN+attention Qwen3.5 (vLLM's own comments say no hybrid pooling models exist), that a background-thread LLM() start works, that the v0.31.0 image ships uv, and that its arm64 build carries `sm_87` kernels — all unverified until t13 |
+| `l11` | `assumption-for-measurement` | status update at 10:06 UTC reported the W4A16 run at 48/65 with ~20 min left; it had already been stalled at 48/65 since 09:38 (no log-timestamp check) — the hang was found only at the next tick |
+| `l12` | `assumption-for-measurement` | introduced a live 'docker update --cpus' thermal governor on a GPU container without checking its device-cgroup side effect; it caused cudaErrorNotPermitted twice and destroyed a finished 40-min GPTQ result |
+| `l13` | `assumption-for-measurement` | l12 and my status message claimed 'docker update' CAUSED the cudaErrorNotPermitted exits; only correlation was observed (2 exits 5 s / 27 s after an update; a 0.8B repro with 9 toggles did not fail). The operator attributes the faults to overheating with the evidence lost. Cause unproven. |
+| `l14` | `assumption-for-measurement` | t11/t12: added `DECIDER_FEASIBLE`=false (+ passthrough) to the live Thor and Spark gateways on the strength of a memory note about OTHER opt-in roles (absent key skips the mesh), without first reading the decider's own /v1/systemone path; it turned out not to be needed (delta b8), and b8's 'not needed' is itself read from code, not tested with the key absent |
+| `l15` | `control-absent` | t11: two background watchers used `pgrep -f <pattern>` inside ssh, which matches its own remote shell, so they could never fire (one ran ~35 min); a third used 'docker logs --since HH:MM:SS', an invalid format, so it could not detect an engine failure — status at ~20:36 UTC leaned on that broken watcher until it was replaced |
 
-`l4` (Clef's 262144 context taken from the base model rather than a card) is the likely source of the advert gap in the Drift table. `l14` touches c26/c40 only through delta b8, which rests on reading the code, not on a test.
+How the approved lapses cap the claims above: `l4` (Clef's 262144 context taken from the base model) is the likely source of the advert gap in the Drift table. `l14` touches c26/c40 only through delta b8, which rests on reading the code, not on a test. `l2` and `l5` (wire formats read from docs) were retired by the live runs in t11 and t12, which exercised both backends end to end.
 
 ## Remaining Work / Follow-up
 
 - **PR #305 (t14):** mark ready, wait for the Qodo, Copilot and Sonar reviews, fix or answer every thread, then merge — the operator.
-- **Adjudicate the delivery records:** confirm or reject evidence e1-e14, deltas b1-b9 and lapses l1-l15 — the operator.
 - **Advert gap:** the decider domain's fingerprint `max_model_len` should report the served window (16,384 on the Orin), not the catalog's 262144 — follow-up issue.
 - **Thin margin on the Orin:** the decider container runs at its 32 GiB cap with about 3.4 GiB of unreclaimable headroom. A larger KV pin or a second engine there needs a higher `mem_limit` — keep in mind before changing the shape.
 - **NVFP4 on the Thor:** flattened probabilities, cause not identified. Not served (`d6`); only matters if a Blackwell Clef is wanted again.
