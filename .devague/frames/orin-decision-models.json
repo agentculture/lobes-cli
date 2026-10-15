@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-14T03:59:59Z",
-  "updated": "2026-10-15T03:43:32Z",
+  "updated": "2026-10-15T03:56:47Z",
   "claims": [
     {
       "id": "c1",
@@ -1172,6 +1172,17 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l16",
+      "code": "provenance-missing",
+      "what": "t12: the t12 evidence called spark2's one-snapshot HF cache 'live proof' of the strands DECIDER_REVISION fix, but the measured image was the dev642 wheel, built from 7e4f38d, one commit BEFORE the fix (b58cf16 = dev643); I assumed dev numbers mapped to my latest push without checking the publish run. The pinned revision equals the repo HEAD, so the run could not tell fixed from unfixed code",
+      "skipped_check": "map the dev wheel to its commit (publish run number) and check the fix is in the image before claiming it live",
+      "refs": [
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [

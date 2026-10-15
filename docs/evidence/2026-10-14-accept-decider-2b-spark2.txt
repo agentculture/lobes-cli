@@ -23,12 +23,18 @@ Dockerfile.decider: copied from lobes/templates/fleet/ on this branch
       DECIDER_DOMAINS=strands-general=http://decider-strands-general:8000,
       DECIDER_DOMAIN_MODELS=strands-general=StrandsAgents/strands-decider-2B-qwen3.5-v1-2610@216d1ccb...
 
-== a fix this task needed (b58cf16, dev642) ==
+== a fix this task found (b58cf16) — NOT in the image measured below ==
 strands-decider's StrandsDeciderModel.load(path) resolves a hub id with NO revision (the
-repo HEAD), so the sidecar's strands backend silently ignored DECIDER_REVISION. It now
+repo HEAD), so the sidecar's strands backend silently ignored DECIDER_REVISION. The fix
 resolves the pinned snapshot with strands_decider's own checkpoint_dir(model, revision)
-and loads that directory. Live proof: the HF cache on spark2 holds exactly one snapshot
-of the checkpoint, 216d1ccb46a9e9b036eb9187b248db98480f77d4.
+and loads that directory.
+CORRECTION (2026-10-15): the image measured below was built from the dev642 wheel, which
+CI published from 7e4f38d, one commit BEFORE the fix (b58cf16 was dev643). Checked in
+the image: StrandsBackend.load does not call checkpoint_dir. The model loaded snapshot
+216d1ccb46a9e9b036eb9187b248db98480f77d4 only because that is also the repo HEAD, so this
+run does not exercise the fix either way. An earlier version of this file called the
+one-snapshot cache "live proof" of the fix; it is not. The re-image with the fix is
+recorded under "re-image with the review fixes" below.
 
 == images ==
 decider-strands-general  sha256:ac200eb5f20e4692acfad929627afae1d37e45ae3e659d8c02520ea867f05e78
@@ -97,3 +103,14 @@ tokens for them (its 4096-token window). Those answers were made on a cut-down s
 == not done here ==
 No adapter was trained or loaded; this is the stock checkpoint. The mesh-wide answer was
 checked with one record per gateway.
+
+== re-image with the review fixes (2026-10-15, 634c158 = dev647) ==
+spark2 .env backed up (.bak-*-pre-review-fixes), MODEL_GEAR_VERSION=0.86.0.dev647;
+decider-strands-general and gateway rebuilt and recreated (decider healthy in 40 s).
+Checked in the new image: lobes-cli 0.86.0.dev647, StrandsBackend.load calls
+checkpoint_dir (the DECIDER_REVISION fix is present). The HF cache still holds one
+snapshot, 216d1ccb46a9e9b036eb9187b248db98480f77d4, which is also the repo HEAD, so
+this still does not distinguish pinned loading from HEAD loading live; the unit test
+test_the_strands_backend_keeps_the_pinned_revision covers the wiring.
+From the Spark gateway: decider:strands-general 200 with X-Lobes-Mesh-Member: spark2,
+same answer (noul 0.1436), 0.81 s (first request after the restart).
