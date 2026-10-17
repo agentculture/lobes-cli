@@ -220,9 +220,12 @@ def test_the_declaration_survives_every_shape_including_the_default() -> None:
         assert env.get(_IOWAIT_KEY) == "100", f"{shape_name} lost the orin card's declaration"
 
 
-@pytest.mark.parametrize("card", [c for c in builtin_names() if c != "orin"])
+@pytest.mark.parametrize("card", ["base"])
 def test_no_other_card_gains_a_host_env_key_under_any_shape(card: str) -> None:
-    """Narrowness: the mechanism moves nothing on base/spark/thor.
+    """Narrowness: the mechanism moves nothing on base (the unknown-card fallback).
+
+    spark/thor gained lane-safety host_env keys in t9 (see
+    tests/test_deployment_lock.py); only ``base`` must stay empty.
 
     The byte-for-byte guarantee is the goldens'; this is the in-suite echo
     that says WHY they cannot have moved.
@@ -233,7 +236,7 @@ def test_no_other_card_gains_a_host_env_key_under_any_shape(card: str) -> None:
         assert not any(k.startswith("LOBES_") for k in env)
 
 
-def test_only_the_orin_goldens_carry_a_lobes_key() -> None:
+def test_only_the_base_goldens_carry_no_lobes_key() -> None:
     """Same narrowness, asserted against the committed golden FILES.
 
     ``template-defaults.env`` is excluded: it is the compose template's own
@@ -246,5 +249,6 @@ def test_only_the_orin_goldens_carry_a_lobes_key() -> None:
         has_lobes_key = any(
             line.startswith("LOBES_") for line in path.read_text(encoding="utf-8").splitlines()
         )
-        expected = path.stem == "orin" or path.stem.endswith("__orin")
+        # t9: spark/thor now declare lane-safety LOBES_* keys too; only base is bare.
+        expected = not (path.stem == "base" or path.stem.endswith("__base"))
         assert has_lobes_key == expected, f"{path.name}: unexpected LOBES_* key presence"
