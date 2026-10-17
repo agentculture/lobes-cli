@@ -38,8 +38,10 @@ services:
     environment:
       - MG_LOG_NAME=embed
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-flashinfer:/cache/flashinfer
     command:
       - vllm
       - serve
@@ -133,6 +135,8 @@ def test_compile_cache_unmounted_names_the_unmounted_vllm_service(tmp_path: Path
     assert "docker-compose.override.yml" in rem
     assert "${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm" in rem
     assert "VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}" in rem
+    assert "${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary-flashinfer:/cache/flashinfer" in rem
+    assert "FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}" in rem
     assert "--force" not in rem
 
 
@@ -152,11 +156,44 @@ def test_compile_cache_unmounted_honours_an_override_file(tmp_path: Path) -> Non
         "  vllm-primary:\n"
         "    environment:\n"
         "      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}\n"
+        "      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}\n"
         "    volumes:\n"
-        "      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm\n",
+        "      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm\n"
+        "      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary-flashinfer"
+        ":/cache/flashinfer\n",
         encoding="utf-8",
     )
     assert ls.compile_cache_unmounted_check(d)["passed"] is True
+
+
+def test_compile_cache_unmounted_fires_on_vllm_cache_without_flashinfer(tmp_path: Path) -> None:
+    """d7: a lane with t8's /cache/vllm bind but no FlashInfer bind is flagged."""
+    compose = _VLLM_ONLY_COMPOSE.replace(
+        "      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-flashinfer:/cache/flashinfer\n",
+        "",
+    )
+    check = ls.compile_cache_unmounted_check(_bare(tmp_path, compose))
+    assert check["passed"] is False
+    assert "vllm-embed (no FlashInfer mount)" in check["message"]
+    rem = check["remediation"]
+    assert "/embed-flashinfer:/cache/flashinfer" in rem
+    assert "/embed:/cache/vllm" in rem
+
+
+def test_compile_cache_unmounted_fires_on_flashinfer_mount_without_env(tmp_path: Path) -> None:
+    compose = _VLLM_ONLY_COMPOSE.replace(
+        "      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}\n",
+        "",
+    )
+    check = ls.compile_cache_unmounted_check(_bare(tmp_path, compose))
+    assert check["passed"] is False
+    assert "vllm-embed (no FLASHINFER_WORKSPACE_BASE)" in check["message"]
+
+
+def test_compile_cache_unmounted_names_t8_gap_first(tmp_path: Path) -> None:
+    """A lane lacking everything reports the vLLM cache gap, the original finding."""
+    check = ls.compile_cache_unmounted_check(_bare(tmp_path))
+    assert "vllm-primary (no mount)" in check["message"]
 
 
 def test_compile_cache_unmounted_passes_on_a_fresh_fleet_scaffold(tmp_path: Path) -> None:
@@ -516,7 +553,10 @@ def test_ensure_compile_cache_dirs_creates_every_lane(tmp_path: Path) -> None:
     assert (d / "compile-cache").is_dir()
     assert (d / "compile-cache" / "primary").is_dir()
     assert (d / "compile-cache" / "embed").is_dir()
+    assert (d / "compile-cache" / "primary-flashinfer").is_dir()
+    assert (d / "compile-cache" / "embed-flashinfer").is_dir()
     assert d / "compile-cache" / "primary" in created
+    assert d / "compile-cache" / "primary-flashinfer" in created
     assert _compose.ensure_compile_cache_dirs(d) == []  # idempotent
 
 
@@ -524,7 +564,23 @@ def test_ensure_compile_cache_dirs_dry_run_creates_nothing(tmp_path: Path) -> No
     d = _fleet(tmp_path)
     planned = _compose.ensure_compile_cache_dirs(d, dry_run=True)
     assert d / "compile-cache" / "primary" in planned
+    assert d / "compile-cache" / "primary-flashinfer" in planned
     assert not (d / "compile-cache").exists()
+
+
+def test_compile_cache_lanes_parses_both_mounts(tmp_path: Path) -> None:
+    """d7: the parser picks up ``<lane>`` (/cache/vllm) and ``<lane>-flashinfer``
+    (/cache/flashinfer) binds, and nothing bound elsewhere."""
+    d = _bare(tmp_path)
+    (d / _compose.LOCAL_OVERRIDE).write_text(
+        "services:\n"
+        "  x:\n"
+        "    volumes:\n"
+        "      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/odd:/somewhere/else\n"
+        "      # - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/gone-flashinfer:/cache/flashinfer\n",
+        encoding="utf-8",
+    )
+    assert _compose.compile_cache_lanes(d) == ["embed", "embed-flashinfer"]
 
 
 def test_ensure_compile_cache_dirs_honours_the_env_knob(tmp_path: Path) -> None:

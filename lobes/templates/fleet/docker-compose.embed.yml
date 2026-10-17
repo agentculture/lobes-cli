@@ -107,12 +107,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-embed-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -170,12 +174,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-rerank:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-rerank-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -230,12 +238,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nemotron-embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nemotron-embed-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -290,12 +302,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nomic-code-embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nomic-code-embed-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]

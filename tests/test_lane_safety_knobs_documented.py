@@ -3,7 +3,7 @@
 Every ``LOBES_*`` knob in ``docs/contracts/lane-safety-runtime.md`` section 1
 must be (a) documented in the fleet ``env.example`` with its off value, (b) read
 somewhere under ``lobes/``, and (c) named in the operator docs. The
-single-model ``env.example`` carries the compile-cache pair only.
+single-model ``env.example`` carries the compile-cache knobs only.
 
 This file does NOT re-prove behaviour. The per-feature tests that show each
 off value restores the pre-change behaviour are:
@@ -13,6 +13,7 @@ off value restores the pre-change behaviour are:
 | LOBES_BOOT_DELAY_S, _BOOT_ORDER, _BOOT_STAGGER_S    | tests/test_logwrap_hold.py |
 | LOBES_START_MAX, LOBES_MEM_GATE                     | tests/test_logwrap_backoff.py |
 | LOBES_VLLM_CACHE_ROOT, LOBES_COMPILE_CACHE_DIR      | tests/test_lane_safety_compose.py |
+| LOBES_FLASHINFER_WORKSPACE_BASE (d7)                | tests/test_lane_safety_compose.py |
 | LOBES_THERMAL_* (zones, shed, resume)               | tests/test_pressure_policy.py |
 | LOBES_WATCHER_MIN_INTERVAL_S                        | tests/test_watcher.py |
 """
@@ -40,7 +41,11 @@ NO_OFF_VALUE = {
     "LOBES_COMPILE_CACHE_DIR",
     "LOBES_WATCHER_MIN_INTERVAL_S",
 }
-SINGLE_KNOBS = {"LOBES_VLLM_CACHE_ROOT", "LOBES_COMPILE_CACHE_DIR"}
+SINGLE_KNOBS = {
+    "LOBES_VLLM_CACHE_ROOT",
+    "LOBES_FLASHINFER_WORKSPACE_BASE",
+    "LOBES_COMPILE_CACHE_DIR",
+}
 
 
 def _contract_knobs() -> dict[str, str | None]:
@@ -69,7 +74,7 @@ def _documented(path: Path) -> set[str]:
 
 def test_contract_table_parses() -> None:
     knobs = _contract_knobs()
-    assert len(knobs) == 13
+    assert len(knobs) == 14
     assert {k for k, v in knobs.items() if v is None} == NO_OFF_VALUE
 
 

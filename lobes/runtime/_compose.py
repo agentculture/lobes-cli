@@ -362,12 +362,13 @@ def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None)
 
 
 #: Lane-safety compile cache (contract ``docs/contracts/lane-safety-runtime.md``
-#: section 6): host dir holding one subdirectory per vLLM lane, bind-mounted at
-#: the fixed container path ``/cache/vllm``.
+#: section 6): host dir holding two subdirectories per vLLM lane, bind-mounted
+#: at fixed container paths — ``<lane>`` at ``/cache/vllm`` (t8) and
+#: ``<lane>-flashinfer`` at ``/cache/flashinfer`` (d7, FlashInfer's JIT cache).
 COMPILE_CACHE_ENV = "LOBES_COMPILE_CACHE_DIR"
 COMPILE_CACHE_DIRNAME = "compile-cache"
 _COMPILE_CACHE_MOUNT_RE = re.compile(
-    r"\$\{" + COMPILE_CACHE_ENV + r":-[^}]*\}/([A-Za-z0-9_.-]+):/cache/vllm\b"
+    r"\$\{" + COMPILE_CACHE_ENV + r":-[^}]*\}/([A-Za-z0-9_.-]+):/cache/(?:vllm|flashinfer)\b"
 )
 
 
@@ -391,7 +392,8 @@ def compile_cache_lanes(deploy_dir: os.PathLike | str) -> list[str]:
 
     Scans every ``docker-compose*.yml`` in the deployment (base, overlays,
     generated shape override, operator override) for the
-    ``${LOBES_COMPILE_CACHE_DIR:-...}/<lane>:/cache/vllm`` bind. Creating a
+    ``${LOBES_COMPILE_CACHE_DIR:-...}/<lane>:/cache/vllm`` and
+    ``.../<lane>-flashinfer:/cache/flashinfer`` binds. Creating a
     directory for an overlay lane that never runs is harmless; NOT creating
     one lets Docker create it root-owned on first mount.
     """
@@ -423,7 +425,7 @@ def _sudo_owner() -> tuple[int, int] | None:
 def ensure_compile_cache_dirs(
     deploy_dir: os.PathLike | str, *, dry_run: bool = False
 ) -> list[Path]:
-    """Create the compile-cache root + one dir per mounted lane, owned by the invoking user.
+    """Create the compile-cache root + one dir per mounted bind, owned by the invoking user.
 
     Must run before any container mounts them: a bind source Docker has to
     create itself is root-owned, and wiping a lane's cache would then need

@@ -57,7 +57,10 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       # Persist downloaded weights across restarts. HF_CACHE overrides the host
       # path; otherwise ~/.cache/huggingface, with /root as the fallback if HOME
@@ -70,6 +73,7 @@ services:
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/vllm:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/vllm-flashinfer:/cache/flashinfer
     ports:
       - "${VLLM_PORT:-8000}:8000"
     # mg-logwrap tees this service's output to /logs/model-gear, then `exec`s the
