@@ -53,6 +53,19 @@ def offline_runtime(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_cache_clear(monkeypatch, request) -> None:
+    """Lifecycle verbs clear the page cache around compose down/up (t11); never
+    let a test reach the real machine CLI or ``sudo``."""
+    from lobes.runtime import _machine
+
+    if request.module.__name__.rsplit(".", 1)[-1] in ("test_machine_adapter",):
+        return  # exercises the real adapter against fakes
+    monkeypatch.setattr(
+        _machine, "drop_caches", lambda: _machine.MachineResult(False, "not_granted")
+    )
+
+
+@pytest.fixture(autouse=True)
 def _pin_unknown_card(monkeypatch) -> None:
     """Pin detection to an UNKNOWN card so no test inherits the host's real GPU.
 

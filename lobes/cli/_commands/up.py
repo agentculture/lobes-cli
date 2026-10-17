@@ -545,8 +545,9 @@ def _dry_run(
     verb_word = "STOP" if action == "stop" else "START"
     text = (
         f"DRY RUN — would run: {command} in {deploy_dir} "
-        f"({verb_word} target {target}: {', '.join(services)}).\n"
-        "Re-run with --apply to execute."
+        f"({verb_word} target {target}: {', '.join(services)})"
+        + (f"; first: {_compose.cache_clear_plan_line()}" if action == "up" else "")
+        + ".\nRe-run with --apply to execute."
     )
     emit_result(payload if json_mode else text, json_mode=json_mode)
     _emit_innereye_hints(deploy_dir, target, action)

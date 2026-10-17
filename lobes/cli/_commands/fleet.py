@@ -51,7 +51,8 @@ def cmd_fleet_up(args: argparse.Namespace) -> int:
 
     if not args.apply:
         msg = (
-            f"DRY RUN — would run: docker compose up -d --build in {deploy_dir}, "
+            f"DRY RUN — would {_compose.cache_clear_plan_line()}, then run: "
+            f"docker compose up -d --build in {deploy_dir}, "
             f"then wait for the gateway /health on :{port}.\nRe-run with --apply to execute."
         )
         payload = {"dry_run": True, "deployment_dir": str(deploy_dir), "port": port}
@@ -88,7 +89,8 @@ def cmd_fleet_down(args: argparse.Namespace) -> int:
 
     if not args.apply:
         dry = (
-            f"DRY RUN — would run: docker compose down in {deploy_dir}.\n"
+            f"DRY RUN — would run: docker compose down in {deploy_dir}, "
+            f"then {_compose.cache_clear_plan_line()}.\n"
             "Re-run with --apply to execute."
         )
         payload = {"dry_run": True, "deployment_dir": str(deploy_dir)}

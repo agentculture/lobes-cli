@@ -22,7 +22,8 @@ def cmd_stop(args: argparse.Namespace) -> int:
             emit_result({"dry_run": True, "deployment_dir": str(deploy_dir)}, json_mode=True)
         else:
             emit_result(
-                f"DRY RUN — would run: docker compose down in {deploy_dir}.\n"
+                f"DRY RUN — would run: docker compose down in {deploy_dir}, "
+                f"then {_compose.cache_clear_plan_line()}.\n"
                 "Re-run with --apply to execute.",
                 json_mode=False,
             )
