@@ -117,4 +117,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 600s                   # allow time for the first-run weight download + load
+      start_period: 780s                   # allow time for the first-run weight download + load
