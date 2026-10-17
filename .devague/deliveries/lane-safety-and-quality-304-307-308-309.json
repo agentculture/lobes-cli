@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T07:57:50Z",
+  "updated": "2026-10-17T08:08:02Z",
   "deviations": [
     {
       "id": "d1",
@@ -76,6 +76,25 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Add a real-hardware validation pass (Spark, Orin, Thor) beyond t19: machine-CLI verbs on each box, the wrapper (hold, counter, memory gate) in throwaway containers on host kernels, the watcher against real markers, a side-by-side dev gateway proving thermal_c and the thermal 429, doctor read-only, and one light-lane recreate on Spark or Orin for the compile cache. Thor: side-by-side and machine-CLI only, no lane recreate",
+      "task_ref": "t19",
+      "reason": "operator, 2026-10-17: 'we must test on real hardware'; scope approved: Spark, Orin, Thor; disruption up to one light-lane recreate (no reboot, no sustained soak)",
+      "affects": [
+        "c3",
+        "c9",
+        "c12",
+        "c14",
+        "c33",
+        "c34",
+        "c41"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 40
     }
   ],
   "evidence": [
