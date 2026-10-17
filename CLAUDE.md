@@ -1099,6 +1099,18 @@ change the world — with three opt-in exceptions, all on `doctor`:
   `mg-logwrap.sh.bak` (the current file) then `mg-logwrap.sh`. Its own flag
   for the same reason as `--repin-version`; same dry-run convention.
 
+**Lane safety (#304, #307, #308, #309).** Lane start, stop and crash are
+guarded by a boot hold, a per-lane vLLM compile cache, a start counter and
+memory gate, a page-cache clear with a host watcher, a gateway thermal shed
+signal, and an exclusive benchmark window. Every knob has an off value in the
+fleet `env.example`. Read `docs/contracts/lane-safety-runtime.md` and
+`docs/contracts/machine-cli-window.md` first, then `docs/operating-a-deployment.md`,
+`docs/measuring-lane-performance.md`, `docs/gateway-fleet.md` and `lobes explain
+lane-safety`. Open items: thermal shed is inert in the gateway container (#311),
+host conditions are on single-model/`--all-lobes` benchmarks only (#312), the
+live Spark acceptance has not run (#313), and every Thor line is
+DECLARED/UNVALIDATED (#108).
+
 ## Build / test / publish
 
 - **Install for dev:** `uv sync`

@@ -349,6 +349,44 @@ lobes status --pressure --json
 #  "pressure": {"swap_used_percent": 82.4, "iowait_percent": 0.8}}
 ```
 
+### Thermal shedding (lane safety, #304) — INERT in the container until #311
+
+The pressure policy has a fourth shed signal, `thermal`. **Honesty first: the
+gateway container does NOT yet receive `LOBES_THERMAL_ZONES`,
+`LOBES_THERMAL_SHED_C` or `LOBES_THERMAL_RESUME_C`** (the gateway service has no
+`env_file` and no passthrough for them), so thermal shedding is **inert in a
+containerised gateway** today. That is issue #311 (deviation d1, not yet
+approved). Setting the keys in `.env` does not arm it until #311 lands.
+
+What it does once the keys reach the process (operators and agents):
+
+- **Before:** only swap and iowait shed a request. A box running at its thermal
+  limit kept accepting work until it reset (the Spark does so under sustained
+  full-GPU load; #304).
+- **After:** the gateway reads the hottest of the zones named by
+  `LOBES_THERMAL_ZONES` (under `/sys/class/thermal`, skipping unreadable zones
+  and readings outside -40 to 150 C). Above `LOBES_THERMAL_SHED_C` it sheds
+  full-tier requests like swap does (429 busy); it stops shedding only once the
+  reading falls to `LOBES_THERMAL_RESUME_C` (hysteresis). `hand` remains the
+  servable floor. No reading (`thermal_c: null`) never sheds, and empty bands
+  mean the signal is off.
+- **How to see it.** A thermal 429 carries `shed_signal: "thermal"` in the error
+  object and an `X-Lobes-Shed-Signal: thermal` header (swap and iowait 429s stay
+  byte-identical). `GET /status` adds `pressure.thermal_c` and
+  `pressure.thermal_shedding`; `lobes status --pressure` prints the reading
+  against the band.
+- **Latch timing.** The hysteresis latch advances on a request or a `GET
+  /status` read, **not** on every 2 s sample. A quiet gateway holds its last
+  state until the next request or status read.
+- **Bands.** Spark ships zone `acpitz`, shed 91 C, resume 86 C: these come from
+  #304's batch-job governor, **not from a serving-load measurement**. Thor and
+  Orin ship the `tj-thermal` zone with no bands, so their signal is off; their
+  bands are unmeasured (#108) and every Thor line is **DECLARED/UNVALIDATED**.
+  The live Spark acceptance under sustained load has not run (issue #313).
+- **Off:** leave the bands empty (`LOBES_THERMAL_SHED_C=`).
+
+Contract: `docs/contracts/lane-safety-runtime.md` section 7.
+
 ## The gateway
 
 A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy:
