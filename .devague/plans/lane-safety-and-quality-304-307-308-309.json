@@ -1,0 +1,1037 @@
+{
+  "slug": "lane-safety-and-quality-304-307-308-309",
+  "title": "lane safety and quality (#304 #307 #308 #309)",
+  "frame_slug": "lane-safety-and-quality-304-307-308-309",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-10-17T06:37:23Z",
+  "updated": "2026-10-17T06:53:08Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes lanes boot, compile and run safely: GPU services hold after a power cycle, the vLLM compile cache survives a recreate, a hot box sheds load instead of power-cycling, and clocks stay stock outside an explicit benchmark window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "Every clause of the announcement maps to a merged PR in the stack (boot hold, compile cache, backoff + cache clear, thermal shedding, benchmark window) with its tests green",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "boundary",
+      "text": "Thor carries experimental work: this effort may change code, templates, tests, docs and goldens, but must NOT deploy, recreate or restart anything on the Thor; live Thor validation is deferred and stays DECLARED/UNVALIDATED (#108)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "No step in the delivery runs docker, compose or lobes write verbs against the Thor; Thor-facing claims are marked DECLARED/UNVALIDATED in docs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "mg-logwrap.sh holds before its final exec until host uptime (/proc/uptime, not namespaced) >= LOBES_BOOT_DELAY_S (default 120, 0 = off), logging the hold; read with bash builtins (no cut/awk dependency); exec \"$@\" stays last so signals and exit codes are unchanged",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "A unit test runs mg-logwrap with a fake uptime source: below the delay it sleeps the remainder; at/after the delay or with LOBES_BOOT_DELAY_S=0 it does not sleep; exec stays the last statement",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "restart: unless-stopped stays on every service (it is the only policy in every template today, no on-failure anywhere); the boot hold is what makes auto-restart safe, not a policy change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "grep over every template and the shape renderer finds restart: unless-stopped on every service and no new restart policy introduced",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Healthcheck start_period is raised to cover the boot hold on every wrapped lane (vLLM lanes are 600s today) so a held container is not marked unhealthy, or the hold is shown to fit inside the existing start_period",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "Every held service's start_period >= its pre-change start_period + LOBES_BOOT_DELAY_S default, or a test proves the hold fits inside it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Every GPU service and the gateway honours the 120 s hold, including services that do not use mg-logwrap today (audio chatterbox/stt, embed-gemma2-embed, decider sidecars, comfyui, gateway): each receives LOBES_BOOT_DELAY_S and runs the hold in its own entrypoint",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "A test enumerates every service across fleet/single/embed/audio/audio-he templates and the decider sidecar renderer and asserts each one runs the hold before its real entrypoint",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Template tests updated: test_cli_logs test_logwrap_template_shipped_and_safe gains assertions for the hold (default 120, 0 disables, exec stays last); tests/test_upgrade_compat fixtures refreshed deliberately if compose bytes change",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "uv run pytest -n auto passes with the updated logwrap/compose assertions and any refreshed upgrade_compat fixtures committed deliberately",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Every vLLM lane persists its compile cache across a recreate: VLLM_CACHE_ROOT (or /root/.cache/vllm) bind-mounted to a per-lane host dir under the deployment (single + fleet templates, embed overlay vLLM lanes), so a compose recreate reuses the known-good torch.compile/inductor artifacts instead of recompiling",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "Every vLLM service in every template mounts a per-lane compile-cache dir and sets VLLM_CACHE_ROOT to it; a test asserts it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The compile cache is keyed so it cannot be reused across a different image/model/knob set by accident (vLLM's own hash key or a per-lane, per-image subdir), and an operator can wipe it (documented path; a lobes verb is optional)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "The cache path includes a per-lane component and vLLM's own content hash still keys entries; docs name the wipe path",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h26",
+      "kind": "honesty",
+      "text": "Unit tests drive the wrapper with fake /proc/meminfo, fake argv and a fake start log: gate waits until MemAvailable >= share then execs; times out with a logged reason; counter holds after N starts in the window and resets after a clean window",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "lobes never clears caches from inside a container and never uses full sudo: the clear runs host-side only, through a single NOPASSWD sudoers rule for '/usr/sbin/sysctl -w vm.drop_caches=3' (mjolnir cachectl pattern), and never prompts \u2014 no grant means skip and say so",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "grep finds no drop_caches/sysctl in any template or container entrypoint, no 'sudo ' without -n in lobes/, and the only sudoers content is the single sysctl rule",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "The gateway pressure policy gains a fourth shed signal, thermal ('hot'): the hottest /sys/class/thermal zone above a per-card threshold sheds sheddable full tiers with 429 + Retry-After exactly like swap; hand (floor) and NEVER_SHED_ROLES (decider) are always served; X-Lobes-Override still bypasses",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "decide() with a hot sample sheds cortex/senses/worker/muse/associate with 429 + Retry-After, serves hand and decider, and honours X-Lobes-Override \u2014 unit tests for each",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h11",
+      "kind": "honesty",
+      "text": "With no readable thermal zone the sample carries thermal=None and decide() never sheds on it; status --pressure and GET /status show the value or 'n/a'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Thermal bands are per-card [host_env] data (e.g. LOBES_THERMAL_SHED_C / resume), with hysteresis; only the Spark has measured values (84/88/91/93.5 \u00b0C vs 104.8 \u00b0C ACPI trip); Thor/Orin render no threshold (signal off) or a DECLARED value marked unmeasured (#108)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "spark.toml carries the measured bands; thor/orin goldens either stay byte-identical or carry values explicitly marked unmeasured; goldens regenerated and committed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "Serving lanes are NEVER paused and NEVER docker update'd by any lobes governor: pause freezes in-flight requests, and docker update --cpus is a correlated (unproven) suspect for cudaErrorNotPermitted on GPU containers (#304 comments 2 and 3)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "grep over lobes/ finds no docker pause or docker update invoked against a serving lane",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "The gateway container can read host thermal zones: verify /sys/class/thermal is visible in the unprivileged gateway container on Spark/Orin (Thor deferred), else add an explicit read-only bind mount in the fleet compose gateway service",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "On the Spark and the Orin, the running gateway container reads /sys/class/thermal (transcript), or the compose adds a read-only bind mount that a test asserts",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "On the Spark, a sustained full-GPU serving load of >= 30 min completes with the thermal signal live and 0 hard resets; the transcript reports shed count and peak zone temperature (Spark only; Thor deferred)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "A Spark transcript under docs/evidence/ shows a sustained full-GPU serving load of >= 30 min with the thermal signal live, peak zone temperature, shed count and 0 hard resets",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Every lobes benchmark/measure result records host conditions: nvpmodel -q, jetson_clocks --show (or devfreq cur/min/max), fan profile, hottest zone at start and end \u2014 best-effort, skipped cleanly on non-Jetson; extends the existing host block (image, gpu_memory)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "A benchmark --json result contains a host.conditions block (power mode, clocks, fan profile, temps start/end) or an explicit unavailable reason per field",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "doctor emits jetson_clocks_locked (warn) when the machine CLI reports locked clocks outside a window, and skips with no finding when the CLI/tool is absent \u2014 tests for both",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "No persistent clock or fan change from lobes init, serve, switch or any deployment; production stays stock DVFS + the host's nvfancontrol profile",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "grep shows no clock/fan mutation in init/serve/switch/up code paths; only the benchmark window calls the lock verbs",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "audience",
+      "text": "Operators of lobes boxes (DGX Spark, Jetson AGX Thor, Jetson AGX Orin) and the agents that run lobes verbs on them in loops; secondarily mesh callers who receive a 429 from a hot box",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "The spec's user-facing docs (operating-a-deployment, measuring-lane-performance, gateway-fleet) address operators and agents by name",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "before_state",
+      "text": "Today: a power-cycled box restarts every lane within ~8 s of dockerd, before ssh is possible; every compose recreate recompiles torch.compile from scratch in the writable layer (2 of 3 fresh Thor compiles hit a device-side assert + Xid 43); a crashed lane restarts immediately into memory the crash still holds; the Spark power-cycled twice under sustained full-GPU load with no lobes thermal awareness; benchmark numbers carry no recorded power mode, clocks or temperatures",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h20",
+      "kind": "honesty",
+      "text": "Each before-state fact cites an issue (#304/#307/#309) or evidence file",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c30",
+      "kind": "why_it_matters",
+      "text": "A hung box that brings its own crash straight back cannot be rescued remotely, and a box that power-cycles under load loses in-flight work and evidence; unrecorded clocks make benchmark numbers irreproducible (docs/measuring-lane-performance.md Rule 2 already cost one wrong conclusion)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "The why is traceable to #304, #307 and docs/measuring-lane-performance.md Rule 2",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "after_state",
+      "text": "After a power cycle every lobes service waits until host uptime >= 120 s; a recreate reuses the lane's compile cache; a repeatedly crashing lane backs off instead of looping into held memory; a box over its per-card thermal threshold sheds sheddable tiers with 429 instead of heating further; lobes benchmark runs inside a locked-clocks window delegated to the machine CLI and always restores stock DVFS, recording conditions in the result",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "Each after-state clause maps to at least one requirement claim with its own test",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "Tests with a fake machine CLI show lock then restore on success, on an exception and on SIGINT; with no CLI the result records unlocked + reason",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "Each machine CLI ships window verbs with --json and a restore that returns to the stored state, released before lobes pins a minimum version",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Host-side lobes verbs that start or stop GPU lanes (serve/start, stop, switch, up, fleet up/down, init --apply when it starts lanes) clear the page cache (sync + vm.drop_caches=3) after teardown and before start when the grant exists; a one-time grant verb installs the single sudoers drop-in (0440, visudo-checked, explicit consent); doctor reports a missing grant on unified-memory cards (Spark/Thor/Orin)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "Tests with a fake sudo/machine CLI show: granted \u2192 clear runs after down and before up, in that order; not granted \u2192 no prompt (sudo -n), verb continues and prints the skip; dry-run prints the clear in the plan",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "lobes ships an opt-in host-side watcher (installed by an explicit lobes verb with --apply, removable, the first host unit lobes installs): it watches for a lane holding in the memory gate (a marker file the wrapper writes in the host-mounted log dir) and runs the granted page-cache clear, rate-limited and logged; without the sudoers grant it only logs; never touches containers (no docker pause/update/restart)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "Tests: a gate marker appearing triggers exactly one clear per rate-limit window via the granted command; no grant \u2192 log only; the watcher issues no docker command; install is dry-run by default and uninstall removes every file it wrote",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "The boot hold must not release every lane at the same instant: lanes are staggered (a per-lane offset on top of LOBES_BOOT_DELAY_S, ordered to match each card's measured boot order \u2014 e.g. Orin associate-first, Thor gears-first with embed/rerank before worker) and the memory gate re-checks after the stagger, because a synchronized release recreates the documented unified-memory first-boot race",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "A test shows two lanes on the same card get distinct release times; the per-card order is data (profile/shape), documented with its evidence; a doc note cites the boot-order caveat in docs/machine-profiles.md",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c43",
+      "kind": "requirement",
+      "text": "Host-side lobes verbs that intentionally (re)start a lane (up, serve, switch, fleet up, init --apply) reset that lane's start counter, so deliberate operator restarts never trip the crash-backoff hold; only unattended (dockerd) restarts accumulate",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "A test runs the verb path against a fake log dir and asserts the lane's counter file is cleared before compose starts it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c44",
+      "kind": "requirement",
+      "text": "Every new runtime behaviour has an env off-switch documented in env.example: LOBES_BOOT_DELAY_S=0, a memory-gate and start-counter disable (or N=0), compile-cache mount opt-out, thermal threshold unset = signal off, watcher uninstall \u2014 so a field regression is reverted by editing .env, not by a code rollback",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "env.example lists each knob with its off value; a test per knob shows the off value restores the pre-change behaviour",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "A safe rollout path for existing deployments: doctor reports a stale scaffold mg-logwrap.sh (digest differs from the packaged template) and a missing compile-cache mount, and a targeted refresh writes ONLY mg-logwrap.sh (with a backup) \u2014 because doctor --fix never rewrites existing files, init --force overwrites the whole compose with no backup, and the Spark's hand-edited compose must never be re-scaffolded",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "Tests: doctor flags a stale mg-logwrap.sh and a missing cache mount; the refresh writes a .bak and only mg-logwrap.sh; no other file in the deployment dir changes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c46",
+      "kind": "requirement",
+      "text": "The compile-cache host dir is created by lobes (init / doctor --fix) owned by the operator before first mount, and the documented wipe works without sudo; otherwise the root container creates it root-owned (the same trap as root-owned logs/, docs/operating-a-deployment.md:48) and growth is unbounded with no size report",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h34",
+      "kind": "honesty",
+      "text": "A test asserts init creates the cache dir; doctor (or status) reports its size; the wipe procedure in docs runs as the operator",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c47",
+      "kind": "requirement",
+      "text": "The thermal reader uses a per-card zone selector (host_env, e.g. LOBES_THERMAL_ZONES=tj-thermal on Jetson, acpitz on Spark) and skips zones whose temp read fails (ENODATA) or is implausible, instead of a blind 'hottest of all zones'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h35",
+      "kind": "honesty",
+      "text": "Tests with a fake sysfs tree: an ENODATA zone is skipped; the selector picks only named zone types; no matching zone means 'no thermal signal'",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c49",
+      "kind": "requirement",
+      "text": "Benchmark windows are exclusive per host: a lock file (or the machine CLI's own) makes a second concurrent window refuse or wait, so one run's restore never unlocks clocks under another run, and the stored state is never overwritten by a nested store",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h36",
+      "kind": "honesty",
+      "text": "A test starts two windows with a fake machine CLI: the second refuses/waits; restore runs once, after the owner finishes",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c50",
+      "kind": "requirement",
+      "text": "The watcher must be running after a reboot without a login (the exact moment it matters): installed as a system unit (root, explicit consent) or a user unit with linger enabled \u2014 the install verb verifies whichever it uses and doctor reports it absent",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h37",
+      "kind": "honesty",
+      "text": "The install plan shows the unit type and the linger/system check; doctor flags an installed-but-inactive watcher",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c51",
+      "kind": "requirement",
+      "text": "The grant step detects an existing equivalent NOPASSWD rule (sudo -n -l matching sysctl vm.drop_caches or tee /proc/sys/vm/drop_caches) and reuses it instead of installing a duplicate; Thor already carries /etc/sudoers.d/drop-caches",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h38",
+      "kind": "honesty",
+      "text": "A test feeds fake 'sudo -n -l' listings: an existing rule is detected and no install is planned; absence plans the single drop-in",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c52",
+      "kind": "requirement",
+      "text": "A thermal shed is observable mesh-wide: the 429 carries a thermal reason (X-Lobes-Tier-Reason / shed_signal 'thermal'), GET /status pressure includes the thermal reading and signal, and a mesh forward that receives it relays the peer's reason (no silent conversion to a generic busy)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h39",
+      "kind": "honesty",
+      "text": "Gateway tests assert the reason header and /status fields for a thermal shed; a mesh-forward test asserts the peer's thermal reason is relayed",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Contracts: machine-CLI window/cache-clear JSON contract + lane-safety runtime contract (knob names, marker/counter files)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "docs/contracts/machine-cli-window.md defines, for spark/thor/orin: 'window store|lock|restore|show --json', 'drop-caches --json', 'grant-permissions [--check] --json' \u2014 argv, exit codes, JSON fields (locked: bool, stored_at, clocks, fan_profile, power_mode, temps), and the no-privilege/no-grant shapes",
+        "docs/contracts/lane-safety-runtime.md defines LOBES_BOOT_DELAY_S, LOBES_BOOT_ORDER, LOBES_BOOT_STAGGER_S, the start-counter and memory-gate knobs with their off values, and the exact paths/formats of the per-lane counter file and gate marker under the host log dir",
+        "docs/contracts/README.md lists both; markdownlint-cli2 passes"
+      ],
+      "deps": [],
+      "covers": [
+        "c51",
+        "h38"
+      ],
+      "instruction": "Write the contracts FIRST so wrapper, watcher, doctor, verbs and the three machine CLIs build against one shape (memory: file-disjoint fan-out hides contract conflicts). Mirror mjolnir cachectl.py for the grant (single NOPASSWD rule for /usr/sbin/sysctl -w vm.drop_caches=3, sudo -n -l detection incl. 'tee /proc/sys/vm/drop_caches' equivalents). Docs only; no code."
+    },
+    {
+      "id": "t2",
+      "summary": "dgx-spark-cli: window + drop-caches + grant-permissions verbs per the contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "In ../dgx-spark-cli: 'spark window store|lock|restore|show --json', 'spark drop-caches', 'spark grant-permissions [--check]' implement docs/contracts/machine-cli-window.md; lock on GB10 uses whatever clock lock the box accepts or reports supported:false (park v2), never fails silently",
+        "Unit tests with faked subprocess/sudo cover: store-then-restore returns to stored state; existing equivalent sudoers rule detected and reused; no grant -> exit code + JSON reason, no prompt (sudo -n)",
+        "Released to PyPI (version bump per that repo's rules) before lobes pins it"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c34",
+        "h24"
+      ],
+      "instruction": "Separate repo, separate PR. Reuse 'spark thermal' for temps. The Spark is NOT the Thor: tests only, no live clock changes in CI."
+    },
+    {
+      "id": "t3",
+      "summary": "jetson-thor-cli: window (jetson_clocks --store/--restore + nvfancontrol profile) + drop-caches + grant-permissions per the contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "In ../jetson-thor-cli: 'thor window store|lock|restore|show --json' wraps jetson_clocks --store/lock/--restore and the nvfancontrol profile (max during window, stored profile restored), plus 'thor drop-caches' and 'thor grant-permissions [--check]' per the contract",
+        "Unit tests with faked jetson_clocks/nvpmodel/nvfancontrol/sudo; the existing /etc/sudoers.d/drop-caches style rule is detected as equivalent",
+        "No command in the PR or its tests runs on the physical Thor (code-only, c2)"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c2",
+        "h1"
+      ],
+      "instruction": "Separate repo/PR. Thor carries experimental work: write and test offline only. mjolnir scripts/hw/setup-thor.sh has fan profiles with .bck rollback worth citing."
+    },
+    {
+      "id": "t4",
+      "summary": "jetson-orin-cli: window + drop-caches + grant-permissions verbs per the contract",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "In ../jetson-orin-cli: 'orin window|drop-caches|grant-permissions' per the contract, same tests as the thor CLI with Orin specifics (nvpmodel modes, fan)",
+        "Released before lobes pins it"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [],
+      "instruction": "Separate repo/PR; cite the thor CLI implementation rather than import it (cite-don't-import)."
+    },
+    {
+      "id": "t5",
+      "summary": "mg-logwrap: boot hold + per-card staggered release + off switch",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/templates/mg-logwrap.sh: with host uptime < LOBES_BOOT_DELAY_S (default 120) + the lane's stagger offset (position of MG_LOG_NAME in LOBES_BOOT_ORDER x LOBES_BOOT_STAGGER_S) it sleeps exactly the remainder, logging the hold; uptime past it or LOBES_BOOT_DELAY_S=0 does not sleep",
+        "Uptime read with bash builtins from ${LOBES_PROC_ROOT:-/proc}/uptime (test seam); exec \"$@\" remains the last statement; tests/test_logwrap_hold.py drives it with a fake proc root and a fake sleep",
+        "tests/test_cli_logs.py::test_logwrap_template_shipped_and_safe still passes and asserts the hold"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c3",
+        "h2",
+        "c42",
+        "h30"
+      ],
+      "instruction": "Owns lobes/templates/mg-logwrap.sh + tests/test_logwrap_hold.py + tests/test_cli_logs.py. Keep the script bash; no cut/awk. Lanes not named in LOBES_BOOT_ORDER release last."
+    },
+    {
+      "id": "t6",
+      "summary": "mg-logwrap: crash backoff \u2014 start counter + pre-exec memory gate + gate marker",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Counter: each start appends to the per-lane counter file (contract path); N starts inside the window (knobs, 0 = off) hold with a logged reason naming the clear path; a clean window resets",
+        "Memory gate: parses --gpu-memory-utilization from its own argv; waits until MemAvailable (${LOBES_PROC_ROOT}/meminfo) >= util x MemTotal, writing the gate marker while waiting and removing it on pass; bounded timeout logs the clear instruction; no util flag (llama.cpp, sidecars) skips the gate",
+        "tests/test_logwrap_backoff.py covers counter hold/reset, gate wait/pass/timeout, skip-without-util, and both off switches"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c12",
+        "h26"
+      ],
+      "instruction": "Same file as t5, so strictly after it. The gate re-checks after the stagger sleep (c42)."
+    },
+    {
+      "id": "t7",
+      "summary": "Compose: every service runs the hold \u2014 wrap non-wrapped services, pass the knobs, size start_period, keep restart policy",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every service in lobes/templates/docker-compose.yml, fleet/docker-compose{,.audio,.audio-he,.embed}.yml and the decider sidecars from lobes/profiles/shape_render.py (and the gateway) runs mg-logwrap (or the hold) before its real entrypoint and receives LOBES_BOOT_DELAY_S/LOBES_BOOT_ORDER/LOBES_BOOT_STAGGER_S (env_file or explicit passthrough)",
+        "Every held service's healthcheck start_period >= previous + the max hold (delay + its stagger) \u2014 or a test proves it fits; restart: unless-stopped unchanged everywhere",
+        "tests/test_lane_safety_compose.py parses every template + a rendered decider shape and asserts hold, knob passthrough, start_period and restart policy per service; GPU_SERVICES derivation in lobes/runtime/_compose.py stays correct"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c4",
+        "h3",
+        "c5",
+        "h4",
+        "c6",
+        "h5"
+      ],
+      "instruction": "Owns the compose templates + shape_render.py decider block + the new test. Images without the mount get ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro; comfyui keeps its respelled ENTRYPOINT after the wrapper. Gateway image has bash (probed)."
+    },
+    {
+      "id": "t8",
+      "summary": "Compose: per-lane vLLM compile cache (VLLM_CACHE_ROOT on a host bind mount)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Every vLLM service in all templates (incl. embed overlay vLLM lanes) bind-mounts `${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/<lane>` and sets VLLM_CACHE_ROOT to it; an opt-out knob restores the writable-layer behaviour",
+        "Verified inside the pinned nightly image (vllm envs.py + compile cache key) that VLLM_CACHE_ROOT governs torch_compile_cache and entries are content-hashed; the finding is cited in docs (closes lapse l1)",
+        "tests/test_lane_safety_compose.py asserts mount + env per vLLM lane and none on non-vLLM services",
+        "The VLLM_CACHE_ROOT / compile-cache-key check is run on BOTH the pinned nightly (sha256:8bd082c2\u2026) and official vllm/vllm-openai:v0.31.0, so the per-lane mount holds across the #310 upgrade; any difference is documented"
+      ],
+      "deps": [
+        "t7"
+      ],
+      "covers": [
+        "c9",
+        "h7",
+        "c10",
+        "h8"
+      ],
+      "instruction": "Same compose files as t7 so after it. Reading the image is read-only (docker run --rm on the Spark is fine; never on Thor)."
+    },
+    {
+      "id": "t9",
+      "summary": "Profiles: per-card boot order + thermal zone selector + thermal bands as [host_env], goldens regenerated",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "spark.toml/thor.toml/orin.toml [host_env] declare LOBES_BOOT_ORDER (Thor gears-first, Orin per its measured order), LOBES_THERMAL_ZONES (acpitz on Spark, tj-thermal on Jetson) and the Spark's measured shed/resume bands; Thor/Orin bands absent (signal off) or marked unmeasured citing #108",
+        "tests/goldens/regen.py output committed; tests/test_profile_goldens.py and shape goldens pass; the deployment-lock allowlist picks the keys up with no _lock.py edit"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c16",
+        "h12"
+      ],
+      "instruction": "Owns lobes/profiles/builtin/*.toml + tests/goldens/**. Spark bands from #304 (84/88/91/93.5 vs 104.8 trip). Cite boot-order evidence in each comment."
+    },
+    {
+      "id": "t10",
+      "summary": "Runtime: machine-CLI adapter (lobes/runtime/_machine.py) \u2014 detect card, call window/drop-caches/grant, sudo -n fallback, optional extras",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/runtime/_machine.py resolves spark/thor/orin from the detected card + PATH, wraps the contract verbs, and falls back to 'sudo -n /usr/sbin/sysctl -w vm.drop_caches=3' only when an equivalent rule shows in 'sudo -n -l'; never prompts; every call returns a typed result with an unavailable reason",
+        "pyproject.toml gains optional extras (spark/thor/orin) pinning the released machine CLIs; the base wheel and Dockerfile.gateway pull none of them",
+        "tests/test_machine_adapter.py with fake executables covers each card, missing CLI, no grant and an existing equivalent rule"
+      ],
+      "deps": [
+        "t1"
+      ],
+      "covers": [
+        "c13",
+        "h27"
+      ],
+      "instruction": "Owns the new module, its test and the pyproject extras. Contract fakes let this build before t2-t4 release; pin minimum versions only after they publish."
+    },
+    {
+      "id": "t11",
+      "summary": "Lifecycle verbs: page-cache clear around compose down/up + start-counter reset for deliberately started lanes",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "compose_down/compose_up_detached/compose_up_build/run_compose in lobes/runtime/_compose.py: after teardown and before start, call the adapter's drop-caches when granted; ungranted prints a one-line skip and continues; dry-run plans show the clear step",
+        "Before a lane is started deliberately its counter file (contract path) is cleared; tests/test_lifecycle_cache_clear.py covers order, skip, dry-run and counter reset"
+      ],
+      "deps": [
+        "t10",
+        "t6"
+      ],
+      "covers": [
+        "c38",
+        "h25",
+        "c43",
+        "h31"
+      ],
+      "instruction": "Single chokepoint in _compose.py so every verb (serve, stop, switch, up, fleet) inherits it; do not touch each command file."
+    },
+    {
+      "id": "t12",
+      "summary": "Watcher: lobes-owned host watcher for gated lanes + 'lobes watcher install|uninstall|status'",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/watcher/ watches the contract gate markers and runs the adapter's drop-caches at most once per rate-limit window, logging each action; with no grant it logs only; it never issues a docker command",
+        "'lobes watcher install' is dry-run by default, --apply installs a boot-persistent unit (system unit, or user unit with linger verified) and records every written file; uninstall removes exactly those; status reports installed/active",
+        "tests/test_watcher.py covers marker->one clear per window, no-grant log-only, no docker calls (asserted), install plan/apply/uninstall round trip on a fake root"
+      ],
+      "deps": [
+        "t10",
+        "t6"
+      ],
+      "covers": [
+        "c41",
+        "h28",
+        "c50",
+        "h37"
+      ],
+      "instruction": "New files only: lobes/watcher/*, lobes/cli/_commands/watcher.py (+ one registration line in lobes/cli/__init__.py), unit template under lobes/templates/. First host unit lobes ships \u2014 keep it removable and explicit."
+    },
+    {
+      "id": "t13",
+      "summary": "Thermal sampler: per-card zone selector + thermal field through sample_pressure and PressureCache",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/runtime/_pressure.py reads only zones whose type matches LOBES_THERMAL_ZONES under ${LOBES_SYS_ROOT:-/sys}/class/thermal, skips ENODATA/implausible reads, and returns thermal_c=None when nothing matches; PressureCache carries the key",
+        "tests/test_pressure.py gains a fake sysfs tree mirroring the probed Spark (7 acpitz) and Orin (cv0-2 ENODATA, tj-thermal) layouts",
+        "Recorded: the Spark gateway container (uid 10001) reads the zones with no mount (probe in the frame); the Orin gateway container verified read-only, or a :ro mount added and asserted"
+      ],
+      "deps": [
+        "t9"
+      ],
+      "covers": [
+        "c15",
+        "h11",
+        "c47",
+        "h35",
+        "c18",
+        "h14"
+      ],
+      "instruction": "Owns _pressure.py, _tier_request.py PressureCache and tests/test_pressure.py/test_tier_request.py."
+    },
+    {
+      "id": "t14",
+      "summary": "Thermal policy: 'thermal' shed signal in decide(), 429 reason, GET /status, status --pressure, mesh relay",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/gateway/_pressure_policy.decide sheds full tiers when thermal_c exceeds the card's shed band (with hysteresis to the resume band) with SHED_SIGNAL_THERMAL; hand and NEVER_SHED_ROLES served; X-Lobes-Override bypasses; None never sheds",
+        "The 429 carries the thermal reason (X-Lobes-Tier-Reason / shed_signal), GET /status pressure and 'lobes status --pressure' show the reading and signal, and a mesh forward relays the peer's thermal reason unchanged",
+        "tests/test_pressure_policy.py, test_gateway_busy_e2e.py, test_status_pressure.py and a mesh-forward test cover each; grep shows no docker pause/update anywhere in lobes/"
+      ],
+      "deps": [
+        "t13"
+      ],
+      "covers": [
+        "c14",
+        "h10",
+        "c52",
+        "h39",
+        "c17",
+        "h13"
+      ],
+      "instruction": "Owns _pressure_policy.py, server.py shed/status/forward sites, status.py and those tests. Thermal is a fourth branch beside swap/engine/iowait."
+    },
+    {
+      "id": "t15",
+      "summary": "Benchmark window: exclusive locked-clocks window via the adapter + host.conditions in every result",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes benchmark (and measure when it drives load) takes a per-host window lock, calls window store+lock before the run and restore in a finally + SIGINT/SIGTERM handler; a second concurrent window refuses or waits; restore runs once, by the owner",
+        "The --json result gains host.conditions: power mode, clocks, fan profile, temps at start and end, locked: true|false with the reason when unlocked (no CLI, no privilege, unsupported)",
+        "tests/test_benchmark_window.py with a fake adapter covers success, exception, SIGINT, concurrent window, no-CLI; grep confirms init/serve/switch/up/fleet never call the window verbs"
+      ],
+      "deps": [
+        "t10"
+      ],
+      "covers": [
+        "c21",
+        "h16",
+        "c33",
+        "h23",
+        "c49",
+        "h36",
+        "c23",
+        "h18"
+      ],
+      "instruction": "Owns lobes/cli/_commands/benchmark.py, measure.py, lobes/assess.py host-block code and the new test. The window module may live at lobes/runtime/_window.py."
+    },
+    {
+      "id": "t16",
+      "summary": "Doctor + rollout: stale-wrapper and missing-cache-mount findings, targeted wrapper refresh, operator-owned cache dir, clocks-locked / grant / watcher findings",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "A new lobes/cli/_commands/_doctor_lane_safety.py adds: logwrap_stale (digest vs packaged template), compile_cache_unmounted, compile_cache_size (info), jetson_clocks_locked (warn, via adapter window show), drop_caches_grant_missing (warn on Spark/Thor/Orin), watcher_inactive; each skips cleanly when not applicable; doctor.py gains only the registration call",
+        "A targeted refresh (doctor --fix --apply path or a named flag) writes mg-logwrap.sh.bak then the packaged mg-logwrap.sh and touches no other file; init and doctor --fix create the compile-cache dir owned by the invoking user before any container mounts it",
+        "tests/test_doctor_lane_safety.py covers every finding's fire/skip and the refresh writes exactly two paths (backup + wrapper)"
+      ],
+      "deps": [
+        "t6",
+        "t8",
+        "t11",
+        "t12"
+      ],
+      "covers": [
+        "c22",
+        "h17",
+        "c45",
+        "h33",
+        "c46",
+        "h34"
+      ],
+      "instruction": "Serialized after t11 because cache-dir creation touches the scaffold code in lobes/runtime/_compose.py. Never rewrite an existing .env line (doctor --fix append-only guarantee, #174)."
+    },
+    {
+      "id": "t17",
+      "summary": "env.example off-switches + operator docs (deployment, measuring, gateway-fleet, machine-profiles, explain catalog, CLAUDE.md)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "lobes/templates/env.example (single + fleet) documents every new knob with its off value; a test asserts each off value restores pre-change behaviour (referencing the per-feature tests)",
+        "docs/operating-a-deployment.md, measuring-lane-performance.md, gateway-fleet.md, machine-profiles.md and lobes explain entries describe boot hold, compile cache, backoff/gate, cache clear + grant + watcher, thermal shedding and benchmark window for operators and agents, citing #304/#307/#308/#309; Thor-facing lines marked DECLARED/UNVALIDATED (#108); markdownlint passes",
+        "CLAUDE.md gains a short pointer paragraph; doc-test alignment holds (every documented knob exists in code)"
+      ],
+      "deps": [
+        "t5",
+        "t6",
+        "t8",
+        "t9",
+        "t11",
+        "t12",
+        "t14",
+        "t15",
+        "t16"
+      ],
+      "covers": [
+        "c44",
+        "h32",
+        "c28",
+        "h19",
+        "c29",
+        "h20",
+        "c30",
+        "h21",
+        "c31",
+        "h22"
+      ],
+      "instruction": "Docs-only plus env.example and one alignment test. Address readers as operators and agents (h19); keep the before/after and why traceable to the issues (h20-h22)."
+    },
+    {
+      "id": "t18",
+      "summary": "Upgrade fixtures + full suite: refresh tests/fixtures/upgrade_compat deliberately, deployments/ lock note, all tests green",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/fixtures/upgrade_compat/{single,fleet} refreshed in one commit that says why; tests/test_upgrade_compat.py passes",
+        "deployments/*/VARIATION.md notes the captured mg-logwrap.sh/compose predate this change (expected lock_drift, c7); no captured file is rewritten from a live box",
+        "uv run pytest -n auto, black/isort/flake8/bandit and afi cli doctor --strict all pass"
+      ],
+      "deps": [
+        "t7",
+        "t8",
+        "t16"
+      ],
+      "covers": [
+        "c8",
+        "h6"
+      ],
+      "instruction": "Owns the fixtures and the deployments notes only."
+    },
+    {
+      "id": "t19",
+      "summary": "Spark acceptance: sustained full-GPU serving load >= 30 min with the thermal signal live (operator-approved at run time)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "`docs/evidence/<date>-accept-thermal-shed-spark.txt` records >= 30 min sustained serving load with the thermal signal live, peak zone temperature, shed count and 0 hard resets (uptime -s unchanged), run under the governor per memory spark-thermal-resets-governor",
+        "The transcript states what was NOT validated (Thor, Orin bands, firmware cutoff)"
+      ],
+      "deps": [
+        "t14",
+        "t9"
+      ],
+      "covers": [
+        "c20",
+        "h15"
+      ],
+      "instruction": "LIVE on the Spark: ask the operator before deploying the dev gateway or starting load. Never touch the Thor. Back up ~/.lobes first; use lobes-deploy's lobes-compose.sh, never compose in lobes/templates/."
+    },
+    {
+      "id": "t20",
+      "summary": "Delivery audit + PR stack: Thor-untouched audit, version bumps, stacked PRs",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Audit of the full diff + session commands shows no docker/compose/lobes write verb run against the Thor; Thor-facing claims are DECLARED/UNVALIDATED",
+        "Each lobes PR bumps the version (version-check passes); stacked: PR-A boot hold + compile cache (t5,t7,t8,t9 boot order) then PR-B bundle (t6,t10-t17) \u2014 or the split the operator approves at gate 2; machine-CLI PRs merged + released first and pinned",
+        "Every announcement clause maps to a merged PR with its tests green"
+      ],
+      "deps": [
+        "t17",
+        "t18",
+        "t19",
+        "t2",
+        "t3",
+        "t4"
+      ],
+      "covers": [
+        "c1",
+        "h29",
+        "c2",
+        "h1"
+      ],
+      "instruction": "Use the cicd skill; sign PR bodies per CLAUDE.md. Do not merge with unaddressed review threads."
+    }
+  ],
+  "risks": [
+    {
+      "id": "r1",
+      "text": "PR-B cannot merge until dgx-spark-cli / jetson-thor-cli / jetson-orin-cli release the contract verbs; t10 builds against fakes meanwhile",
+      "kind": "follow_up",
+      "task_id": "t20",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r2",
+      "text": "GB10 may accept no clock lock (nvidia-smi -lgc unverified, frame park v2): spark window lock may ship as supported:false, so Spark benchmarks record conditions but run unlocked",
+      "kind": "unknown_nonblocking",
+      "task_id": "t2",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r3",
+      "text": "VLLM_CACHE_ROOT semantics and compile-cache keying are assumed (approved lapse l1) \u2014 if the pinned image keys or locates the cache differently, t8 changes its mount approach before the compose edit",
+      "kind": "unknown_nonblocking",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r4",
+      "text": "The memory gate compares MemAvailable with util x MemTotal, while vLLM checks CUDA free memory: on Jetson the nvmap pool can make them disagree (frame park v6), so the gate may pass and vLLM still refuse \u2014 the start counter remains the backstop",
+      "kind": "unknown_nonblocking",
+      "task_id": "t6",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r5",
+      "text": "All Thor behaviour (gears-first boot order, gate vs nvmap pool, thor window verbs on real hardware) stays DECLARED/UNVALIDATED \u2014 Thor is code-only while its experimental work runs",
+      "kind": "out_of_scope",
+      "task_id": "t20",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r6",
+      "text": "t19 runs a sustained full-GPU load on the Spark, which has hard-reset under such load before (#304); run it under the governor, back up ~/.lobes, and get operator approval at run time",
+      "kind": "unknown_nonblocking",
+      "task_id": "t19",
+      "resolved": false,
+      "resolution": ""
+    },
+    {
+      "id": "r7",
+      "text": "Fleet move from the pinned nightly to official vLLM v0.31.0 is tracked separately as agentculture/lobes-cli#310 (out of this bundle per frame claim c11); t8's VLLM_CACHE_ROOT check should hold on both images",
+      "kind": "follow_up",
+      "task_id": "t8",
+      "resolved": false,
+      "resolution": ""
+    }
+  ],
+  "obligations": []
+}
