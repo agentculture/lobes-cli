@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import sys
 import time
 from dataclasses import dataclass, field
@@ -102,6 +103,9 @@ class Watcher:
     #: ``False`` = dry run (d8): log ``would-clear``, never call the clear and
     #: never persist state. ``lobes watcher run`` sets it from ``--apply``.
     apply: bool = True
+    #: The deployment's cached compose project candidates (set by
+    #: :func:`watcher_for`; ``None`` for a bare test watcher).
+    projects: "ProjectCandidates | None" = None
     _state: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _logged: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
@@ -243,22 +247,78 @@ def lane_state_dir(deploy_dir: Path) -> Path:
     return _compose.lane_state_dir(deploy_dir)
 
 
-def watcher_for(deploy_dir: Path, **kw: Any) -> Watcher:
+#: Seconds the watcher reuses a deployment's compose project candidates before
+#: re-reading them (``.env``, the compose files, the dir's symlink target).
+#: ``SIGHUP`` refreshes them at once (review3 #7).
+PROJECT_REFRESH_S = 300.0
+
+
+class ProjectCandidates:
+    """:func:`lobes.runtime._compose.compose_project_candidates`, cached per deployment.
+
+    The watcher polls every few seconds; the candidates only change when the
+    operator edits ``.env`` / the compose files or re-points a symlink, so they
+    are re-read every :data:`PROJECT_REFRESH_S` or after :meth:`invalidate`
+    (wired to ``SIGHUP`` by :func:`install_sighup_refresh`).
+    """
+
+    def __init__(
+        self,
+        deploy_dir: Path,
+        clock: Callable[[], float] = time.monotonic,
+        ttl_s: float = PROJECT_REFRESH_S,
+    ) -> None:
+        self.deploy_dir = deploy_dir
+        self.clock = clock
+        self.ttl_s = ttl_s
+        self._value: frozenset[str] | None = None
+        self._at = 0.0
+
+    def invalidate(self) -> None:
+        self._value = None
+
+    def get(self) -> frozenset[str]:
+        now = self.clock()
+        if self._value is None or now - self._at > self.ttl_s:
+            self._value = _compose.compose_project_candidates(self.deploy_dir)
+            self._at = now
+        return self._value
+
+
+def watcher_for(
+    deploy_dir: Path, *, cache_clock: Callable[[], float] = time.monotonic, **kw: Any
+) -> Watcher:
     """A :class:`Watcher` wired to a deployment dir's log dir and ``.env`` knobs."""
     deploy_dir = Path(deploy_dir)
     env = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
     gate_timeout = _int_knob(env, GATE_TIMEOUT_ENV, DEFAULT_GATE_TIMEOUT_S)
-    kw.setdefault("health", lambda: _compose.lane_health(deploy_dir))
-    return Watcher(
+    projects = ProjectCandidates(deploy_dir, clock=cache_clock)
+    kw.setdefault("health", lambda: _compose.lane_health(deploy_dir, candidates=projects.get()))
+    watcher = Watcher(
         state_dir=lane_state_dir(deploy_dir),
         state_file=deploy_dir / STATE_FILE,
         min_interval_s=_int_knob(env, MIN_INTERVAL_ENV, DEFAULT_MIN_INTERVAL_S),
         stale_after_s=2 * gate_timeout,
         **kw,
     )
+    watcher.projects = projects
+    return watcher
+
+
+def install_sighup_refresh(watcher: Watcher) -> None:
+    """``SIGHUP`` drops the watcher's cached project candidates (re-read next poll)."""
+    projects = watcher.projects
+    if projects is None:
+        return
+
+    def _on_hup(_signum, _frame) -> None:
+        projects.invalidate()
+
+    signal.signal(signal.SIGHUP, _on_hup)
 
 
 def run_forever(watcher: Watcher, poll_s: float = DEFAULT_POLL_S) -> None:  # pragma: no cover
+    install_sighup_refresh(watcher)
     mode = "" if watcher.apply else "; DRY RUN, pass --apply to clear"
     watcher.log(
         f"lobes-watcher: watching {watcher.state_dir} "

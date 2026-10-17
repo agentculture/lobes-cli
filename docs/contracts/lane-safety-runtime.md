@@ -222,7 +222,9 @@ OTHER lane is starting.
   `COMPOSE_PROJECT_NAME` and `name:`; a working-directory match would miss a
   project renamed that way. The watcher unit's `--compose-dir` is the
   absolute deployment path with symlinks kept, so the watcher derives the
-  same candidates. The filter is the project label, not a `model-gear-` name prefix,
+  same candidates. It caches them, re-reading them every 5 minutes, or at the
+  next poll after a `SIGHUP` (`systemctl --user kill -s HUP
+  lobes-watcher.service`). The filter is the project label, not a `model-gear-` name prefix,
   because the embed overlay's vLLM lanes
   (`embed-qwen3vl-embed`, `embed-qwen3vl-rerank`, `embed-nemotron-embed`,
   `embed-nomic-code-embed`) run the memory gate under their own container

@@ -588,3 +588,43 @@ def test_watcher_does_not_defer_for_a_held_lane(tmp_path):
     actions = w.tick()
     assert actions[0]["action"] == "cleared"
     assert clear.calls == 1
+
+
+# --- review3 #7: the watcher caches the project candidates --------------------
+
+
+def test_watcher_caches_project_candidates_until_ttl_or_sighup(tmp_path, monkeypatch):
+    import signal
+
+    from lobes.runtime import _compose
+
+    calls: list = []
+    real = _compose.compose_project_candidates
+
+    def counting(deploy_dir):
+        calls.append(deploy_dir)
+        return real(deploy_dir)
+
+    monkeypatch.setattr(_compose, "compose_project_candidates", counting)
+    monkeypatch.setattr(
+        _compose,
+        "_probe",
+        lambda argv, **k: subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n")
+    now = Clock(0.0)
+    w = _run.watcher_for(tmp_path, clock=Clock(), log=[].append, cache_clock=now)
+    for _ in range(5):
+        w.health()
+    assert len(calls) == 1
+    now.t += _run.PROJECT_REFRESH_S + 1
+    w.health()
+    assert len(calls) == 2
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        _run.install_sighup_refresh(w)
+        signal.raise_signal(signal.SIGHUP)
+        w.health()
+        assert len(calls) == 3
+    finally:
+        signal.signal(signal.SIGHUP, previous)

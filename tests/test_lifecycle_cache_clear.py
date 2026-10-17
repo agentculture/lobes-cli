@@ -686,3 +686,28 @@ def test_lane_state_dir_follows_the_log_dir_knob(tmp_path):
     assert _compose.lane_state_dir(tmp_path) == tmp_path / "custom-logs" / "lane-state"
     (tmp_path / ".env").write_text("", encoding="utf-8")
     assert _compose.lane_state_dir(tmp_path) == tmp_path / "logs" / "lane-state"
+
+
+# --- review3 #7: the guarded clear reads the mode and the lane-state dir once --
+
+
+def test_guarded_clear_reads_mode_and_state_dir_once(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    _deploy(tmp_path)
+    _ps(monkeypatch, "vllm-primary\tmodel-gear-vllm-primary\tUp 2 hours (healthy)\n")
+    counts = {"mode": 0, "state": 0}
+    real_mode, real_state = _compose.page_cache_clear_mode, _compose.lane_state_dir
+
+    def mode(*a, **k):
+        counts["mode"] += 1
+        return real_mode(*a, **k)
+
+    def state(*a, **k):
+        counts["state"] += 1
+        return real_state(*a, **k)
+
+    monkeypatch.setattr(_compose, "page_cache_clear_mode", mode)
+    monkeypatch.setattr(_compose, "lane_state_dir", state)
+    assert _compose._guarded_clear(tmp_path) is True
+    assert events == ["clear"]
+    assert counts == {"mode": 1, "state": 1}

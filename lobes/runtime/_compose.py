@@ -1138,8 +1138,10 @@ def page_cache_clear_mode(deploy_dir: os.PathLike | str | None = None) -> str:
     return mode if mode in PAGE_CACHE_CLEAR_MODES else "auto"
 
 
-def _clear_wanted(deploy_dir: os.PathLike | str | None) -> bool:
-    mode = page_cache_clear_mode(deploy_dir)
+def _clear_wanted(deploy_dir: os.PathLike | str | None, mode: str | None = None) -> bool:
+    """Whether the clear is attempted; ``mode`` skips re-reading it (review3 #7)."""
+    if mode is None:
+        mode = page_cache_clear_mode(deploy_dir)
     if mode == "never":
         return False
     if mode == "always":
@@ -1147,7 +1149,9 @@ def _clear_wanted(deploy_dir: os.PathLike | str | None) -> bool:
     return _machine.detected_card() in _machine.CARD_CLIS
 
 
-def clear_page_cache(deploy_dir: os.PathLike | str | None = None) -> bool:
+def clear_page_cache(
+    deploy_dir: os.PathLike | str | None = None, *, mode: str | None = None
+) -> bool:
     """Clear the page cache when granted; never fails the verb, never prompts.
 
     ``LOBES_PAGE_CACHE_CLEAR`` decides where it is attempted: ``auto`` (the
@@ -1156,9 +1160,9 @@ def clear_page_cache(deploy_dir: os.PathLike | str | None = None) -> bool:
     silently, without probing ``sudo -n -l``; ``always`` on any card (the
     machine CLI if present, else the ``sudo -n`` fallback); ``never`` nowhere.
     Ungranted (or failed) when attempted prints ONE stderr line and returns
-    False.
+    False. A caller that already read the mode passes it as ``mode``.
     """
-    if not _clear_wanted(deploy_dir):
+    if not _clear_wanted(deploy_dir, mode):
         return False
     try:
         result = _machine.drop_caches()
@@ -1435,9 +1439,11 @@ def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
     ``exec``), so gated (``.gated``) and held (``.held``, review2-b #2) lanes
     never defer the clear. Docker unreadable: clear as before.
     """
-    if not _clear_wanted(deploy_dir):
+    mode = page_cache_clear_mode(deploy_dir)  # read once, passed down (review3 #7)
+    if not _clear_wanted(deploy_dir, mode):
         return False  # clear_page_cache would skip anyway; don't run docker ps
-    idle = gated_lanes(deploy_dir) | held_lanes(deploy_dir)
+    state = lane_state_dir(deploy_dir)
+    idle = marker_lanes(state, ".gated") | marker_lanes(state, ".held")
     booting = lanes_starting(lane_health(deploy_dir), idle)
     if booting:
         print(
@@ -1446,7 +1452,7 @@ def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
             file=sys.stderr,
         )
         return False
-    return clear_page_cache(deploy_dir)
+    return clear_page_cache(deploy_dir, mode=mode)
 
 
 def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:
