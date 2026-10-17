@@ -227,7 +227,7 @@ def test_up_defers_clear_while_another_lane_starts(rec, tmp_path, monkeypatch, c
     )
     _compose.run_compose(tmp_path, ["docker", "compose", "up", "-d", "--no-deps", "vllm-hand"])
     assert events == ["docker up -d --no-deps vllm-hand"]  # no clear, verb still runs
-    assert calls == [_compose.LANE_HEALTH_ARGV]
+    assert calls == [_compose.lane_health_argv(tmp_path)]
     err = capsys.readouterr().err
     assert err.count("\n") == 1 and "deferred" in err and "primary" in err
 
@@ -347,3 +347,77 @@ def test_always_ungranted_on_an_undetected_card_names_the_sudo_rule(
     err = capsys.readouterr().err
     assert err.count("\n") == 1
     assert "vm.drop_caches" in err and "LOBES_PAGE_CACHE_CLEAR=never" in err
+
+
+# --- review2-b #1: lanes are found by compose project, not by name prefix ----
+
+
+def test_lane_health_argv_filters_by_the_compose_project_label(tmp_path, monkeypatch):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    d = tmp_path / ".lobes"
+    d.mkdir()
+    argv = _compose.lane_health_argv(d)
+    assert argv[:2] == ["docker", "ps"]
+    assert "label=com.docker.compose.project=lobes" in argv
+    assert not any(a.startswith("name=") for a in argv)
+
+
+@pytest.mark.parametrize(
+    "dirname,setup,expected",
+    [
+        (".lobes", {}, "lobes"),
+        ("My Deploy.1", {}, "mydeploy1"),
+        ("dep", {"dotenv": "COMPOSE_PROJECT_NAME=fromdotenv\n"}, "fromdotenv"),
+        ("dep", {"name": "toplevel"}, "toplevel"),
+        ("dep", {"name": "toplevel", "dotenv": "COMPOSE_PROJECT_NAME=wins\n"}, "wins"),
+        ("dep", {"dotenv": "COMPOSE_PROJECT_NAME=dot\n", "environ": "Proc"}, "proc"),
+    ],
+)
+def test_compose_project_name_resolution(tmp_path, monkeypatch, dirname, setup, expected):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    d = tmp_path / dirname
+    d.mkdir()
+    body = "services: {}\n"
+    if "name" in setup:
+        body = f"name: {setup['name']}\n" + body
+    (d / "docker-compose.yml").write_text(body, encoding="utf-8")
+    if "dotenv" in setup:
+        (d / ".env").write_text(setup["dotenv"], encoding="utf-8")
+    if "environ" in setup:
+        monkeypatch.setenv("COMPOSE_PROJECT_NAME", setup["environ"])
+    assert _compose.compose_project_name(d) == expected
+
+
+def test_lane_health_maps_embed_overlay_lanes(tmp_path, monkeypatch):
+    """embed-* containers are not model-gear-* but run the memory gate too."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  vllm-primary:\n    environment:\n      - MG_LOG_NAME=primary\n",
+        encoding="utf-8",
+    )
+    (tmp_path / _compose.EMBED_OVERLAY).write_text(
+        "services:\n  embed-nemotron-embed:\n    container_name: embed-nemotron-embed\n"
+        "    environment:\n"
+        "      - MG_LOG_NAME=nemotron-embed   # -> /logs/model-gear/nemotron-embed-<boot>.log\n",
+        encoding="utf-8",
+    )
+    calls = _ps(
+        monkeypatch,
+        "vllm-primary\tmodel-gear-vllm-primary\tUp 2 hours (healthy)\n"
+        "embed-nemotron-embed\tembed-nemotron-embed\tUp 1 minute (health: starting)\n",
+    )
+    assert _compose.lane_health(tmp_path) == {"primary": "running", "nemotron-embed": "starting"}
+    assert calls == [_compose.lane_health_argv(tmp_path)]
+
+
+def test_a_booting_embed_lane_defers_the_clear(rec, tmp_path, monkeypatch, capsys):
+    events, _ = rec
+    _deploy(tmp_path)
+    (tmp_path / _compose.EMBED_OVERLAY).write_text(
+        "services:\n  embed-qwen3vl-embed:\n    environment:\n"
+        "      - MG_LOG_NAME=qwen3vl-embed\n",
+        encoding="utf-8",
+    )
+    _ps(monkeypatch, "embed-qwen3vl-embed\tembed-qwen3vl-embed\tUp 1 minute (health: starting)\n")
+    _compose.compose_up_detached(tmp_path)
+    assert "clear" not in events and events[-1].endswith("up -d")
+    assert "qwen3vl-embed" in capsys.readouterr().err

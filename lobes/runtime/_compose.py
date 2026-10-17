@@ -1182,20 +1182,67 @@ def clear_page_cache(deploy_dir: os.PathLike | str | None = None) -> bool:
     return False
 
 
-#: The ONE docker call the lane-health read makes (review-b #3): fixed argv,
-#: read-only (``docker ps`` lists, never changes), shared with the host watcher.
-LANE_HEALTH_ARGV = [
-    "docker",
-    "ps",
-    "--filter",
-    "name=model-gear-",
-    "--format",
-    '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
-]
+#: Docker's compose project label: every container compose creates carries it,
+#: whatever its ``container_name`` (review2-b #1: the embed overlay's
+#: ``embed-*`` vLLM lanes are not named ``model-gear-*`` but run the gate too).
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+COMPOSE_PROJECT_ENV = "COMPOSE_PROJECT_NAME"
+
+
+def _normalize_project_name(raw: str) -> str:
+    """docker compose's normalisation: lowercase, keep ``[a-z0-9_-]`` only."""
+    return re.sub(r"[^a-z0-9_-]", "", raw.lower()).lstrip("-_")
+
+
+def compose_project_name(deploy_dir: os.PathLike | str) -> str:
+    """The compose project a deployment's containers carry, resolved as compose does.
+
+    lobes never passes ``-p``, so the order is: ``COMPOSE_PROJECT_NAME`` in
+    this process's env, then in the deployment ``.env``, then a top-level
+    ``name:`` in the compose chain (the last file that sets one), then the
+    deployment dir's basename — all normalised (``~/.lobes`` -> ``lobes``, the
+    project every live box runs).
+    """
+    raw = os.environ.get(COMPOSE_PROJECT_ENV, "").strip()
+    if not raw:
+        raw = (_env.read_env(Path(deploy_dir) / ENV_FILE, COMPOSE_PROJECT_ENV) or "").strip()
+    if not raw:
+        try:
+            files = [a for a in _compose_files(deploy_dir) if a != "-f"] or [COMPOSE_FILE]
+        except OSError:
+            files = [COMPOSE_FILE]
+        for name in files:
+            try:
+                text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            m = re.search(r"^name:\s*['\"]?([^'\"#\s]+)", text, re.M)
+            if m:
+                raw = m.group(1)
+    if not raw:
+        raw = Path(deploy_dir).resolve().name
+    return _normalize_project_name(raw)
+
+
+def lane_health_argv(deploy_dir: os.PathLike | str) -> list[str]:
+    """The ONE docker call the lane-health read makes (review-b #3).
+
+    Fixed shape, read-only (``docker ps`` lists, never changes), shared with
+    the host watcher. Filtered by the deployment's compose project label, not
+    a container-name prefix (review2-b #1).
+    """
+    return [
+        "docker",
+        "ps",
+        "--filter",
+        f"label={COMPOSE_PROJECT_LABEL}={compose_project_name(deploy_dir)}",
+        "--format",
+        '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+    ]
 
 
 def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
-    """Running ``model-gear-*`` lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
+    """The project's running lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
 
     ``"starting"`` is docker's ``health: starting`` (inside the healthcheck's
     start period, not yet healthy) — the window where a page-cache drop can
@@ -1203,9 +1250,9 @@ def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
     (healthy, unhealthy, no healthcheck) is ``"running"``. A container with no
     compose service label is keyed by its container name. ``None`` when docker
     cannot be read (absent, no permission, error). Read-only: runs exactly
-    :data:`LANE_HEALTH_ARGV`.
+    :func:`lane_health_argv`.
     """
-    result = _probe(list(LANE_HEALTH_ARGV))
+    result = _probe(lane_health_argv(deploy_dir))
     if result is None or getattr(result, "returncode", 1) != 0:
         return None
     try:

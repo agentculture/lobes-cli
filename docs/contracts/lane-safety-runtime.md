@@ -167,9 +167,17 @@ OTHER lane is starting.
 - **Signal: docker health, read-only.** "Starting" is docker's
   `health: starting`: the lane is inside its healthcheck `start_period` and not
   yet healthy. Both callers read it with one fixed argv,
-  `docker ps --filter name=model-gear- --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
-  (`_compose.LANE_HEALTH_ARGV`), and map each compose service to its
-  `MG_LOG_NAME`.
+  `docker ps --filter label=com.docker.compose.project=<project> --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.lane_health_argv`), and map each compose service to its
+  `MG_LOG_NAME`. `<project>` is the deployment's compose project, resolved as
+  compose does (lobes never passes `-p`): `COMPOSE_PROJECT_NAME` in the
+  environment, then in the deployment `.env`, then a top-level `name:` in the
+  compose files, then the deployment directory's basename, normalised (live
+  boxes: `~/.lobes` gives `lobes`). The filter is the project label, not a
+  `model-gear-` name prefix, because the embed overlay's vLLM lanes
+  (`embed-qwen3vl-embed`, `embed-qwen3vl-rerank`, `embed-nemotron-embed`,
+  `embed-nomic-code-embed`) run the memory gate under their own container
+  names; a name filter hid their boots and made their live markers look stale.
 - **Why not the lane-state markers.** A `.starts` entry is written before the
   memory gate and long before vLLM's profiling step, which for a 27B lane runs
   minutes after the start. A fixed "fresh start" window (for example 120 s)
