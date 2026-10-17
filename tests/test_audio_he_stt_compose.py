@@ -72,7 +72,7 @@ class TestSttServiceOverride:
 
     def test_only_build_and_environment_are_overridden(self) -> None:
         stt = _load(_AUDIO_HE_COMPOSE)["services"]["stt"]
-        assert set(stt.keys()) <= {"build", "environment"}, (
+        assert set(stt.keys()) <= {"build", "command", "environment"}, (
             f"stt override should only touch build/environment, got keys: "
             f"{sorted(stt.keys())} — container_name/healthcheck/volumes/expose "
             "must stay inherited from docker-compose.audio.yml"

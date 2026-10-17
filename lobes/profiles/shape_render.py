@@ -252,7 +252,10 @@ DECIDER_DOMAIN_MODELS_KEY = "DECIDER_DOMAIN_MODELS"
 # ceiling (lobes.roles.decider_domain_contexts reads it).
 DECIDER_DOMAIN_CONTEXTS_KEY = "DECIDER_DOMAIN_CONTEXTS"
 #: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
-DECIDER_DEFAULT_START_PERIOD = "900s"
+# Declared load window (900s) PLUS the lane-safety boot hold's maximum (180s:
+# LOBES_BOOT_DELAY_S 120 + an unlisted lane's len(order) x stagger, <= 60), so
+# the healthcheck cannot flag a lane that is still deliberately holding.
+DECIDER_DEFAULT_START_PERIOD = "1080s"
 
 
 def decider_service(domain: str) -> str:
@@ -352,6 +355,13 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
         "HF_HUB_DISABLE_XET=1",
         "NVIDIA_VISIBLE_DEVICES=all",
         "NVIDIA_DISABLE_REQUIRE=1",
+        # Lane-safety boot hold (mg-logwrap): the sidecar has no env_file, so the
+        # knobs are passed through explicitly.
+        "MG_LOG_DIR=/logs/model-gear",
+        f"MG_LOG_NAME={service}",
+        "LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}",
+        "LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}",
+        "LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}",
     ]
     lines = [
         f"  {service}:",
@@ -373,6 +383,11 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
     lines += [
         "    volumes:",
         "      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface",
+        "      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear",
+        "      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro",
+        '    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]',
+        # The image ENTRYPOINT (Dockerfile.decider / .decider-vllm), respelled.
+        '    command: ["python3", "-m", "lobes.decider_sidecar.server"]',
         "    expose:",
         f'      - "{DECIDER_PORT}"',
         "    healthcheck:",

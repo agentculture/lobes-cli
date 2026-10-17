@@ -57,6 +57,9 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed for lane-safety t7 (boot hold): every non-primary service moved
+    # because each healthcheck.start_period grew by the 180s maximum hold, and the
+    # formerly unwrapped services (gateway, ...) gained the mg-logwrap entrypoint.
     # Recomputed for the /v1/render body caps (review finding 1 on the innereye
     # PR): ONLY `gateway` moved, and it moved by GAINING two environment
     # passthroughs — GATEWAY_RENDER_MAX_WORKFLOW_BYTES (1 MiB) and
@@ -255,16 +258,16 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # finding 4): `gateway` GAINED the one DECIDER_DOMAIN_CONTEXTS passthrough
     # line (each domain's max_model_len, read by /capabilities in place of the
     # catalog's native ceiling). `gateway` is the ONLY service moved.
-    "gateway": "218baf57f135f893dd33d4b871a297a132d364c0a8477adba433dc009ad6d4d3",
+    "gateway": "6ae32706bd728fe85705045ac0cd63f6c92282f00128f5e5d6fb00fe819ec8dc",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
-    "llamacpp-primary": "56507a02c50560eb2ab2d620b33121c605fd2b0f3b6092f17451889cac7c2004",
+    "llamacpp-primary": "61e57bb2a1862a6adf6912fb6f0c3d0cc585ad008030c2ea1119038c66152de8",
     # NEW (innereye plan t3, issue #82; volumes/user added by t4): the opt-in
     # `comfyui` render-tenant service, gated behind the `innereye` profile so
     # no existing deployment starts it. Nothing else moved — vllm-primary's
     # tool-parser wiring above is untouched by this task.
-    "comfyui": "7cf16de67291ce8dedc077fcf56dcdbf8784e51315f5f6b651d0706c59f3771d",
+    "comfyui": "9af5f5d01aeab2a08b4e4d1997ad0048e3016c5f114cd92de7378017554ca488",
     # NEW (lightning-on-orin plan, t7): the opt-in `vllm-associate` lane, gated
     # behind the `associate` profile so no existing deployment starts it. It
     # gives NVIDIA's published Jetson serve recipe's eight previously-
@@ -292,18 +295,18 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (default 0, mirroring vllm-primary) so a 1M-window lane can cap its
     # sequences. ONLY vllm-associate moved; every other hash here is
     # byte-identical. See tests/test_associate_compose.py.
-    "vllm-associate": "84b15c910c57694b5acd3a2ae9ba107a9f40d879f5b623c72b020a36a25865aa",
-    "vllm-embed": "52d6afc61fb6f23d23655251443ab0a50ab17ba350fb78ef3b1653a206117a1d",
-    "vllm-embed-deep": "f73a2c1f7fe25664ea0ca12adb72ff445503cb5dd03ff9d027b6dc58cb1b0bcb",
-    "vllm-hand": "7337db5b60adf2fcd47d1530eb149adf6c3652d029bb7102896f2da4432b7428",
-    "vllm-middle": "cb09dd82886e67ac05d97815c8f567dbc97a422de5ba28dcf4055c5a0ea4f36b",
-    "vllm-minor": "8e5b98ae680d8274eb563b897382b21f077a568af8a3aaf1f28f75b40f967b8f",
-    "vllm-multimodal": "e2895d0933383774cdf2e983daf826da947a075e0d63a45c39bdc8b95ae2f271",
-    "vllm-multimodal-coder": "a2909d32484894bc4d10507157322f2abb739e6817ee83a7340803a9f096449d",
-    "vllm-muse": "b694144cae4d9acacd5d1eb6e217a0323ed418bc3bc4ec699595021631ef5923",
+    "vllm-associate": "b2a475b77decb477f558bb573a45935a1a616ba6453aa362690677e414b99e58",
+    "vllm-embed": "3fdc5ac330c3f179ff3aa487d7c905e5e024eeaa996ab9922bf8800a02c06358",
+    "vllm-embed-deep": "52f80913708783b5d92ca12b4cd52702bc204c61a9eec34baf0c0d0bfa7a163c",
+    "vllm-hand": "92699881ba1adfa176728a605b1a8c7d61eb95323b9c99451206d3a9c18e9712",
+    "vllm-middle": "b1163ac2d7da837df7c8adf6e14cdff93067c0b0d41d69c33f4ce734db8285d5",
+    "vllm-minor": "0e847b697424c8044f81044c7c79a91da6b0f190f4340c517850ccc5a87fc95d",
+    "vllm-multimodal": "88302455706d505bb22945b033560bb512cdb47aae6178aeee52e1948e8bdc45",
+    "vllm-multimodal-coder": "5a3222d372149c29dd7da37396cc9a9f0f2397e2318f2f125feb648fb1a0fc33",
+    "vllm-muse": "eb1280ddcf872eb0d243835282fe6d660da7906de79a10b64c244e46bbaa928f",
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
-    "vllm-rerank": "8fea9569d776f62385b87a0086131c8286df82accf7bb6b639dc275c2a168007",
+    "vllm-rerank": "4b67fda3977fcdf7edfd6c5bfad651610e4cbdb98e0a5a04d2d8268cdbc33deb",
     # Recomputed 2026-09-10 for the worker recipe knobs (worker-recipe-knobs
     # t3): ONLY `vllm-worker` moved, and only its `command` string +
     # environment comments — it grew the ${VAR:+…} / ${VAR-} slots for
@@ -315,7 +318,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # against real `docker compose config` in
     # tests/test_worker_recipe_knobs.py); this tripwire is hashing the
     # TEMPLATE text, which did change.
-    "vllm-worker": "09e073e516a3a86b310ef535cff53d66aebf369eebddfe75efad6f15d4d7b2d1",
+    "vllm-worker": "e7ad413fec8d24d926dc981dde2e13ccf915977d939827f445995151d77fda17",
 }
 
 
