@@ -1584,7 +1584,8 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
 - **Cache clear, grant, watcher**: lifecycle verbs clear the page cache when a
   passwordless rule is granted (never prompts, never fails the verb); `lobes
   watcher install` does it for a gated lane. `lobes doctor` reports
-  `drop_caches_grant_missing`, `watcher_inactive` and `logwrap_stale`
+  `drop_caches_grant_missing`, `watcher_inactive`, `lane_state_writable` (a
+  root-owned `logs/lane-state/` blocks counter resets) and `logwrap_stale`
   (`lobes doctor --refresh-logwrap --apply`).
 - **Thermal shedding** (`LOBES_THERMAL_ZONES`, `_SHED_C`, `_RESUME_C`; off:
   empty): a 429 with `X-Lobes-Shed-Signal: thermal`. The compose passes the

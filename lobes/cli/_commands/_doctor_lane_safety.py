@@ -1,12 +1,15 @@
 """``lobes doctor`` lane-safety findings and the targeted wrapper refresh (t16).
 
-Contract: ``docs/contracts/lane-safety-runtime.md``. Six read-only findings,
+Contract: ``docs/contracts/lane-safety-runtime.md``. Seven read-only findings,
 none of them ``error`` (lane safety never makes a deployment "unhealthy"), and
 each returns ``None`` — no row at all — when it does not apply:
 
 * ``logwrap_stale`` (warn) — the deployed ``mg-logwrap.sh`` differs from the
   packaged template, so the boot hold / start counter / memory gate may be
   missing. Absent wrapper: skipped (``scaffold_files`` already reports it).
+* ``lane_state_writable`` (warn) — ``logs/lane-state/`` exists but the operator
+  cannot write it (a root container created it first), so lifecycle verbs
+  cannot reset start counters. Absent: skipped.
 * ``compile_cache_unmounted`` (warn) — a vLLM service lacks the ``/cache/vllm``
   bind or ``VLLM_CACHE_ROOT``, or (d7) the ``/cache/flashinfer`` bind or
   ``FLASHINFER_WORKSPACE_BASE``. A hand-kept compose fires this on purpose; the
@@ -36,7 +39,7 @@ import shutil
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
-from lobes.runtime import _compose, _detect, _machine, _window
+from lobes.runtime import _compose, _detect, _env, _machine, _window
 from lobes.watcher import _install
 
 _TEMPLATES_PACKAGE = "lobes.templates"
@@ -279,6 +282,37 @@ def compile_cache_size_check(deploy_dir: Path) -> dict | None:
     )
 
 
+# --- lane_state_writable (review-b #1) ----------------------------------------
+
+
+def _lane_state_dir(deploy_dir: Path) -> Path:
+    configured = _env.read_env(deploy_dir / _compose.ENV_FILE, _compose.LOG_DIR_ENV) or None
+    return _compose.durable_log_dir(deploy_dir, configured) / _compose.LANE_STATE_DIRNAME
+
+
+def lane_state_writable_check(deploy_dir: Path) -> dict | None:
+    """``lane-state/`` must be writable by the operator, or counter resets fail.
+
+    A root container that wrote the first start counter before any lobes verb
+    created the dir leaves it root 0755: ``lobes up <role> --apply`` then cannot
+    delete ``<lane>.starts`` and the lane stays held. Absent: skipped (the next
+    lifecycle verb creates it as the operator).
+    """
+    state = _lane_state_dir(Path(deploy_dir))
+    if not state.is_dir():
+        return None
+    if os.access(state, os.W_OK | os.X_OK):
+        return _check("lane_state_writable", True, "info", f"{state} is writable by this user")
+    return _check(
+        "lane_state_writable",
+        False,
+        "warn",
+        f"{state} is not writable by this user (created by a root container): "
+        "lifecycle verbs cannot reset a lane's start counter, so a held lane stays held",
+        f"run 'sudo chown -R \"$(id -un)\" {state}' (the root containers can still write it)",
+    )
+
+
 # --- machine findings -------------------------------------------------------
 
 
@@ -435,6 +469,7 @@ def lane_safety_checks(deploy_dir: Path) -> list[dict]:
     deploy_dir = Path(deploy_dir)
     candidates = [
         logwrap_stale_check(deploy_dir),
+        lane_state_writable_check(deploy_dir),
         compile_cache_unmounted_check(deploy_dir),
         compile_cache_size_check(deploy_dir),
         jetson_clocks_locked_check(),

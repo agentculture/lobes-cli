@@ -79,8 +79,19 @@ hold     = release − host uptime, if positive
   `rerank` → `reranker`, any other lane is its own name).
 - **Unwritable log dir:** the counter and the gate marker are skipped, with one
   log line. The memory gate still runs.
+- **Directory owner:** every lifecycle verb that starts a lane (and `lobes
+  init`) creates `logs/` and `logs/lane-state/` as the invoking user before any
+  container starts; a new `lane-state/` is mode `0775`, and under `sudo` both are
+  chowned to `SUDO_UID`/`SUDO_GID`. Left to the first root container, the
+  directory would be root `0755` and the operator could not delete a counter.
+  An existing directory is never changed.
 - **Reset:** a lifecycle verb that starts a lane on purpose deletes that lane's
-  file first, so deliberate restarts never count.
+  file first, so deliberate restarts never count. A missing file is fine. A
+  file the verb cannot delete is reported as one stderr line naming the files,
+  `sudo rm <file>` and `lobes doctor`; the verb still runs, but the lane may
+  stay held. `lobes doctor` reports `lane_state_writable` (warn) when
+  `lane-state/` exists and the operator cannot write it; the fix is
+  `sudo chown -R "$(id -un)" <dir>`.
 
 ## 4. Crash backoff: the memory gate
 
@@ -154,16 +165,19 @@ hold     = release − host uptime, if positive
   sidecars (vLLM runs in-process there). `<lane>` is the lane's `MG_LOG_NAME`
   (the decider service name for deciders). `llamacpp-primary`, `comfyui`, the
   gateway, the audio services and `embed-gemma2-embed` get no mount.
-- `lobes init` and `lobes doctor --fix --apply` create the host directories (both
-  `<lane>` and `<lane>-flashinfer`), owned
-  by the invoking user, before any container mounts it.
+- `lobes init`, `lobes doctor --fix --apply` and every lifecycle verb that
+  starts a lane (`serve`, `fleet up`, `up`, `switch`, under `--apply` only)
+  create the host directories (both `<lane>` and `<lane>-flashinfer`), owned by
+  the invoking user, before any container mounts them. A dry run creates
+  nothing.
 - Wipe a lane's cache by deleting its directory (or its `-flashinfer` sibling)
   with no lane running. No sudo is needed.
 - `lobes doctor` reports `compile_cache_unmounted` (warn: a vLLM service lacks
   the `/cache/vllm` bind, `VLLM_CACHE_ROOT`, the `/cache/flashinfer` bind or
   `FLASHINFER_WORKSPACE_BASE`; the remediation, which carries both binds, is
   `docker-compose.override.yml` lines, never `init --force`) and
-  `compile_cache_size` (info). Alongside them: `logwrap_stale` (warn; fixed by
+  `compile_cache_size` (info). Alongside them: `lane_state_writable` (warn,
+  section 3), `logwrap_stale` (warn; fixed by
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
   then the packaged wrapper and nothing else), `jetson_clocks_locked` (warn:
   `window show` reports `clocks_locked`, or `active` from an older CLI,

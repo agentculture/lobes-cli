@@ -330,6 +330,10 @@ def default_deployment_dir() -> Path:
     return Path.home() / ".lobes"
 
 
+#: Lane-safety state dir under the durable-log dir (contract sections 3-4).
+LANE_STATE_DIRNAME = "lane-state"
+
+
 def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
     """Host directory holding the per-boot vLLM logs that ``mg-logwrap`` writes.
 
@@ -346,18 +350,39 @@ def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None
 
 
 def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
-    """Create the durable-log dir before ``docker compose up``.
+    """Create the durable-log dir and its ``lane-state/`` before ``docker compose up``.
 
     The compose bind-mounts this host dir into each vLLM container; if it doesn't
     exist when compose runs, Docker creates it **root-owned**. Creating it here (as
-    the invoking user) keeps the logs user-readable. Best-effort — returns the dir
-    even if mkdir fails (the wrapper falls back to plain exec, never blocking serve).
+    the invoking user) keeps the logs user-readable.
+
+    ``lane-state/`` (the start counters and gate markers, lane-safety contract
+    sections 3-4) is created too (review-b #1): left to the first root container
+    that writes a counter, it ends up root 0755 and the operator's ``lobes up
+    <role> --apply`` can no longer delete ``<lane>.starts``. A newly created
+    ``lane-state/`` is made group-writable (0775); under ``sudo`` every dir this
+    call creates is chowned to ``SUDO_UID``/``SUDO_GID``, as
+    :func:`ensure_compile_cache_dirs` does. An existing dir is never touched.
+    Best-effort — returns the log dir even if mkdir fails (the wrapper falls back
+    to plain exec, never blocking serve).
     """
     d = durable_log_dir(deploy_dir, configured)
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    state = d / LANE_STATE_DIRNAME
+    owner = _sudo_owner()
+    for path, mode in ((d, None), (state, 0o775)):
+        if path.exists():
+            continue
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if mode is not None:
+                os.chmod(path, mode)
+        except OSError:
+            break
+        if owner is not None:
+            try:
+                os.chown(path, *owner)
+            except OSError:
+                pass
     return d
 
 
@@ -1084,7 +1109,6 @@ def _probe(argv: list[str], *, timeout: int = 10):
 
 
 CACHE_CLEAR_PLAN_LINE = "clear the page cache (when the drop-caches grant is present)"
-LANE_STATE_DIRNAME = "lane-state"
 
 # One clear per down->up pair (``switch``): a clear after ``down`` is consumed by
 # the next ``up`` instead of clearing twice. Process-local; reset by every ``up``.
@@ -1165,17 +1189,47 @@ def reset_start_counters(
             wanted.add(mapping.get(svc, svc))
         targets = [state / f"{n}.starts" for n in sorted(wanted)]
     removed = []
+    failed: list[tuple[Path, OSError]] = []
     for t in targets:
         try:
             t.unlink()
             removed.append(t.name)
-        except OSError:
+        except FileNotFoundError:
             pass
+        except OSError as exc:
+            failed.append((t, exc))
+    if failed:
+        # Never silent (review-b #1): a counter the operator cannot delete keeps
+        # the lane held while the verb reports success.
+        names = ", ".join(t.name for t, _ in failed)
+        reason = failed[0][1].strerror or failed[0][1].__class__.__name__
+        files = " ".join(str(t) for t, _ in failed)
+        print(
+            f"lobes: could not reset the start counter ({names}) in {state} ({reason})"
+            f" - the lane may stay held; run 'sudo rm {files}' or see 'lobes doctor'"
+            " (lane_state_writable)",
+            file=sys.stderr,
+        )
     return removed
+
+
+def prepare_bind_sources(deploy_dir: os.PathLike | str) -> None:
+    """Create every host bind source a starting lane writes into, as the operator.
+
+    The durable-log dir + ``lane-state/`` (:func:`ensure_log_dir`) and the
+    compile-cache dirs (:func:`ensure_compile_cache_dirs`). Called from the
+    pre-start chokepoint, so EVERY lifecycle path that starts containers
+    (``serve``, ``fleet up``, ``up``, ``switch``, the role swap) gets it, and
+    only under ``--apply`` (review-b #7). Best-effort: never raises.
+    """
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    ensure_log_dir(deploy_dir, configured)
+    ensure_compile_cache_dirs(deploy_dir)
 
 
 def _before_up(deploy_dir, services: list[str] | None, compose_files: list[str] | None = None):
     global _cleared_after_down
+    prepare_bind_sources(deploy_dir)
     if _cleared_after_down:
         _cleared_after_down = False  # the preceding down already cleared
     else:

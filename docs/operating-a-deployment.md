@@ -169,7 +169,10 @@ would fit; the start counter is the backstop.
 `stop` and `fleet` clear the page cache around down/up (on a detected Spark,
 Thor or Orin; elsewhere the step is skipped silently) and delete the
 start-counter files of the lanes they start on purpose, so deliberate restarts
-never count. The clear needs a passwordless rule. `lobes doctor` reports
+never count. They create `logs/lane-state/` and the compile-cache directories
+as you before any container starts; a `lane-state/` a root container created
+first blocks the reset, which the verb reports on stderr and `lobes doctor`
+reports as `lane_state_writable`. The clear needs a passwordless rule. `lobes doctor` reports
 `drop_caches_grant_missing`; the machine CLI's `grant-permissions` installs the
 single rule (the Thor already has an equivalent one, which is reused). With no
 grant, the verb prints one stderr line and carries on; it never prompts and
