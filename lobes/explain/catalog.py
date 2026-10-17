@@ -1557,7 +1557,9 @@ memory that a cache clear would hand back. The watcher closes that gap.
 
 ## Verbs
 
-- `lobes watcher run [--once] [--poll S]` — the loop (the unit's ExecStart).
+- `lobes watcher run [--once] [--poll S] [--apply]` — the loop (the unit's
+  ExecStart, which passes `--apply`). Without `--apply` it is a dry run: it logs
+  `would-clear` and changes nothing.
 - `lobes watcher install [--system] [--apply]` — WRITE, dry-run by default.
   The default is a **user** unit (`~/.config/systemd/user/lobes-watcher.service`)
   and it REQUIRES linger (`sudo loginctl enable-linger $USER`); `--system`
@@ -1596,8 +1598,9 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
   empty): a 429 with `X-Lobes-Shed-Signal: thermal`. The compose passes the
   keys to the gateway (#311); the latch advances on a request or `GET /status`;
   Spark bands come from #304's batch-job governor, not a serving measurement.
-- **Benchmark window** (`lobes benchmark`, `--no-lock`): locked clocks and
-  `host.conditions` on single-model and `--all-lobes` results only (#312);
+- **Benchmark window** (`lobes benchmark --lock`, opt-in; plain `benchmark`
+  is read-only and records `locked: false`, reason `not_requested`): locked
+  clocks and `host.conditions` on single-model and `--all-lobes` results only (#312);
   the GB10 has no supported clock lock, so the Spark runs unlocked. The machine
   CLI verbs ship in dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and
   jetson-orin-cli 0.7.1 (`lobes-cli[spark|thor|orin]`).

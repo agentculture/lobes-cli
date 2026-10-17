@@ -1,6 +1,6 @@
 """``lobes watcher`` — the host watcher for memory-gated lanes.
 
-    lobes watcher run [--once]          # the loop (the unit's ExecStart)
+    lobes watcher run [--once] [--apply]  # the loop (the unit's ExecStart passes --apply)
     lobes watcher install [--system]    # dry-run plan; --apply installs the unit
     lobes watcher uninstall             # dry-run plan; --apply removes it
     lobes watcher status                # installed / active / linger / last clear
@@ -9,7 +9,9 @@ The watcher polls the deployment's ``logs/lane-state/*.gated`` markers and runs
 the machine CLI's drop-caches at most once per ``LOBES_WATCHER_MIN_INTERVAL_S``
 (default 300); with no grant it only logs. Its one docker call is a read-only
 ``docker ps`` (to skip a clear while another lane boots); it never changes a
-container. ``install``
+container. ``run`` is dry-run unless ``--apply`` (operator decision d8): it
+logs what it would clear and changes nothing; the installed unit passes
+``--apply``. ``install``
 and ``uninstall`` are write verbs: dry-run by default, ``--apply`` commits.
 """
 
@@ -25,15 +27,20 @@ from lobes.watcher import _install, _run
 
 def _cmd_run(args: argparse.Namespace) -> int:
     deploy = _runtime_ops.deployment_dir(args)
-    watcher = _run.watcher_for(deploy)
+    watcher = _run.watcher_for(deploy, apply=bool(args.apply))
     if args.once:
         actions = watcher.tick()
-        payload = {"state_dir": str(watcher.state_dir), "actions": actions}
+        payload = {
+            "dry_run": not args.apply,
+            "state_dir": str(watcher.state_dir),
+            "actions": actions,
+        }
         if args.json:
             emit_result(payload, json_mode=True)
         else:
+            tail = "" if args.apply else "\n>> dry run: re-run with --apply to clear"
             emit_result(
-                f"{len(actions)} gated lane(s) in {watcher.state_dir}",
+                f"{len(actions)} gated lane(s) in {watcher.state_dir}{tail}",
                 json_mode=False,
             )
         return 0
@@ -129,8 +136,17 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     wsub = p.add_subparsers(dest="watcher_command", required=True)
 
-    r = wsub.add_parser("run", help="Run the watcher loop in the foreground (the unit's command).")
+    r = wsub.add_parser(
+        "run",
+        help="Run the watcher loop in the foreground (the unit's command). Dry-run "
+        "(logs what it would clear) unless --apply.",
+    )
     r.add_argument("--once", action="store_true", help="Poll once and exit.")
+    r.add_argument(
+        "--apply",
+        action="store_true",
+        help="Actually clear the page cache (default: log what would be cleared).",
+    )
     r.add_argument(
         "--poll",
         type=float,

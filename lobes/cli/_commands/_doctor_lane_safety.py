@@ -439,6 +439,19 @@ def _watcher_active_state(system: bool) -> str:
     return stdout.strip() or "unknown"
 
 
+def _unit_runs_dry(manifest: dict) -> bool:
+    """True when an installed unit's ExecStart runs ``watcher run`` without ``--apply``."""
+    for f in manifest.get("files") or []:
+        try:
+            text = Path(str(f)).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.startswith("ExecStart=") and "watcher run" in line:
+                return "--apply" not in line.split()
+    return False
+
+
 def watcher_inactive_check(deploy_dir: Path) -> dict | None:
     manifest = _install.read_manifest(Path(deploy_dir))
     if manifest is None:
@@ -451,6 +464,15 @@ def watcher_inactive_check(deploy_dir: Path) -> dict | None:
         )
     system = manifest.get("unit_type") == "system"
     state = _watcher_active_state(system)
+    if state == "active" and _unit_runs_dry(manifest):
+        return _check(
+            "watcher_inactive",
+            False,
+            "warn",
+            "host watcher is active but its unit runs 'lobes watcher run' without "
+            "--apply (installed before d8), so it only logs what it would clear",
+            "reinstall it: 'lobes watcher uninstall --apply' then 'lobes watcher install --apply'",
+        )
     if state == "active":
         return _check("watcher_inactive", True, "info", "host watcher is active")
     systemctl = "sudo systemctl" if system else "systemctl --user"

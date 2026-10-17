@@ -1,7 +1,11 @@
 """Benchmark window — an exclusive, locked-clocks window around a load run.
 
-Only ``lobes benchmark`` enters this window; ``init``/``serve``/``switch``/
-``up``/``fleet`` never do (guarded by ``tests/test_benchmark_window.py``).
+Only ``lobes benchmark --lock`` enters this window; ``init``/``serve``/
+``switch``/``up``/``fleet`` never do (guarded by ``tests/test_benchmark_window.py``).
+Locking is OPT-IN (operator decision d8): ``lobes benchmark`` is a read-only
+verb, so without ``--lock`` it takes no host lock and changes no clock — it only
+records the start/end ``window show`` conditions, with ``locked: false`` and
+reason ``not_requested``.
 
 Sequence: take a per-host file lock -> ``window show`` (start conditions) ->
 ``store`` -> ``lock`` -> run -> ``restore`` exactly once (only if ``store``
@@ -89,24 +93,38 @@ def _host_lock() -> Iterator[None]:
 
 
 @contextlib.contextmanager
+def _observe_only() -> Iterator[Conditions]:
+    """No window (d8): record the conditions, take no lock, change nothing."""
+    cond = Conditions()
+    cond.reason = "not_requested"
+    cond.start = _snapshot(_machine.window("show"))
+    try:
+        yield cond
+    finally:
+        cond.end = _snapshot(_machine.window("show"))
+
+
+@contextlib.contextmanager
 def benchmark_window(*, lock_clocks: bool = True) -> Iterator[Conditions]:
+    """The locked window, or (``lock_clocks=False``) an observe-only recorder."""
+    if not lock_clocks:
+        with _observe_only() as cond:
+            yield cond
+        return
     cond = Conditions()
     with _host_lock():
         cond.start = _snapshot(_machine.window("show"))
         stored = False
-        if not lock_clocks:
-            cond.reason = "disabled"
+        st = _machine.window("store")
+        if not st.ok:
+            cond.reason = st.reason or "failed"
         else:
-            st = _machine.window("store")
-            if not st.ok:
-                cond.reason = st.reason or "failed"
+            stored = True
+            lk = _machine.window("lock")
+            if lk.ok:
+                cond.locked = True
             else:
-                stored = True
-                lk = _machine.window("lock")
-                if lk.ok:
-                    cond.locked = True
-                else:
-                    cond.reason = lk.reason or "failed"
+                cond.reason = lk.reason or "failed"
         prev: dict[int, Any] = {}
         try:
             for sig in (signal.SIGINT, signal.SIGTERM):

@@ -436,6 +436,29 @@ def test_watcher_inactive_passes_when_active(tmp_path, monkeypatch) -> None:
     assert ls.watcher_inactive_check(d)["passed"] is True
 
 
+@pytest.mark.parametrize(
+    "exec_start, passed",
+    [
+        ("/opt/lobes watcher run --compose-dir /d", False),  # pre-d8 unit: now a dry run
+        ("/opt/lobes watcher run --compose-dir /d --apply", True),
+    ],
+)
+def test_watcher_active_unit_without_apply_warns(tmp_path, monkeypatch, exec_start, passed):
+    d = _bare(tmp_path)
+    unit = tmp_path / "lobes-watcher.service"
+    unit.write_text(f"[Service]\nExecStart={exec_start}\n", encoding="utf-8")
+    (d / _install.MANIFEST).write_text(
+        json.dumps({"unit": _install.UNIT_NAME, "unit_type": "user", "files": [str(unit)]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(ls, "_watcher_active_state", lambda system: "active")
+    check = ls.watcher_inactive_check(d)
+    assert check["passed"] is passed
+    if not passed:
+        assert "--apply" in check["message"]
+        assert "lobes watcher uninstall --apply" in check["remediation"]
+
+
 def test_watcher_not_installed_is_informational(tmp_path, monkeypatch) -> None:
     def _boom(system):  # pragma: no cover - must never run
         raise AssertionError("systemctl probed without a manifest")

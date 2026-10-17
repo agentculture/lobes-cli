@@ -108,20 +108,23 @@ conditions is not.
 
 ## Rule 4 — lock the clocks, and keep the window honest (#304)
 
-Rule 3 says to record clocks; `lobes benchmark` now enforces them where the
+Rule 3 says to record clocks; `lobes benchmark --lock` enforces them where the
 machine allows. The window is for operators and for agents running a
 comparison.
 
-- **What it does.** `lobes benchmark` takes a per-host file lock
-  (`$XDG_RUNTIME_DIR/lobes-benchmark-window.lock`, so two runs cannot overlap),
-  reads `window show`, runs `window store`, then `window lock` (clocks and fan
-  to max), runs the load, and calls `window restore` exactly once in a
-  `finally` (SIGINT and SIGTERM included). Only `benchmark` enters the window;
-  `init`, `serve`, `switch`, `up` and `fleet` never do.
-- **Opt out.** `--no-lock` runs unlocked and records `locked: false, reason:
-  disabled`. If the machine CLI is missing, ungranted or unsupported, the run
-  proceeds **unlocked** and the same block records why. A run never fails
-  because the clocks could not be locked.
+- **Opt in with `--lock`.** `lobes benchmark` is a read-only verb, so by
+  default it opens no window: it takes no lock, changes no clock, and records
+  `locked: false, reason: not_requested` with the `window show` conditions at
+  start and end (operator decision d8). Pass `--lock` for a comparison run.
+- **What `--lock` does.** It takes a per-host file lock
+  (`$XDG_RUNTIME_DIR/lobes-benchmark-window.lock`, so two locked runs cannot
+  overlap), reads `window show`, runs `window store`, then `window lock` (clocks
+  and fan to max), runs the load, and calls `window restore` exactly once in a
+  `finally` (SIGINT and SIGTERM included). Only `benchmark --lock` enters the
+  window; `init`, `serve`, `switch`, `up` and `fleet` never do.
+- **When the lock is not possible.** If the machine CLI is missing, ungranted
+  or unsupported, a `--lock` run proceeds **unlocked** and the same block
+  records why. A run never fails because the clocks could not be locked.
 - **What gets recorded.** Single-model and `--all-lobes` results carry
   `host.conditions` with `locked`, `reason`, and `start` / `end` snapshots
   (`power_mode`, `clocks`, `fan_profile`, `temps_c`). Compare `start` and

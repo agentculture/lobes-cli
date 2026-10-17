@@ -269,18 +269,51 @@ def test_watcher_runs_no_mutating_docker_command(tmp_path, monkeypatch):
     assert not any("docker" in " ".join(a) for a in seen if a not in docker)
 
 
-def test_run_once_cli(tmp_path, monkeypatch, capsys):
+def _once_deploy(tmp_path):
     deploy = tmp_path / "dep"
     deploy.mkdir()
     (deploy / "docker-compose.yml").write_text("services: {}\n")
     _marker(deploy / "logs" / "lane-state", "worker", since=int(time.time()))
+    return deploy
+
+
+def test_run_once_cli_is_dry_run_without_apply(tmp_path, monkeypatch, capsys):
+    """d8: `watcher run` changes nothing unless --apply; it logs what it would clear."""
+    deploy = _once_deploy(tmp_path)
     clear = CountingClear()
     monkeypatch.setattr(_run, "drop_caches", clear)
     rc = main(["watcher", "run", "--compose-dir", str(deploy), "--once", "--json"])
     assert rc == 0
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out["dry_run"] is True
+    assert out["actions"][0]["action"] == "would-clear"
+    assert clear.calls == 0
+    assert not (deploy / _run.STATE_FILE).exists()
+    assert "would-clear" in captured.err
+
+
+def test_run_once_cli_apply_clears(tmp_path, monkeypatch, capsys):
+    deploy = _once_deploy(tmp_path)
+    clear = CountingClear()
+    monkeypatch.setattr(_run, "drop_caches", clear)
+    rc = main(["watcher", "run", "--compose-dir", str(deploy), "--once", "--apply", "--json"])
+    assert rc == 0
     out = json.loads(capsys.readouterr().out)
+    assert out["dry_run"] is False
     assert out["actions"][0]["action"] == "cleared"
     assert clear.calls == 1
+
+
+def test_dry_run_watcher_logs_would_clear_once(tmp_path):
+    clear, logs = CountingClear(), []
+    _marker(tmp_path / "logs" / "lane-state", "worker")
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.apply = False
+    for _ in range(3):
+        assert w.tick()[0]["action"] == "would-clear"
+    assert clear.calls == 0
+    assert sum("would-clear" in line for line in logs) == 1
 
 
 def test_min_interval_knob(tmp_path, monkeypatch):
@@ -358,6 +391,8 @@ def test_install_plan_is_dry_run(tmp_path):
     assert plan.unit_type == "user"
     assert plan.unit_path == tmp_path / "root" / "home/u/.config/systemd/user/lobes-watcher.service"
     assert "ExecStart=/opt/bin/lobes watcher run --compose-dir" in plan.content
+    exec_line = next(ln for ln in plan.content.splitlines() if ln.startswith("ExecStart="))
+    assert exec_line.endswith(" --apply")  # d8: the unit must commit, the CLI defaults dry
     assert str(deploy) in plan.content
     assert "Restart=on-failure" in plan.content
     assert "Environment=PATH=/home/u/.local/bin:/usr/bin" in plan.content

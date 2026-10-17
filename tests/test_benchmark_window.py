@@ -100,26 +100,62 @@ def test_lock_failure_still_restores(fake):
     assert cond.as_dict()["reason"] == "not_granted"
 
 
-def test_no_lock_flag(fake):
+def test_no_lock_records_conditions_without_a_window(fake):
+    """d8: an unlocked run touches no clocks and takes no host lock."""
     calls, _ = fake
     with _window.benchmark_window(lock_clocks=False) as cond:
-        pass
-    assert calls == ["show", "show"] and cond.as_dict()["reason"] == "disabled"
+        with _window.benchmark_window():  # the host lock is free: no window held
+            pass
+    assert calls == ["show", "show", "store", "lock", "restore", "show", "show"]
+    d = cond.as_dict()
+    assert d["locked"] is False and d["reason"] == "not_requested"
+    assert d["start"]["power_mode"] == "MAXN" and d["end"]["power_mode"] == "MAXN"
 
 
-def test_benchmark_json_has_conditions(fake, monkeypatch, capsys):
-    import json
-
+def _bench(monkeypatch):
     import lobes.cli._commands.benchmark as b
-    from lobes.cli import main
 
     monkeypatch.setattr(b._assess, "run_benchmark", lambda *a, **k: {"x": 1})
     monkeypatch.setattr(b._compose, "container_image", lambda: "img")
     monkeypatch.setattr(b._compose, "gpu_engine_mem", lambda: "1G")
+
+
+def test_benchmark_default_is_read_only_no_window(fake, monkeypatch, capsys):
+    """d8: `lobes benchmark` is a read-only verb; locking is opt-in (--lock)."""
+    import json
+
+    from lobes.cli import main
+
+    calls, _ = fake
+    _bench(monkeypatch)
     main(["benchmark", "--json", "--model", "m", "--port", "1"])
     out = json.loads(capsys.readouterr().out)
     assert out["host"]["image"] == "img"
+    assert out["host"]["conditions"]["locked"] is False
+    assert out["host"]["conditions"]["reason"] == "not_requested"
+    assert calls == ["show", "show"]  # no store / lock / restore
+
+
+def test_benchmark_lock_flag_locks_and_restores(fake, monkeypatch, capsys):
+    import json
+
+    from lobes.cli import main
+
+    calls, _ = fake
+    _bench(monkeypatch)
+    main(["benchmark", "--lock", "--json", "--model", "m", "--port", "1"])
+    out = json.loads(capsys.readouterr().out)
     assert out["host"]["conditions"]["locked"] is True
+    assert calls == ["show", "store", "lock", "restore", "show"]
+
+
+def test_benchmark_no_lock_flag_is_gone(fake, monkeypatch, capsys):
+    from lobes.cli import main
+
+    with pytest.raises(SystemExit) as e:
+        main(["benchmark", "--no-lock", "--model", "m", "--port", "1"])
+    assert e.value.code != 0
+    assert "--no-lock" in capsys.readouterr().err
 
 
 def test_other_verbs_never_use_window():

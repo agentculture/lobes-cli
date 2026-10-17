@@ -177,7 +177,9 @@ reports as `lane_state_writable`. The clear needs a passwordless rule. `lobes do
 single rule (the Thor already has an equivalent one, which is reused). With no
 grant, the verb prints one stderr line and carries on; it never prompts and
 never fails. For a lane stuck at the gate, `lobes watcher install --apply`
-(user unit; needs linger, or `--system`) polls the `.gated` markers and runs
+(user unit; needs linger, or `--system`; the unit runs `lobes watcher run
+--apply`, and `run` without `--apply` only logs what it would clear) polls the
+`.gated` markers and runs
 `drop-caches` at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (300). The watcher
 skips a marker older than twice `LOBES_MEM_GATE_TIMEOUT_S` or whose lane has
 no running container, and defers the clear while another lane is still
@@ -192,8 +194,9 @@ when the card runs hot; see `gateway-fleet.md`. A deployment scaffolded before
 issue #311 lacks the gateway passthrough and stays inert until its compose is
 updated, and the Spark bands are not a serving measurement.
 
-**Benchmark window (#304).** `lobes benchmark` locks clocks for its run and
-records the host conditions; see `measuring-lane-performance.md`.
+**Benchmark window (#304).** `lobes benchmark --lock` locks clocks for its run;
+plain `lobes benchmark` is read-only and only records the host conditions. See
+`measuring-lane-performance.md`.
 
 **What none of this does:** no lobes code pauses, `docker update`s or restarts a
 serving container, nothing clears the page cache inside a container, and no

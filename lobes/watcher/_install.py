@@ -122,7 +122,15 @@ def _quote(arg: str) -> str:
 
 def render_unit(ctx: InstallContext, deploy_dir: Path, system: bool) -> str:
     template = files("lobes.templates").joinpath(UNIT_TEMPLATE).read_text(encoding="utf-8")
-    argv = [*ctx.exec_argv, "watcher", "run", "--compose-dir", str(Path(deploy_dir).resolve())]
+    # `watcher run` is dry-run without --apply (d8); the unit must commit.
+    argv = [
+        *ctx.exec_argv,
+        "watcher",
+        "run",
+        "--compose-dir",
+        str(Path(deploy_dir).resolve()),
+        "--apply",
+    ]
     env_line = f"Environment={_quote('PATH=' + ctx.path_env)}\n" if ctx.path_env else ""
     return (
         template.replace("@EXEC_START@", " ".join(_quote(a) for a in argv))

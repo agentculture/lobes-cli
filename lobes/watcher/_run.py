@@ -82,7 +82,7 @@ def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
 
 
 #: Actions logged once per lane until the action changes (not every poll).
-_QUIET_ACTIONS = ("rate-limited", "deferred:lane-starting", "ignored:stale")
+_QUIET_ACTIONS = ("rate-limited", "deferred:lane-starting", "ignored:stale", "would-clear")
 
 
 @dataclass
@@ -97,6 +97,9 @@ class Watcher:
     #: ``MG_LOG_NAME`` -> ``"starting"`` | ``"running"`` for the running lanes, or
     #: ``None`` when unknown (see :func:`lobes.runtime._compose.lane_health`).
     health: Callable[[], dict[str, str] | None] | None = None
+    #: ``False`` = dry run (d8): log ``would-clear``, never call the clear and
+    #: never persist state. ``lobes watcher run`` sets it from ``--apply``.
+    apply: bool = True
     _state: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
     _logged: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
@@ -159,6 +162,8 @@ class Watcher:
         last = self._state.get("last_attempt")
         if isinstance(last, (int, float)) and now - last < self.min_interval_s:
             return "rate-limited", None
+        if not self.apply:
+            return "would-clear", None  # dry run: no clear, no state written
         clear = self.clear if self.clear is not None else drop_caches
         result = clear()
         self._state["last_attempt"] = now
@@ -251,9 +256,10 @@ def watcher_for(deploy_dir: Path, **kw: Any) -> Watcher:
 
 
 def run_forever(watcher: Watcher, poll_s: float = DEFAULT_POLL_S) -> None:  # pragma: no cover
+    mode = "" if watcher.apply else "; DRY RUN, pass --apply to clear"
     watcher.log(
         f"lobes-watcher: watching {watcher.state_dir} "
-        f"(min interval {watcher.min_interval_s}s, poll {poll_s}s)"
+        f"(min interval {watcher.min_interval_s}s, poll {poll_s}s{mode})"
     )
     while True:
         try:

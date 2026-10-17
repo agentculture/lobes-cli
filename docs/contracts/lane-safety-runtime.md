@@ -136,6 +136,10 @@ hold     = release − host uptime, if positive
 ### The host watcher
 
 - Polls `<deployment>/logs/lane-state/*.gated`.
+- `lobes watcher run` is a dry run unless `--apply` (operator decision d8): it
+  logs `action=would-clear` and neither clears nor writes its state file. The
+  installed unit's `ExecStart` passes `--apply`. `lobes doctor`'s
+  `watcher_inactive` warns when an active unit lacks it (installed before d8).
 - On a live marker, it runs the machine CLI's `drop-caches` (see
   `machine-cli-window.md`), at most once per `LOBES_WATCHER_MIN_INTERVAL_S`.
   With no grant it logs and does nothing else.
