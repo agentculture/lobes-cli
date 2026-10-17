@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.89.1] - 2026-10-17
+
+### Added
+
+- Runbook docs/runbooks/lane-safety-r1-rollout.md: move an existing hand-kept ~/.lobes from the 0.86 scaffold to the 0.89.0 (lane-safety + #310 R1) scaffold without re-scaffolding — override-only compose merge (with the compose merge-semantics table), doctor --refresh-logwrap / --refresh-plugin / --fix, verification and rollback; dry-run record docs/evidence/2026-10-17-dryrun-r1-rollout-spark-copy.txt (#310 t6)
+
 ## [0.89.0] - 2026-10-17
 
 ### Added
