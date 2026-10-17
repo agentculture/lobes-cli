@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T05:50:04Z",
-  "updated": "2026-10-17T07:13:25Z",
+  "updated": "2026-10-17T07:22:10Z",
   "claims": [
     {
       "id": "c1",
@@ -1368,6 +1368,17 @@
       "refs": [
         "t7",
         "c6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "control-absent",
+      "what": "t12 wrote tests first but never observed them failing before implementing (they passed on first run), so the TDD red step was not witnessed",
+      "skipped_check": "run the new tests against the unimplemented module",
+      "refs": [
+        "t12"
       ],
       "origin": "llm",
       "status": "proposed"
