@@ -1220,7 +1220,7 @@ def compose_project_name(deploy_dir: os.PathLike | str) -> str:
             if m:
                 raw = m.group(1)
     if not raw:
-        raw = Path(deploy_dir).resolve().name
+        raw = os.path.basename(os.path.abspath(deploy_dir))  # compose: Abs, no symlink resolve
     return _normalize_project_name(raw)
 
 
