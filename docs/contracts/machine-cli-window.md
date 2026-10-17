@@ -112,9 +112,14 @@ state returns `ok: true`, `"restored": false`.
   drop-in `/etc/sudoers.d/<cli>-lobes` with one `sudo install`. One rule per
   command. Never full sudo.
 - **Window rules** (Jetson): `/usr/bin/jetson_clocks`, `/usr/bin/jetson_clocks
-  --store <path>`, `/usr/bin/jetson_clocks --restore <path>`, plus the fan
-  control the CLI uses. The CLI owns the exact list and prints it before
-  installing.
+  --store <path>`, `/usr/bin/jetson_clocks --restore <path>`,
+  `/usr/bin/jetson_clocks --fan` (the fan lock) and `/usr/bin/jetson_clocks
+  --show` (EMC clock and fan state for `window show`). The CLI owns the exact
+  list and prints it before installing.
+  - `nvfancontrol` has no runtime profile switch. Its options are only `-q`,
+    `-f` and `--verbose`, and `-q` needs root (read on a Thor, 2026-10-17).
+  - The fan is locked with `jetson_clocks --fan` and restored by
+    `jetson_clocks --restore`, whose stored file includes the fan PWM state.
 - **No grant, no prompt.** Every verb uses `sudo -n`. A missing grant is exit
   `2` with `reason: "not_granted"`.
 
