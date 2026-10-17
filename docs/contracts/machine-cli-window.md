@@ -8,7 +8,7 @@ only calls `window show`), and it clears the page cache around lane start/stop. 
 machine work itself (clocks, fans, sudo) lives in these CLIs, not in lobes
 (lane-safety frame, decision c25).
 
-**Status: draft, 2026-10-17. No live exchange exists yet.** The JSON below is
+**Status: implemented and released 2026-10-17** (dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1, jetson-orin-cli 0.7.1). Live exchanges on all three boxes are in `docs/evidence/2026-10-17-accept-lane-safety-hardware.txt`. Some examples below are still shapes, not captured payloads. The JSON below is
 the required *shape*, not a captured payload. Replace each example with a real
 one from a box (box + date) when the verbs ship. Tracked by the lane-safety plan,
 tasks t2 to t4 (issues #304, #308, #309).

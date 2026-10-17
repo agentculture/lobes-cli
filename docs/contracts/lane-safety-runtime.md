@@ -7,7 +7,7 @@ verbs (`lobes up`, `serve`, `switch`, `stop`, `fleet`), the host watcher
 One place names every knob, file and format, so these parts cannot drift
 apart.
 
-**Status: draft, 2026-10-17. Not yet implemented.** Lane-safety plan
+**Status: implemented 2026-10-17 (lobes 0.87.0 / 0.88.0, PRs #314 and #315).** Validated on the DGX Spark, Jetson AGX Orin and Jetson AGX Thor, side by side (`docs/evidence/2026-10-17-accept-lane-safety-hardware.txt`). Lane-safety plan
 (`docs/plans/2026-10-17-lane-safety-and-quality-304-307-308-309.md`), for
 issues #304, #307, #308 and #309. Thor behaviour is DECLARED/UNVALIDATED (#108): the
 Thor is code-only while its experimental work runs.

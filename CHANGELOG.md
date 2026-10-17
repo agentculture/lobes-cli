@@ -8,6 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `LOBES_PAGE_CACHE_CLEAR` (`auto` | `always` | `never`): `auto` clears the page cache around lifecycle verbs only on detected Spark/Thor/Orin cards; `always` tries the `sudo -n` fallback on any card.
+- The wrapper writes a `lane-state/<lane>.held` marker during the boot hold and the crash-backoff hold, so a held lane (which uses no GPU) never defers another lane's page-cache clear.
 - Crash backoff in mg-logwrap (#309): a per-lane start counter holds a lane after LOBES_START_MAX (3) starts inside LOBES_START_WINDOW_S (600 s), and a memory gate waits until MemAvailable covers the lane's --gpu-memory-utilization share before starting (LOBES_MEM_GATE, timeout LOBES_MEM_GATE_TIMEOUT_S, exit 75), writing a gate marker under logs/lane-state/
 - Page-cache clear around lifecycle verbs: compose down/up (serve, stop, switch, up, fleet) run the machine CLI's drop-caches when the single NOPASSWD sysctl rule is granted, never prompting, only on a detected Spark/Thor/Orin, and never while another lane is docker health: starting; deliberate starts reset the lane's start counter, and a counter the operator cannot delete is reported on stderr instead of silently ignored
 - Lifecycle verbs that start lanes create logs/lane-state/ (group-writable) and the compile-cache dirs as the operator before compose runs, so Docker never creates them root-owned
@@ -18,6 +20,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - lobes doctor: logwrap_stale, lane_state_writable, compile_cache_unmounted, compile_cache_size, jetson_clocks_locked, drop_caches_grant_missing, watcher_inactive; lobes doctor --refresh-logwrap (backup + packaged wrapper, nothing else; the wrapper is renamed into place so running lanes keep their inode); init and doctor --fix create the compile-cache dirs owned by the operator
 - Per-lane FlashInfer JIT cache (deviation d7, vllm#62149): every vLLM lane (and the clef-vllm decider) also binds `${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/<lane>-flashinfer` at /cache/flashinfer with FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer} (off value /root), so a recreated container skips the fp8_gemm_cutlass JIT build behind the Thor cold-boot crash; lobes init/doctor --fix create the dirs and compile_cache_unmounted flags a missing FlashInfer bind
 - Optional extras lobes-cli[spark|thor|orin] for the machine CLIs; lobes/runtime/_machine.py adapter with a sudo -n fallback
+
+### Fixed
+
+- Review round 2: the lane-health check filters `docker ps` on the compose project label, so `embed-*` overlay lanes count. On every start, the wrapper hands a root-owned `lane-state/` back to the log dir's owner.
+- `status --pressure` reads the swap and iowait thresholds from the deployment `.env`, as the gateway does.
+- A failed card detection is retried at most once a minute instead of being cached for the life of the process.
+- `--refresh-logwrap` keeps the wrapper's owner when run as root.
+- The pre-start bind-source setup lives only in the `_before_up` chokepoint.
 
 ## [0.87.0] - 2026-10-17
 
