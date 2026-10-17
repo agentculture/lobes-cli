@@ -26,6 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Review round 2: the lane-health check filters `docker ps` on the compose project label, so `embed-*` overlay lanes count. On every start, the wrapper hands a root-owned `lane-state/` back to the log dir's owner.
 - `status --pressure` reads the swap and iowait thresholds from the deployment `.env`, as the gateway does.
 - A failed card detection is retried at most once a minute instead of being cached for the life of the process.
+- The card-detection cache is bounded (8 detectors), and a detection that returns `unknown` is cached instead of re-running `nvidia-smi` every minute; only a detection that raised is retried.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.
 - The pre-start bind-source setup lives only in the `_before_up` chokepoint.
 - Lane health no longer depends on guessing one compose project name: `docker ps` lists every compose-labelled container with its project label, and rows are kept when the label is one of the deployment's candidates (`COMPOSE_PROJECT_NAME`, the top-level `name:`, and the basename of the deployment dir both as given and with symlinks resolved). A symlinked `~/.lobes` no longer leaves lane health empty and the boot guard silently off. The watcher unit's `--compose-dir` keeps the symlink so the watcher derives the same candidates.

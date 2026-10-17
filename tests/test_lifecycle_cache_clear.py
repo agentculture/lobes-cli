@@ -183,16 +183,15 @@ def _flaky(results):
     return detect, calls
 
 
-@pytest.mark.parametrize("first", [RuntimeError("nvidia-smi not ready"), "unknown"])
-def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
+def test_failed_detection_is_retried_after_the_interval(monkeypatch):
     """review2-b #6: a boot-time failure must not stick for the watcher's lifetime."""
     now = {"t": 1000.0}
     monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
-    detect, calls = _flaky([first, "thor"])
+    detect, calls = _flaky([RuntimeError("nvidia-smi not ready"), "thor"])
     monkeypatch.setattr(_machine, "detect_card", detect)
-    assert _machine.detected_card() in (None, "unknown")
+    assert _machine.detected_card() is None
     now["t"] += _machine.DETECT_RETRY_S - 1
-    assert _machine.detected_card() in (None, "unknown")
+    assert _machine.detected_card() is None
     assert len(calls) == 1
     now["t"] += 2
     assert _machine.detected_card() == "thor"
@@ -629,3 +628,27 @@ def test_ungranted_hint_with_the_machine_cli_on_path_names_it(rec, tmp_path, mon
     err = capsys.readouterr().err
     assert "'spark grant-permissions'" in err
     assert "lobes-cli[" not in err
+
+
+# --- review3 #4: a bounded detection cache; a successful UNKNOWN is stable ----
+
+
+def test_successful_unknown_detection_is_cached_for_good(monkeypatch):
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
+    detect, calls = _flaky(["unknown", "thor"])
+    monkeypatch.setattr(_machine, "detect_card", detect)
+    assert _machine.detected_card() == "unknown"
+    now["t"] += 100 * _machine.DETECT_RETRY_S
+    assert _machine.detected_card() == "unknown"
+    assert len(calls) == 1  # nvidia-smi answered; re-probing every minute is waste
+
+
+def test_detection_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(_machine, "_card_cache", _machine._card_cache.__class__())
+    for i in range(50):
+        _machine.detected_card(lambda i=i: types.SimpleNamespace(resolved=f"c{i}"))
+    assert len(_machine._card_cache) <= _machine.CARD_CACHE_MAX
+    # the most recent detector is still a hit
+    last = list(_machine._card_cache)[-1]
+    assert _machine._card_cache[last][0] == "c49"

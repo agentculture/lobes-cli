@@ -163,10 +163,11 @@ hold     = release − host uptime, if positive
   attempts it on any card, so an undetected box with a passwordless
   `vm.drop_caches` sudo rule still gets its clear; `never` skips it (and the
   `docker ps` below) everywhere. The knob governs the lifecycle verbs only; the
-  watcher is switched on and off by installing and uninstalling it. A
-  successful card detection is cached for the life of the process; a failed or
-  `unknown` one is retried, at most once per 60 s, so the long-running watcher
-  recovers when `nvidia-smi` was not ready at boot.
+  watcher is switched on and off by installing and uninstalling it. A card
+  detection that returns is cached for the life of the process, `unknown`
+  included, because the probe answered. Only a detection that raised is
+  retried, at most once per 60 s, so the long-running watcher recovers when
+  `nvidia-smi` was not ready at boot.
 - When the clear is attempted with no grant, the verb prints one stderr line
   and carries on. It never prompts and never fails. The line names
   `<card> grant-permissions` only when that machine CLI is on `PATH`.
