@@ -155,8 +155,10 @@ def test_card_detection_cached_per_process(monkeypatch):
     assert len(calls) == 1
 
 
-def test_card_detection_failure_is_none_and_cached(monkeypatch):
+def test_card_detection_failure_is_none_and_rate_limited(monkeypatch):
     calls: list[int] = []
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
 
     def boom():
         calls.append(1)
@@ -165,7 +167,38 @@ def test_card_detection_failure_is_none_and_cached(monkeypatch):
     monkeypatch.setattr(_machine, "detect_card", boom)
     assert _machine.detected_card() is None
     assert _machine.detected_card() is None
+    assert len(calls) == 1  # inside the retry interval: no re-probe
+
+
+def _flaky(results):
+    calls: list[int] = []
+
+    def detect():
+        calls.append(1)
+        r = results[min(len(calls), len(results)) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return types.SimpleNamespace(resolved=r)
+
+    return detect, calls
+
+
+@pytest.mark.parametrize("first", [RuntimeError("nvidia-smi not ready"), "unknown"])
+def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
+    """review2-b #6: a boot-time failure must not stick for the watcher's lifetime."""
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
+    detect, calls = _flaky([first, "thor"])
+    monkeypatch.setattr(_machine, "detect_card", detect)
+    assert _machine.detected_card() in (None, "unknown")
+    now["t"] += _machine.DETECT_RETRY_S - 1
+    assert _machine.detected_card() in (None, "unknown")
     assert len(calls) == 1
+    now["t"] += 2
+    assert _machine.detected_card() == "thor"
+    now["t"] += 10 * _machine.DETECT_RETRY_S
+    assert _machine.detected_card() == "thor"
+    assert len(calls) == 2  # a success is cached for good
 
 
 # --- review-b #3: no lifecycle clear while another lane is mid-boot --------
@@ -194,7 +227,7 @@ def test_up_defers_clear_while_another_lane_starts(rec, tmp_path, monkeypatch, c
     )
     _compose.run_compose(tmp_path, ["docker", "compose", "up", "-d", "--no-deps", "vllm-hand"])
     assert events == ["docker up -d --no-deps vllm-hand"]  # no clear, verb still runs
-    assert calls == [_compose.LANE_HEALTH_ARGV]
+    assert calls == [_compose.lane_health_argv(tmp_path)]
     err = capsys.readouterr().err
     assert err.count("\n") == 1 and "deferred" in err and "primary" in err
 
@@ -245,3 +278,184 @@ def test_lane_health_none_on_docker_error(tmp_path, monkeypatch):
         lambda argv, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="denied"),
     )
     assert _compose.lane_health(tmp_path) is None
+
+
+# --- review2-b #5: LOBES_PAGE_CACHE_CLEAR = auto | always | never ------------
+
+
+@pytest.mark.parametrize("card", ["unknown", None])
+def test_always_attempts_the_clear_on_an_undetected_card(rec, tmp_path, monkeypatch, card):
+    events, _ = rec
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: card)
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    assert _compose.clear_page_cache(tmp_path) is True
+    assert events == ["clear"]
+
+
+def test_always_from_the_deployment_env(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    monkeypatch.delenv("LOBES_PAGE_CACHE_CLEAR", raising=False)
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=always\n", encoding="utf-8")
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["clear", "docker up -d"]
+
+
+@pytest.mark.parametrize("card", ["spark", "unknown"])
+def test_never_skips_the_clear_everywhere(rec, tmp_path, monkeypatch, capsys, card):
+    events, _ = rec
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: card)
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=never\n", encoding="utf-8")
+    monkeypatch.delenv("LOBES_PAGE_CACHE_CLEAR", raising=False)
+    probes = _ps(monkeypatch, "")
+    _compose.compose_up_detached(tmp_path)
+    _compose.compose_down(tmp_path)
+    assert events == ["docker up -d", "docker down"]
+    assert probes == []  # no docker ps either
+    assert capsys.readouterr().err == ""
+
+
+def test_process_env_wins_over_the_deployment_env(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=never\n", encoding="utf-8")
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["clear", "docker up -d"]
+
+
+@pytest.mark.parametrize("value", ["auto", "", "bogus"])
+def test_auto_and_unknown_values_keep_the_card_gate(rec, tmp_path, monkeypatch, capsys, value):
+    events, _ = rec
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", value)
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    assert _compose.clear_page_cache(tmp_path) is False
+    assert events == []
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "orin")
+    assert _compose.clear_page_cache(tmp_path) is True
+
+
+def test_always_ungranted_on_an_undetected_card_names_the_sudo_rule(
+    rec, tmp_path, monkeypatch, capsys
+):
+    events, result = rec
+    result["ok"] = False
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    monkeypatch.setattr(_machine, "_current_cli", lambda: None)
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "vm.drop_caches" in err and "LOBES_PAGE_CACHE_CLEAR=never" in err
+
+
+# --- review2-b #1: lanes are found by compose project, not by name prefix ----
+
+
+def test_lane_health_argv_filters_by_the_compose_project_label(tmp_path, monkeypatch):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    d = tmp_path / ".lobes"
+    d.mkdir()
+    argv = _compose.lane_health_argv(d)
+    assert argv[:2] == ["docker", "ps"]
+    assert "label=com.docker.compose.project=lobes" in argv
+    assert not any(a.startswith("name=") for a in argv)
+
+
+@pytest.mark.parametrize(
+    "dirname,setup,expected",
+    [
+        (".lobes", {}, "lobes"),
+        ("My Deploy.1", {}, "mydeploy1"),
+        ("dep", {"dotenv": "COMPOSE_PROJECT_NAME=fromdotenv\n"}, "fromdotenv"),
+        ("dep", {"name": "toplevel"}, "toplevel"),
+        ("dep", {"name": "toplevel", "dotenv": "COMPOSE_PROJECT_NAME=wins\n"}, "wins"),
+        ("dep", {"dotenv": "COMPOSE_PROJECT_NAME=dot\n", "environ": "Proc"}, "proc"),
+    ],
+)
+def test_compose_project_name_resolution(tmp_path, monkeypatch, dirname, setup, expected):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    d = tmp_path / dirname
+    d.mkdir()
+    body = "services: {}\n"
+    if "name" in setup:
+        body = f"name: {setup['name']}\n" + body
+    (d / "docker-compose.yml").write_text(body, encoding="utf-8")
+    if "dotenv" in setup:
+        (d / ".env").write_text(setup["dotenv"], encoding="utf-8")
+    if "environ" in setup:
+        monkeypatch.setenv("COMPOSE_PROJECT_NAME", setup["environ"])
+    assert _compose.compose_project_name(d) == expected
+
+
+def test_lane_health_maps_embed_overlay_lanes(tmp_path, monkeypatch):
+    """embed-* containers are not model-gear-* but run the memory gate too."""
+    (tmp_path / "docker-compose.yml").write_text(
+        "services:\n  vllm-primary:\n    environment:\n      - MG_LOG_NAME=primary\n",
+        encoding="utf-8",
+    )
+    (tmp_path / _compose.EMBED_OVERLAY).write_text(
+        "services:\n  embed-nemotron-embed:\n    container_name: embed-nemotron-embed\n"
+        "    environment:\n"
+        "      - MG_LOG_NAME=nemotron-embed   # -> /logs/model-gear/nemotron-embed-<boot>.log\n",
+        encoding="utf-8",
+    )
+    calls = _ps(
+        monkeypatch,
+        "vllm-primary\tmodel-gear-vllm-primary\tUp 2 hours (healthy)\n"
+        "embed-nemotron-embed\tembed-nemotron-embed\tUp 1 minute (health: starting)\n",
+    )
+    assert _compose.lane_health(tmp_path) == {"primary": "running", "nemotron-embed": "starting"}
+    assert calls == [_compose.lane_health_argv(tmp_path)]
+
+
+def test_a_booting_embed_lane_defers_the_clear(rec, tmp_path, monkeypatch, capsys):
+    events, _ = rec
+    _deploy(tmp_path)
+    (tmp_path / _compose.EMBED_OVERLAY).write_text(
+        "services:\n  embed-qwen3vl-embed:\n    environment:\n"
+        "      - MG_LOG_NAME=qwen3vl-embed\n",
+        encoding="utf-8",
+    )
+    _ps(monkeypatch, "embed-qwen3vl-embed\tembed-qwen3vl-embed\tUp 1 minute (health: starting)\n")
+    _compose.compose_up_detached(tmp_path)
+    assert "clear" not in events and events[-1].endswith("up -d")
+    assert "qwen3vl-embed" in capsys.readouterr().err
+
+
+# --- review2-b #2: lanes held before exec (.held) never defer the clear ------
+
+
+def test_lanes_starting_excludes_held_lanes(tmp_path):
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text('{"lane": "primary", "reason": "boot_hold"}')
+    assert _compose.held_lanes(tmp_path) == {"primary"}
+    health = {"primary": "starting", "hand": "starting"}
+    excluded = _compose.gated_lanes(tmp_path) | _compose.held_lanes(tmp_path)
+    assert _compose.lanes_starting(health, excluded) == ["hand"]
+
+
+def test_counter_held_lane_does_not_block_a_clear(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text(
+        '{"lane": "primary", "since": 1, "reason": "start_counter"}', encoding="utf-8"
+    )
+    _ps(monkeypatch, "vllm-primary\tmodel-gear-vllm-primary\tUp 9 minutes (health: starting)\n")
+    _compose.run_compose(tmp_path, ["docker", "compose", "up", "-d", "--no-deps", "vllm-hand"])
+    assert events == ["clear", "docker up -d --no-deps vllm-hand"]
+
+
+def test_a_held_lane_does_not_hide_another_booting_lane(rec, tmp_path, monkeypatch, capsys):
+    events, _ = rec
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text('{"lane": "primary"}', encoding="utf-8")
+    _ps(
+        monkeypatch,
+        "vllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "vllm-hand\tmodel-gear-vllm-hand\tUp 1 minute (health: starting)\n",
+    )
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["docker up -d"]
+    err = capsys.readouterr().err
+    assert "hand" in err and "primary" not in err.split("starting:")[1]

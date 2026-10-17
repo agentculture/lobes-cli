@@ -542,6 +542,54 @@ def test_refresh_replaces_the_wrapper_atomically_new_inode(tmp_path: Path) -> No
     ]  # no temp file left behind
 
 
+def _stale_wrapper(tmp_path: Path) -> tuple[Path, Path]:
+    d = _fleet(tmp_path)
+    wrapper = d / _compose.LOG_WRAPPER
+    wrapper.write_text('#!/bin/bash\n# hand-edited\nexec "$@"\n', encoding="utf-8")
+    return d, wrapper
+
+
+def test_refresh_as_root_keeps_the_old_owner(tmp_path: Path, monkeypatch) -> None:
+    """review2-b #7: under sudo, mkstemp + os.replace would leave a root-owned wrapper."""
+    d, wrapper = _stale_wrapper(tmp_path)
+    st = wrapper.stat()
+    calls: list[tuple[str, int, int, bool]] = []
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        os,
+        "chown",
+        lambda p, u, g: calls.append((str(p), u, g, wrapper.read_text().endswith('"$@"\n'))),
+    )
+    actions = ls.apply_refresh_logwrap(d)
+    temp = [c for c in calls if Path(c[0]).name.startswith(".mg-logwrap.sh.")]
+    assert temp, calls
+    path, uid, gid, old_still_in_place = temp[0]
+    assert (uid, gid) == (st.st_uid, st.st_gid)
+    assert old_still_in_place  # chowned BEFORE the rename
+    assert (str(d / "mg-logwrap.sh.bak"), st.st_uid, st.st_gid) in [c[:3] for c in calls]
+    assert not any("could not" in a for a in actions)
+
+
+def test_refresh_as_root_reports_a_failed_chown(tmp_path: Path, monkeypatch) -> None:
+    d, wrapper = _stale_wrapper(tmp_path)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+
+    def deny(*a):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(os, "chown", deny)
+    actions = ls.apply_refresh_logwrap(d)
+    assert wrapper.read_text(encoding="utf-8") == _packaged_logwrap()  # still written
+    assert any("could not keep the owner" in a for a in actions), actions
+
+
+def test_refresh_as_a_user_never_chowns(tmp_path: Path, monkeypatch) -> None:
+    d, _ = _stale_wrapper(tmp_path)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(os, "chown", lambda *a: pytest.fail("chown as non-root"))
+    assert ls.apply_refresh_logwrap(d)
+
+
 def test_refresh_is_a_noop_when_current(tmp_path: Path) -> None:
     d = _fleet(tmp_path)
     before = _snapshot(d)

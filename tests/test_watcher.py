@@ -260,10 +260,11 @@ def test_watcher_runs_no_mutating_docker_command(tmp_path, monkeypatch):
     assert seen, "the adapter should have probed the sudo grant"
     docker = [a for a in seen if a and Path(a[0]).name == "docker"]
     assert docker, "the lane-health read should have run"
-    assert all(a == _compose.LANE_HEALTH_ARGV for a in docker)
-    assert _compose.LANE_HEALTH_ARGV[:2] == ["docker", "ps"]
+    argv = _compose.lane_health_argv(deploy)
+    assert all(a == argv for a in docker)
+    assert argv[:2] == ["docker", "ps"]
     assert not any(
-        verb in _compose.LANE_HEALTH_ARGV
+        verb in argv
         for verb in ("stop", "start", "restart", "kill", "rm", "update", "pause", "up", "down")
     )
     assert not any("docker" in " ".join(a) for a in seen if a not in docker)
@@ -537,3 +538,52 @@ def test_cli_install_no_linger_apply_errors(tmp_path, monkeypatch, capsys):
     assert rc != 0
     err = capsys.readouterr().err
     assert "enable-linger" in err
+
+
+def test_embed_overlay_lane_marker_is_live_not_stale(tmp_path, monkeypatch):
+    """review2-b #1: an embed-* lane (not named model-gear-*) is found by its
+    compose project label, so its gate marker is acted on, not aged out."""
+    from lobes.runtime import _compose
+
+    deploy = tmp_path
+    (deploy / "docker-compose.yml").write_text("services: {}\n")
+    (deploy / _compose.EMBED_OVERLAY).write_text(
+        "services:\n  embed-nemotron-embed:\n    container_name: embed-nemotron-embed\n"
+        "    environment:\n      - MG_LOG_NAME=nemotron-embed\n"
+    )
+    seen: list[list[str]] = []
+
+    def fake_probe(argv, **k):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            "embed-nemotron-embed\tembed-nemotron-embed\tUp 3 minutes (health: starting)\n",
+            "",
+        )
+
+    monkeypatch.setattr(_compose, "_probe", fake_probe)
+    _marker(deploy / "logs" / "lane-state", "nemotron-embed", since=int(Clock()()))
+    clear = CountingClear()
+    w = _run.watcher_for(deploy, clock=Clock(), log=[].append, clear=clear)
+    w.min_interval_s = 0
+    actions = w.tick()
+    assert actions[0]["stale"] is False
+    assert actions[0]["action"] == "cleared"  # gated lanes never block their own clear
+    assert (
+        seen
+        and f"label=com.docker.compose.project={_compose.compose_project_name(deploy)}" in seen[0]
+    )
+
+
+def test_watcher_does_not_defer_for_a_held_lane(tmp_path):
+    """review2-b #2: a lane in its boot/counter hold (.held) is not booting."""
+    state = tmp_path / "logs" / "lane-state"
+    _marker(state, "worker")
+    (state / "primary.held").write_text('{"lane": "primary", "since": 1, "reason": "boot_hold"}')
+    clear, logs = CountingClear(), []
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.health = lambda: {"worker": "starting", "primary": "starting"}
+    actions = w.tick()
+    assert actions[0]["action"] == "cleared"
+    assert clear.calls == 1

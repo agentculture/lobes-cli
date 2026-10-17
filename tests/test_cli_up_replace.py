@@ -444,3 +444,12 @@ def test_replace_stops_every_running_decider_domain_with_its_profile(box, capsys
     assert {s.rsplit(" ", 1)[-1] for s in stops} == {"decider-general", "decider-triage"}
     assert "DECIDER_FEASIBLE=false" in _env(box)
     assert "decider, decider" not in capsys.readouterr().err
+
+
+def test_replace_leaves_bind_sources_to_the_chokepoint(box, monkeypatch) -> None:
+    """review2-b #8: the swap path never calls ensure_log_dir itself."""
+    monkeypatch.setattr(
+        _compose, "ensure_log_dir", lambda *a, **k: pytest.fail("swap bypassed _before_up")
+    )
+    _activate_innereye(box)
+    assert _up(box, "innereye", "--replace", "--apply") == 0

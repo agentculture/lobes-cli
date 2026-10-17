@@ -548,19 +548,29 @@ def apply_refresh_logwrap(deploy_dir: Path) -> list[str]:
     INODE and a held lane's bash is still reading it, so truncating and
     rewriting in place would make bash resume at a stale offset in the new
     bytes. The rename leaves the old inode intact for them; the ``.bak`` is an
-    independent copy. The old file's mode is kept.
+    independent copy. The old file's mode is kept, and so is its owner when
+    this runs as root (review2-b #7: under ``sudo`` the temp file and the copy
+    would otherwise be root-owned) — best-effort, a failure is reported as an
+    extra action line and never stops the refresh.
     """
     if _refresh_state(deploy_dir) != "stale":
         return []
     wrapper = Path(deploy_dir) / _compose.LOG_WRAPPER
     backup = wrapper.with_name(wrapper.name + _BACKUP_SUFFIX)
+    old = wrapper.stat()
     shutil.copy2(wrapper, backup)
-    mode = stat.S_IMODE(wrapper.stat().st_mode)
+    mode = stat.S_IMODE(old.st_mode)
+    as_root = os.geteuid() == 0
+    failed: list[str] = []
+    if as_root:
+        failed += _keep_owner(backup, old)
     fd, tmp = tempfile.mkstemp(prefix=f".{wrapper.name}.", dir=str(wrapper.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(_packaged_logwrap())
         os.chmod(tmp, mode)
+        if as_root:
+            failed += _keep_owner(Path(tmp), old, shown=wrapper.name)
         os.replace(tmp, wrapper)
     except BaseException:
         try:
@@ -568,4 +578,23 @@ def apply_refresh_logwrap(deploy_dir: Path) -> list[str]:
         except OSError:
             pass
         raise
-    return [f"backed up {wrapper.name} -> {backup.name}", f"wrote packaged {wrapper.name}"]
+    return [
+        f"backed up {wrapper.name} -> {backup.name}",
+        f"wrote packaged {wrapper.name}",
+        *failed,
+    ]
+
+
+def _keep_owner(path: Path, old: os.stat_result, shown: str | None = None) -> list[str]:
+    """chown *path* to *old*'s uid/gid; ``[]`` on success, else one report line."""
+    try:
+        os.chown(path, old.st_uid, old.st_gid)
+    except OSError as exc:
+        reason = exc.strerror or exc.__class__.__name__
+        name = shown or path.name
+        owner = f"{old.st_uid}:{old.st_gid}"
+        return [
+            f"could not keep the owner {owner} on {name} ({reason})"
+            f" - run 'sudo chown {owner} {path.parent / name}'"
+        ]
+    return []

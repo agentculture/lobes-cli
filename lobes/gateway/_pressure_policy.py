@@ -257,6 +257,34 @@ SWAP_DEGRADED_THRESHOLD: float = _env_float("LOBES_SWAP_DEGRADED_THRESHOLD", 75.
 #: Env override: ``LOBES_IOWAIT_DEGRADED_THRESHOLD`` (default 50.0).
 IOWAIT_DEGRADED_THRESHOLD: float = _env_float("LOBES_IOWAIT_DEGRADED_THRESHOLD", 50.0)
 
+#: The two busy-threshold env keys, in ``(swap, iowait)`` order.
+SWAP_THRESHOLD_ENV = "LOBES_SWAP_DEGRADED_THRESHOLD"
+IOWAIT_THRESHOLD_ENV = "LOBES_IOWAIT_DEGRADED_THRESHOLD"
+
+
+def degraded_thresholds_from_env(environ: Mapping[str, str]) -> tuple[float, float]:
+    """``(swap, iowait)`` busy thresholds from *environ* (review2-b #4).
+
+    A missing, empty, invalid or non-finite key keeps the module constant, so
+    a caller that passes a merged env (the one-shot ``lobes status
+    --pressure`` reading the deployment ``.env``) gets exactly the gateway's
+    parsing. The gateway itself keeps its import-time constants.
+    """
+
+    def _pick(key: str, default: float) -> float:
+        raw = environ.get(key)
+        try:
+            value = float(str(raw).strip()) if raw is not None and str(raw).strip() else None
+        except ValueError:
+            value = None
+        return value if value is not None and math.isfinite(value) else default
+
+    return (
+        _pick(SWAP_THRESHOLD_ENV, SWAP_DEGRADED_THRESHOLD),
+        _pick(IOWAIT_THRESHOLD_ENV, IOWAIT_DEGRADED_THRESHOLD),
+    )
+
+
 # --- Thermal shed band (lane-safety t14; contract §1 / §7) -------------------
 
 
@@ -507,6 +535,7 @@ def decide(
     thermal_c: float | None = None,
     thermal_latched: bool = False,
     thermal_bands: tuple[float | None, float | None] | None = None,
+    thresholds: tuple[float, float] | None = None,
 ) -> dict:
     """Map system pressure + a requested tier to a busy/shed routing decision.
 
@@ -554,6 +583,11 @@ def decide(
         Explicit ``(shed_c, resume_c)`` overriding the module constants (the
         one-shot CLI reads them from the deployment ``.env``); ``None`` keeps
         the gateway's process-env bands.
+    thresholds:
+        Explicit ``(swap, iowait)`` busy thresholds overriding
+        ``SWAP_DEGRADED_THRESHOLD`` / ``IOWAIT_DEGRADED_THRESHOLD`` (the
+        one-shot CLI reads them from the deployment ``.env``, review2-b #4);
+        ``None`` keeps the gateway's import-time constants.
 
     Returns
     -------
@@ -590,8 +624,13 @@ def decide(
     exactly equal to a threshold does **not** trigger busy mode.  For
     example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` is busy.
     """
-    swap_thrash = swap_used_percent > SWAP_DEGRADED_THRESHOLD
-    iowait_high = iowait_percent > IOWAIT_DEGRADED_THRESHOLD
+    swap_limit, iowait_limit = (
+        thresholds
+        if thresholds is not None
+        else (SWAP_DEGRADED_THRESHOLD, IOWAIT_DEGRADED_THRESHOLD)
+    )
+    swap_thrash = swap_used_percent > swap_limit
+    iowait_high = iowait_percent > iowait_limit
 
     # `mode` is UNCHANGED by d1: it reports the HOST, and both signals are
     # honest observations of it. Only the shed band below narrowed.

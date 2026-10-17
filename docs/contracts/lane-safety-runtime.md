@@ -33,6 +33,7 @@ behaviour from before this work.
 | `LOBES_THERMAL_SHED_C` | empty (per-card) | empty | gateway | Shed above this temperature. |
 | `LOBES_THERMAL_RESUME_C` | empty (per-card) | empty | gateway | Stop shedding below this temperature (hysteresis). |
 | `LOBES_WATCHER_MIN_INTERVAL_S` | `300` | — | watcher | Minimum seconds between two cache clears. |
+| `LOBES_PAGE_CACHE_CLEAR` | `auto` | `never` | lifecycle verbs | Where the lifecycle page-cache clear is attempted: `auto` on a detected Spark, Thor or Orin only; `always` on any card (machine CLI, else the `sudo -n` fallback); `never` nowhere. The process environment wins over the `.env`; an unrecognised value is `auto`. |
 
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal
@@ -53,12 +54,25 @@ hold     = release − host uptime, if positive
 - `LOBES_BOOT_DELAY_S=0` disables the hold and the stagger together.
 - The hold is logged once, in the lane log, as
   `lobes: host up <u>s, holding <h>s (boot delay <d>s + stagger <o>s)`.
+- **Hold marker.** For exactly the duration of the hold the wrapper keeps
+  `${MG_LOG_DIR}/lane-state/<MG_LOG_NAME>.held`, one JSON object:
+
+  ```json
+  {"lane": "primary", "since": 1760688000, "reason": "boot_hold"}
+  ```
+
+  `reason` is `boot_hold` here and `start_counter` for the start-counter hold
+  (section 3). The wrapper removes it when the hold ends, on TERM/INT and on
+  any other exit, and drops a leftover one for its own lane when it starts (a
+  SIGKILLed wrapper runs no trap). It tells the page-cache clear that the lane
+  is held, not booting (section 5). An unwritable `lane-state/` skips the
+  marker; the hold still runs.
 - After a reboot, dockerd restarts containers by restart policy and does not
   honour compose `depends_on` (assumption c32, unverified on DGX OS and JetPack:
   lapse l2). So the hold lives in each container's own entrypoint.
 - Every hold (this one, the start counter, the memory gate) is stoppable: the
   wrapper waits with `sleep N & wait $!` under a TERM/INT handler that removes
-  the gate marker and exits `143`/`130`, so `docker stop` ends a held lane at
+  the gate and hold markers and exits `143`/`130`, so `docker stop` ends a held lane at
   once. Before 2026-10-17 a held lane ignored TERM until docker's kill timeout
   (measured on Spark, Orin and Thor).
 
@@ -73,6 +87,8 @@ hold     = release − host uptime, if positive
   the window, the wrapper logs
   `lobes: <n> starts in <w>s — holding; clear with 'lobes up <role> --apply' or delete <file>`,
   and re-checks every 30 s until the oldest start ages out or the file is gone.
+  While it waits it keeps the `.held` marker with `reason: "start_counter"`
+  (section 2).
   With the defaults, the 4th start inside 600 s holds. The start itself is
   recorded when the lane gets past the hold. `<role>` is the role name for the
   lane (`primary` → `cortex`, `multimodal` → `senses`, `embed` → `embedder`,
@@ -84,7 +100,15 @@ hold     = release − host uptime, if positive
   container starts; a new `lane-state/` is mode `0775`, and under `sudo` both are
   chowned to `SUDO_UID`/`SUDO_GID`. Left to the first root container, the
   directory would be root `0755` and the operator could not delete a counter.
-  An existing directory is never changed.
+  An existing directory is never changed by the verbs.
+- **Self-heal in the wrapper.** The wrapper runs as root inside the container,
+  so on a box where a root container already created `lane-state/` the verbs'
+  rule above never repairs it. So on every start the wrapper aligns
+  `lane-state/` and each file it writes there (its `.starts`, `.gated` and
+  `.held`) to the owner of the parent log dir: `chown --reference=<log dir>`,
+  falling back to `chown "$(stat -c %u:%g <log dir>)"`. It is best-effort and
+  silent: a failed chown never blocks the lane. The next start of any lane
+  repairs the directory; each lane repairs its own files.
 - **Reset:** a lifecycle verb that starts a lane on purpose deletes that lane's
   file first, so deliberate restarts never count. A missing file is fine. A
   file the verb cannot delete is reported as one stderr line naming the files,
@@ -127,11 +151,18 @@ hold     = release − host uptime, if positive
 
 - `lobes up`, `serve`, `switch`, `stop` and `fleet` clear the page cache
   after a `down` and before an `up` (one clear per down→up pair).
-- The clear is attempted only on a detected Spark, Thor or Orin. On any other
-  card it is skipped silently: no `sudo -n -l` probe, no stderr line. Card
-  detection runs at most once per process.
-- On a supported card with no grant, the verb prints one stderr line and
-  carries on. It never prompts and never fails.
+- `LOBES_PAGE_CACHE_CLEAR` (section 1) decides where the clear is attempted.
+  With the default `auto`, only on a detected Spark, Thor or Orin. On any other
+  card it is skipped silently: no `sudo -n -l` probe, no stderr line. `always`
+  attempts it on any card, so an undetected box with a passwordless
+  `vm.drop_caches` sudo rule still gets its clear; `never` skips it (and the
+  `docker ps` below) everywhere. The knob governs the lifecycle verbs only; the
+  watcher is switched on and off by installing and uninstalling it. A
+  successful card detection is cached for the life of the process; a failed or
+  `unknown` one is retried, at most once per 60 s, so the long-running watcher
+  recovers when `nvidia-smi` was not ready at boot.
+- When the clear is attempted with no grant, the verb prints one stderr line
+  and carries on. It never prompts and never fails.
 
 ### The host watcher
 
@@ -159,21 +190,30 @@ OTHER lane is starting.
 - **Signal: docker health, read-only.** "Starting" is docker's
   `health: starting`: the lane is inside its healthcheck `start_period` and not
   yet healthy. Both callers read it with one fixed argv,
-  `docker ps --filter name=model-gear- --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
-  (`_compose.LANE_HEALTH_ARGV`), and map each compose service to its
-  `MG_LOG_NAME`.
+  `docker ps --filter label=com.docker.compose.project=<project> --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.lane_health_argv`), and map each compose service to its
+  `MG_LOG_NAME`. `<project>` is the deployment's compose project, resolved as
+  compose does (lobes never passes `-p`): `COMPOSE_PROJECT_NAME` in the
+  environment, then in the deployment `.env`, then a top-level `name:` in the
+  compose files, then the deployment directory's basename, normalised (live
+  boxes: `~/.lobes` gives `lobes`). The filter is the project label, not a
+  `model-gear-` name prefix, because the embed overlay's vLLM lanes
+  (`embed-qwen3vl-embed`, `embed-qwen3vl-rerank`, `embed-nemotron-embed`,
+  `embed-nomic-code-embed`) run the memory gate under their own container
+  names; a name filter hid their boots and made their live markers look stale.
 - **Why not the lane-state markers.** A `.starts` entry is written before the
   memory gate and long before vLLM's profiling step, which for a 27B lane runs
   minutes after the start. A fixed "fresh start" window (for example 120 s)
   would miss it. A lane that waited at the gate would be missed entirely, and
   `LOBES_START_MAX=0` writes no entry at all. Docker's health status covers the
   whole boot.
-- **Gated lanes do not count.** A lane held at the memory gate (or a boot or
-  start-counter hold) is also `health: starting`, because it has not exec'd
-  vLLM yet. Lanes with a `.gated` marker are excluded, so they never block
-  their own clear. A lane in the boot hold or a start-counter hold has no
-  marker and does count, so after a reboot the clear waits for the staggered
-  boot to settle. That is deliberately conservative.
+- **Gated and held lanes do not count.** A lane held at the memory gate, in
+  the boot hold or stagger, or in a start-counter hold is also
+  `health: starting`, because it has not exec'd vLLM yet and uses no GPU.
+  Lanes with a `.gated` marker (section 4) or a `.held` marker (section 2) are
+  excluded, so a gated lane never blocks its own clear and a held lane never
+  defers a clear for the minutes its hold lasts. Only a lane past every hold,
+  actually loading, counts as starting.
 - **Docker unreadable** (absent, no permission, error): the state is unknown.
   The clear proceeds as before, and the watcher ages markers only by time.
 - The lifecycle verb prints one stderr line naming the starting lanes. The
@@ -224,7 +264,9 @@ OTHER lane is starting.
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
   then the packaged wrapper and nothing else; the wrapper is written to a temp
   file and renamed over the old name, so running containers, which bind-mount
-  the old inode, keep reading intact bytes until they are recreated), `jetson_clocks_locked` (warn:
+  the old inode, keep reading intact bytes until they are recreated; the new
+  file and the `.bak` keep the old file's mode and, when run as root, its
+  owner, and a failed chown is reported, never fatal), `jetson_clocks_locked` (warn:
   `window show` reports `clocks_locked`, or `active` from an older CLI,
   while no benchmark window holds the host lock),
   `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
@@ -300,7 +342,11 @@ OTHER lane is starting.
 - The gateway reads the three knobs from its own environment; the compose
   passes them from the deployment `.env`. `lobes status --pressure` runs on the
   host, so it reads them from the resolved deployment `.env` (best-effort: no
-  deployment is fine), and a key set in the CLI's own environment wins.
+  deployment is fine), and a key set in the CLI's own environment wins. It
+  reads the gateway's swap/iowait busy thresholds
+  (`LOBES_SWAP_DEGRADED_THRESHOLD`, `LOBES_IOWAIT_DEGRADED_THRESHOLD`) the same
+  way, so a deployment that raises one (an Orin's iowait threshold) gets the
+  same verdict from `status --pressure` as from the gateway.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

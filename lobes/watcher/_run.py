@@ -13,7 +13,9 @@ lane is mid-boot (docker ``health: starting``) the clear is deferred, because a
 drop during a sibling vLLM's memory profiling can trip it on unified memory.
 
 The watcher runs no docker command that changes anything: its one docker call
-is the fixed, read-only ``docker ps`` of :data:`lobes.runtime._compose.LANE_HEALTH_ARGV`
+is the fixed-shape, read-only ``docker ps`` of
+:func:`lobes.runtime._compose.lane_health_argv` (filtered by the deployment's
+compose project label)
 (unreadable docker = unknown: age-only staleness, no deferral). Its only side
 effect besides its own state file is the adapter call. Every action is one log
 line on stderr (the unit's journal captures it).
@@ -187,7 +189,9 @@ class Watcher:
         health = self._read_health()
         stale = {m["lane"]: self._stale_reason(m, now, health) for m in markers}
         live = [m for m in markers if stale[m["lane"]] is None]
-        booting = _compose.lanes_starting(health, present)
+        # gated (markers above) and held (boot/counter hold) lanes are not booting
+        held = _compose.marker_lanes(self.state_dir, ".held")
+        booting = _compose.lanes_starting(health, present | held)
         via: str | None = None
         if not live:
             action = "ignored:stale"
