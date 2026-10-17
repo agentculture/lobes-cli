@@ -293,6 +293,10 @@ OTHER lane is starting.
   a zone whose `temp` read fails (Orin `cv0..cv2-thermal` return ENODATA, read
   2026-10-17) or is outside −40 °C to 150 °C.
 - No matching zone means `thermal_c: null`, which is never a reason to shed.
+- The gateway reads the three knobs from its own environment; the compose
+  passes them from the deployment `.env`. `lobes status --pressure` runs on the
+  host, so it reads them from the resolved deployment `.env` (best-effort: no
+  deployment is fine), and a key set in the CLI's own environment wins.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

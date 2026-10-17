@@ -63,7 +63,7 @@ def _set_pressure(monkeypatch, *, swap: float, iowait: float) -> None:
     monkeypatch.setattr(
         _pressure_mod,
         "sample_pressure",
-        lambda: {"swap_used_percent": swap, "iowait_percent": iowait},
+        lambda env=None: {"swap_used_percent": swap, "iowait_percent": iowait},
     )
 
 
@@ -268,7 +268,7 @@ def _set_thermal(monkeypatch, t) -> None:
     monkeypatch.setattr(
         _pressure_mod,
         "sample_pressure",
-        lambda: {"swap_used_percent": 1.0, "iowait_percent": 1.0, "thermal_c": t},
+        lambda env=None: {"swap_used_percent": 1.0, "iowait_percent": 1.0, "thermal_c": t},
     )
 
 
@@ -336,3 +336,72 @@ def test_status_pressure_text_thermal_na(capsys, monkeypatch):
     _set_pressure(monkeypatch, swap=10.0, iowait=5.0)  # a sampler with no thermal key
     assert main(["status", "--pressure"]) == 0
     assert "thermal: n/a" in capsys.readouterr().out
+
+
+# --- review-b #9: the thermal knobs come from the deployment .env -----------
+
+_THERMAL_ENV = ("LOBES_THERMAL_ZONES", "LOBES_THERMAL_SHED_C", "LOBES_THERMAL_RESUME_C")
+
+
+@pytest.fixture
+def thermal_deploy(tmp_path, monkeypatch):
+    for key in _THERMAL_ENV:
+        monkeypatch.delenv(key, raising=False)
+    sys_root = tmp_path / "sys"
+    zone = sys_root / "class" / "thermal" / "thermal_zone0"
+    zone.mkdir(parents=True)
+    (zone / "type").write_text("cpu-thermal\n")
+    (zone / "temp").write_text("85000\n")
+    monkeypatch.setenv("LOBES_SYS_ROOT", str(sys_root))
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / "docker-compose.yml").write_text("services: {}\n")
+    (d / ".env").write_text(
+        "LOBES_THERMAL_ZONES=cpu-thermal\nLOBES_THERMAL_SHED_C=80\nLOBES_THERMAL_RESUME_C=75\n"
+    )
+    real_read = _pressure_mod.read_thermal_c
+    monkeypatch.setattr(
+        _pressure_mod,
+        "sample_pressure",
+        lambda env=None: {
+            "swap_used_percent": 1.0,
+            "iowait_percent": 1.0,
+            "thermal_c": real_read(env=env),
+        },
+    )
+    return d
+
+
+def test_status_pressure_reads_thermal_knobs_from_the_deployment_env(capsys, thermal_deploy):
+    assert main(["status", "--pressure", "--json", "--compose-dir", str(thermal_deploy)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["thermal"] == {
+        "c": 85.0,
+        "shed_c": 80.0,
+        "resume_c": 75.0,
+        "band": "above_shed",
+        "shedding": True,
+    }
+    assert payload["shed"] is True and payload["shed_signal"] == "thermal"
+
+
+def test_status_pressure_process_env_overrides_the_deployment_env(
+    capsys, monkeypatch, thermal_deploy
+):
+    monkeypatch.setenv("LOBES_THERMAL_SHED_C", "90")
+    monkeypatch.setenv("LOBES_THERMAL_RESUME_C", "88")
+    assert main(["status", "--pressure", "--json", "--compose-dir", str(thermal_deploy)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["thermal"]["shed_c"] == 90.0
+    assert payload["thermal"]["band"] == "below_resume"
+    assert payload["shed"] is False
+
+
+def test_status_pressure_without_a_deployment_still_works(capsys, monkeypatch, tmp_path):
+    for key in _THERMAL_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(_P, "THERMAL_SHED_C", None)
+    monkeypatch.setattr(_P, "THERMAL_RESUME_C", None)
+    _set_thermal(monkeypatch, None)
+    assert main(["status", "--pressure", "--json"]) == 0  # no deployment scaffolded
+    assert json.loads(capsys.readouterr().out)["thermal"]["band"] == "off"
