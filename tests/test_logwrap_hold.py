@@ -140,7 +140,8 @@ def test_sigterm_during_boot_hold_exits_143_promptly(tmp_path):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    end = time.monotonic() + 2.0
+    # Startup only (seconds under a full parallel suite); the exit is timed below.
+    end = time.monotonic() + 15.0
     while time.monotonic() < end:
         logs = list((tmp_path / "logs").glob("primary-2*.log"))
         if logs and "holding" in logs[0].read_text():

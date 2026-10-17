@@ -345,7 +345,9 @@ def _spawn_held(tmp_path: Path, env: dict[str, str], *args: str, **extra: str):
     )
 
 
-def _wait_for_log(tmp_path: Path, needle: str, deadline_s: float = 2.0) -> None:
+def _wait_for_log(tmp_path: Path, needle: str, deadline_s: float = 15.0) -> None:
+    # Startup only: under a full parallel suite bash can take seconds to reach the
+    # hold. The prompt-exit promise is timed separately in _term_and_time.
     end = time.monotonic() + deadline_s
     while time.monotonic() < end:
         logs = list((tmp_path / "logs").glob("worker-2*.log"))
