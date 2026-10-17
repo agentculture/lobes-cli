@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T07:32:00Z",
+  "updated": "2026-10-17T07:32:36Z",
   "deviations": [
     {
       "id": "d1",
@@ -47,6 +47,21 @@
       "status": "proposed",
       "classification": "acceptable",
       "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "t19 (live Spark acceptance, >= 30 min sustained serving load with the thermal signal live) is not run in this delivery; it continues in issue #313",
+      "task_ref": "t19",
+      "reason": "it needs d1 (#311, gateway thermal passthrough, unconfirmed) to be meaningful and explicit operator approval at run time for a live, reset-prone load on the Spark (#304); neither arrived before the code waves finished",
+      "affects": [
+        "c20",
+        "h15",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 4
     }
   ],
   "evidence": [],
