@@ -602,3 +602,30 @@ def test_project_candidates_include_env_dotenv_and_name(tmp_path, monkeypatch):
     (d / ".env").write_text("COMPOSE_PROJECT_NAME=dot\n", encoding="utf-8")
     (d / "docker-compose.yml").write_text("name: top\nservices: {}\n", encoding="utf-8")
     assert _compose.compose_project_candidates(d) == frozenset({"proc", "dot", "top", "dep"})
+
+
+# --- review3 #3: the failure hint names a machine CLI only when it is on PATH --
+
+
+def test_ungranted_hint_without_the_machine_cli_names_the_sudo_rule(
+    rec, tmp_path, monkeypatch, capsys
+):
+    _events, result = rec
+    result["ok"] = False
+    monkeypatch.setattr(_machine.shutil, "which", lambda name: None)
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "grant-permissions" not in err
+    assert "sysctl -w vm.drop_caches=3" in err
+    assert "lobes-cli[spark]" in err
+
+
+def test_ungranted_hint_with_the_machine_cli_on_path_names_it(rec, tmp_path, monkeypatch, capsys):
+    _events, result = rec
+    result["ok"] = False
+    monkeypatch.setattr(_machine.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert "'spark grant-permissions'" in err
+    assert "lobes-cli[" not in err

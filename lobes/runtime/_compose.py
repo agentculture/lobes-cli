@@ -1166,20 +1166,29 @@ def clear_page_cache(deploy_dir: os.PathLike | str | None = None) -> bool:
         result = _machine.MachineResult(False, f"error: {exc}")
     if result.ok:
         return True
-    card_cli = _machine.CARD_CLIS.get(_machine.detected_card() or "")
-    cli = _machine._current_cli() or card_cli
-    if cli is not None:
-        hint = f"run '{cli} grant-permissions' to enable it"
-    else:
-        hint = (
-            "add a passwordless sudo rule for '/usr/sbin/sysctl -w vm.drop_caches=3'"
-            f" or set {PAGE_CACHE_CLEAR_ENV}=never"
-        )
     print(
-        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) - {hint}",
+        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) - {_clear_hint()}",
         file=sys.stderr,
     )
     return False
+
+
+def _clear_hint() -> str:
+    """How to enable the clear: the machine CLI only when it is ON PATH (review3 #3).
+
+    Without it the adapter used (or would use) the ``sudo -n`` fallback, so the
+    hint names the sysctl sudoers rule, plus the extra that installs the CLI
+    when the card has one.
+    """
+    card = _machine.detected_card()
+    cli = _machine.machine_cli_for(card)
+    if cli is not None:
+        return f"run '{cli} grant-permissions' to enable it"
+    hint = "add a passwordless sudo rule for '/usr/sbin/sysctl -w vm.drop_caches=3'"
+    extra = _machine.CARD_CLIS.get(card or "")
+    if extra is not None:
+        hint += f" (or install the machine CLI: uv pip install 'lobes-cli[{extra}]')"
+    return hint + f" or set {PAGE_CACHE_CLEAR_ENV}=never"
 
 
 #: Docker's compose project label: every container compose creates carries it,

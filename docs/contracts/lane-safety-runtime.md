@@ -168,7 +168,11 @@ hold     = release − host uptime, if positive
   `unknown` one is retried, at most once per 60 s, so the long-running watcher
   recovers when `nvidia-smi` was not ready at boot.
 - When the clear is attempted with no grant, the verb prints one stderr line
-  and carries on. It never prompts and never fails.
+  and carries on. It never prompts and never fails. The line names
+  `<card> grant-permissions` only when that machine CLI is on `PATH`.
+  Otherwise the `sudo -n` fallback was used, so it names the passwordless
+  sudo rule for `/usr/sbin/sysctl -w vm.drop_caches=3`, plus
+  `uv pip install 'lobes-cli[<card>]'` on a Spark, Thor or Orin.
 
 ### The host watcher
 
