@@ -54,6 +54,10 @@ services:
       # from the volume below); MG_LOG_NAME namespaces this service's file.
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=vllm
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       # Persist downloaded weights across restarts. HF_CACHE overrides the host
       # path; otherwise ~/.cache/huggingface, with /root as the fallback if HOME
@@ -65,6 +69,7 @@ services:
       # `lobes logs` (or straight from the host dir), even after the container is gone.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/vllm:/cache/vllm
     ports:
       - "${VLLM_PORT:-8000}:8000"
     # mg-logwrap tees this service's output to /logs/model-gear, then `exec`s the
@@ -117,4 +122,4 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 600s                   # allow time for the first-run weight download + load
+      start_period: 780s                   # allow time for the first-run weight download + load

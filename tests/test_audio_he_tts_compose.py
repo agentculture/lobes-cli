@@ -72,7 +72,7 @@ class TestChatterboxServiceOverride:
 
     def test_only_build_environment_and_healthcheck_are_overridden(self) -> None:
         chatterbox = _load(_AUDIO_HE_COMPOSE)["services"]["chatterbox"]
-        assert set(chatterbox.keys()) <= {"build", "environment", "healthcheck"}, (
+        assert set(chatterbox.keys()) <= {"build", "command", "environment", "healthcheck"}, (
             f"chatterbox override should only touch build/environment/healthcheck, "
             f"got keys: {sorted(chatterbox.keys())} — container_name/volumes/expose/"
             "deploy/ipc must stay inherited from docker-compose.audio.yml"
@@ -124,8 +124,10 @@ class TestRealtimeVolumeMount:
         assert any("huggingface" in v for v in realtime["volumes"])
 
     def test_english_realtime_service_has_no_volumes(self) -> None:
+        # Lane-safety t7: the English realtime service now mounts the wrapper
+        # and the logs dir, but never the HF cache the Hebrew overlay adds.
         realtime = _load(_AUDIO_COMPOSE)["services"]["realtime"]
-        assert "volumes" not in realtime
+        assert not any("huggingface" in v for v in realtime.get("volumes", []))
 
 
 class TestGatewayPassthrough:

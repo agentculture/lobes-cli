@@ -12,6 +12,25 @@
 name = "spark"
 summary = "DGX Spark (GB10 Grace Blackwell, 128 GB unified) — the default, load-tested fleet profile"
 
+# --- lane-safety host_env (plan lane-safety #304/#307/#308/#309) -------------
+# docs/contracts/lane-safety-runtime.md section 1. Card facts, rendered into .env.
+#
+# LOBES_BOOT_ORDER is deliberately ABSENT on the Spark: no gears-first or
+# lane-first order has been measured on the GB10 (#108 - no invented values), so
+# the wrapper's stagger stays off here until one is.
+#
+# LOBES_THERMAL_ZONES: the GB10 exposes 7 thermal zones of type `acpitz`
+# (read 2026-10-17). The ACPI critical trip is 104.8 C.
+# LOBES_THERMAL_SHED_C / LOBES_THERMAL_RESUME_C: 91 C is the start of the
+# governor's 4-CPU band in #304 (bands 84/88/91/93.5 vs the 104.8 C trip); 86 C
+# is the graded governor's resume point. NOTE: these bands come from #304's
+# batch-job governor, NOT from a serving-load measurement - treat as the best
+# available declared values.
+[host_env]
+LOBES_THERMAL_ZONES = "acpitz"
+LOBES_THERMAL_SHED_C = "91"
+LOBES_THERMAL_RESUME_C = "86"
+
 [roles.cortex]
 feasible = true
 # unsloth/Qwen3.8-27B-NVFP4 — fleet default PRIMARY since 2026-08-19

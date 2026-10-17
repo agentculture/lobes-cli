@@ -242,10 +242,10 @@ class TestGatewayLedgerMount:
         """c9: the gateway service has NO volumes today — the mesh dir bind is
         its first (and, on the base template, only) mount."""
         gateway = _render_gateway({})
-        assert gateway["volumes"] == [f"{_DEFAULT_LEDGER_HOST_NAME}:/home/gateway/mesh"], (
-            "the gateway's volume list must be exactly the mesh dir bind — the "
-            "first volume the gateway service has ever had"
-        )
+        # Lane-safety t7 appended the log dir + mg-logwrap mounts AFTER it.
+        assert (
+            gateway["volumes"][0] == f"{_DEFAULT_LEDGER_HOST_NAME}:/home/gateway/mesh"
+        ), "the mesh dir bind must stay the gateway's first volume"
 
     def test_default_volume_is_mesh_dir_not_ledger_file(self) -> None:
         """With no .env value the default volume is the mesh runtime

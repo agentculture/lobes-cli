@@ -55,8 +55,18 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=embed-gemma2-embed
+      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Image ENTRYPOINT (Dockerfile.embed-st) respelled after the wrapper.
+    command: ["python3", "-m", "lobes.embed_sidecar.server"]
     expose:
       - "8000"
     healthcheck:
@@ -66,7 +76,7 @@ services:
       timeout: 10s
       retries: 5
       # DECLARED: covers the weight load of every loaded modality.
-      start_period: ${GEMMA2_EMBED_START_PERIOD:-300s}
+      start_period: ${GEMMA2_EMBED_START_PERIOD:-480s}
 
   embed-qwen3vl-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
@@ -94,10 +104,15 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=qwen3vl-embed   # -> /logs/model-gear/qwen3vl-embed-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-embed:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -121,7 +136,7 @@ services:
       timeout: 10s
       retries: 5
       # DECLARED: 8B load on a unified-memory board.
-      start_period: ${QWEN3VL_EMBED_START_PERIOD:-900s}
+      start_period: ${QWEN3VL_EMBED_START_PERIOD:-1080s}
 
   embed-qwen3vl-rerank:
     # DECLARED — vLLM viability on sm_87 pending plan t1
@@ -152,10 +167,15 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=qwen3vl-rerank   # -> /logs/model-gear/qwen3vl-rerank-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/qwen3vl-rerank:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -179,7 +199,7 @@ services:
       timeout: 10s
       retries: 5
       # DECLARED: 8B load on a unified-memory board.
-      start_period: ${QWEN3VL_RERANK_START_PERIOD:-900s}
+      start_period: ${QWEN3VL_RERANK_START_PERIOD:-1080s}
 
   embed-nemotron-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
@@ -207,10 +227,15 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=nemotron-embed   # -> /logs/model-gear/nemotron-embed-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nemotron-embed:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -234,7 +259,7 @@ services:
       timeout: 10s
       retries: 5
       # DECLARED: 8B load on a unified-memory board.
-      start_period: ${NEMOTRON_EMBED_START_PERIOD:-900s}
+      start_period: ${NEMOTRON_EMBED_START_PERIOD:-1080s}
 
   embed-nomic-code-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
@@ -262,10 +287,15 @@ services:
       - NVIDIA_DISABLE_REQUIRE=1
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=nomic-code-embed   # -> /logs/model-gear/nomic-code-embed-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/nomic-code-embed:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -289,7 +319,7 @@ services:
       timeout: 10s
       retries: 5
       # DECLARED: 8B load on a unified-memory board.
-      start_period: ${NOMIC_CODE_EMBED_START_PERIOD:-900s}
+      start_period: ${NOMIC_CODE_EMBED_START_PERIOD:-1080s}
 
   # The gateway lives in the base compose; this override only adds env (a
   # compose override merges `environment` by key). No depends_on, see header.

@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.87.0] - 2026-10-17
+
+### Added
+
+- Boot hold before every lane (#307): mg-logwrap waits until host uptime >= LOBES_BOOT_DELAY_S (default 120, 0 = off), then releases lanes staggered in each card's LOBES_BOOT_ORDER (LOBES_BOOT_STAGGER_S, default 20), so a power-cycled box can be reached before its lanes reload; restart: unless-stopped is kept everywhere
+- Every service now runs the hold: the gateway, audio (chatterbox, stt, realtime), the gemma2 embed sidecar and the decider sidecars are wrapped too; healthcheck start_period values are raised to cover the hold
+- Per-lane vLLM compile cache (#309): each vLLM lane bind-mounts `${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/<lane>` at /cache/vllm with VLLM_CACHE_ROOT pointed at it, so a compose recreate reuses torch.compile artifacts instead of recompiling; opt out with LOBES_VLLM_CACHE_ROOT=/root/.cache/vllm. Verified on the pinned nightly and on vLLM 0.31.0
+- Per-card [host_env] data: LOBES_BOOT_ORDER (Thor embed,rerank; Orin multimodal,embed,rerank), LOBES_THERMAL_ZONES (Spark acpitz, Jetson tj-thermal) and the Spark's thermal bands (91/86 C)
+- docs/contracts/lane-safety-runtime.md and docs/contracts/machine-cli-window.md (draft contracts)
+- Shapes may declare their own `[host_env]` table, which wins over the card's; orin-associate uses it for an associate-first boot (LOBES_BOOT_ORDER=associate, LOBES_BOOT_STAGGER_S=400: associate released at 120 s, the gears at 520 s, after associate's one measured 360 s load), matching the order its util 0.70 budget was measured at
+
+### Fixed
+
+- A lane in its boot hold now stops on `docker stop` (exit 143) instead of waiting out docker's kill timeout: the hold is a backgrounded sleep under a TERM/INT handler (bash as PID 1 ignores TERM otherwise)
+- Every shape now renders each key any built-in shape declares in `[host_env]` (the shape's value, else the card's, else the documented default: LOBES_BOOT_ORDER empty, LOBES_BOOT_STAGGER_S 20), so switching shapes overwrites it instead of leaving the previous shape's value in `.env`
+- The wrapped stt service still runs its image's real ENTRYPOINT: `/opt/nvidia/nvidia_entrypoint.sh` is chained between mg-logwrap and the CMD (English and Hebrew overlays)
+
 ## [0.86.1] - 2026-10-15
 
 ### Changed

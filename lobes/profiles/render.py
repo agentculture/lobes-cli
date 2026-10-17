@@ -79,13 +79,72 @@ verbatim — *before* the role keys, so a role knob always wins a name
 collision and ``host_env`` can never shadow ``PRIMARY_GPU_MEM_UTIL`` & co. A
 profile that declares no ``host_env`` (every built-in but ``orin``) renders
 exactly what it rendered before the field existed.
+
+**Shape-declared ``host_env`` keys are always rendered.** A shape may declare
+its own ``[host_env]`` (``orin-associate``'s boot order), which wins over the
+card's (:func:`lobes.profiles.shape_render.compose_profile`). Such a key can
+then differ between two shapes on ONE card, and a re-render only ever writes
+keys — so a shape silent on it would leave the previous shape's value behind in
+``.env``. Every key ANY built-in shape declares (:func:`shape_host_env_keys`)
+is therefore rendered by every SHAPE render
+(:func:`lobes.profiles.shape_render.compose_profile`): the shape's value, else
+the card's, else its documented default (:data:`SHAPE_HOST_ENV_DEFAULTS`).
+That is what keeps a shape switch restorable. :func:`profile_env` itself stays
+a pure projection of what the profile declares.
 """
 
 from __future__ import annotations
 
+import functools
+
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM, SUPPORTED_MODELS
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
+
+#: The value a profile renders for a shape-declared ``host_env`` key it does not
+#: itself declare: the documented default in
+#: ``docs/contracts/lane-safety-runtime.md`` section 1 (the same value the
+#: compose template's ``${VAR:-default}`` falls back to). Every key in
+#: :func:`shape_host_env_keys` must have an entry (pinned by a test).
+SHAPE_HOST_ENV_DEFAULTS: dict[str, str] = {
+    "LOBES_BOOT_ORDER": "",
+    "LOBES_BOOT_STAGGER_S": "20",
+}
+
+
+@functools.cache
+def shape_host_env_keys() -> frozenset[str]:
+    """Every ``host_env`` key declared by a packaged built-in shape.
+
+    Derived from the shape files, never a hand-written list (the same
+    derivation :func:`lobes.runtime._lock.lock_keys` uses). Imported lazily:
+    :mod:`lobes.profiles.shapes` does not import this module, but keeping the
+    import local keeps that direction from ever becoming a cycle.
+    """
+    from lobes.profiles.shapes import builtin_shape_names, resolve_shape
+
+    keys: set[str] = set()
+    for name in builtin_shape_names():
+        keys |= set(resolve_shape(name).host_env)
+    return frozenset(keys)
+
+
+def shape_host_env_defaults() -> dict[str, str]:
+    """``{key: documented default}`` for every :func:`shape_host_env_keys` key.
+
+    Raises when a built-in shape declares a key with no entry in
+    :data:`SHAPE_HOST_ENV_DEFAULTS` -- a packaging bug the test suite catches.
+    """
+    keys = shape_host_env_keys()
+    missing = sorted(keys - set(SHAPE_HOST_ENV_DEFAULTS))
+    if missing:  # a packaging bug: a shape added a key with no documented default
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"shape host_env key(s) without a default: {', '.join(missing)}",
+            remediation="add the documented default to SHAPE_HOST_ENV_DEFAULTS",
+        )
+    return {key: SHAPE_HOST_ENV_DEFAULTS[key] for key in sorted(keys)}
+
 
 # role -> the fleet compose template's env-var prefix for that role's service.
 ROLE_ENV_PREFIX: dict[str, str] = {

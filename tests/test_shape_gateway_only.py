@@ -38,7 +38,7 @@ from lobes.gateway import server as S
 from lobes.gateway._config import FEASIBLE_ENV, build_config
 from lobes.gateway._routing import RoutingTable, order_backends
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.render import ROLE_ENV_PREFIX, profile_env
+from lobes.profiles.render import ROLE_ENV_PREFIX, profile_env, shape_host_env_keys
 from lobes.profiles.schema import ROLES as CORE_ROLES
 from lobes.profiles.shape_render import GATEWAY_SERVICE, shape_env, shape_services
 from lobes.profiles.shapes import (
@@ -147,7 +147,8 @@ def test_renders_no_local_wiring_and_no_compose_profile_on_every_card(card: str)
     assert "COMPOSE_PROFILES" not in env
     # Everything rendered is either a flagged-off marker or the card's own
     # box-level passthrough (host_env) — nothing else.
-    bare_card = set(profile_env(resolve_profile(card)))
+    # ...or a shape-declared [host_env] key, which every shape renders.
+    bare_card = set(profile_env(resolve_profile(card))) | shape_host_env_keys()
     markers = {f"{ROLE_ENV_PREFIX[role]}_FEASIBLE" for role in CORE_ROLES}
     for key in env:
         if key not in markers:

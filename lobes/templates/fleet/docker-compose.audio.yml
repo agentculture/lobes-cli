@@ -36,8 +36,12 @@ services:
       - CHATTERBOX_PORT=${CHATTERBOX_PORT:-9000}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=chatterbox
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     deploy:
       resources:
         reservations:
@@ -47,6 +51,9 @@ services:
     # Internal only — reachable as http://chatterbox:9000 on the compose network.
     expose:
       - "${CHATTERBOX_PORT:-9000}"
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Image ENTRYPOINT (Dockerfile.chatterbox) respelled after the wrapper.
+    command: ["python3.12", "-m", "lobes.realtime.chatterbox_server"]
     healthcheck:
       # The nvidia/cuda base ships no curl AND installs python as `python3.12`
       # (no `python3` symlink) — probe /ready with that interpreter via stdlib
@@ -62,7 +69,7 @@ services:
       retries: 5
       # Cold model load on first request: ~19 s; generous start_period covers
       # both container startup and the initial weight-load on first /ready probe.
-      start_period: 120s
+      start_period: 300s
 
   # --- Parakeet STT (NeMo ASR, already OpenAI /v1/audio/transcriptions) ------
   stt:
@@ -81,14 +88,24 @@ services:
       - PARAKEET_MODEL=${PARAKEET_MODEL:-nvidia/parakeet-tdt-0.6b-v2}
       - HF_HOME=/root/.cache/huggingface
       - NVIDIA_DISABLE_REQUIRE=1
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=stt
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
     deploy:
       resources:
         reservations:
           devices:
             - { driver: nvidia, count: all, capabilities: [gpu] }
     ipc: host
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # The image sets only CMD (Dockerfile.parakeet); its ENTRYPOINT is the base
+    # image's /opt/nvidia/nvidia_entrypoint.sh, which overriding `entrypoint:`
+    # would drop. So it is chained after the wrapper, then the CMD — the NVIDIA
+    # script ends in `exec "$@"`, so the server is still the signal target.
+    command: ["/opt/nvidia/nvidia_entrypoint.sh", "python3", "/app/listen_server.py"]
     expose:
       - "${PARAKEET_PORT:-9002}"
     healthcheck:
@@ -100,7 +117,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 600s
+      start_period: 780s
 
   # --- realtime bridge (lobes.realtime, shipped in the wheel) -----------
   # Serves the OpenAI /v1/audio/* facade now (+ /v1/realtime WS in a later
@@ -152,6 +169,17 @@ services:
       # env.audio.example for the rationale on both defaults.
       - BARGE_IN_WINDOW_MS=${BARGE_IN_WINDOW_MS:-750}
       - BARGE_IN_MODEL=${BARGE_IN_MODEL:-}
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=realtime
+      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
+    volumes:
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Image ENTRYPOINT (Dockerfile.realtime) respelled after the wrapper.
+    command: ["python", "-m", "lobes.realtime"]
     expose:
       - "${REALTIME_PORT:-8080}"
     healthcheck:
@@ -164,7 +192,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 30s
+      start_period: 210s
 
   # --- gateway override: teach the front to route /v1/audio/* to realtime ----
   # Merged onto the base fleet's gateway service (compose appends environment).

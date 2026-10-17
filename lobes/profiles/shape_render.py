@@ -17,7 +17,11 @@ synthetic :class:`~lobes.profiles.schema.Profile` and hands that to the existing
 :func:`lobes.profiles.render.profile_env`. That is what makes the whole-brain
 ``machine-as-brain`` shape a strict no-op: hosting every role with no override
 yields exactly the bare card profile's rendering (the invariant the goldens
-pin).
+pin) -- plus one shape-axis addition every shape makes: each ``host_env`` key
+ANY built-in shape declares is rendered explicitly
+(:func:`lobes.profiles.render.shape_host_env_keys`), so a shape switch
+overwrites it. On a card that does not declare such a key, that is its
+documented default (``LOBES_BOOT_ORDER=`` / ``LOBES_BOOT_STAGGER_S=20``).
 
 **Core roles vs audio roles vs the opt-in `minor` gear.** The four
 Profile-machinery core roles (:data:`~lobes.profiles.schema.ROLES` —
@@ -73,7 +77,7 @@ from typing import Mapping
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.lane_keys import lane_env_key
-from lobes.profiles.render import profile_env, role_engine
+from lobes.profiles.render import profile_env, role_engine, shape_host_env_defaults
 from lobes.profiles.schema import (
     GPU_ACCESS_RUNTIME,
     KNOB_LANE_ROLES,
@@ -252,7 +256,10 @@ DECIDER_DOMAIN_MODELS_KEY = "DECIDER_DOMAIN_MODELS"
 # ceiling (lobes.roles.decider_domain_contexts reads it).
 DECIDER_DOMAIN_CONTEXTS_KEY = "DECIDER_DOMAIN_CONTEXTS"
 #: DECLARED (#108): a 27B decision checkpoint's load on a unified-memory board.
-DECIDER_DEFAULT_START_PERIOD = "900s"
+# Declared load window (900s) PLUS the lane-safety boot hold's maximum (180s:
+# LOBES_BOOT_DELAY_S 120 + an unlisted lane's len(order) x stagger, <= 60), so
+# the healthcheck cannot flag a lane that is still deliberately holding.
+DECIDER_DEFAULT_START_PERIOD = "1080s"
 
 
 def decider_service(domain: str) -> str:
@@ -352,7 +359,19 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
         "HF_HUB_DISABLE_XET=1",
         "NVIDIA_VISIBLE_DEVICES=all",
         "NVIDIA_DISABLE_REQUIRE=1",
+        # Lane-safety boot hold (mg-logwrap): the sidecar has no env_file, so the
+        # knobs are passed through explicitly.
+        "MG_LOG_DIR=/logs/model-gear",
+        f"MG_LOG_NAME={service}",
+        "LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}",
+        "LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}",
+        "LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}",
     ]
+    runs_vllm = spec["backend"] == "clef-vllm"
+    if runs_vllm:
+        # Lane-safety t8: clef-vllm runs vLLM in-process (LLM(...)), so it has a
+        # torch_compile_cache to keep. Off value /root/.cache/vllm = writable layer.
+        environment.append("VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}")
     lines = [
         f"  {service}:",
         "    build:",
@@ -373,6 +392,15 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
     lines += [
         "    volumes:",
         "      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface",
+        "      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear",
+        "      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro",
+    ]
+    if runs_vllm:
+        lines.append(f"      - ${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{service}:/cache/vllm")
+    lines += [
+        '    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]',
+        # The image ENTRYPOINT (Dockerfile.decider / .decider-vllm), respelled.
+        '    command: ["python3", "-m", "lobes.decider_sidecar.server"]',
         "    expose:",
         f'      - "{DECIDER_PORT}"',
         "    healthcheck:",
@@ -520,12 +548,21 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
 
     The card's non-role ``host_env`` and ``gpu_access`` declarations
     (:attr:`~lobes.profiles.schema.Profile.host_env` /
-    :attr:`~lobes.profiles.schema.Profile.gpu_access`) pass through UNCHANGED:
-    each states a fact about the BOX (its ``/proc/stat`` accounting, say, or
-    which compose syntax its container runtime accepts), which no hosting
-    decision can alter — so every shape rendered over that card inherits them,
-    ``machine-as-brain`` included (which is what keeps the identity-shape
-    invariant true on a card that declares either).
+    :attr:`~lobes.profiles.schema.Profile.gpu_access`) pass through: each
+    states a fact about the BOX (its ``/proc/stat`` accounting, say, or which
+    compose syntax its container runtime accepts), so every shape rendered over
+    that card inherits them, ``machine-as-brain`` included (which is what keeps
+    the identity-shape invariant true on a card that declares either). The one
+    exception is a key the SHAPE also declares in its own ``[host_env]``
+    (:attr:`~lobes.profiles.shapes.Shape.host_env`): that key depends on what
+    the shape hosts — ``LOBES_BOOT_ORDER`` names hosted lanes — so the shape's
+    value wins. Because such a key can then differ between two shapes on one
+    card, and a re-render only ever writes keys, EVERY shape renders every key
+    any built-in shape declares (:func:`lobes.profiles.render.shape_host_env_keys`):
+    the shape's value, else the card's, else the documented default
+    (:data:`lobes.profiles.render.SHAPE_HOST_ENV_DEFAULTS`). Without that,
+    ``orin-associate`` then ``spark-lobe`` on a Spark would leave
+    ``LOBES_BOOT_ORDER=associate`` behind in ``.env``.
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -560,7 +597,11 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         name=f"{shape.name}@{profile.name}",
         summary=f"shape={shape.name} card={profile.name}",
         roles=roles,
-        host_env=profile.host_env,
+        # Every key ANY built-in shape declares is rendered by EVERY shape (its
+        # documented default when neither the card nor this shape declares it),
+        # so a shape switch overwrites it rather than leaving the previous
+        # shape's value behind in .env (render.shape_host_env_keys).
+        host_env={**shape_host_env_defaults(), **profile.host_env, **shape.host_env},
         gpu_access=profile.gpu_access,
     )
 
@@ -646,10 +687,11 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     activation keys that actually bring its gear up
     (:data:`OPT_IN_ACTIVATION_ENV` + :data:`OPT_IN_COMPOSE_PROFILE`): without
     them the service stays parked behind its Compose profile and the gateway
-    leaves the backend unwired (Qodo find on PR #121). Byte-identical to
-    ``profile_env(profile)`` for the whole-brain ``machine-as-brain`` shape
-    (hosts every role, no overrides, no opt-in gear), which is the invariant
-    the goldens pin.
+    leaves the backend unwired (Qodo find on PR #121). For the whole-brain
+    ``machine-as-brain`` shape (hosts every role, no overrides, no opt-in gear)
+    it equals ``profile_env(profile)`` plus the shape-declared ``host_env``
+    keys' defaults the card does not declare (:func:`compose_profile`), which
+    is the invariant the goldens pin.
     """
     composed = compose_profile(shape, profile)
     env = profile_env(composed)
@@ -750,8 +792,8 @@ class ShapeRender:
 
         Identical formatting to ``tests/goldens/regen.py``'s
         ``profile_env_text`` so a shape golden and a profile golden are the same
-        shape of file (and ``machine-as-brain`` is byte-identical to the bare
-        profile golden).
+        shape of file (and ``machine-as-brain`` is the bare profile golden plus
+        the shape-declared ``host_env`` defaults -- see :func:`compose_profile`).
         """
         lines = sorted(f"{key}={value}" for key, value in self.env.items())
         return "\n".join(lines) + "\n"

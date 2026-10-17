@@ -553,8 +553,9 @@ max_model_len = 8192
 # the honesty rule: `host_env` renders on EVERY shape, so declaring them would
 # leak ASSOCIATE_* onto shapes that DROP associate — the half-served lobe #92
 # forbids, and exactly what tests/test_shape_goldens.py's
-# test_every_dropped_core_role_renders_only_the_feasible_marker catches. The
-# Shape dataclass has no env mechanism (name/summary/hosts/overrides only), so
+# test_every_dropped_core_role_renders_only_the_feasible_marker catches. A
+# shape's own [host_env] table could carry them, but the orin-associate shape's
+# carries only LOBES_BOOT_ORDER today (moving these is not done), so
 # these are OPERATOR-TYPED in the deployment's own .env — the same posture as
 # peer origins (#92: always operator-typed, never derived). They are a MATCHED
 # PAIR — arming one without the other does not degrade, it refuses to boot:
@@ -596,6 +597,25 @@ max_model_len = 8192
 #   ASSOCIATE_SPECULATIVE_CONFIG="'--speculative-config={\"method\": \"dspark\", \"model\": \"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark\", \"num_speculative_tokens\": 5, \"kv_cache_dtype\": \"bfloat16\"}'"
 [host_env]
 LOBES_IOWAIT_DEGRADED_THRESHOLD = "100"
+
+# --- lane-safety host_env (plan lane-safety #304/#307/#308/#309) -------------
+# LOBES_BOOT_ORDER: the CARD-level default is the order MEASURED 2026-08-04 for
+# the senses lane (docs/orin-profiles.md, "senses KV figure is boot-order-
+# dependent"): senses (MG_LOG_NAME `multimodal`) FIRST, then the pooling gears
+# `embed`, `rerank` - gears-first shrank senses' KV pool 1.67x (480,431 vs
+# 802,644 tokens). That order is SHAPE-dependent, so a shape whose measured
+# order differs overrides it in its own [host_env] table, which wins over this
+# one: orin-associate releases associate first (its budget was measured
+# associate-first, docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt).
+# The other Orin shapes keep this default — orin-lobe is the senses shape it was
+# measured on, and no other order has been measured for orin-cortex, orin-embed,
+# orin-decider or orin-small (#108). An unlisted lane (hand, llamacpp-primary,
+# a specialist embed lane, a decider sidecar) is held last.
+# LOBES_THERMAL_ZONES: the Jetson `tj-thermal` zone (read 2026-10-17).
+# SHED/RESUME bands ABSENT on purpose: unmeasured on this board (#108), so the
+# shed signal stays off.
+LOBES_BOOT_ORDER = "multimodal,embed,rerank"
+LOBES_THERMAL_ZONES = "tj-thermal"
 # GATEWAY_READ_TIMEOUT: the gateway's socket-read timeout on every upstream
 # POST (lobes/gateway/server.py; default 600 s, lobes/gateway/_config.py's
 # GATEWAY_READ_TIMEOUT). MEASURED 2026-09-13

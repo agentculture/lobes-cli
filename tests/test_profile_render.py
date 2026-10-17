@@ -329,8 +329,9 @@ def test_a_role_knob_always_wins_a_host_env_name_collision() -> None:
 
 def test_a_profile_with_no_host_env_renders_exactly_what_it_always_did() -> None:
     # The "byte-identical for every other card" guarantee, as a unit fact:
-    # spark/thor/base declare no host_env, so nothing new appears in their env.
-    for card in ("base", "spark", "thor"):
+    # base declares no host_env, so nothing new appears in its env (spark/thor
+    # gained lane-safety keys in t9).
+    for card in ("base",):
         profile = resolve_profile(card)
         assert dict(profile.host_env) == {}
         assert not any(k.startswith("LOBES_") for k in profile_env(profile))

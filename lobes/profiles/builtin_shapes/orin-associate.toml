@@ -62,6 +62,38 @@ summary = "Jetson AGX Orin 64GB associate-lobe (VALIDATED live 2026-09-13 at 1M)
 # work once headroom is found (issue #216), not a decision this task makes.
 hosts = ["associate", "embedder", "reranker"]
 
+# The wrapper's release order after a host reboot (lane-safety LOBES_BOOT_ORDER,
+# docs/contracts/lane-safety-runtime.md section 2). On a reboot dockerd starts
+# every lane at once and ignores compose depends_on, so the associate-first
+# override described below cannot order that boot — this does. The Orin card's
+# default ("multimodal,embed,rerank") would hold associate LAST, i.e. gears
+# first, which is not the order the util 0.70 budget below was measured at
+# (associate-first, docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt).
+# Shape-level because the order follows the shape's budget, not the card: it
+# wins over any card's LOBES_BOOT_ORDER (shape_render.compose_profile).
+#
+# The ORDER alone is not enough — the release is a TIME, not a wait-for-healthy:
+# release = LOBES_BOOT_DELAY_S + index x LOBES_BOOT_STAGGER_S, and an unlisted
+# lane releases at len(order) x stagger (mg-logwrap.sh). With the default 20 s
+# stagger the gears would start 20/40 s after associate begins loading, long
+# before it is resident: memory-wise a gears-first boot after all. So only
+# associate is listed (MG_LOG_NAME "associate"; the gears "embed"/"rerank" are
+# unlisted, so they release together) and the stagger is widened to 400 s:
+#
+#   associate  120 + 0 x 400 = 120 s   (default LOBES_BOOT_DELAY_S = 120)
+#   associate healthy        ~ 480 s   (120 + 360 measured, below)
+#   embed, rerank 120 + 1 x 400 = 520 s
+#
+# 360 s is ONE measured boot: vllm-associate "healthy after 360s" on this
+# rendered shape (docs/evidence/2026-09-13-accept-orin-associate-1m.txt). A
+# different engine, image or context would need re-measuring (#108). The 520 s
+# hold stays inside the gears' healthcheck start_period (780 s), leaving 260 s
+# for their own load (tests/test_orin_associate_boot_order.py pins both).
+# Every lane NOT listed is held to 520 s too — the gateway included.
+[host_env]
+LOBES_BOOT_ORDER = "associate"
+LOBES_BOOT_STAGGER_S = "400"
+
 [overrides.associate]
 # The full associate declaration lives HERE (not on the card) — see the header
 # comment and approved deviation d1. nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-

@@ -39,7 +39,7 @@ import pytest
 from lobes.gateway import _pressure_policy
 from lobes.gateway._pressure_policy import _env_float, decide
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.render import ROLE_ENV_PREFIX
+from lobes.profiles.render import ROLE_ENV_PREFIX, shape_host_env_keys
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape, shape_env, shape_services
 from lobes.profiles.shapes import AUDIO_ROLES, builtin_shape_names, resolve_shape
 from tests.goldens.regen import FLEET_COMPOSE, shape_golden_path
@@ -220,20 +220,27 @@ def test_the_declaration_survives_every_shape_including_the_default() -> None:
         assert env.get(_IOWAIT_KEY) == "100", f"{shape_name} lost the orin card's declaration"
 
 
-@pytest.mark.parametrize("card", [c for c in builtin_names() if c != "orin"])
+@pytest.mark.parametrize("card", ["base"])
 def test_no_other_card_gains_a_host_env_key_under_any_shape(card: str) -> None:
-    """Narrowness: the mechanism moves nothing on base/spark/thor.
+    """Narrowness: the mechanism moves nothing on base (the unknown-card fallback).
+
+    spark/thor gained lane-safety host_env keys in t9 (see
+    tests/test_deployment_lock.py); only ``base`` must stay empty.
 
     The byte-for-byte guarantee is the goldens'; this is the in-suite echo
     that says WHY they cannot have moved.
     """
     assert dict(resolve_profile(card).host_env) == {}
     for shape_name in builtin_shape_names():
-        env = shape_env(resolve_shape(shape_name), resolve_profile(card))
-        assert not any(k.startswith("LOBES_") for k in env)
+        shape = resolve_shape(shape_name)
+        env = shape_env(shape, resolve_profile(card))
+        # A key ANY built-in shape declares in its [host_env] (orin-associate's
+        # boot order) is rendered by every shape on every card, so a shape
+        # switch overwrites it; nothing else may appear.
+        assert not any(k.startswith("LOBES_") and k not in shape_host_env_keys() for k in env)
 
 
-def test_only_the_orin_goldens_carry_a_lobes_key() -> None:
+def test_only_the_base_goldens_carry_no_lobes_key() -> None:
     """Same narrowness, asserted against the committed golden FILES.
 
     ``template-defaults.env`` is excluded: it is the compose template's own
@@ -243,8 +250,14 @@ def test_only_the_orin_goldens_carry_a_lobes_key() -> None:
     goldens = [p for p in _GOLDENS_DIR.glob("*.env") if p.stem != "template-defaults"]
     goldens += list((_GOLDENS_DIR / "shapes").glob("*.env"))
     for path in goldens:
+        # A key a built-in shape declares in its own [host_env] is rendered by
+        # every shape on every card (orin-associate's boot order), so it does
+        # not count.
+        shape_keys: set[str] = set(shape_host_env_keys()) if path.parent.name == "shapes" else set()
         has_lobes_key = any(
-            line.startswith("LOBES_") for line in path.read_text(encoding="utf-8").splitlines()
+            line.startswith("LOBES_") and line.split("=", 1)[0] not in shape_keys
+            for line in path.read_text(encoding="utf-8").splitlines()
         )
-        expected = path.stem == "orin" or path.stem.endswith("__orin")
+        # t9: spark/thor now declare lane-safety LOBES_* keys too; only base is bare.
+        expected = not (path.stem == "base" or path.stem.endswith("__base"))
         assert has_lobes_key == expected, f"{path.name}: unexpected LOBES_* key presence"

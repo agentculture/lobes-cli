@@ -53,6 +53,7 @@ from lobes.profiles.render import (
     ROLE_ENV_PREFIX,
     profile_env,
     role_engine,
+    shape_host_env_defaults,
 )
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 from lobes.profiles.shape_render import (
@@ -112,6 +113,13 @@ def test_machine_as_brain_is_byte_identical_to_profile_golden(card: str) -> None
     profile = resolve_profile(card)
     rendered = render_shape(shape, profile).env_text()
     existing_golden = (_PROFILE_GOLDENS_DIR / f"{card}.env").read_text(encoding="utf-8")
+    # The one shape-axis addition: every shape renders each key a built-in
+    # shape declares in [host_env] (its default where the card is silent), so a
+    # shape switch overwrites it (shape_render.compose_profile).
+    lines = existing_golden.splitlines()
+    present = {line.split("=", 1)[0] for line in lines}
+    lines += [f"{k}={v}" for k, v in shape_host_env_defaults().items() if k not in present]
+    existing_golden = "\n".join(sorted(lines)) + "\n"
     assert rendered == existing_golden, (
         f"machine-as-brain on card {card!r} must render byte-identically to the "
         f"pre-change tests/goldens/{card}.env — the whole-brain shape is a no-op. "
@@ -124,7 +132,8 @@ def test_machine_as_brain_env_equals_profile_env(card: str) -> None:
     """The composed env dict itself is identical to profile_env(profile), not just the text."""
     profile = resolve_profile(card)
     shape = resolve_shape(_IDENTITY_SHAPE)
-    assert render_shape(shape, profile).env == profile_env(profile)
+    expected = {**shape_host_env_defaults(), **profile_env(profile)}
+    assert render_shape(shape, profile).env == expected
 
 
 def test_machine_as_brain_carries_no_overrides_and_hosts_everything() -> None:
@@ -715,7 +724,22 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
 # anyway keeps the card's declaration visible next to the knobs it sits
 # beside, the same way COMPOSE_PROFILES's own rendered value is visible even
 # though nothing here expands it.
-_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset({"COMPOSE_PROFILES", "INNEREYE_DECLARED_PEAK_GIB"})
+#
+# The four lane-safety host_env keys (t9, #304/#307/#308/#309) are the third
+# class: they are read straight from the deployment's `.env` by the lane
+# wrapper (LOBES_BOOT_ORDER) and by the gateway/status verbs (LOBES_THERMAL_*)
+# per docs/contracts/lane-safety-runtime.md section 1, never ${substituted}
+# into a compose flag.
+_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset(
+    {
+        "COMPOSE_PROFILES",
+        "INNEREYE_DECLARED_PEAK_GIB",
+        "LOBES_BOOT_ORDER",
+        "LOBES_THERMAL_ZONES",
+        "LOBES_THERMAL_SHED_C",
+        "LOBES_THERMAL_RESUME_C",
+    }
+)
 
 
 @pytest.mark.parametrize("card_name", sorted(builtin_names()))

@@ -69,6 +69,10 @@ services:
   stt:
     build:
       dockerfile: Dockerfile.whisper-stt
+    # Image CMD (Dockerfile.whisper-stt) respelled; the wrapper entrypoint is
+    # inherited from docker-compose.audio.yml, and the base image's ENTRYPOINT
+    # (/opt/nvidia/nvidia_entrypoint.sh) is chained first, as in that file.
+    command: ["/opt/nvidia/nvidia_entrypoint.sh", "python3", "/app/listen_server_whisper.py"]
     environment:
       # STT_MODEL: the Whisper checkpoint id, read by listen_server_whisper.py
       # (MODEL_NAME) and by lobes/roles.py's GET /capabilities advertisement
@@ -100,6 +104,8 @@ services:
   chatterbox:
     build:
       dockerfile: Dockerfile.chatterbox-ml
+    # Image ENTRYPOINT (Dockerfile.chatterbox-ml) respelled; wrapper inherited.
+    command: ["python3.12", "-m", "lobes.realtime.chatterbox_multilingual_server"]
     environment:
       # TTS_LANGUAGE: the server-side synthesis language (criterion 2) —
       # read by chatterbox_multilingual_server.py's MlSettings, passed as
@@ -135,7 +141,7 @@ services:
       # 2026-09-hebrew-tts-ab-spark.txt) PLUS a mandatory warm-up synthesis
       # before /v1/health/ready reports 200 (criterion 4) — more generous
       # than the English overlay's 120s start_period.
-      start_period: 300s
+      start_period: 480s
 
   # --- gateway: advertise the Whisper AND Chatterbox-Multilingual engines
   # actually served (deviation d3, extended from STT to TTS by this task) --
