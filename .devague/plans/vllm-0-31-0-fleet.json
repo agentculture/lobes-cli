@@ -3,9 +3,9 @@
   "title": "vllm 0.31.0 fleet",
   "frame_slug": "vllm-0-31-0-fleet",
   "schema_version": 5,
-  "status": "drafting",
+  "status": "exported",
   "created": "2026-10-17T18:03:19Z",
-  "updated": "2026-10-17T18:06:43Z",
+  "updated": "2026-10-17T18:22:16Z",
   "targets": [
     {
       "id": "c1",
@@ -335,7 +335,7 @@
       "id": "t1",
       "summary": "Make the qwen3_coder_thinking plugin accept vLLM 0.31.0's strict_level keyword",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "lobes/vllm_plugins/qwen3_thinking_tool_parser.py's get_structural_tag override accepts strict_level (keyword-only, default matching upstream) and forwards it to super(), still deriving reasoning from the request",
         "a new test calls the override with reasoning=False, strict_level=<value> and asserts no TypeError and that strict_level reaches the parent; the existing stubs at tests/test_vllm_plugin_thinking.py:97,202,216,235 are updated to the 0.31.0 signature",
@@ -353,7 +353,7 @@
       "id": "t2",
       "summary": "Add 'lobes doctor --refresh-plugin' to replace a stale per-box plugin copy",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "lobes doctor --refresh-plugin prints a plan (dry-run) naming ~/.lobes/qwen3_thinking_tool_parser.py, its current sha256 and the packaged copy's sha256; with --apply it writes qwen3_thinking_tool_parser.py.bak then the packaged copy, touching exactly those two paths",
         "a deployment whose copy already matches the packaged one reports 'up to date' and writes nothing",
@@ -371,7 +371,7 @@
       "id": "t3",
       "summary": "Prove (or disprove) that changing the CPU cap on a running vLLM GPU container is safe",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "a scratch evidence transcript under docs/evidence/ records: a small vLLM container (e.g. the hand checkpoint) serving on the Spark, a request before, 'docker update --cpus' stepped through 16/12/8/4 while a request loop runs, a pause/unpause, and a request after \u2014 with every request's status and the container log grep for CUDA errors",
         "the transcript ends with an explicit verdict: SAFE (docker update --cpus is the mechanism) or UNSAFE (the alternative mechanism to use, e.g. writing the container cgroup's cpu.max, is named and itself shown working)"
@@ -387,7 +387,7 @@
       "id": "t4",
       "summary": "Package the graded thermal governor in lobes",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "a lobes module implements the graded bands from ~/odm/telemetry/governor2.sh: hottest thermal zone <84 C -> 16 cpus, <88 -> 12, <91 -> 8, <93.5 -> 4, >=93.5 -> pause, resume below 86 C at 4; 3 s poll; no root; band thresholds and the target container are configurable",
         "the CPU-cap mechanism is whichever one t3's verdict proved; the band-selection logic is a pure function with unit tests for every boundary (83.9/84.0/87.9/88.0/90.9/91.0/93.4/93.5 C and the paused->resume hysteresis)",
@@ -407,7 +407,7 @@
       "id": "t5",
       "summary": "Release R1: ship the plugin fix, the plugin refresh flag and the governor",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "a PR on its own branch bumps the version (bump.py minor, CHANGELOG entry), passes CI (tests, black, isort, flake8, bandit, afi doctor --strict, version-check, secrets-scan) and has every review thread replied to and resolved before merge",
         "the merged release is published to PyPI as lobes-cli and its version is recorded for the box tasks"
@@ -424,7 +424,7 @@
       "id": "t6",
       "summary": "Write the per-box rollout procedure: lane-safety 0.88 scaffold + R1 onto a hand-kept deployment",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "docs/operating-a-deployment.md (or a new docs/runbooks/ page) gains a step-by-step procedure that takes an existing ~/.lobes from the 0.86 scaffold to the R1 scaffold WITHOUT re-scaffolding over hand edits: install lobes-cli==R1 with uv tool on the box, diff the packaged fleet compose against the box's compose for the lane-safety blocks (/cache/vllm mounts, boot hold, restart policy, start counter), merge them via an override or a reviewed edit, run doctor --refresh-logwrap --apply and doctor --refresh-plugin --apply, create the cache dirs (doctor --fix --apply), and verify with doctor (no logwrap_stale, no stale-plugin finding)",
         "the procedure includes a rollback (restore the dated backups) and a verification command list, and is dry-run once against a COPY of one real box's ~/.lobes in scratch space, recording the diff it would apply"
@@ -442,7 +442,7 @@
       "id": "t7",
       "summary": "Thor: apply the R1 + lane-safety scaffold and file the incumbent baselines",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Thor's ~/.lobes follows the t6 procedure: doctor shows no logwrap_stale and no stale-plugin finding, /cache/vllm mounts are present, and the backups are on disk",
         "docs/evidence/<date>-baseline-nightly-thor.txt records the embedder and reranker on the nightly (correctness probes + throughput via lobes benchmark/measure, conditions recorded), and notes that the worker's nightly baseline is the 2026-09-10 transcript because the worker already runs 0.31.0",
@@ -465,7 +465,7 @@
       "id": "t8",
       "summary": "Thor: switch embed and rerank to 0.31.0-ubuntu2404 and retire the hand-typed worker override",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Thor's .env VLLM_NIGHTLY_IMAGE equals the v0.31.0-ubuntu2404 index digest, and ~/.lobes/docker-compose.override.yml carries no 'image: vllm/vllm-openai' line; the worker, embed and rerank containers all run that digest and report vllm 0.31.0",
         "docs/evidence/<date>-accept-vllm-031-thor.txt records the day-of before-state, the switch, cold-compile boot times, and the probes: worker known-answer + tool call + image input + one strict:true tool call (xgrammar engaged or not), embedder ranking, reranker ordering, and throughput compared against the t7 baseline",
@@ -492,7 +492,7 @@
       "id": "t9",
       "summary": "Orin: apply the R1 + lane-safety scaffold and file the incumbent baselines",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Orin's ~/.lobes follows the t6 procedure (doctor clean for logwrap and plugin, cache mounts present, backups on disk)",
         "docs/evidence/<date>-baseline-nightly-orin.txt records the embedder and reranker on the 7c5a10e9 nightly, gemma2-embed's per-modality negative controls on its current base, and cites the existing 2026-10-14 decider transcripts as the decider's plain-v0.31.0 baseline",
@@ -515,7 +515,7 @@
       "id": "t10",
       "summary": "Orin: switch embed/rerank to 0.31.0-ubuntu2404, rebuild the gemma2-embed and decider sidecars on it, re-measure the decider",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Orin's .env VLLM_NIGHTLY_IMAGE equals the v0.31.0-ubuntu2404 digest; embed and rerank run it and report vllm 0.31.0 on sm_87; the gemma2-embed sidecar and the decider sidecar(s) are rebuilt with ST_BASE_IMAGE / DECIDER_BASE_IMAGE / DECIDER_VLLM_BASE_IMAGE set to that digest",
         "docs/evidence/<date>-accept-vllm-031-orin.txt records boots and probes: embedder ranking, reranker ordering, gemma2-embed per-modality negative controls, and the decider's top-1 agreement vs bf16 on the 418 labelled questions re-measured on -ubuntu2404 (decision c53), compared against t9's baselines",
@@ -543,7 +543,7 @@
       "id": "t11",
       "summary": "spark2: file the nightly cortex/embed/rerank/hand baselines under the thermal governor (no changes to the box)",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "docs/evidence/<date>-baseline-nightly-spark2.txt records cortex measured through cortex-spark2 (never plain cortex \u2014 c34): TTFT, decode tok/s from usage.completion_tokens, DSpark acceptance, KV pool, known-answer + tool call + one strict:true call; embedder ranking, reranker ordering, hand known-answer; with benchmark conditions (clocks, temps) recorded",
         "every benchmark run ran under a thermal governor (the proven pause-only ~/odm/telemetry/governor.sh, or the graded one if t3 has proven it), and the transcript says which",
@@ -562,7 +562,7 @@
       "id": "t12",
       "summary": "Spark: apply the R1 + lane-safety scaffold, stop ComfyUI, bring cortex up on 0.31.0-ubuntu2404 under the graded governor",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Spark's ~/.lobes follows the t6 procedure (hand-kept compose merged, never re-scaffolded); model-gear-comfyui is stopped and INNEREYE_FEASIBLE=false, PRIMARY_FEASIBLE=true, VLLM_NIGHTLY_IMAGE = the v0.31.0-ubuntu2404 digest; vllm-primary runs unsloth/Qwen3.8-27B-NVFP4 at the existing PRIMARY_* knobs (util 0.58, 262144, DSpark) and reports vllm 0.31.0",
         "the graded governor (t4) is attached to vllm-primary for the whole run and its log shows band changes",
@@ -602,7 +602,7 @@
       "id": "t13",
       "summary": "spark2: apply the R1 + lane-safety scaffold and switch all lanes to 0.31.0-ubuntu2404 in one recreate window",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "the Spark's cortex (t12) is serving and verified BEFORE spark2's lanes are recreated, so plain cortex stays answerable mesh-wide through the window",
         "spark2's ~/.lobes follows the t6 procedure and its .env VLLM_NIGHTLY_IMAGE equals the v0.31.0-ubuntu2404 digest; cortex, embed, rerank and hand run it and report vllm 0.31.0",
@@ -631,7 +631,7 @@
       "id": "t14",
       "summary": "R2 template flip: VLLM_NIGHTLY_IMAGE default, torch bases and decider-vllm to v0.31.0-ubuntu2404, with tests and goldens",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "'git grep 8bd082c2 lobes/templates' and 'git grep 7c5a10e9 lobes/templates/fleet/Dockerfile.embed-st lobes/templates/fleet/Dockerfile.decider' return nothing; the 12 image lines and 3 comment mentions carry the -ubuntu2404 index digest; Dockerfile.decider-vllm's DECIDER_VLLM_BASE_IMAGE is the -ubuntu2404 digest; Dockerfile.vllm-gemma4 is unchanged",
         "tests updated to the new digest (test_worker_compose.py, test_gemma4_compose.py, test_cli_fleet.py, test_nightly_migration_doc.py, test_gateway_fleet_doc.py, test_init.py with its exactly-7 count, test_embed_overlay.py, test_decider_sidecar_vllm.py); 'uv run python tests/goldens/regen.py' regenerated tests/goldens/template-defaults.env; uv run pytest -n auto passes",
@@ -658,7 +658,7 @@
       "id": "t15",
       "summary": "Relabel nightly-measured values: DECLARED until re-measured, re-promote with the new 0.31.0 evidence",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "every MEASURED claim measured on the nightly in lobes/profiles/builtin/*.toml, lobes/profiles/builtin_shapes/*.toml, docs/*.md (excluding docs/evidence/, docs/vllm-nightly-migration.md and docs/gateway-fleet.md, which t14 owns) and CLAUDE.md either cites a new 0.31.0 transcript from t8/t10/t12/t13 or is relabelled DECLARED/UNVALIDATED (#108)",
         "the decider's 0.988 agreement and orin-decider acceptance lines cite t10's -ubuntu2404 re-measure, or are relabelled DECLARED if it differs",
@@ -680,7 +680,7 @@
       "id": "t16",
       "summary": "Re-capture the deployments/ catalog entries from the switched Thor and Orin",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "deployments/jetson-agx-thor__thor-worker and deployments/jetson-agx-orin__orin-embed are re-captured (lock + verbatim files) from the live boxes via lobes.runtime._lock.capture_lock, and each VARIATION.md's Measured result cites t8's / t10's 0.31.0 transcript (or says verbatim 'No measured result.' with an empty evidence field)",
         "uv run pytest tests/test_variation_catalog.py tests/test_deployment_lock.py passes and the secrets-scan job is clean"
@@ -699,7 +699,7 @@
       "id": "t17",
       "summary": "Ship R2 and run the fleet acceptance sweep against the success signals",
       "origin": "llm",
-      "status": "proposed",
+      "status": "confirmed",
       "acceptance_criteria": [
         "one PR carries t14+t15+t16 with a version bump, passes CI, has every review thread resolved, and is merged and published",
         "a sweep transcript under docs/evidence/ shows, per box: every in-scope vLLM container's digest and vllm.__version__ (0.31.0), the .env VLLM_NIGHTLY_IMAGE equal to the released template default, no vllm image: line in any compose override, and the role probes passing",
