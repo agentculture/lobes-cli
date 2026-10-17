@@ -49,7 +49,8 @@ Written 2026-10-17 for a context compaction. Read this first, then
 
 ## Open follow-ups (issues)
 
-- **#310** Fleet move to vLLM v0.31.0. New data from mjolnir-agent: the official 0.31.0 worker config hit Xid 31 (MMU fault) at 131K depth × 4 concurrent on Thor. Worth a comment on #310 once mjolnir-agent's repro (window 3) reports.
+- **#310** Fleet move to vLLM v0.31.0. mjolnir-agent's window 3 (ended 13:40Z, Thor restored, worker healthy) did **not** reproduce the Xid 31 at 131K × 4 concurrent (2 clean runs): treat it as a one-off, no #310 comment needed for it. The TC-45 accuracy drop was a probe artifact (`max_tokens=256`), seen on both images.
+- **#309 recurrence:** the official v0.31.0 worker's warm-cache first boot crashed in inductor Triton autotune (`cudaErrorIllegalInstruction`, Xid 13 on every SM, then Xid 43) in 2 of 3 restarts today. Docker restarted it 6 s later, healthy since. So a warm compile cache does not prevent the autotune crash. mjolnir-agent will propose a comment on vllm#62149 (operator approves posts first). A #309 comment from lobes is pending operator approval.
 - **#312** `measure` and `benchmark --profile` record no host conditions.
 - **#313** The ≥ 30 min Spark thermal soak, never run.
 - **#316** Switching shapes leaves role keys in `.env`. A strict xfail test pins it. Fold in the general "rendered-key ownership" design.
