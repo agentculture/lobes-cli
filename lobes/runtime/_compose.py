@@ -1468,7 +1468,7 @@ def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) 
             continue
         service = None
         for line in text.splitlines():
-            m = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)
+            m = re.match(r"^ {2}([A-Za-z0-9_.-]+):\s*$", line)
             if m:
                 service = m.group(1)
                 continue

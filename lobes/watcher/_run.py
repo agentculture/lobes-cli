@@ -50,6 +50,22 @@ def _stderr_log(line: str) -> None:
     sys.stderr.flush()
 
 
+def _marker_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _read_marker(path: Path) -> dict[str, Any] | None:
+    """The marker's JSON object, or ``None`` when unreadable / not an object."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
     """Every ``*.gated`` marker in ``state_dir``, sorted by lane name.
 
@@ -65,27 +81,22 @@ def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
             continue
         lane = p.name[: -len(MARKER_SUFFIX)]
         entry: dict[str, Any] = {"lane": lane, "path": str(p), "malformed": False}
-        try:
-            entry["mtime"] = p.stat().st_mtime
-        except OSError:
-            entry["mtime"] = None
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("not an object")
-        except (OSError, ValueError):
+        entry["mtime"] = _marker_mtime(p)
+        data = _read_marker(p)
+        if data is None:
             entry["malformed"] = True
-            out.append(entry)
-            continue
-        for key in ("since", "need_kib", "avail_kib"):
-            val = data.get(key)
-            entry[key] = val if isinstance(val, int) and not isinstance(val, bool) else None
+        else:
+            for key in ("since", "need_kib", "avail_kib"):
+                val = data.get(key)
+                entry[key] = val if isinstance(val, int) and not isinstance(val, bool) else None
         out.append(entry)
     return out
 
 
 #: Actions logged once per lane until the action changes (not every poll).
-_QUIET_ACTIONS = ("rate-limited", "deferred:lane-starting", "ignored:stale", "would-clear")
+ACTION_STALE = "ignored:stale"
+ACTION_DEFERRED = "deferred:lane-starting"
+_QUIET_ACTIONS = ("rate-limited", ACTION_DEFERRED, ACTION_STALE, "would-clear")
 
 
 @dataclass
@@ -182,6 +193,27 @@ class Watcher:
         self._save_state()
         return action, result.source
 
+    def _log_action(
+        self,
+        m: dict[str, Any],
+        act: str,
+        reason: str | None,
+        via: str | None,
+        booting: list[str],
+    ) -> None:
+        """Log one marker's action line, once per lane until the action changes."""
+        if act in _QUIET_ACTIONS and self._logged.get(m["lane"]) == act:
+            return
+        self._logged[m["lane"]] = act
+        line = f"lobes-watcher: {self._describe(m)} action={act}"
+        if via and not reason:
+            line += f" via={via}"
+        if reason:
+            line += f" (stale marker: {reason}; not acted on)"
+        elif act == ACTION_DEFERRED:
+            line += f" (lane(s) still starting: {', '.join(booting)})"
+        self.log(line)
+
     def tick(self) -> list[dict[str, Any]]:
         """Poll once; return one action record per marker (empty when none)."""
         markers = scan_markers(self.state_dir)
@@ -198,16 +230,16 @@ class Watcher:
         booting = _compose.lanes_starting(health, present | held)
         via: str | None = None
         if not live:
-            action = "ignored:stale"
+            action = ACTION_STALE
         elif booting:
             # a drop mid-boot can trip a sibling vLLM's memory profiling (#3a)
-            action = "deferred:lane-starting"
+            action = ACTION_DEFERRED
         else:
             action, via = self._attempt(now)
         actions = []
         for m in markers:
             reason = stale[m["lane"]]
-            act = "ignored:stale" if reason else action
+            act = ACTION_STALE if reason else action
             actions.append(
                 {
                     "lane": m["lane"],
@@ -217,17 +249,7 @@ class Watcher:
                     "action": act,
                 }
             )
-            if act in _QUIET_ACTIONS and self._logged.get(m["lane"]) == act:
-                continue
-            self._logged[m["lane"]] = act
-            line = f"lobes-watcher: {self._describe(m)} action={act}"
-            if via and not reason:
-                line += f" via={via}"
-            if reason:
-                line += f" (stale marker: {reason}; not acted on)"
-            elif act == "deferred:lane-starting":
-                line += f" (lane(s) still starting: {', '.join(booting)})"
-            self.log(line)
+            self._log_action(m, act, reason, via, booting)
         return actions
 
 
