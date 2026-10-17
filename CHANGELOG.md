@@ -25,6 +25,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Review round 2: the lane-health check filters `docker ps` on the compose project label, so `embed-*` overlay lanes count. On every start, the wrapper hands a root-owned `lane-state/` back to the log dir's owner.
 - `status --pressure` reads the swap and iowait thresholds from the deployment `.env`, as the gateway does.
+- The gateway's threshold constants and `status --pressure` parse the swap/iowait thresholds with the same function (`_env_float`, now taking an `environ` mapping), so whitespace, empty and non-finite values are handled identically.
 - A failed card detection is retried at most once a minute instead of being cached for the life of the process.
 - The card-detection cache is bounded (8 detectors), and a detection that returns `unknown` is cached instead of re-running `nvidia-smi` every minute; only a detection that raised is retried.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.

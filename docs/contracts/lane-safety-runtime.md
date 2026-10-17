@@ -372,7 +372,10 @@ OTHER lane is starting.
   reads the gateway's swap/iowait busy thresholds
   (`LOBES_SWAP_DEGRADED_THRESHOLD`, `LOBES_IOWAIT_DEGRADED_THRESHOLD`) the same
   way, so a deployment that raises one (an Orin's iowait threshold) gets the
-  same verdict from `status --pressure` as from the gateway.
+  same verdict from `status --pressure` as from the gateway. Both parse the
+  value with one function (`_pressure_policy._env_float`): surrounding
+  whitespace is ignored, and a missing, empty, unparsable or non-finite value
+  keeps the default.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

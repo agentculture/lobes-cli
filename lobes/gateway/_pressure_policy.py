@@ -230,19 +230,24 @@ _FLOOR_TIER = "hand"
 _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)
 
 
-def _env_float(key: str, default: float) -> float:
-    """Read a float from *key* in ``os.environ``; fall back to *default*.
+def _env_float(key: str, default: float, environ: Mapping[str, str] | None = None) -> float:
+    """Read a float from *key* in *environ* (default ``os.environ``); else *default*.
 
-    Non-finite values (``nan``, ``inf``, ``-inf``) are treated as parse
-    failures and return *default* — a non-finite threshold silently breaks
-    every ``>`` comparison (``nan > x`` is always ``False``).
+    The ONE parser for every float knob here (review3 #6): the gateway's
+    import-time constants and :func:`degraded_thresholds_from_env` both call
+    it. Surrounding whitespace is ignored; a missing, empty or
+    whitespace-only, unparsable or non-finite value (``nan``, ``inf``,
+    ``-inf``) returns *default* — a non-finite threshold silently breaks every
+    ``>`` comparison (``nan > x`` is always ``False``).
     """
-    try:
-        raw = os.environ.get(key)
-        value = float(raw) if raw is not None else float(default)
-        return value if math.isfinite(value) else float(default)
-    except (TypeError, ValueError):
+    raw = (os.environ if environ is None else environ).get(key)
+    if raw is None:
         return float(default)
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return float(default)
+    return value if math.isfinite(value) else float(default)
 
 
 # ---------------------------------------------------------------------------
@@ -265,23 +270,15 @@ IOWAIT_THRESHOLD_ENV = "LOBES_IOWAIT_DEGRADED_THRESHOLD"
 def degraded_thresholds_from_env(environ: Mapping[str, str]) -> tuple[float, float]:
     """``(swap, iowait)`` busy thresholds from *environ* (review2-b #4).
 
-    A missing, empty, invalid or non-finite key keeps the module constant, so
-    a caller that passes a merged env (the one-shot ``lobes status
-    --pressure`` reading the deployment ``.env``) gets exactly the gateway's
-    parsing. The gateway itself keeps its import-time constants.
+    Parsed by the same :func:`_env_float` the gateway's import-time constants
+    use (review3 #6), so a caller that passes a merged env (the one-shot
+    ``lobes status --pressure`` reading the deployment ``.env``) gets exactly
+    the gateway's parsing: a missing, empty, invalid or non-finite key keeps
+    the module constant.
     """
-
-    def _pick(key: str, default: float) -> float:
-        raw = environ.get(key)
-        try:
-            value = float(str(raw).strip()) if raw is not None and str(raw).strip() else None
-        except ValueError:
-            value = None
-        return value if value is not None and math.isfinite(value) else default
-
     return (
-        _pick(SWAP_THRESHOLD_ENV, SWAP_DEGRADED_THRESHOLD),
-        _pick(IOWAIT_THRESHOLD_ENV, IOWAIT_DEGRADED_THRESHOLD),
+        _env_float(SWAP_THRESHOLD_ENV, SWAP_DEGRADED_THRESHOLD, environ),
+        _env_float(IOWAIT_THRESHOLD_ENV, IOWAIT_DEGRADED_THRESHOLD, environ),
     )
 
 
