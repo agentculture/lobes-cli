@@ -534,8 +534,9 @@ can serve for hours with `/health` green while one lane is simply absent),
 `profile_staleness` (the deployed `.env` carries the knobs the resolved
 machine profile requires, rendered with the deployment's recorded shape —
 `LOBES_SHAPE`, else the lock's `[variation] shape`, else machine-as-brain — so a
-shape's own `[host_env]` values are required, not overrides; a pre-#110 `.env` missing its card's validated
-divergences is issue #119's silent-hang incident; a key still carrying the
+shape's own `[host_env]` values are required, not overrides; a pre-#110
+`.env` missing its card's validated divergences is issue #119's silent-hang
+incident; a key still carrying the
 template default where the profile requires a divergence is named too, while
 a genuine operator override only downgrades to info), `health_reachable`
 (`/health` responds), and `gateway_version_match` (the deployed gateway's own
