@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T08:32:42Z",
+  "updated": "2026-10-17T08:45:15Z",
   "deviations": [
     {
       "id": "d1",
@@ -106,7 +106,7 @@
         "c10"
       ],
       "origin": "llm",
-      "status": "proposed",
+      "status": "approved",
       "classification": "acceptable",
       "seq": 41
     }
