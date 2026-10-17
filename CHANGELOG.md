@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A failed card detection is retried at most once a minute instead of being cached for the life of the process.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.
 - The pre-start bind-source setup lives only in the `_before_up` chokepoint.
+- A top-level compose `name:` is interpolated (`${VAR}`, `${VAR:-default}`, `${VAR-default}`, against the process env then the deployment `.env`) and unquoted; an unresolvable one is ignored instead of being normalised into a wrong project name.
 
 ## [0.87.0] - 2026-10-17
 

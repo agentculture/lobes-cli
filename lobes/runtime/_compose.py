@@ -1194,31 +1194,105 @@ def _normalize_project_name(raw: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", raw.lower()).lstrip("-_")
 
 
+_INTERP_RE = re.compile(
+    r"\$(?:(\$)|\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))"
+)
+
+
+def _interpolate(raw: str, lookup) -> str | None:
+    """Resolve compose ``$VAR`` / ``${VAR}`` / ``${VAR:-d}`` / ``${VAR-d}`` in *raw*.
+
+    ``lookup(name)`` returns the value or ``None`` when unset. ``None`` when a
+    reference cannot be resolved (an unset bare ``${VAR}``, any ``?`` form, an
+    unknown operator): the caller then ignores the value rather than guessing.
+    """
+    unresolved = False
+
+    def sub(m: re.Match) -> str:
+        nonlocal unresolved
+        escaped, braced, op, default, bare = m.groups()
+        if escaped:
+            return "$"
+        name = braced or bare
+        value = lookup(name)
+        if op is None:
+            if value is None:
+                unresolved = True
+                return ""
+            return value
+        if op == ":-":
+            return value if value else default
+        if op == "-":
+            return value if value is not None else default
+        unresolved = True  # ``?`` / ``+`` forms: not worth guessing here
+        return ""
+
+    out = _INTERP_RE.sub(sub, raw)
+    return None if unresolved else out
+
+
+def _env_lookup(deploy_dir: os.PathLike | str):
+    """A ``name -> value | None`` lookup: process env first, then the deployment ``.env``."""
+    dotenv: dict[str, str] | None = None
+
+    def lookup(name: str) -> str | None:
+        nonlocal dotenv
+        if name in os.environ:
+            return os.environ[name]
+        if dotenv is None:
+            dotenv = _env.read_env_file(Path(deploy_dir) / ENV_FILE)
+        return dotenv.get(name)
+
+    return lookup
+
+
+def _top_level_name(deploy_dir: os.PathLike | str) -> str | None:
+    """The compose chain's top-level ``name:`` (last file wins), interpolated.
+
+    Quotes and a trailing comment are stripped; an unresolvable value is
+    ignored (``None``), silently (review3 #2).
+    """
+    try:
+        files = [a for a in _compose_files(deploy_dir) if a != "-f"] or [COMPOSE_FILE]
+    except OSError:
+        files = [COMPOSE_FILE]
+    found: str | None = None
+    for name in files:
+        try:
+            text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        m = re.search(r"^name:[ \t]*(.*)$", text, re.M)
+        if m:
+            found = m.group(1)
+    if found is None:
+        return None
+    value = found.strip()
+    if value[:1] in ("'", '"'):
+        quote = value[0]
+        end = value.find(quote, 1)
+        value = value[1:end] if end > 0 else value[1:]
+    else:
+        value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+    resolved = _interpolate(value, _env_lookup(deploy_dir))
+    return resolved.strip() if resolved and resolved.strip() else None
+
+
 def compose_project_name(deploy_dir: os.PathLike | str) -> str:
     """The compose project a deployment's containers carry, resolved as compose does.
 
     lobes never passes ``-p``, so the order is: ``COMPOSE_PROJECT_NAME`` in
     this process's env, then in the deployment ``.env``, then a top-level
-    ``name:`` in the compose chain (the last file that sets one), then the
-    deployment dir's basename — all normalised (``~/.lobes`` -> ``lobes``, the
-    project every live box runs).
+    ``name:`` in the compose chain (the last file that sets one, with
+    ``${VAR}`` references resolved — review3 #2), then the deployment dir's
+    basename — all normalised (``~/.lobes`` -> ``lobes``, the project every
+    live box runs).
     """
     raw = os.environ.get(COMPOSE_PROJECT_ENV, "").strip()
     if not raw:
         raw = (_env.read_env(Path(deploy_dir) / ENV_FILE, COMPOSE_PROJECT_ENV) or "").strip()
     if not raw:
-        try:
-            files = [a for a in _compose_files(deploy_dir) if a != "-f"] or [COMPOSE_FILE]
-        except OSError:
-            files = [COMPOSE_FILE]
-        for name in files:
-            try:
-                text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
-            except OSError:
-                continue
-            m = re.search(r"^name:\s*['\"]?([^'\"#\s]+)", text, re.M)
-            if m:
-                raw = m.group(1)
+        raw = _top_level_name(deploy_dir) or ""
     if not raw:
         raw = os.path.basename(os.path.abspath(deploy_dir))  # compose: Abs, no symlink resolve
     return _normalize_project_name(raw)

@@ -459,3 +459,39 @@ def test_a_held_lane_does_not_hide_another_booting_lane(rec, tmp_path, monkeypat
     assert events == ["docker up -d"]
     err = capsys.readouterr().err
     assert "hand" in err and "primary" not in err.split("starting:")[1]
+
+
+# --- review3 #2: a top-level ``name:`` is interpolated, never taken raw ------
+
+
+@pytest.mark.parametrize(
+    "name_line,environ,dotenv,expected",
+    [
+        ("name: ${LOBES_PROJECT:-lobes}", {}, "", "lobes"),
+        ("name: ${LOBES_PROJECT:-lobes}", {"LOBES_PROJECT": "Prod"}, "", "prod"),
+        ("name: ${LOBES_PROJECT:-lobes}", {}, "LOBES_PROJECT=fromenv\n", "fromenv"),
+        ("name: ${LOBES_PROJECT:-lobes}", {"LOBES_PROJECT": ""}, "", "lobes"),
+        ("name: ${LOBES_PROJECT-dflt}", {}, "", "dflt"),
+        ("name: ${LOBES_PROJECT}", {"LOBES_PROJECT": "plain"}, "", "plain"),
+        ('name: "quoted"', {}, "", "quoted"),
+        ("name: 'single'  # comment", {}, "", "single"),
+        ("name: pre-${SUFFIX:-x}", {}, "", "pre-x"),
+        # unresolvable -> the name: candidate is ignored, the basename wins
+        ("name: ${UNSET_VAR}", {}, "", "dep"),
+        ("name: ${UNSET_VAR:?boom}", {}, "", "dep"),
+    ],
+)
+def test_top_level_name_is_interpolated(
+    tmp_path, monkeypatch, capsys, name_line, environ, dotenv, expected
+):
+    for key in ("COMPOSE_PROJECT_NAME", "LOBES_PROJECT", "SUFFIX", "UNSET_VAR"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / "docker-compose.yml").write_text(f"{name_line}\nservices: {{}}\n", encoding="utf-8")
+    if dotenv:
+        (d / ".env").write_text(dotenv, encoding="utf-8")
+    assert _compose.compose_project_name(d) == expected
+    assert capsys.readouterr().err == ""  # an unresolvable name logs nothing
