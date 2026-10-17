@@ -54,12 +54,25 @@ hold     = release − host uptime, if positive
 - `LOBES_BOOT_DELAY_S=0` disables the hold and the stagger together.
 - The hold is logged once, in the lane log, as
   `lobes: host up <u>s, holding <h>s (boot delay <d>s + stagger <o>s)`.
+- **Hold marker.** For exactly the duration of the hold the wrapper keeps
+  `${MG_LOG_DIR}/lane-state/<MG_LOG_NAME>.held`, one JSON object:
+
+  ```json
+  {"lane": "primary", "since": 1760688000, "reason": "boot_hold"}
+  ```
+
+  `reason` is `boot_hold` here and `start_counter` for the start-counter hold
+  (section 3). The wrapper removes it when the hold ends, on TERM/INT and on
+  any other exit, and drops a leftover one for its own lane when it starts (a
+  SIGKILLed wrapper runs no trap). It tells the page-cache clear that the lane
+  is held, not booting (section 5). An unwritable `lane-state/` skips the
+  marker; the hold still runs.
 - After a reboot, dockerd restarts containers by restart policy and does not
   honour compose `depends_on` (assumption c32, unverified on DGX OS and JetPack:
   lapse l2). So the hold lives in each container's own entrypoint.
 - Every hold (this one, the start counter, the memory gate) is stoppable: the
   wrapper waits with `sleep N & wait $!` under a TERM/INT handler that removes
-  the gate marker and exits `143`/`130`, so `docker stop` ends a held lane at
+  the gate and hold markers and exits `143`/`130`, so `docker stop` ends a held lane at
   once. Before 2026-10-17 a held lane ignored TERM until docker's kill timeout
   (measured on Spark, Orin and Thor).
 
@@ -74,6 +87,8 @@ hold     = release − host uptime, if positive
   the window, the wrapper logs
   `lobes: <n> starts in <w>s — holding; clear with 'lobes up <role> --apply' or delete <file>`,
   and re-checks every 30 s until the oldest start ages out or the file is gone.
+  While it waits it keeps the `.held` marker with `reason: "start_counter"`
+  (section 2).
   With the defaults, the 4th start inside 600 s holds. The start itself is
   recorded when the lane gets past the hold. `<role>` is the role name for the
   lane (`primary` → `cortex`, `multimodal` → `senses`, `embed` → `embedder`,
@@ -85,7 +100,15 @@ hold     = release − host uptime, if positive
   container starts; a new `lane-state/` is mode `0775`, and under `sudo` both are
   chowned to `SUDO_UID`/`SUDO_GID`. Left to the first root container, the
   directory would be root `0755` and the operator could not delete a counter.
-  An existing directory is never changed.
+  An existing directory is never changed by the verbs.
+- **Self-heal in the wrapper.** The wrapper runs as root inside the container,
+  so on a box where a root container already created `lane-state/` the verbs'
+  rule above never repairs it. So on every start the wrapper aligns
+  `lane-state/` and each file it writes there (its `.starts`, `.gated` and
+  `.held`) to the owner of the parent log dir: `chown --reference=<log dir>`,
+  falling back to `chown "$(stat -c %u:%g <log dir>)"`. It is best-effort and
+  silent: a failed chown never blocks the lane. The next start of any lane
+  repairs the directory; each lane repairs its own files.
 - **Reset:** a lifecycle verb that starts a lane on purpose deletes that lane's
   file first, so deliberate restarts never count. A missing file is fine. A
   file the verb cannot delete is reported as one stderr line naming the files,
@@ -184,12 +207,13 @@ OTHER lane is starting.
   would miss it. A lane that waited at the gate would be missed entirely, and
   `LOBES_START_MAX=0` writes no entry at all. Docker's health status covers the
   whole boot.
-- **Gated lanes do not count.** A lane held at the memory gate (or a boot or
-  start-counter hold) is also `health: starting`, because it has not exec'd
-  vLLM yet. Lanes with a `.gated` marker are excluded, so they never block
-  their own clear. A lane in the boot hold or a start-counter hold has no
-  marker and does count, so after a reboot the clear waits for the staggered
-  boot to settle. That is deliberately conservative.
+- **Gated and held lanes do not count.** A lane held at the memory gate, in
+  the boot hold or stagger, or in a start-counter hold is also
+  `health: starting`, because it has not exec'd vLLM yet and uses no GPU.
+  Lanes with a `.gated` marker (section 4) or a `.held` marker (section 2) are
+  excluded, so a gated lane never blocks its own clear and a held lane never
+  defers a clear for the minutes its hold lasts. Only a lane past every hold,
+  actually loading, counts as starting.
 - **Docker unreadable** (absent, no permission, error): the state is unknown.
   The clear proceeds as before, and the watcher ages markers only by time.
 - The lifecycle verb prints one stderr line naming the starting lanes. The

@@ -574,3 +574,16 @@ def test_embed_overlay_lane_marker_is_live_not_stale(tmp_path, monkeypatch):
         seen
         and f"label=com.docker.compose.project={_compose.compose_project_name(deploy)}" in seen[0]
     )
+
+
+def test_watcher_does_not_defer_for_a_held_lane(tmp_path):
+    """review2-b #2: a lane in its boot/counter hold (.held) is not booting."""
+    state = tmp_path / "logs" / "lane-state"
+    _marker(state, "worker")
+    (state / "primary.held").write_text('{"lane": "primary", "since": 1, "reason": "boot_hold"}')
+    clear, logs = CountingClear(), []
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.health = lambda: {"worker": "starting", "primary": "starting"}
+    actions = w.tick()
+    assert actions[0]["action"] == "cleared"
+    assert clear.calls == 1

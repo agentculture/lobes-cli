@@ -189,7 +189,9 @@ class Watcher:
         health = self._read_health()
         stale = {m["lane"]: self._stale_reason(m, now, health) for m in markers}
         live = [m for m in markers if stale[m["lane"]] is None]
-        booting = _compose.lanes_starting(health, present)
+        # gated (markers above) and held (boot/counter hold) lanes are not booting
+        held = _compose.marker_lanes(self.state_dir, ".held")
+        booting = _compose.lanes_starting(health, present | held)
         via: str | None = None
         if not live:
             action = "ignored:stale"

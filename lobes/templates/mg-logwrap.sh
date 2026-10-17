@@ -86,23 +86,84 @@ _num() { case "$1" in '' | *[!0-9]*) echo "$2" ;; *) echo "$((10#$1))" ;; esac; 
 # Spark, Orin and Thor a held lane ran until docker's kill timeout. So each wait
 # is `sleep N & wait $!` (the `wait` builtin returns at once on a trapped
 # signal) under a TERM/INT handler that kills the pending sleep, removes the
-# gate marker (if any) and exits 143/130. The handlers are cleared before the
-# final exec, so the server gets default signal handling.
+# gate and hold markers (if any) and exits 143/130; an EXIT trap removes them
+# on any other exit. The handlers are cleared before the final exec, so the
+# server gets default signal handling.
 _sleep_pid=""
-_marker=""
+_marker="" # lane-state/<name>.gated while the memory gate waits
+_held=""   # lane-state/<name>.held while a boot or start-counter hold waits
+_cleanup() {
+    [ -n "$_marker" ] && rm -f "$_marker"
+    [ -n "$_held" ] && rm -f "$_held"
+    return 0
+}
 _on_signal() {
     [ -n "$_sleep_pid" ] && kill "$_sleep_pid" 2>/dev/null
-    [ -n "$_marker" ] && rm -f "$_marker"
+    _cleanup
     exit "$1"
 }
 trap '_on_signal 143' TERM
 trap '_on_signal 130' INT
+trap _cleanup EXIT
 _wait() {
     sleep "$1" &
     _sleep_pid=$!
     wait "$_sleep_pid" || true
     _sleep_pid=""
 }
+
+# --- Lane state dir (lane-safety contract, sections 2 to 4) -----------------
+# Holds the start counter, the memory-gate marker and the hold marker. If it
+# cannot be created they are all skipped (one log line) — the holds and the
+# gate themselves only need /proc and still run.
+#
+# Ownership self-heal (review2-b #3, finding 9): this wrapper runs as root in the
+# container, so a lane-state/ it (or an older wrapper) created is root-owned
+# and the operator cannot delete a counter. So every start aligns lane-state/
+# and each file the wrapper writes into it to the parent log dir's owner
+# (`chown --reference`, else the owner `stat` reports). Best-effort and silent:
+# a failed chown never blocks the lane.
+_chown_like_dir() {
+    chown --reference="$dir" "$@" 2>/dev/null && return 0
+    local _o
+    _o="$(stat -c %u:%g "$dir" 2>/dev/null)" || return 0
+    [ -n "$_o" ] && chown "$_o" "$@" 2>/dev/null
+    return 0
+}
+_state="${dir}/lane-state"
+if mkdir -p "$_state" 2>/dev/null && [ -w "$_state" ]; then
+    _chown_like_dir "$_state"
+    # A .held left by an earlier run of THIS lane that was SIGKILLed (no trap
+    # runs) would hide this boot from the clear guard: drop it now.
+    rm -f "${_state}/${name}.held" 2>/dev/null
+else
+    printf 'lobes: %s not writable; start counter and gate marker skipped\n' "$_state"
+    _state=""
+fi
+_now() { printf '%(%s)T' -1; }
+
+# A lane in the boot hold or a start-counter hold is held BEFORE exec (no GPU)
+# but docker reports it `health: starting`; lane-state/<name>.held (one JSON
+# object) tells the lifecycle clear and the watcher not to count it as booting
+# (contract section 5). Present for exactly the hold; removed on release and on
+# TERM/INT/EXIT.
+_hold_begin() { # $1: boot_hold | start_counter
+    [ -n "$_state" ] || return 0
+    _held="${_state}/${name}.held"
+    if printf '{"lane": "%s", "since": %s, "reason": "%s"}\n' \
+        "$name" "$(_now)" "$1" >"$_held" 2>/dev/null; then
+        _chown_like_dir "$_held"
+    else
+        _held=""
+    fi
+    return 0
+}
+_hold_end() {
+    [ -n "$_held" ] && rm -f "$_held"
+    _held=""
+    return 0
+}
+
 _delay="$(_num "${LOBES_BOOT_DELAY_S-}" 120)"
 if [ "$_delay" -gt 0 ]; then
     _stagger="$(_num "${LOBES_BOOT_STAGGER_S-}" 20)"
@@ -125,23 +186,12 @@ if [ "$_delay" -gt 0 ]; then
         if [ "$_hold" -gt 0 ]; then
             printf 'lobes: host up %ss, holding %ss (boot delay %ss + stagger %ss)\n' \
                 "$((10#$_up))" "$_hold" "$_delay" "$_off"
+            _hold_begin boot_hold
             _wait "$_hold"
+            _hold_end
         fi
     fi
 fi
-
-# --- Lane state dir (lane-safety contract, sections 3 and 4) ----------------
-# Holds the start counter and the memory-gate marker. If it cannot be created
-# the counter and the marker are skipped (one log line) — the gate itself only
-# needs /proc and still runs.
-_state="${dir}/lane-state"
-if mkdir -p "$_state" 2>/dev/null && [ -w "$_state" ]; then
-    :
-else
-    printf 'lobes: %s not writable; start counter and gate marker skipped\n' "$_state"
-    _state=""
-fi
-_now() { printf '%(%s)T' -1; }
 
 # --- Crash backoff: the start counter (contract section 3) ------------------
 # File: lane-state/<name>.starts, one epoch second per line. A start HOLDS when
@@ -177,16 +227,18 @@ if [ "$_max" -gt 0 ] && [ -n "$_state" ]; then
     if [ "${#_kept[@]}" -ge "$_max" ]; then
         printf "lobes: %s starts in %ss — holding; clear with 'lobes up %s --apply' or delete %s\n" \
             "${#_kept[@]}" "$_window" "$_role" "$_starts"
+        _hold_begin start_counter
         while :; do
             _wait 30
             [ -f "$_starts" ] || break
             _count_starts
             [ "${#_kept[@]}" -lt "$_max" ] && break
         done
+        _hold_end
         _count_starts
     fi
     _kept+=("$(_now)")
-    printf '%s\n' "${_kept[@]}" >"$_starts" 2>/dev/null || true
+    printf '%s\n' "${_kept[@]}" >"$_starts" 2>/dev/null && _chown_like_dir "$_starts"
 fi
 
 # --- Crash backoff: the memory gate (contract section 4) --------------------
@@ -254,9 +306,9 @@ if [ "$(_num "${LOBES_MEM_GATE-}" 1)" != 0 ] && [ "$_has_util" = 1 ]; then
         _waited=0
         while [ "$_avail" -lt "$_need" ]; do
             if [ -n "$_marker" ]; then
-                [ "$_waited" = 0 ] && trap 'rm -f "$_marker"' EXIT
                 printf '{"lane": "%s", "since": %s, "need_kib": %s, "avail_kib": %s}\n' \
-                    "$name" "$_since" "$_need" "$_avail" >"$_marker" 2>/dev/null || true
+                    "$name" "$_since" "$_need" "$_avail" >"$_marker" 2>/dev/null &&
+                    [ "$_waited" = 0 ] && _chown_like_dir "$_marker"
             fi
             if [ "$_waited" -ge "$_gtimeout" ]; then
                 printf "lobes: memory gate timed out (need %s KiB, have %s KiB) — run 'lobes watcher install' or the machine CLI's drop-caches\n" \
@@ -268,10 +320,7 @@ if [ "$(_num "${LOBES_MEM_GATE-}" 1)" != 0 ] && [ "$_has_util" = 1 ]; then
             _waited=$((_waited + 5))
             _meminfo || break # meminfo vanished: never block serving
         done
-        if [ -n "$_marker" ]; then
-            rm -f "$_marker"
-            trap - EXIT
-        fi
+        [ -n "$_marker" ] && rm -f "$_marker"
         _marker=""
     fi
 fi
@@ -279,7 +328,7 @@ fi
 # The waits are over: drop the TERM/INT handlers so the server starts with
 # default signal dispositions (exec resets caught signals anyway; this keeps
 # the intent explicit and covers no-wait paths too).
-trap - TERM INT
+trap - TERM INT EXIT
 
 # exec the real command: this DOES replace the shell, so the server (not bash) is
 # the container's main process — it receives SIGTERM directly (graceful shutdown)

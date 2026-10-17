@@ -421,3 +421,41 @@ def test_a_booting_embed_lane_defers_the_clear(rec, tmp_path, monkeypatch, capsy
     _compose.compose_up_detached(tmp_path)
     assert "clear" not in events and events[-1].endswith("up -d")
     assert "qwen3vl-embed" in capsys.readouterr().err
+
+
+# --- review2-b #2: lanes held before exec (.held) never defer the clear ------
+
+
+def test_lanes_starting_excludes_held_lanes(tmp_path):
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text('{"lane": "primary", "reason": "boot_hold"}')
+    assert _compose.held_lanes(tmp_path) == {"primary"}
+    health = {"primary": "starting", "hand": "starting"}
+    excluded = _compose.gated_lanes(tmp_path) | _compose.held_lanes(tmp_path)
+    assert _compose.lanes_starting(health, excluded) == ["hand"]
+
+
+def test_counter_held_lane_does_not_block_a_clear(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text(
+        '{"lane": "primary", "since": 1, "reason": "start_counter"}', encoding="utf-8"
+    )
+    _ps(monkeypatch, "vllm-primary\tmodel-gear-vllm-primary\tUp 9 minutes (health: starting)\n")
+    _compose.run_compose(tmp_path, ["docker", "compose", "up", "-d", "--no-deps", "vllm-hand"])
+    assert events == ["clear", "docker up -d --no-deps vllm-hand"]
+
+
+def test_a_held_lane_does_not_hide_another_booting_lane(rec, tmp_path, monkeypatch, capsys):
+    events, _ = rec
+    state = _deploy(tmp_path)
+    (state / "primary.held").write_text('{"lane": "primary"}', encoding="utf-8")
+    _ps(
+        monkeypatch,
+        "vllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "vllm-hand\tmodel-gear-vllm-hand\tUp 1 minute (health: starting)\n",
+    )
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["docker up -d"]
+    err = capsys.readouterr().err
+    assert "hand" in err and "primary" not in err.split("starting:")[1]

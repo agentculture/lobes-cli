@@ -1272,18 +1272,35 @@ def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
     return health
 
 
-def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
-    """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
-    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
-    state = durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+def marker_lanes(state: Path, suffix: str) -> set[str]:
+    """Lane names with a ``<lane><suffix>`` marker in a ``lane-state/`` dir."""
     try:
-        return {p.name[: -len(".gated")] for p in state.glob("*.gated")}
+        return {p.name[: -len(suffix)] for p in Path(state).glob(f"*{suffix}")}
     except OSError:
         return set()
 
 
+def _lane_state(deploy_dir: os.PathLike | str) -> Path:
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    return durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+
+
+def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
+    return marker_lanes(_lane_state(deploy_dir), ".gated")
+
+
+def held_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.held`` marker (review2-b #2).
+
+    The wrapper keeps it for the boot hold/stagger and the start-counter hold:
+    the lane is held before ``exec`` (no GPU) though docker says ``starting``.
+    """
+    return marker_lanes(_lane_state(deploy_dir), ".held")
+
+
 def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str]:
-    """Lanes docker reports mid-boot, minus ``exclude`` (gated lanes: held, not booting)."""
+    """Lanes docker reports mid-boot, minus ``exclude`` (gated/held lanes: not booting)."""
     if not health:
         return []
     return sorted(k for k, v in health.items() if v == "starting" and k not in exclude)
@@ -1292,12 +1309,14 @@ def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str
 def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
     """The lifecycle clear, skipped while another lane is mid-boot (review-b #3).
 
-    A gated lane shows ``health: starting`` too (it is held before ``exec``), so
-    gated lanes never defer the clear. Docker unreadable: clear as before.
+    A gated or held lane shows ``health: starting`` too (it is held before
+    ``exec``), so gated (``.gated``) and held (``.held``, review2-b #2) lanes
+    never defer the clear. Docker unreadable: clear as before.
     """
     if not _clear_wanted(deploy_dir):
         return False  # clear_page_cache would skip anyway; don't run docker ps
-    booting = lanes_starting(lane_health(deploy_dir), gated_lanes(deploy_dir))
+    idle = gated_lanes(deploy_dir) | held_lanes(deploy_dir)
+    booting = lanes_starting(lane_health(deploy_dir), idle)
     if booting:
         print(
             "lobes: page-cache clear deferred - lane(s) still starting: "
