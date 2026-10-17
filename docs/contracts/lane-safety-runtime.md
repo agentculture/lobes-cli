@@ -226,7 +226,9 @@ OTHER lane is starting.
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
   then the packaged wrapper and nothing else; the wrapper is written to a temp
   file and renamed over the old name, so running containers, which bind-mount
-  the old inode, keep reading intact bytes until they are recreated), `jetson_clocks_locked` (warn:
+  the old inode, keep reading intact bytes until they are recreated; the new
+  file and the `.bak` keep the old file's mode and, when run as root, its
+  owner, and a failed chown is reported, never fatal), `jetson_clocks_locked` (warn:
   `window show` reports `clocks_locked`, or `active` from an older CLI,
   while no benchmark window holds the host lock),
   `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
