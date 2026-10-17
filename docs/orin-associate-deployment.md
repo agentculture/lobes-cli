@@ -151,13 +151,31 @@ and ignore start order, so bring `associate` up before the gears when you use th
 
 After a host reboot, dockerd restarts every lane at once and ignores
 `depends_on`; there the lane wrapper's boot hold sets the order instead. The
-shape's own `[host_env]` renders `LOBES_BOOT_ORDER=associate,embed,rerank`,
-which replaces the Orin card's senses-first default, so associate is released
-first there too.
+wrapper releases each lane at a fixed time, not when the one before it is
+healthy: `LOBES_BOOT_DELAY_S` (default 120 s) plus its position in
+`LOBES_BOOT_ORDER` times `LOBES_BOOT_STAGGER_S`, and a lane that is not listed
+goes last. With the default 20 s stagger the gears would start while associate
+is still loading, which is a gears-first boot in memory terms. So the shape's
+own `[host_env]` renders `LOBES_BOOT_ORDER=associate` and
+`LOBES_BOOT_STAGGER_S=400`. This replaces the Orin card's senses-first default:
+
+| lane | released at |
+|---|---|
+| `associate` | 120 s (120 + 0 × 400) |
+| `embed`, `rerank` (not listed) | 520 s (120 + 1 × 400) |
+
+Associate went healthy 360 s after it started on this rendered shape
+(`docs/evidence/2026-09-13-accept-orin-associate-1m.txt`), so it should be
+healthy at about 480 s, before the gears start. That 360 s is one measured
+boot. A different engine, image or context needs re-measuring (#108). The
+520 s hold stays inside the gears' 780 s healthcheck `start_period`. Every
+other unlisted lane waits until 520 s too, including the gateway, whose own
+`start_period` is 200 s, so it reports unhealthy for a few minutes after a
+reboot.
 
 Two keys are **operator-typed** in the deployment's `.env`. The shape does not
-declare them (its `[host_env]` carries only `LOBES_BOOT_ORDER`), and the card
-must not (it would leak them onto shapes that drop associate):
+declare them (its `[host_env]` carries only `LOBES_BOOT_ORDER` and
+`LOBES_BOOT_STAGGER_S`), and the card must not (it would leak them onto shapes that drop associate):
 
 ```bash
 ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1

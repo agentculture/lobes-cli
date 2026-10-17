@@ -53,6 +53,7 @@ from lobes.profiles.render import (
     ROLE_ENV_PREFIX,
     profile_env,
     role_engine,
+    shape_host_env_defaults,
 )
 from lobes.profiles.schema import ROLES, Profile, RoleProfile
 from lobes.profiles.shape_render import (
@@ -112,6 +113,13 @@ def test_machine_as_brain_is_byte_identical_to_profile_golden(card: str) -> None
     profile = resolve_profile(card)
     rendered = render_shape(shape, profile).env_text()
     existing_golden = (_PROFILE_GOLDENS_DIR / f"{card}.env").read_text(encoding="utf-8")
+    # The one shape-axis addition: every shape renders each key a built-in
+    # shape declares in [host_env] (its default where the card is silent), so a
+    # shape switch overwrites it (shape_render.compose_profile).
+    lines = existing_golden.splitlines()
+    present = {line.split("=", 1)[0] for line in lines}
+    lines += [f"{k}={v}" for k, v in shape_host_env_defaults().items() if k not in present]
+    existing_golden = "\n".join(sorted(lines)) + "\n"
     assert rendered == existing_golden, (
         f"machine-as-brain on card {card!r} must render byte-identically to the "
         f"pre-change tests/goldens/{card}.env — the whole-brain shape is a no-op. "
@@ -124,7 +132,8 @@ def test_machine_as_brain_env_equals_profile_env(card: str) -> None:
     """The composed env dict itself is identical to profile_env(profile), not just the text."""
     profile = resolve_profile(card)
     shape = resolve_shape(_IDENTITY_SHAPE)
-    assert render_shape(shape, profile).env == profile_env(profile)
+    expected = {**shape_host_env_defaults(), **profile_env(profile)}
+    assert render_shape(shape, profile).env == expected
 
 
 def test_machine_as_brain_carries_no_overrides_and_hosts_everything() -> None:

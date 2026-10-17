@@ -39,7 +39,7 @@ import pytest
 from lobes.gateway import _pressure_policy
 from lobes.gateway._pressure_policy import _env_float, decide
 from lobes.profiles.loader import builtin_names, resolve_profile
-from lobes.profiles.render import ROLE_ENV_PREFIX
+from lobes.profiles.render import ROLE_ENV_PREFIX, shape_host_env_keys
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape, shape_env, shape_services
 from lobes.profiles.shapes import AUDIO_ROLES, builtin_shape_names, resolve_shape
 from tests.goldens.regen import FLEET_COMPOSE, shape_golden_path
@@ -234,9 +234,10 @@ def test_no_other_card_gains_a_host_env_key_under_any_shape(card: str) -> None:
     for shape_name in builtin_shape_names():
         shape = resolve_shape(shape_name)
         env = shape_env(shape, resolve_profile(card))
-        # A key the SHAPE itself declares in its [host_env] (orin-associate's
-        # LOBES_BOOT_ORDER) follows the shape onto every card; nothing else may.
-        assert not any(k.startswith("LOBES_") and k not in shape.host_env for k in env)
+        # A key ANY built-in shape declares in its [host_env] (orin-associate's
+        # boot order) is rendered by every shape on every card, so a shape
+        # switch overwrites it; nothing else may appear.
+        assert not any(k.startswith("LOBES_") and k not in shape_host_env_keys() for k in env)
 
 
 def test_only_the_base_goldens_carry_no_lobes_key() -> None:
@@ -249,11 +250,10 @@ def test_only_the_base_goldens_carry_no_lobes_key() -> None:
     goldens = [p for p in _GOLDENS_DIR.glob("*.env") if p.stem != "template-defaults"]
     goldens += list((_GOLDENS_DIR / "shapes").glob("*.env"))
     for path in goldens:
-        # A key a shape declares in its own [host_env] follows that shape onto
-        # every card (orin-associate's LOBES_BOOT_ORDER), so it does not count.
-        shape_keys: set[str] = set()
-        if path.parent.name == "shapes":
-            shape_keys = set(resolve_shape(path.stem.split("__")[0]).host_env)
+        # A key a built-in shape declares in its own [host_env] is rendered by
+        # every shape on every card (orin-associate's boot order), so it does
+        # not count.
+        shape_keys: set[str] = set(shape_host_env_keys()) if path.parent.name == "shapes" else set()
         has_lobes_key = any(
             line.startswith("LOBES_") and line.split("=", 1)[0] not in shape_keys
             for line in path.read_text(encoding="utf-8").splitlines()
