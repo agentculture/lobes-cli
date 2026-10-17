@@ -19,10 +19,11 @@ import re
 import shutil
 import subprocess  # fixed argv lists only, never shell=True
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from lobes.runtime._detect import UNKNOWN, detect_card
+from lobes.runtime._detect import detect_card
 
 CARD_CLIS = {"spark": "spark", "thor": "thor", "orin": "orin"}
 WINDOW_ACTIONS = ("show", "store", "lock", "restore")
@@ -87,8 +88,12 @@ def machine_cli_for(card: str | None) -> str | None:
 DETECT_RETRY_S = 60.0
 #: Monotonic clock for the retry interval (a test seam).
 _clock = time.monotonic
-#: detector -> (card, probed_at). Only a failure's timestamp matters.
-_card_cache: dict[Any, tuple[str | None, float]] = {}
+#: Most detectors the cache keeps (review3 #4): production uses one
+#: (``detect_card``); tests swap many in, and an unbounded dict keyed by
+#: function objects would grow for the life of the process.
+CARD_CACHE_MAX = 8
+#: detector -> (card, probed_at, failed). LRU-bounded at :data:`CARD_CACHE_MAX`.
+_card_cache: OrderedDict[Any, tuple[str | None, float, bool]] = OrderedDict()
 
 
 def _resolve_card(detect) -> str | None:
@@ -96,23 +101,30 @@ def _resolve_card(detect) -> str | None:
 
     Keyed on the detector itself, so the real ``detect_card`` (nvidia-smi +
     hostname probes) runs once per process, while a test that swaps the
-    detector gets a fresh answer. Only a SUCCESSFUL detection (a known card)
-    is cached for good (review2-b #6): a failure (``None``, detector raised)
-    or ``UNKNOWN`` is retried, at most once per :data:`DETECT_RETRY_S`, so a
+    detector gets a fresh answer. Any detection that RETURNS is cached for
+    good, ``UNKNOWN`` included (review3 #4): nvidia-smi answered, and asking
+    again every minute only repeats the answer. Only a detector that RAISED
+    (``None``) is retried, at most once per :data:`DETECT_RETRY_S`, so a
     long-running process (the watcher unit) recovers from an nvidia-smi that
-    was not ready at boot.
+    was not ready at boot (review2-b #6). The cache keeps the
+    :data:`CARD_CACHE_MAX` most recently used detectors.
     """
     now = _clock()
     hit = _card_cache.get(detect)
     if hit is not None:
-        card, at = hit
-        if card not in (None, UNKNOWN) or now - at < DETECT_RETRY_S:
+        card, at, failed = hit
+        if not failed or now - at < DETECT_RETRY_S:
+            _card_cache.move_to_end(detect)
             return card
+    failed = False
     try:
         card = detect().resolved
     except Exception:  # detection must never break the adapter
-        card = None
-    _card_cache[detect] = (card, now)
+        card, failed = None, True
+    _card_cache[detect] = (card, now, failed)
+    _card_cache.move_to_end(detect)
+    while len(_card_cache) > CARD_CACHE_MAX:
+        _card_cache.popitem(last=False)
     return card
 
 

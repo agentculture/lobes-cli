@@ -42,7 +42,7 @@ import tempfile
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
-from lobes.runtime import _compose, _detect, _env, _machine, _window
+from lobes.runtime import _compose, _detect, _machine, _window
 from lobes.watcher import _install
 
 _TEMPLATES_PACKAGE = "lobes.templates"
@@ -289,8 +289,7 @@ def compile_cache_size_check(deploy_dir: Path) -> dict | None:
 
 
 def _lane_state_dir(deploy_dir: Path) -> Path:
-    configured = _env.read_env(deploy_dir / _compose.ENV_FILE, _compose.LOG_DIR_ENV) or None
-    return _compose.durable_log_dir(deploy_dir, configured) / _compose.LANE_STATE_DIRNAME
+    return _compose.lane_state_dir(deploy_dir)
 
 
 def lane_state_writable_check(deploy_dir: Path) -> dict | None:

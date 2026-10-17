@@ -40,6 +40,13 @@ A key that any built-in shape declares in its `[host_env]` (today
 written to `.env` by every `lobes init --shape` render: the shape's value,
 else the card's, else the default above. Switching shapes therefore
 overwrites it, and a value typed by hand is replaced on the next render.
+`lobes init` records the shape as `LOBES_SHAPE` in `.env`, and `lobes doctor`'s
+`profile_staleness` renders against it (else the committed lock's
+`[variation] shape`, else `machine-as-brain`). On `orin-associate`,
+`LOBES_BOOT_ORDER=associate` and `LOBES_BOOT_STAGGER_S=400` are therefore
+required values, not operator overrides: a deleted one is reported missing,
+and `lobes doctor --fix --apply` appends it (missing-only, never rewriting an
+existing line).
 
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal
@@ -163,12 +170,17 @@ hold     = release − host uptime, if positive
   attempts it on any card, so an undetected box with a passwordless
   `vm.drop_caches` sudo rule still gets its clear; `never` skips it (and the
   `docker ps` below) everywhere. The knob governs the lifecycle verbs only; the
-  watcher is switched on and off by installing and uninstalling it. A
-  successful card detection is cached for the life of the process; a failed or
-  `unknown` one is retried, at most once per 60 s, so the long-running watcher
-  recovers when `nvidia-smi` was not ready at boot.
+  watcher is switched on and off by installing and uninstalling it. A card
+  detection that returns is cached for the life of the process, `unknown`
+  included, because the probe answered. Only a detection that raised is
+  retried, at most once per 60 s, so the long-running watcher recovers when
+  `nvidia-smi` was not ready at boot.
 - When the clear is attempted with no grant, the verb prints one stderr line
-  and carries on. It never prompts and never fails.
+  and carries on. It never prompts and never fails. The line names
+  `<card> grant-permissions` only when that machine CLI is on `PATH`.
+  Otherwise the `sudo -n` fallback was used, so it names the passwordless
+  sudo rule for `/usr/sbin/sysctl -w vm.drop_caches=3`, plus
+  `uv pip install 'lobes-cli[<card>]'` on a Spark, Thor or Orin.
 
 ### The host watcher
 
@@ -196,14 +208,31 @@ OTHER lane is starting.
 - **Signal: docker health, read-only.** "Starting" is docker's
   `health: starting`: the lane is inside its healthcheck `start_period` and not
   yet healthy. Both callers read it with one fixed argv,
-  `docker ps --filter label=com.docker.compose.project=<project> --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
-  (`_compose.lane_health_argv`), and map each compose service to its
-  `MG_LOG_NAME`. `<project>` is the deployment's compose project, resolved as
-  compose does (lobes never passes `-p`): `COMPOSE_PROJECT_NAME` in the
-  environment, then in the deployment `.env`, then a top-level `name:` in the
-  compose files, then the deployment directory's basename, normalised (live
-  boxes: `~/.lobes` gives `lobes`). The filter is the project label, not a
-  `model-gear-` name prefix, because the embed overlay's vLLM lanes
+  `docker ps --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.LANE_HEALTH_ARGV`), keep the rows whose project label is one of
+  the deployment's project candidates, and map each compose service to its
+  `MG_LOG_NAME`. The candidates (`_compose.compose_project_candidates`) are
+  every name compose could have stamped, normalised: `COMPOSE_PROJECT_NAME`
+  in the environment, then in the deployment `.env`; a top-level `name:` in
+  the compose files, with `${VAR}`, `${VAR:-default}` and `${VAR-default}`
+  resolved against the environment and then the `.env` (an unresolvable
+  `name:` is ignored); and the basename of the deployment directory both as
+  given and with symlinks resolved. lobes never passes `-p`, and it cannot
+  know which cwd compose saw: compose run from lobes gets the physical
+  directory, an operator's shell gets the link. With `~/.lobes` a symlink to
+  `/data/lobes-prod`, the project is `lobes` or `lobes-prod` depending on who
+  ran compose, so one guessed name could leave lane health empty and switch
+  the boot guard off without a word. Matching the set covers both. The
+  candidate set was chosen over matching the
+  `com.docker.compose.project.working_dir` label because the project label
+  is what compose itself groups containers by, and it also follows
+  `COMPOSE_PROJECT_NAME` and `name:`; a working-directory match would miss a
+  project renamed that way. The watcher unit's `--compose-dir` is the
+  absolute deployment path with symlinks kept, so the watcher derives the
+  same candidates. It caches them, re-reading them every 5 minutes, or at the
+  next poll after a `SIGHUP` (`systemctl --user kill -s HUP
+  lobes-watcher.service`). The filter is the project label, not a `model-gear-` name prefix,
+  because the embed overlay's vLLM lanes
   (`embed-qwen3vl-embed`, `embed-qwen3vl-rerank`, `embed-nemotron-embed`,
   `embed-nomic-code-embed`) run the memory gate under their own container
   names; a name filter hid their boots and made their live markers look stale.
@@ -352,7 +381,10 @@ OTHER lane is starting.
   reads the gateway's swap/iowait busy thresholds
   (`LOBES_SWAP_DEGRADED_THRESHOLD`, `LOBES_IOWAIT_DEGRADED_THRESHOLD`) the same
   way, so a deployment that raises one (an Orin's iowait threshold) gets the
-  same verdict from `status --pressure` as from the gateway.
+  same verdict from `status --pressure` as from the gateway. Both parse the
+  value with one function (`_pressure_policy._env_float`): surrounding
+  whitespace is ignored, and a missing, empty, unparsable or non-finite value
+  keeps the default.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

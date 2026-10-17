@@ -440,3 +440,87 @@ def test_single_model_deployment_skips_the_fleet_checks(tmp_path, monkeypatch, c
     assert "scaffold_files" not in ids
     assert "profile_staleness" not in ids
     assert "fix_plan" not in payload
+
+
+# --- review3 #8: staleness is rendered against the deployment's OWN shape -----
+
+
+def _orin_card():
+    return _card("orin", "Orin", "sm_87")
+
+
+def _orin_associate(tmp_path, monkeypatch):
+    monkeypatch.setattr(_detect, "detect_card", _orin_card)
+    target = tmp_path / "deploy"
+    assert (
+        main(["init", "--shape", "orin-associate", "--profile", "orin", str(target), "--apply"])
+        == 0
+    )
+    monkeypatch.setenv("LOBES_DIR", str(target))
+    monkeypatch.setattr(_compose, "docker_available", lambda: True)
+    return target
+
+
+def test_init_records_the_shape(tmp_path, monkeypatch, capsys):
+    target = _orin_associate(tmp_path, monkeypatch)
+    assert _env.read_env(target / ".env", "LOBES_SHAPE") == "orin-associate"
+
+
+def test_shape_required_boot_keys_are_not_operator_overrides(tmp_path, monkeypatch, capsys):
+    target = _orin_associate(tmp_path, monkeypatch)
+    capsys.readouterr()
+    stale = {c["id"]: c for c in _doctor_json(capsys)["checks"]}["profile_staleness"]
+    assert stale["passed"] is True
+    assert "operator-set" not in stale["message"]  # 400 / associate are the shape's own
+    assert _env.read_env(target / ".env", "LOBES_BOOT_STAGGER_S") == "400"
+
+
+def test_deleted_shape_stagger_is_reported_and_restored(tmp_path, monkeypatch, capsys):
+    target = _orin_associate(tmp_path, monkeypatch)
+    _drop_env_keys(target / ".env", "LOBES_BOOT_STAGGER_S")
+    before = (target / ".env").read_text(encoding="utf-8")
+    capsys.readouterr()
+    payload = _doctor_json(capsys)
+    stale = {c["id"]: c for c in payload["checks"]}["profile_staleness"]
+    assert stale["passed"] is False
+    assert "LOBES_BOOT_STAGGER_S" in stale["message"]
+    assert payload["fix_plan"]["env"].get("LOBES_BOOT_STAGGER_S") == "400"
+
+    main(["doctor", "--fix", "--apply"])  # exit code reflects unrelated checks (auth gate)
+    after = (target / ".env").read_text(encoding="utf-8")
+    assert after.startswith(before)  # missing-only append: every existing line survives
+    assert [ln for ln in after.splitlines() if ln.startswith("LOBES_BOOT_STAGGER_S=")] == [
+        "LOBES_BOOT_STAGGER_S=400"
+    ]
+    assert "LOBES_BOOT_STAGGER_S=400\n" in after[len(before) :]
+    capsys.readouterr()
+    healed = {c["id"]: c for c in _doctor_json(capsys)["checks"]}["profile_staleness"]
+    assert healed["passed"] is True
+
+
+def test_shape_falls_back_to_the_lock_variation(tmp_path, monkeypatch, capsys):
+    from lobes.runtime._lock import build_lock, write_lock
+
+    target = _orin_associate(tmp_path, monkeypatch)
+    _drop_env_keys(target / ".env", "LOBES_SHAPE", "LOBES_BOOT_STAGGER_S")
+    write_lock(target, build_lock(variation="jetson-agx-orin", env={}, shape="orin-associate"))
+    capsys.readouterr()
+    payload = _doctor_json(capsys)
+    assert payload["fix_plan"]["env"].get("LOBES_BOOT_STAGGER_S") == "400"
+
+
+def test_no_recorded_shape_keeps_the_machine_as_brain_render(tmp_path, monkeypatch, capsys):
+    target = _orin_associate(tmp_path, monkeypatch)
+    _drop_env_keys(target / ".env", "LOBES_SHAPE", "LOBES_BOOT_STAGGER_S")
+    capsys.readouterr()
+    payload = _doctor_json(capsys)
+    # machine-as-brain's documented default (20) is supplied by the template.
+    assert "LOBES_BOOT_STAGGER_S" not in payload["fix_plan"]["env"]
+
+
+def test_unresolvable_recorded_shape_degrades_with_a_note(tmp_path, monkeypatch, capsys):
+    target = _orin_associate(tmp_path, monkeypatch)
+    _env.set_env(target / ".env", "LOBES_SHAPE", "no-such-shape")
+    capsys.readouterr()
+    stale = {c["id"]: c for c in _doctor_json(capsys)["checks"]}["profile_staleness"]
+    assert "no-such-shape" in stale["message"]

@@ -183,16 +183,15 @@ def _flaky(results):
     return detect, calls
 
 
-@pytest.mark.parametrize("first", [RuntimeError("nvidia-smi not ready"), "unknown"])
-def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
+def test_failed_detection_is_retried_after_the_interval(monkeypatch):
     """review2-b #6: a boot-time failure must not stick for the watcher's lifetime."""
     now = {"t": 1000.0}
     monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
-    detect, calls = _flaky([first, "thor"])
+    detect, calls = _flaky([RuntimeError("nvidia-smi not ready"), "thor"])
     monkeypatch.setattr(_machine, "detect_card", detect)
-    assert _machine.detected_card() in (None, "unknown")
+    assert _machine.detected_card() is None
     now["t"] += _machine.DETECT_RETRY_S - 1
-    assert _machine.detected_card() in (None, "unknown")
+    assert _machine.detected_card() is None
     assert len(calls) == 1
     now["t"] += 2
     assert _machine.detected_card() == "thor"
@@ -204,6 +203,23 @@ def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
 # --- review-b #3: no lifecycle clear while another lane is mid-boot --------
 
 
+#: The project every 3-column ``_ps`` row is stamped with (see ``_project_env``).
+_TEST_PROJECT = "lobes-test"
+
+
+@pytest.fixture(autouse=True)
+def _project_env(monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", _TEST_PROJECT)
+
+
+def _with_project(stdout: str) -> str:
+    """Prefix a ``service\tname\tstatus`` row with the test project label."""
+    rows = []
+    for line in stdout.splitlines():
+        rows.append(line if line.count("\t") >= 3 else f"{_TEST_PROJECT}\t{line}")
+    return "".join(r + "\n" for r in rows)
+
+
 def _ps(monkeypatch, stdout: str | None):
     calls: list[list[str]] = []
 
@@ -211,7 +227,7 @@ def _ps(monkeypatch, stdout: str | None):
         calls.append(list(argv))
         if stdout is None:
             return None
-        return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+        return types.SimpleNamespace(returncode=0, stdout=_with_project(stdout), stderr="")
 
     monkeypatch.setattr(_compose, "_probe", probe)
     return calls
@@ -358,7 +374,7 @@ def test_lane_health_argv_filters_by_the_compose_project_label(tmp_path, monkeyp
     d.mkdir()
     argv = _compose.lane_health_argv(d)
     assert argv[:2] == ["docker", "ps"]
-    assert "label=com.docker.compose.project=lobes" in argv
+    assert "label=com.docker.compose.project" in argv
     assert not any(a.startswith("name=") for a in argv)
 
 
@@ -459,3 +475,239 @@ def test_a_held_lane_does_not_hide_another_booting_lane(rec, tmp_path, monkeypat
     assert events == ["docker up -d"]
     err = capsys.readouterr().err
     assert "hand" in err and "primary" not in err.split("starting:")[1]
+
+
+# --- review3 #2: a top-level ``name:`` is interpolated, never taken raw ------
+
+
+@pytest.mark.parametrize(
+    "name_line,environ,dotenv,expected",
+    [
+        ("name: ${LOBES_PROJECT:-lobes}", {}, "", "lobes"),
+        ("name: ${LOBES_PROJECT:-lobes}", {"LOBES_PROJECT": "Prod"}, "", "prod"),
+        ("name: ${LOBES_PROJECT:-lobes}", {}, "LOBES_PROJECT=fromenv\n", "fromenv"),
+        ("name: ${LOBES_PROJECT:-lobes}", {"LOBES_PROJECT": ""}, "", "lobes"),
+        ("name: ${LOBES_PROJECT-dflt}", {}, "", "dflt"),
+        ("name: ${LOBES_PROJECT}", {"LOBES_PROJECT": "plain"}, "", "plain"),
+        ('name: "quoted"', {}, "", "quoted"),
+        ("name: 'single'  # comment", {}, "", "single"),
+        ("name: pre-${SUFFIX:-x}", {}, "", "pre-x"),
+        # unresolvable -> the name: candidate is ignored, the basename wins
+        ("name: ${UNSET_VAR}", {}, "", "dep"),
+        ("name: ${UNSET_VAR:?boom}", {}, "", "dep"),
+    ],
+)
+def test_top_level_name_is_interpolated(
+    tmp_path, monkeypatch, capsys, name_line, environ, dotenv, expected
+):
+    for key in ("COMPOSE_PROJECT_NAME", "LOBES_PROJECT", "SUFFIX", "UNSET_VAR"):
+        monkeypatch.delenv(key, raising=False)
+    for key, value in environ.items():
+        monkeypatch.setenv(key, value)
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / "docker-compose.yml").write_text(f"{name_line}\nservices: {{}}\n", encoding="utf-8")
+    if dotenv:
+        (d / ".env").write_text(dotenv, encoding="utf-8")
+    assert _compose.compose_project_name(d) == expected
+    assert capsys.readouterr().err == ""  # an unresolvable name logs nothing
+
+
+# --- review3 #1: lane health matches a CANDIDATE set of project names --------
+
+
+def _symlinked(tmp_path, real_name: str, link_name: str):
+    real = tmp_path / "data" / real_name
+    real.mkdir(parents=True)
+    (real / "docker-compose.yml").write_text(
+        "services:\n  vllm-primary:\n    environment:\n      - MG_LOG_NAME=primary\n",
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    link = home / link_name
+    link.symlink_to(real, target_is_directory=True)
+    return real, link
+
+
+def test_lane_health_argv_lists_every_compose_project_with_its_label():
+    argv = _compose.LANE_HEALTH_ARGV
+    assert argv[:2] == ["docker", "ps"]
+    assert argv[argv.index("--filter") + 1] == "label=com.docker.compose.project"
+    fmt = argv[argv.index("--format") + 1]
+    assert fmt.startswith('{{.Label "com.docker.compose.project"}}\t')
+
+
+@pytest.mark.parametrize(
+    "real_name,link_name,expected",
+    [
+        # ~/.lobes -> /data/lobes-prod: the CLI (via the link) and compose run with
+        # a physical cwd (via the target) disagree on the basename.
+        ("lobes-prod", ".lobes", {"lobes", "lobes-prod"}),
+        # the other order: the real dir is .lobes, reached through a link "prod"
+        (".lobes", "prod", {"prod", "lobes"}),
+    ],
+)
+def test_project_candidates_cover_both_symlink_names(
+    tmp_path, monkeypatch, real_name, link_name, expected
+):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    _real, link = _symlinked(tmp_path, real_name, link_name)
+    assert _compose.compose_project_candidates(link) == frozenset(expected)
+
+
+@pytest.mark.parametrize("stamped", ["lobes", "lobes-prod"])
+@pytest.mark.parametrize("via", ["link", "watcher-unit"])
+def test_lane_health_sees_lanes_whichever_symlink_name_compose_stamped(
+    tmp_path, monkeypatch, stamped, via
+):
+    """~/.lobes -> /data/lobes-prod: whichever name compose stamped, both the CLI
+    (deploy dir = the link) and the watcher (the unit's --compose-dir) find the lane."""
+    from lobes.watcher import _install
+
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    _real, link = _symlinked(tmp_path, "lobes-prod", ".lobes")
+    deploy = link
+    if via == "watcher-unit":
+        ctx = _install.InstallContext(user="op", home=tmp_path, exec_argv=["lobes"])
+        unit = _install.render_unit(ctx, link, system=False)
+        exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
+        args = exec_line.split()
+        deploy = args[args.index("--compose-dir") + 1]
+        assert deploy == str(link)  # absolute, symlink kept: both names derivable
+    _ps(
+        monkeypatch,
+        f"{stamped}\tvllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "other\tvllm-primary\tother-vllm-primary\tUp 2 hours (healthy)\n",
+    )
+    assert _compose.lane_health(deploy) == {"primary": "starting"}
+
+
+def test_lane_health_drops_rows_of_unrelated_projects(tmp_path, monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "mine")
+    _deploy(tmp_path)
+    _ps(
+        monkeypatch,
+        "mine\tvllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "theirs\tvllm-hand\ttheirs-vllm-hand\tUp 1 minute (health: starting)\n",
+    )
+    assert _compose.lane_health(tmp_path) == {"primary": "starting"}
+
+
+def test_project_candidates_include_env_dotenv_and_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "Proc")
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / ".env").write_text("COMPOSE_PROJECT_NAME=dot\n", encoding="utf-8")
+    (d / "docker-compose.yml").write_text("name: top\nservices: {}\n", encoding="utf-8")
+    assert _compose.compose_project_candidates(d) == frozenset({"proc", "dot", "top", "dep"})
+
+
+# --- review3 #3: the failure hint names a machine CLI only when it is on PATH --
+
+
+def test_ungranted_hint_without_the_machine_cli_names_the_sudo_rule(
+    rec, tmp_path, monkeypatch, capsys
+):
+    _events, result = rec
+    result["ok"] = False
+    monkeypatch.setattr(_machine.shutil, "which", lambda name: None)
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "grant-permissions" not in err
+    assert "sysctl -w vm.drop_caches=3" in err
+    assert "lobes-cli[spark]" in err
+
+
+def test_ungranted_hint_with_the_machine_cli_on_path_names_it(rec, tmp_path, monkeypatch, capsys):
+    _events, result = rec
+    result["ok"] = False
+    monkeypatch.setattr(_machine.shutil, "which", lambda name: f"/usr/bin/{name}")
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert "'spark grant-permissions'" in err
+    assert "lobes-cli[" not in err
+
+
+# --- review3 #4: a bounded detection cache; a successful UNKNOWN is stable ----
+
+
+def test_successful_unknown_detection_is_cached_for_good(monkeypatch):
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
+    detect, calls = _flaky(["unknown", "thor"])
+    monkeypatch.setattr(_machine, "detect_card", detect)
+    assert _machine.detected_card() == "unknown"
+    now["t"] += 100 * _machine.DETECT_RETRY_S
+    assert _machine.detected_card() == "unknown"
+    assert len(calls) == 1  # nvidia-smi answered; re-probing every minute is waste
+
+
+def test_detection_cache_is_bounded(monkeypatch):
+    monkeypatch.setattr(_machine, "_card_cache", _machine._card_cache.__class__())
+    for i in range(50):
+        _machine.detected_card(lambda i=i: types.SimpleNamespace(resolved=f"c{i}"))
+    assert len(_machine._card_cache) <= _machine.CARD_CACHE_MAX
+    # the most recent detector is still a hit
+    last = list(_machine._card_cache)[-1]
+    assert _machine._card_cache[last][0] == "c49"
+
+
+# --- review3 #5: one lane-state dir resolver -----------------------------------
+
+
+def test_every_lane_state_reader_uses_the_one_resolver(tmp_path, monkeypatch):
+    from lobes.cli._commands import _doctor_lane_safety
+    from lobes.watcher import _run
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "hand.starts").write_text("1\n", encoding="utf-8")
+    (elsewhere / "hand.gated").write_text("{}", encoding="utf-8")
+    (elsewhere / "hand.held").write_text("{}", encoding="utf-8")
+    seen: list = []
+
+    def resolver(deploy_dir, *a, **k):
+        seen.append(deploy_dir)
+        return elsewhere
+
+    monkeypatch.setattr(_compose, "lane_state_dir", resolver)
+    assert _compose.gated_lanes(tmp_path) == {"hand"}
+    assert _compose.held_lanes(tmp_path) == {"hand"}
+    assert _compose.reset_start_counters(tmp_path) == ["hand.starts"]
+    assert _run.lane_state_dir(tmp_path) == elsewhere
+    assert _doctor_lane_safety._lane_state_dir(tmp_path) == elsewhere
+    assert len(seen) == 5
+
+
+def test_lane_state_dir_follows_the_log_dir_knob(tmp_path):
+    (tmp_path / ".env").write_text("MODEL_GEAR_LOG_DIR=custom-logs\n", encoding="utf-8")
+    assert _compose.lane_state_dir(tmp_path) == tmp_path / "custom-logs" / "lane-state"
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    assert _compose.lane_state_dir(tmp_path) == tmp_path / "logs" / "lane-state"
+
+
+# --- review3 #7: the guarded clear reads the mode and the lane-state dir once --
+
+
+def test_guarded_clear_reads_mode_and_state_dir_once(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    _deploy(tmp_path)
+    _ps(monkeypatch, "vllm-primary\tmodel-gear-vllm-primary\tUp 2 hours (healthy)\n")
+    counts = {"mode": 0, "state": 0}
+    real_mode, real_state = _compose.page_cache_clear_mode, _compose.lane_state_dir
+
+    def mode(*a, **k):
+        counts["mode"] += 1
+        return real_mode(*a, **k)
+
+    def state(*a, **k):
+        counts["state"] += 1
+        return real_state(*a, **k)
+
+    monkeypatch.setattr(_compose, "page_cache_clear_mode", mode)
+    monkeypatch.setattr(_compose, "lane_state_dir", state)
+    assert _compose._guarded_clear(tmp_path) is True
+    assert events == ["clear"]
+    assert counts == {"mode": 1, "state": 1}

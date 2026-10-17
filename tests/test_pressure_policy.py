@@ -824,3 +824,19 @@ def test_the_docker_pause_update_grep_is_not_vacuous(line: str) -> None:
     import re
 
     assert any(re.search(p, line) for p in _DOCKER_PAUSE_UPDATE)
+
+
+# --- review3 #6: one float parser for the gateway constants and the .env read --
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", " 80 ", "80", "1e2", "abc", "nan", "inf", "-inf"])
+def test_env_float_and_degraded_thresholds_parse_identically(raw):
+    from lobes.gateway import _pressure_policy as pp
+
+    environ = {} if raw is None else {pp.SWAP_THRESHOLD_ENV: raw}
+    via_env_float = pp._env_float(pp.SWAP_THRESHOLD_ENV, pp.SWAP_DEGRADED_THRESHOLD, environ)
+    assert pp.degraded_thresholds_from_env(environ)[0] == via_env_float
+    if raw is not None and raw.strip() in ("80", "1e2"):
+        assert via_env_float == float(raw)
+    else:
+        assert via_env_float == pp.SWAP_DEGRADED_THRESHOLD

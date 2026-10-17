@@ -25,9 +25,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Review round 2: the lane-health check filters `docker ps` on the compose project label, so `embed-*` overlay lanes count. On every start, the wrapper hands a root-owned `lane-state/` back to the log dir's owner.
 - `status --pressure` reads the swap and iowait thresholds from the deployment `.env`, as the gateway does.
+- The gateway's threshold constants and `status --pressure` parse the swap/iowait thresholds with the same function (`_env_float`, now taking an `environ` mapping), so whitespace, empty and non-finite values are handled identically.
 - A failed card detection is retried at most once a minute instead of being cached for the life of the process.
+- The card-detection cache is bounded (8 detectors), and a detection that returns `unknown` is cached instead of re-running `nvidia-smi` every minute; only a detection that raised is retried.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.
 - The pre-start bind-source setup lives only in the `_before_up` chokepoint.
+- `lobes init` records the rendered shape as `LOBES_SHAPE`, and `lobes doctor`'s `profile_staleness` renders against it (else the lock's `[variation] shape`, else machine-as-brain). `orin-associate`'s `LOBES_BOOT_ORDER` / `LOBES_BOOT_STAGGER_S` no longer read as operator overrides, and a deleted stagger is reported missing and restored by `doctor --fix --apply`.
+- The `lane-state/` dir is resolved by one helper (`_compose.lane_state_dir`), used by the marker readers, the start-counter reset, the watcher and `lobes doctor`.
+- Fewer repeated reads: the lifecycle clear reads `LOBES_PAGE_CACHE_CLEAR` and the `lane-state/` dir once and passes them down, and the watcher caches the compose project candidates (re-read every 5 minutes or after `SIGHUP`) instead of recomputing them every poll.
+- Lane health no longer depends on guessing one compose project name: `docker ps` lists every compose-labelled container with its project label, and rows are kept when the label is one of the deployment's candidates (`COMPOSE_PROJECT_NAME`, the top-level `name:`, and the basename of the deployment dir both as given and with symlinks resolved). A symlinked `~/.lobes` no longer leaves lane health empty and the boot guard silently off. The watcher unit's `--compose-dir` keeps the symlink so the watcher derives the same candidates.
+- A top-level compose `name:` is interpolated (`${VAR}`, `${VAR:-default}`, `${VAR-default}`, against the process env then the deployment `.env`) and unquoted; an unresolvable one is ignored instead of being normalised into a wrong project name.
+- The page-cache clear's failure hint names `<card> grant-permissions` only when that CLI is on `PATH`; otherwise it names the sysctl sudoers rule and `uv pip install 'lobes-cli[<card>]'`.
 
 ## [0.87.0] - 2026-10-17
 
