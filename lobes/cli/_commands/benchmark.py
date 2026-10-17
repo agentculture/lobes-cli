@@ -46,6 +46,7 @@ from lobes.cli._output import emit_result
 from lobes.roles import role_registry_from_env
 from lobes.roles_measure import DEFAULT_TIMEOUT as _PROFILE_DEFAULT_TIMEOUT
 from lobes.runtime import _compose, _env
+from lobes.runtime._window import benchmark_window
 
 _PROFILE_CHOICES: tuple[str, ...] = (*PROFILE_NAMES, "all")
 
@@ -191,7 +192,9 @@ def _parse_concurrency(raw: str) -> "str | int":
     return value
 
 
-def _run_all_lobes(args: argparse.Namespace, url: str, deploy_dir, json_mode: bool) -> int:
+def _run_all_lobes(
+    args: argparse.Namespace, url: str, deploy_dir, json_mode: bool, cond=None
+) -> int:
     """Benchmark BOTH lobes through the gateway and emit one combined report.
 
     Resolves the primary/minor served names (flags override ``.env``), runs the
@@ -231,7 +234,10 @@ def _run_all_lobes(args: argparse.Namespace, url: str, deploy_dir, json_mode: bo
 
     markdown = render_report(results)
     if json_mode:
-        emit_result({"results": results, "markdown": markdown}, json_mode=True)
+        payload = {"results": results, "markdown": markdown}
+        if cond is not None:
+            payload["host"] = {"conditions": cond.as_dict()}
+        emit_result(payload, json_mode=True)
     else:
         emit_result(markdown, json_mode=False)
     return 0
@@ -298,13 +304,16 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     headers = _runtime_ops.gateway_auth_headers(deploy_dir)
 
     with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
+        lock_clocks = not bool(getattr(args, "no_lock", False))
         if getattr(args, "profile", None):
-            return _run_profile_mode(args, json_mode)
+            with benchmark_window(lock_clocks=lock_clocks):
+                return _run_profile_mode(args, json_mode)
 
         url = f"http://localhost:{port}"
 
         if bool(getattr(args, "all_lobes", False)):
-            return _run_all_lobes(args, url, deploy_dir, json_mode)
+            with benchmark_window(lock_clocks=lock_clocks) as cond:
+                return _run_all_lobes(args, url, deploy_dir, json_mode, cond)
 
         # Original single-model path (unchanged when --all-lobes is absent).
         model = args.model
@@ -312,15 +321,20 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             model = _env.read_env(deploy_dir / _compose.ENV_FILE, "VLLM_SERVED_NAME")
 
         wl, input_len, output_len = _resolve_shape(args, deploy_dir)
-        result = _assess.run_benchmark(
-            url,
-            model,
-            purpose=wl.name,
-            input_len=input_len,
-            output_len=output_len,
-            runs=args.runs,
-        )
-        host = {"image": _compose.container_image(), "gpu_memory": _compose.gpu_engine_mem()}
+        with benchmark_window(lock_clocks=lock_clocks) as cond:
+            result = _assess.run_benchmark(
+                url,
+                model,
+                purpose=wl.name,
+                input_len=input_len,
+                output_len=output_len,
+                runs=args.runs,
+            )
+        host = {
+            "image": _compose.container_image(),
+            "gpu_memory": _compose.gpu_engine_mem(),
+            "conditions": cond.as_dict(),
+        }
 
         if json_mode:
             emit_result({**result, "host": host}, json_mode=True)
@@ -387,6 +401,11 @@ def register(sub: argparse._SubParsersAction) -> None:
             "Concurrency for throughput test: 'auto' (knee-find ramp) "
             "or an integer (default: auto)."
         ),
+    )
+    p.add_argument(
+        "--no-lock",
+        action="store_true",
+        help="Do not lock clocks for the run (conditions record locked:false, reason disabled).",
     )
     # --profile branch: RUNTIME-ONLY fleet-profile comparison (issue #81, t9).
     # A third, independent mode from --all-lobes: probes via lobes.roles_measure
