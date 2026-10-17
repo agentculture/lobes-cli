@@ -40,6 +40,13 @@ A key that any built-in shape declares in its `[host_env]` (today
 written to `.env` by every `lobes init --shape` render: the shape's value,
 else the card's, else the default above. Switching shapes therefore
 overwrites it, and a value typed by hand is replaced on the next render.
+`lobes init` records the shape as `LOBES_SHAPE` in `.env`, and `lobes doctor`'s
+`profile_staleness` renders against it (else the committed lock's
+`[variation] shape`, else `machine-as-brain`). On `orin-associate`,
+`LOBES_BOOT_ORDER=associate` and `LOBES_BOOT_STAGGER_S=400` are therefore
+required values, not operator overrides: a deleted one is reported missing,
+and `lobes doctor --fix --apply` appends it (missing-only, never rewriting an
+existing line).
 
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal

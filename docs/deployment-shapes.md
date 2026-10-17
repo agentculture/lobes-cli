@@ -252,8 +252,10 @@ currently renders this shape at all.
   whether `docker-compose.shape.yml` would be written or removed. Changes
   zero bytes.
 - **`--apply`** commits: renders the `(shape, profile)` pair's env into
-  `.env`, persists `LOBES_PROFILE` / `MODEL_GEAR_VERSION`, and writes (or
-  scrubs) the generated shape override.
+  `.env`, persists `LOBES_PROFILE` / `LOBES_SHAPE` / `MODEL_GEAR_VERSION`,
+  and writes (or scrubs) the generated shape override. `lobes doctor`'s
+  `profile_staleness` renders against the recorded `LOBES_SHAPE` (else the
+  committed lock's `[variation] shape`, else `machine-as-brain`).
 - **Byte-for-byte restore** — re-running `lobes init --shape <previous>
   --apply` restores the previous rendering exactly:
   `tests/test_init_shape.py::test_reapplying_shape_is_idempotent_including_override`

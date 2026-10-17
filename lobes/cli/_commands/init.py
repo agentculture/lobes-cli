@@ -148,6 +148,8 @@ from lobes.variation import resolve_variation_id
 # tests/test_shape_goldens.py), which is what makes the bare path's rendering
 # provably unchanged by the existence of this flag.
 DEFAULT_SHAPE = "machine-as-brain"
+# The .env key recording the rendered shape (review3 #8), beside LOBES_PROFILE.
+SHAPE_KEY = "LOBES_SHAPE"
 
 # The compose profile a shape-dropped core service is parked in. NOTHING ever
 # activates it (no COMPOSE_PROFILES entry, no CLI target), so `docker compose up`
@@ -1142,6 +1144,10 @@ def _write_fleet_render(
     _apply_profile_env(target / _compose.ENV_FILE, rendered.env)
     # Persist the profile choice itself for doctor/status to report
     _env.set_env(target / _compose.ENV_FILE, "LOBES_PROFILE", profile.name)
+    # ...and the shape, so doctor's staleness diff renders the deployment's
+    # OWN shape rather than machine-as-brain (review3 #8).
+    if shape is not None:
+        _env.set_env(target / _compose.ENV_FILE, SHAPE_KEY, shape.name)
     # Pin the gateway image to the lobes-cli release that scaffolded this.
     _env.set_env(target / _compose.ENV_FILE, "MODEL_GEAR_VERSION", __version__)
     # A mesh-brain shape that DROPS a core role needs the generated compose

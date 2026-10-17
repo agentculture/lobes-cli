@@ -37,7 +37,7 @@ from lobes import __version__
 from lobes.cli import _runtime_ops
 from lobes.cli._commands import _doctor_lane_safety, _role_probe
 from lobes.cli._commands.capabilities import _fetch_gateway_capabilities
-from lobes.cli._commands.init import DEFAULT_SHAPE, _values_equal
+from lobes.cli._commands.init import DEFAULT_SHAPE, SHAPE_KEY, _values_equal
 from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
@@ -832,6 +832,42 @@ def _resolve_deployment_profile(deploy_dir: Path, recorded: str | None):
         )
 
 
+def _recorded_shape(deploy_dir: Path, deployed: dict[str, str]) -> tuple[str | None, str]:
+    """``(shape name, source)`` the deployment records, or ``(None, "")`` (review3 #8).
+
+    ``LOBES_SHAPE`` in ``.env`` (written by ``lobes init``) wins; else the
+    committed lock's ``[variation] shape``. A deployment scaffolded before
+    either existed records nothing, and the caller keeps the machine-as-brain
+    render it always used.
+    """
+    recorded = (deployed.get(SHAPE_KEY) or "").strip()
+    if recorded:
+        return recorded, SHAPE_KEY
+    path = deploy_dir / LOCK_FILENAME
+    if path.is_file():
+        try:
+            shape = load_lock(path).shape
+        except ModelGearError:
+            shape = None  # lock_drift reports a malformed lock; not this check's job
+        if shape:
+            return shape, LOCK_FILENAME
+    return None, ""
+
+
+def _resolve_deployment_shape(deploy_dir: Path, deployed: dict[str, str]):
+    """``(Shape, note)`` to render staleness against; machine-as-brain when unrecorded."""
+    name, source = _recorded_shape(deploy_dir, deployed)
+    if name is None:
+        return resolve_shape(DEFAULT_SHAPE), None
+    try:
+        return resolve_shape(name), None
+    except ModelGearError as err:
+        return resolve_shape(DEFAULT_SHAPE), (
+            f"recorded shape {name!r} ({source}) did not resolve ({err.message}); "
+            f"checked against {DEFAULT_SHAPE} instead"
+        )
+
+
 def _staleness_ok(profile_name: str, overridden: list[str], detail: str) -> dict:
     """The passing verdict — operator overrides only ever annotate it."""
     message = f"profile {profile_name}: every required .env key is present"
@@ -897,7 +933,11 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
     deployed = _env.read_env_file(env_path)
     recorded = deployed.get("LOBES_PROFILE") or None
     profile, note = _resolve_deployment_profile(deploy_dir, recorded)
-    rendered = render_shape(resolve_shape(DEFAULT_SHAPE), profile).env
+    # The deployment's OWN shape (review3 #8): a shape's [host_env] values
+    # (orin-associate's LOBES_BOOT_ORDER / LOBES_BOOT_STAGGER_S) are required
+    # there, not operator overrides of a machine-as-brain render.
+    shape, shape_note = _resolve_deployment_shape(deploy_dir, deployed)
+    rendered = render_shape(shape, profile).env
     dropped = _dropped_role_prefixes(deploy_dir)
     required = {k: str(v) for k, v in rendered.items() if not k.startswith(dropped)}
     # A shape-declared host_env key every render writes explicitly (so a shape
@@ -935,6 +975,8 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
         )
     if note:
         notes.append(note)
+    if shape_note:
+        notes.append(shape_note)
     return _staleness_verdict(profile.name, missing, stale, overridden, notes), missing
 
 
