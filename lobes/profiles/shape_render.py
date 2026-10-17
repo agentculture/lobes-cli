@@ -544,12 +544,15 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
 
     The card's non-role ``host_env`` and ``gpu_access`` declarations
     (:attr:`~lobes.profiles.schema.Profile.host_env` /
-    :attr:`~lobes.profiles.schema.Profile.gpu_access`) pass through UNCHANGED:
-    each states a fact about the BOX (its ``/proc/stat`` accounting, say, or
-    which compose syntax its container runtime accepts), which no hosting
-    decision can alter — so every shape rendered over that card inherits them,
-    ``machine-as-brain`` included (which is what keeps the identity-shape
-    invariant true on a card that declares either).
+    :attr:`~lobes.profiles.schema.Profile.gpu_access`) pass through: each
+    states a fact about the BOX (its ``/proc/stat`` accounting, say, or which
+    compose syntax its container runtime accepts), so every shape rendered over
+    that card inherits them, ``machine-as-brain`` included (which is what keeps
+    the identity-shape invariant true on a card that declares either). The one
+    exception is a key the SHAPE also declares in its own ``[host_env]``
+    (:attr:`~lobes.profiles.shapes.Shape.host_env`): that key depends on what
+    the shape hosts — ``LOBES_BOOT_ORDER`` names hosted lanes — so the shape's
+    value wins. A shape declaring none leaves the card's table untouched.
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -584,7 +587,7 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         name=f"{shape.name}@{profile.name}",
         summary=f"shape={shape.name} card={profile.name}",
         roles=roles,
-        host_env=profile.host_env,
+        host_env={**profile.host_env, **shape.host_env},
         gpu_access=profile.gpu_access,
     )
 

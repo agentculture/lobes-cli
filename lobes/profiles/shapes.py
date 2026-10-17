@@ -56,7 +56,7 @@ from typing import Any, Mapping
 
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.profiles.schema import ROLES as PROFILE_ROLES
-from lobes.profiles.schema import RoleProfile
+from lobes.profiles.schema import RoleProfile, _host_env_from_dict
 
 # The two audio-overlay roles -- fixed sidecars (Parakeet STT / Chatterbox
 # TTS) with no machine-dependent vLLM knobs of their own, exactly like
@@ -427,11 +427,18 @@ class Shape:
     # start_period), in declaration order. Empty for every shape that does not
     # host `decider`, so their renders stay byte-identical.
     decider_domains: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    # Box-wide ``.env`` keys whose right value depends on what this shape
+    # HOSTS (today only LOBES_BOOT_ORDER: the wrapper's release order names
+    # hosted lanes). Same grammar as the card's ``[host_env]``; a key declared
+    # here wins over the card's (lobes.profiles.shape_render.compose_profile).
+    # Empty for every shape that declares none, so their renders are unchanged.
+    host_env: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "hosts", tuple(self.hosts))
         object.__setattr__(self, "overrides", MappingProxyType(dict(self.overrides)))
         object.__setattr__(self, "lanes", tuple(self.lanes))
+        object.__setattr__(self, "host_env", MappingProxyType(dict(self.host_env)))
         object.__setattr__(
             self,
             "lane_knobs",
@@ -473,6 +480,8 @@ class Shape:
             out["lane_knobs"] = {k: dict(v) for k, v in self.lane_knobs.items()}
         if self.decider_domains:  # absent for non-decider shapes: dict view unchanged
             out["decider_domains"] = {k: dict(v) for k, v in self.decider_domains.items()}
+        if self.host_env:  # absent for shapes declaring none: dict view unchanged
+            out["host_env"] = dict(self.host_env)
         return out
 
     @staticmethod
@@ -495,6 +504,7 @@ class Shape:
             "lanes",
             "lane_knobs",
             "decider_domains",
+            "host_env",
         }
         unknown_top = set(data.keys()) - known_top
         if unknown_top:
@@ -559,6 +569,7 @@ class Shape:
 
         lanes, lane_knobs = _parse_lanes(name, data)
         decider_domains = _parse_decider_domains(name, data, tuple(raw_hosts))
+        host_env = _host_env_from_dict(name, data.get("host_env", {}), kind="shape")
 
         # declared-name wins over an embedded "name" field (the loader passes
         # the filename stem, which is the source of truth for a shape's
@@ -581,6 +592,7 @@ class Shape:
             lanes=lanes,
             lane_knobs=lane_knobs,
             decider_domains=decider_domains,
+            host_env=host_env,
         )
 
 

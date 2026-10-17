@@ -70,6 +70,7 @@ from lobes.profiles.render import (  # the allowlist is DERIVED from these table
     ROLE_ENV_PREFIX,
 )
 from lobes.profiles.shape_render import OPT_IN_ACTIVATION_ENV, OPT_IN_CORE_ACTIVATION_ENV
+from lobes.profiles.shapes import builtin_shape_names, resolve_shape
 
 #: The committed lock's filename. Matches NEITHER the ``.env`` suffix rule nor
 #: the ``.env.`` prefix rule of the repo's positional gitignore convention —
@@ -133,8 +134,9 @@ def lock_keys() -> frozenset[str]:
        crossed with the knob suffixes
        (:data:`lobes.profiles.render._KNOB_ENV_SUFFIX`) plus ``MODEL`` /
        ``SERVED_NAME`` / ``FEASIBLE``;
-    2. every card-level ``host_env`` key declared by a packaged built-in
-       profile (``LOBES_IOWAIT_DEGRADED_THRESHOLD`` on ``orin`` today);
+    2. every ``host_env`` key declared by a packaged built-in card profile
+       (``LOBES_IOWAIT_DEGRADED_THRESHOLD`` on ``orin``, say) or built-in
+       shape (``LOBES_BOOT_ORDER`` on ``orin-associate``);
     3. the activation keys an alternative-engine or opt-in lane renders
        (:data:`lobes.profiles.render.LLAMA_CPP_ACTIVATION_ENV`,
        :data:`lobes.profiles.shape_render.OPT_IN_ACTIVATION_ENV`,
@@ -159,6 +161,8 @@ def lock_keys() -> frozenset[str]:
     keys = {f"{prefix}_{suffix}" for prefix in ROLE_ENV_PREFIX.values() for suffix in suffixes}
     for name in builtin_names():
         keys |= set(resolve_profile(name).host_env)
+    for name in builtin_shape_names():
+        keys |= set(resolve_shape(name).host_env)
     for table in (
         LLAMA_CPP_ACTIVATION_ENV,
         OPT_IN_ACTIVATION_ENV,

@@ -101,8 +101,11 @@ services:
             - { driver: nvidia, count: all, capabilities: [gpu] }
     ipc: host
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
-    # Image CMD (Dockerfile.parakeet) respelled after the wrapper.
-    command: ["python3", "/app/listen_server.py"]
+    # The image sets only CMD (Dockerfile.parakeet); its ENTRYPOINT is the base
+    # image's /opt/nvidia/nvidia_entrypoint.sh, which overriding `entrypoint:`
+    # would drop. So it is chained after the wrapper, then the CMD — the NVIDIA
+    # script ends in `exec "$@"`, so the server is still the signal target.
+    command: ["/opt/nvidia/nvidia_entrypoint.sh", "python3", "/app/listen_server.py"]
     expose:
       - "${PARAKEET_PORT:-9002}"
     healthcheck:
