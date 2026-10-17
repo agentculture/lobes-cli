@@ -13,7 +13,7 @@ off value restores the pre-change behaviour are:
 | LOBES_BOOT_DELAY_S, _BOOT_ORDER, _BOOT_STAGGER_S    | tests/test_logwrap_hold.py |
 | LOBES_START_MAX, LOBES_MEM_GATE                     | tests/test_logwrap_backoff.py |
 | LOBES_VLLM_CACHE_ROOT, LOBES_COMPILE_CACHE_DIR      | tests/test_lane_safety_compose.py |
-| LOBES_THERMAL_ZONES, _SHED_C, _RESUME_C             | test_pressure_policy.py, test_status_pressure.py |
+| LOBES_THERMAL_* (zones, shed, resume)              | test_pressure_policy.py, test_status_pressure.py |
 | LOBES_WATCHER_MIN_INTERVAL_S                        | tests/test_watcher.py |
 """
 
