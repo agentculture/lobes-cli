@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T07:10:40Z",
+  "updated": "2026-10-17T07:32:00Z",
   "deviations": [
     {
       "id": "d1",
@@ -34,6 +34,19 @@
       "status": "proposed",
       "classification": "needs-follow-up",
       "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "t16's doctor.py change is more than the single registration call: it adds the --refresh-logwrap flag, its dispatcher, flag validation/rendering, fix_plan.dirs and one _apply_fix call; all finding logic stays in _doctor_lane_safety.py. It also edited CLAUDE.md (Mutation safety lists --refresh-logwrap) and the runtime contract \u00a76",
+      "task_ref": "t16",
+      "reason": "argparse flags and the --fix apply path live in doctor.py and cannot be wired from outside it; following the --repin-version precedent requires the flag beside it",
+      "affects": [
+        "c45"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 3
     }
   ],
   "evidence": [],
