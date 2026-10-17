@@ -235,10 +235,12 @@ def test_compile_cache_mount_only_on_vllm_services(rel: str, name: str, svc: dic
     has_mount = any(v.endswith(f":{CACHE_TARGET}") for v in vols)
     has_env = CACHE_ENV in (svc.get("environment") or [])
     if _is_vllm_service(svc):
-        assert has_mount and has_env, f"{name}: vLLM lane without per-lane compile cache"
+        assert has_mount, f"{name}: vLLM lane without per-lane compile cache"
+        assert has_env, f"{name}: vLLM lane without per-lane compile cache"
         assert _cache_volume(_lane(svc)) in vols
     else:
-        assert not has_mount and not has_env, f"{name}: non-vLLM service has a compile cache"
+        assert not has_mount, f"{name}: non-vLLM service has a compile cache"
+        assert not has_env, f"{name}: non-vLLM service has a compile cache"
 
 
 def test_every_expected_vllm_lane_is_covered() -> None:
@@ -264,7 +266,8 @@ def test_every_expected_vllm_lane_is_covered() -> None:
         "embed-nemotron-embed",
         "embed-nomic-code-embed",
     }
-    assert "llamacpp-primary" not in found and "embed-gemma2-embed" not in found
+    assert "llamacpp-primary" not in found
+    assert "embed-gemma2-embed" not in found
 
 
 def test_clef_vllm_decider_has_the_cache_and_python_decider_does_not() -> None:
@@ -281,7 +284,8 @@ def test_clef_vllm_decider_has_the_cache_and_python_decider_does_not() -> None:
             "general", {"backend": "clef", "model": "m", "mem_limit": "1g"}, "runtime"
         )
     )
-    assert "VLLM_CACHE_ROOT" not in other and "/cache/vllm" not in other
+    assert "VLLM_CACHE_ROOT" not in other
+    assert "/cache/vllm" not in other
 
 
 def test_off_value_is_off_the_mount_target() -> None:
