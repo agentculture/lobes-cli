@@ -248,3 +248,31 @@ def test_switch_apply_creates_compile_cache(tmp_path, monkeypatch, capsys, no_do
     capsys.readouterr()
     assert (d / "compile-cache").is_dir()
     assert (d / "logs" / "lane-state").is_dir()
+
+
+# --- review2-b #8: _before_up is the ONLY bind-source chokepoint --------------
+
+
+@pytest.mark.parametrize(
+    "argv,stub",
+    [
+        (["serve", "--no-probe"], "compose_up_detached"),
+        (["fleet", "up"], "compose_up_build"),
+        (["up", "hand"], "run_compose"),
+    ],
+)
+def test_verbs_leave_bind_sources_to_the_chokepoint(tmp_path, monkeypatch, capsys, argv, stub):
+    """No verb calls ensure_log_dir itself: the compose helper's _before_up does."""
+    from lobes.runtime import _health
+
+    d = tmp_path / "dep"
+    _compose.write_scaffold(d, force=True, templates=dict(_compose.FLEET_TEMPLATES))
+    monkeypatch.setattr(
+        _compose, "ensure_log_dir", lambda *a, **k: pytest.fail("verb bypassed _before_up")
+    )
+    ok = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(_compose, stub, lambda *a, **k: ok)
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr("lobes.cli._commands.up.trigger_reannounce", lambda *a, **k: None)
+    assert main([*argv, "--apply", "--compose-dir", str(d)]) == 0
+    capsys.readouterr()
