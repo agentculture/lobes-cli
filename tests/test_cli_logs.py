@@ -208,6 +208,12 @@ def test_logwrap_template_shipped_and_safe() -> None:
     assert "tee -a" in content
     assert "MG_LOG_NAME" in content
     assert "MG_LOG_DIR" in content
+    # ... holds at boot (lane-safety), reading uptime via the test seam.
+    assert "LOBES_BOOT_DELAY_S" in content
+    assert "LOBES_BOOT_STAGGER_S" in content
+    assert "LOBES_BOOT_ORDER" in content
+    assert "${LOBES_PROC_ROOT:-/proc}/uptime" in content
+    assert content.rstrip().splitlines()[-1] == 'exec "$@"'
     # In both template sets (single + fleet).
     assert "mg-logwrap.sh" in _compose.SINGLE_TEMPLATES
     assert "mg-logwrap.sh" in _compose.FLEET_TEMPLATES
