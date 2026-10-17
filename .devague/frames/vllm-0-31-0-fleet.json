@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T19:47:33Z",
+  "updated": "2026-10-17T20:24:55Z",
   "claims": [
     {
       "id": "c1",
@@ -963,8 +963,8 @@
       "text": "The spark-lobe DSpark transcript (docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt:30-31,80-81) logs the running primary's digest as sha256:49d2eb65\u2026, not 8bd082c2, while reporting version 0.26.1rc1.dev942 \u2014 the digest\u2192version mapping of the incumbent baseline is unreconciled (possibly a per-arch child digest)",
       "kind": "unknown_nonblocking",
       "claim_id": null,
-      "resolved": false,
-      "resolution": "",
+      "resolved": true,
+      "resolution": "49d2eb65 is the local image id of vllm/vllm-openai@sha256:8bd082c2 (arm64), confirmed on spark2 2026-10-17 (docs/evidence/2026-10-17-baseline-nightly-spark2.txt); the 2026-08-24 DSpark baseline ran on the nightly (operator approved closing, 2026-10-17)",
       "resolution_claim_id": null
     },
     {
