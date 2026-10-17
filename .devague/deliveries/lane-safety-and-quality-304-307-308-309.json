@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T08:08:02Z",
+  "updated": "2026-10-17T08:23:23Z",
   "deviations": [
     {
       "id": "d1",
@@ -95,6 +95,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 40
+    },
+    {
+      "id": "d7",
+      "what": "Extend the per-lane compile cache (t8) with a per-lane /root/.cache/flashinfer mount for vLLM lanes",
+      "task_ref": "t8",
+      "reason": "mjolnir-agent's Thor finding: the cold-boot crash (vllm-project/vllm#62149) is in the FlashInfer fp8_gemm_cutlass JIT build, whose cache lives in /root/.cache/flashinfer, outside VLLM_CACHE_ROOT; Thor's working fix mounts both",
+      "affects": [
+        "c9",
+        "c10"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 41
     }
   ],
   "evidence": [
