@@ -144,19 +144,94 @@ def _shape_env(shape_name: str, card: str = "orin") -> dict[str, str]:
 
 
 def test_orin_associate_renders_an_associate_first_release_order() -> None:
-    assert _shape_env("orin-associate")["LOBES_BOOT_ORDER"] == "associate,embed,rerank"
+    env = _shape_env("orin-associate")
+    # Gears UNLISTED: released together, one full stagger after associate.
+    assert env["LOBES_BOOT_ORDER"] == "associate"
+    assert env["LOBES_BOOT_STAGGER_S"] == "400"
 
 
 def test_orin_associate_golden_carries_the_associate_first_order() -> None:
     golden = Path(__file__).resolve().parent / "goldens" / "shapes" / "orin-associate__orin.env"
-    assert "LOBES_BOOT_ORDER=associate,embed,rerank\n" in golden.read_text(encoding="utf-8")
+    text = golden.read_text(encoding="utf-8")
+    assert "LOBES_BOOT_ORDER=associate\n" in text
+    assert "LOBES_BOOT_STAGGER_S=400\n" in text
 
 
 def test_the_shape_order_wins_on_every_card() -> None:
     # The associate-first order is a property of the shape's budget, not the
     # card's (the same reason the depends_on override above is card-independent).
     for card in ("orin", "spark", "thor"):
-        assert _shape_env("orin-associate", card)["LOBES_BOOT_ORDER"] == "associate,embed,rerank"
+        env = _shape_env("orin-associate", card)
+        assert env["LOBES_BOOT_ORDER"] == "associate"
+        assert env["LOBES_BOOT_STAGGER_S"] == "400"
+
+
+# One measured boot: vllm-associate went healthy 360 s after its container
+# started on the rendered 1M shape (docs/evidence/2026-09-13-accept-orin-
+# associate-1m.txt, "healthy after 360s"). A different engine or context would
+# need re-measuring (#108); this pins the margin, not a law.
+_ASSOCIATE_MEASURED_HEALTHY_S = 360
+_WRAPPER = Path(__file__).resolve().parents[1] / "lobes" / "templates" / "mg-logwrap.sh"
+
+
+def _wrapper_hold(tmp_path: Path, name: str, env: dict[str, str]) -> int:
+    """Run the real wrapper at host uptime 0 and return the hold it sleeps."""
+    import os
+
+    lane = tmp_path / name
+    proc = lane / "proc"
+    proc.mkdir(parents=True)
+    (proc / "uptime").write_text("0.00 0.00\n")
+    bindir = lane / "bin"
+    bindir.mkdir()
+    rec = lane / "sleeps"
+    shim = bindir / "sleep"
+    shim.write_text(f'#!/bin/sh\necho "$1" >> "{rec}"\n')
+    shim.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(_WRAPPER), "true"],
+        env={
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "LOBES_PROC_ROOT": str(proc),
+            "MG_LOG_DIR": str(lane / "logs"),
+            "MG_LOG_NAME": name,
+            "LOBES_BOOT_ORDER": env["LOBES_BOOT_ORDER"],
+            "LOBES_BOOT_STAGGER_S": env["LOBES_BOOT_STAGGER_S"],
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return int(rec.read_text().split()[0])
+
+
+def _start_period_s(service: str) -> int:
+    compose = yaml.safe_load(_TEMPLATE.read_text(encoding="utf-8"))
+    period = compose["services"][service]["healthcheck"]["start_period"]
+    assert period.endswith("s"), period
+    return int(period[:-1])
+
+
+def test_gears_are_released_after_associate_is_resident(tmp_path: Path) -> None:
+    env = _shape_env("orin-associate")
+    associate = _wrapper_hold(tmp_path, "associate", env)
+    embed = _wrapper_hold(tmp_path, "embed", env)
+    rerank = _wrapper_hold(tmp_path, "rerank", env)
+    assert associate == 120  # the default LOBES_BOOT_DELAY_S
+    assert embed == rerank == 520  # 120 + len(order)=1 x 400
+    # Associate's measured healthy point (120 + 360 = 480) lands before the
+    # gears are released: memory-wise associate-first, as measured.
+    assert associate + _ASSOCIATE_MEASURED_HEALTHY_S < embed
+
+
+def test_the_gear_hold_fits_inside_their_healthcheck_start_period(tmp_path: Path) -> None:
+    env = _shape_env("orin-associate")
+    hold = max(_wrapper_hold(tmp_path, name, env) for name in ("embed", "rerank"))
+    for service in ("vllm-embed", "vllm-rerank"):
+        assert _start_period_s(service) == 780
+        assert hold < _start_period_s(service)
 
 
 def test_the_senses_shape_keeps_the_card_default() -> None:

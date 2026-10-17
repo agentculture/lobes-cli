@@ -33,6 +33,12 @@ behaviour from before this work.
 | `LOBES_THERMAL_RESUME_C` | empty (per-card) | empty | gateway | Stop shedding below this temperature (hysteresis). |
 | `LOBES_WATCHER_MIN_INTERVAL_S` | `300` | — | watcher | Minimum seconds between two cache clears. |
 
+A key that any built-in shape declares in its `[host_env]` (today
+`LOBES_BOOT_ORDER` and `LOBES_BOOT_STAGGER_S`, from `orin-associate`) is
+written to `.env` by every `lobes init --shape` render: the shape's value,
+else the card's, else the default above. Switching shapes therefore
+overwrites it, and a value typed by hand is replaced on the next render.
+
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal
 reader at a fake tree.
