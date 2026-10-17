@@ -361,6 +361,99 @@ def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None)
     return d
 
 
+#: Lane-safety compile cache (contract ``docs/contracts/lane-safety-runtime.md``
+#: section 6): host dir holding one subdirectory per vLLM lane, bind-mounted at
+#: the fixed container path ``/cache/vllm``.
+COMPILE_CACHE_ENV = "LOBES_COMPILE_CACHE_DIR"
+COMPILE_CACHE_DIRNAME = "compile-cache"
+_COMPILE_CACHE_MOUNT_RE = re.compile(
+    r"\$\{" + COMPILE_CACHE_ENV + r":-[^}]*\}/([A-Za-z0-9_.-]+):/cache/vllm\b"
+)
+
+
+def compile_cache_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
+    """Host compile-cache root, mirroring compose's ``${LOBES_COMPILE_CACHE_DIR:-./compile-cache}``.
+
+    ``configured`` defaults to the deployment ``.env``'s value; a relative path
+    resolves against the deployment dir (where compose runs).
+    """
+    base = Path(deploy_dir).expanduser()
+    if configured is None:
+        configured = _env.read_env(base / ENV_FILE, COMPILE_CACHE_ENV) or None
+    if configured:
+        p = Path(configured).expanduser()
+        return p if p.is_absolute() else (base / p)
+    return base / COMPILE_CACHE_DIRNAME
+
+
+def compile_cache_lanes(deploy_dir: os.PathLike | str) -> list[str]:
+    """Per-lane subdirectory names every scaffolded compose file mounts.
+
+    Scans every ``docker-compose*.yml`` in the deployment (base, overlays,
+    generated shape override, operator override) for the
+    ``${LOBES_COMPILE_CACHE_DIR:-...}/<lane>:/cache/vllm`` bind. Creating a
+    directory for an overlay lane that never runs is harmless; NOT creating
+    one lets Docker create it root-owned on first mount.
+    """
+    lanes: set[str] = set()
+    for path in sorted(Path(deploy_dir).expanduser().glob("docker-compose*.yml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            lanes.update(_COMPILE_CACHE_MOUNT_RE.findall(line))
+    return sorted(lanes)
+
+
+def _sudo_owner() -> tuple[int, int] | None:
+    """``(uid, gid)`` of the user behind ``sudo`` when running as root, else ``None``."""
+    try:
+        if os.geteuid() != 0:
+            return None
+        uid = int(os.environ["SUDO_UID"])
+        gid = int(os.environ.get("SUDO_GID", uid))
+    except (AttributeError, KeyError, ValueError):
+        return None
+    return uid, gid
+
+
+def ensure_compile_cache_dirs(
+    deploy_dir: os.PathLike | str, *, dry_run: bool = False
+) -> list[Path]:
+    """Create the compile-cache root + one dir per mounted lane, owned by the invoking user.
+
+    Must run before any container mounts them: a bind source Docker has to
+    create itself is root-owned, and wiping a lane's cache would then need
+    sudo (contract section 6). Running as the user needs no chown; under
+    ``sudo`` the created dirs are chowned to ``SUDO_UID``/``SUDO_GID``. Only
+    ABSENT dirs are created (never touches an existing one). Returns the dirs
+    created — or, with ``dry_run``, the dirs that would be. Best-effort: a
+    mkdir failure is skipped, never raised.
+    """
+    root = compile_cache_dir(deploy_dir)
+    wanted = [root, *(root / lane for lane in compile_cache_lanes(deploy_dir))]
+    missing = [d for d in wanted if not d.exists()]
+    if dry_run:
+        return missing
+    owner = _sudo_owner()
+    created: list[Path] = []
+    for d in missing:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        created.append(d)
+        if owner is not None:
+            try:
+                os.chown(d, *owner)
+            except OSError:
+                pass
+    return created
+
+
 def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
     """Resolve the directory holding ``docker-compose.yml``.
 

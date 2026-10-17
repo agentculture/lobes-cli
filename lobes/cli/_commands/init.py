@@ -1277,6 +1277,10 @@ def _emit_apply(
         # guarantee is what makes that safe).
         for append_env in AUDIO_LANG_ENV_APPENDS[audio_lang]:
             append_env(target)
+    # Lane-safety compile cache (contract section 6): create the per-lane bind
+    # sources now, as the invoking user, after every compose file (shape
+    # override included) is on disk — a source Docker creates is root-owned.
+    _compose.ensure_compile_cache_dirs(target)
     if json_mode:
         emit_result(
             _apply_payload(
@@ -1891,8 +1895,9 @@ def _emit_from_lock(
 
     target.mkdir(parents=True, exist_ok=True)
     added = _write_restore(target, source_dir, names, removals, env_path, dict(lock.env))
-    # The compose bind-mount source, exactly as the scaffold path creates it.
+    # The compose bind-mount sources, exactly as the scaffold path creates them.
     _compose.ensure_log_dir(target)
+    _compose.ensure_compile_cache_dirs(target)
     payload.update({"restored": str(target), "files": names, "removed": removals})
     payload["env_keys_added"] = added
     if json_mode:
