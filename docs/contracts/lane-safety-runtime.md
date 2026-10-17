@@ -196,14 +196,29 @@ OTHER lane is starting.
 - **Signal: docker health, read-only.** "Starting" is docker's
   `health: starting`: the lane is inside its healthcheck `start_period` and not
   yet healthy. Both callers read it with one fixed argv,
-  `docker ps --filter label=com.docker.compose.project=<project> --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
-  (`_compose.lane_health_argv`), and map each compose service to its
-  `MG_LOG_NAME`. `<project>` is the deployment's compose project, resolved as
-  compose does (lobes never passes `-p`): `COMPOSE_PROJECT_NAME` in the
-  environment, then in the deployment `.env`, then a top-level `name:` in the
-  compose files, then the deployment directory's basename, normalised (live
-  boxes: `~/.lobes` gives `lobes`). The filter is the project label, not a
-  `model-gear-` name prefix, because the embed overlay's vLLM lanes
+  `docker ps --filter label=com.docker.compose.project --format '{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.LANE_HEALTH_ARGV`), keep the rows whose project label is one of
+  the deployment's project candidates, and map each compose service to its
+  `MG_LOG_NAME`. The candidates (`_compose.compose_project_candidates`) are
+  every name compose could have stamped, normalised: `COMPOSE_PROJECT_NAME`
+  in the environment, then in the deployment `.env`; a top-level `name:` in
+  the compose files, with `${VAR}`, `${VAR:-default}` and `${VAR-default}`
+  resolved against the environment and then the `.env` (an unresolvable
+  `name:` is ignored); and the basename of the deployment directory both as
+  given and with symlinks resolved. lobes never passes `-p`, and it cannot
+  know which cwd compose saw: compose run from lobes gets the physical
+  directory, an operator's shell gets the link. With `~/.lobes` a symlink to
+  `/data/lobes-prod`, the project is `lobes` or `lobes-prod` depending on who
+  ran compose, so one guessed name could leave lane health empty and switch
+  the boot guard off without a word. Matching the set covers both. The
+  candidate set was chosen over matching the
+  `com.docker.compose.project.working_dir` label because the project label
+  is what compose itself groups containers by, and it also follows
+  `COMPOSE_PROJECT_NAME` and `name:`; a working-directory match would miss a
+  project renamed that way. The watcher unit's `--compose-dir` is the
+  absolute deployment path with symlinks kept, so the watcher derives the
+  same candidates. The filter is the project label, not a `model-gear-` name prefix,
+  because the embed overlay's vLLM lanes
   (`embed-qwen3vl-embed`, `embed-qwen3vl-rerank`, `embed-nemotron-embed`,
   `embed-nomic-code-embed`) run the memory gate under their own container
   names; a name filter hid their boots and made their live markers look stale.

@@ -204,6 +204,23 @@ def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
 # --- review-b #3: no lifecycle clear while another lane is mid-boot --------
 
 
+#: The project every 3-column ``_ps`` row is stamped with (see ``_project_env``).
+_TEST_PROJECT = "lobes-test"
+
+
+@pytest.fixture(autouse=True)
+def _project_env(monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", _TEST_PROJECT)
+
+
+def _with_project(stdout: str) -> str:
+    """Prefix a ``service\tname\tstatus`` row with the test project label."""
+    rows = []
+    for line in stdout.splitlines():
+        rows.append(line if line.count("\t") >= 3 else f"{_TEST_PROJECT}\t{line}")
+    return "".join(r + "\n" for r in rows)
+
+
 def _ps(monkeypatch, stdout: str | None):
     calls: list[list[str]] = []
 
@@ -211,7 +228,7 @@ def _ps(monkeypatch, stdout: str | None):
         calls.append(list(argv))
         if stdout is None:
             return None
-        return types.SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+        return types.SimpleNamespace(returncode=0, stdout=_with_project(stdout), stderr="")
 
     monkeypatch.setattr(_compose, "_probe", probe)
     return calls
@@ -358,7 +375,7 @@ def test_lane_health_argv_filters_by_the_compose_project_label(tmp_path, monkeyp
     d.mkdir()
     argv = _compose.lane_health_argv(d)
     assert argv[:2] == ["docker", "ps"]
-    assert "label=com.docker.compose.project=lobes" in argv
+    assert "label=com.docker.compose.project" in argv
     assert not any(a.startswith("name=") for a in argv)
 
 
@@ -495,3 +512,93 @@ def test_top_level_name_is_interpolated(
         (d / ".env").write_text(dotenv, encoding="utf-8")
     assert _compose.compose_project_name(d) == expected
     assert capsys.readouterr().err == ""  # an unresolvable name logs nothing
+
+
+# --- review3 #1: lane health matches a CANDIDATE set of project names --------
+
+
+def _symlinked(tmp_path, real_name: str, link_name: str):
+    real = tmp_path / "data" / real_name
+    real.mkdir(parents=True)
+    (real / "docker-compose.yml").write_text(
+        "services:\n  vllm-primary:\n    environment:\n      - MG_LOG_NAME=primary\n",
+        encoding="utf-8",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    link = home / link_name
+    link.symlink_to(real, target_is_directory=True)
+    return real, link
+
+
+def test_lane_health_argv_lists_every_compose_project_with_its_label():
+    argv = _compose.LANE_HEALTH_ARGV
+    assert argv[:2] == ["docker", "ps"]
+    assert argv[argv.index("--filter") + 1] == "label=com.docker.compose.project"
+    fmt = argv[argv.index("--format") + 1]
+    assert fmt.startswith('{{.Label "com.docker.compose.project"}}\t')
+
+
+@pytest.mark.parametrize(
+    "real_name,link_name,expected",
+    [
+        # ~/.lobes -> /data/lobes-prod: the CLI (via the link) and compose run with
+        # a physical cwd (via the target) disagree on the basename.
+        ("lobes-prod", ".lobes", {"lobes", "lobes-prod"}),
+        # the other order: the real dir is .lobes, reached through a link "prod"
+        (".lobes", "prod", {"prod", "lobes"}),
+    ],
+)
+def test_project_candidates_cover_both_symlink_names(
+    tmp_path, monkeypatch, real_name, link_name, expected
+):
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    _real, link = _symlinked(tmp_path, real_name, link_name)
+    assert _compose.compose_project_candidates(link) == frozenset(expected)
+
+
+@pytest.mark.parametrize("stamped", ["lobes", "lobes-prod"])
+@pytest.mark.parametrize("via", ["link", "watcher-unit"])
+def test_lane_health_sees_lanes_whichever_symlink_name_compose_stamped(
+    tmp_path, monkeypatch, stamped, via
+):
+    """~/.lobes -> /data/lobes-prod: whichever name compose stamped, both the CLI
+    (deploy dir = the link) and the watcher (the unit's --compose-dir) find the lane."""
+    from lobes.watcher import _install
+
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)
+    _real, link = _symlinked(tmp_path, "lobes-prod", ".lobes")
+    deploy = link
+    if via == "watcher-unit":
+        ctx = _install.InstallContext(user="op", home=tmp_path, exec_argv=["lobes"])
+        unit = _install.render_unit(ctx, link, system=False)
+        exec_line = next(ln for ln in unit.splitlines() if ln.startswith("ExecStart="))
+        args = exec_line.split()
+        deploy = args[args.index("--compose-dir") + 1]
+        assert deploy == str(link)  # absolute, symlink kept: both names derivable
+    _ps(
+        monkeypatch,
+        f"{stamped}\tvllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "other\tvllm-primary\tother-vllm-primary\tUp 2 hours (healthy)\n",
+    )
+    assert _compose.lane_health(deploy) == {"primary": "starting"}
+
+
+def test_lane_health_drops_rows_of_unrelated_projects(tmp_path, monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "mine")
+    _deploy(tmp_path)
+    _ps(
+        monkeypatch,
+        "mine\tvllm-primary\tmodel-gear-vllm-primary\tUp 1 minute (health: starting)\n"
+        "theirs\tvllm-hand\ttheirs-vllm-hand\tUp 1 minute (health: starting)\n",
+    )
+    assert _compose.lane_health(tmp_path) == {"primary": "starting"}
+
+
+def test_project_candidates_include_env_dotenv_and_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "Proc")
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / ".env").write_text("COMPOSE_PROJECT_NAME=dot\n", encoding="utf-8")
+    (d / "docker-compose.yml").write_text("name: top\nservices: {}\n", encoding="utf-8")
+    assert _compose.compose_project_candidates(d) == frozenset({"proc", "dot", "top", "dep"})

@@ -128,7 +128,10 @@ def render_unit(ctx: InstallContext, deploy_dir: Path, system: bool) -> str:
         "watcher",
         "run",
         "--compose-dir",
-        str(Path(deploy_dir).resolve()),
+        # absolute but NOT resolved (review3 #1): a symlinked deployment dir
+        # keeps its link name, so the watcher derives the same compose project
+        # candidates (link basename AND target basename) as the CLI.
+        os.path.abspath(os.path.expanduser(str(deploy_dir))),
         "--apply",
     ]
     env_line = f"Environment={_quote('PATH=' + ctx.path_env)}\n" if ctx.path_env else ""

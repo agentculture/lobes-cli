@@ -1298,37 +1298,70 @@ def compose_project_name(deploy_dir: os.PathLike | str) -> str:
     return _normalize_project_name(raw)
 
 
-def lane_health_argv(deploy_dir: os.PathLike | str) -> list[str]:
-    """The ONE docker call the lane-health read makes (review-b #3).
+def compose_project_candidates(deploy_dir: os.PathLike | str) -> frozenset[str]:
+    """Every project name a deployment's containers may carry, normalised (review3 #1).
 
-    Fixed shape, read-only (``docker ps`` lists, never changes), shared with
-    the host watcher. Filtered by the deployment's compose project label, not
-    a container-name prefix (review2-b #1).
+    lobes cannot know which cwd compose saw: ``subprocess(cwd=...)`` hands it a
+    PHYSICAL cwd (symlinks resolved), while an operator who runs ``cd`` into
+    ``~/.lobes`` gives it the link name. With ``~/.lobes -> /data/lobes-prod``
+    one guess makes the CLI, the watcher and compose disagree and lane health
+    silently empty. So lane health matches the set: ``COMPOSE_PROJECT_NAME``
+    (process env, then ``.env``), the interpolated top-level ``name:``, and the
+    basename of both the absolute and the resolved deployment path. Empty
+    values are dropped.
     """
-    return [
-        "docker",
-        "ps",
-        "--filter",
-        f"label={COMPOSE_PROJECT_LABEL}={compose_project_name(deploy_dir)}",
-        "--format",
-        '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+    raw = [
+        os.environ.get(COMPOSE_PROJECT_ENV, ""),
+        _env.read_env(Path(deploy_dir) / ENV_FILE, COMPOSE_PROJECT_ENV) or "",
+        _top_level_name(deploy_dir) or "",
+        os.path.basename(os.path.abspath(deploy_dir)),
+        os.path.basename(os.path.realpath(deploy_dir)),
     ]
+    return frozenset(n for n in (_normalize_project_name(r.strip()) for r in raw) if n)
 
 
-def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
+#: The ONE docker call the lane-health read makes (review-b #3): fixed shape,
+#: read-only (``docker ps`` lists, never changes), shared with the host
+#: watcher. It lists every container that carries a compose project label and
+#: prints that label, so the caller filters rows against the deployment's
+#: :func:`compose_project_candidates` (review3 #1) — not one guessed name, and
+#: not a container-name prefix (review2-b #1).
+LANE_HEALTH_ARGV = [
+    "docker",
+    "ps",
+    "--filter",
+    f"label={COMPOSE_PROJECT_LABEL}",
+    "--format",
+    f'{{{{.Label "{COMPOSE_PROJECT_LABEL}"}}}}\t{{{{.Label "com.docker.compose.service"}}}}'
+    "\t{{.Names}}\t{{.Status}}",
+]
+
+
+def lane_health_argv(deploy_dir: os.PathLike | str | None = None) -> list[str]:
+    """A copy of :data:`LANE_HEALTH_ARGV` (the argv no longer depends on the deployment)."""
+    return list(LANE_HEALTH_ARGV)
+
+
+def lane_health(
+    deploy_dir: os.PathLike | str, candidates: frozenset[str] | None = None
+) -> dict[str, str] | None:
     """The project's running lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
 
     ``"starting"`` is docker's ``health: starting`` (inside the healthcheck's
     start period, not yet healthy) — the window where a page-cache drop can
     trip vLLM's memory profiling on unified memory. Every other running state
-    (healthy, unhealthy, no healthcheck) is ``"running"``. A container with no
-    compose service label is keyed by its container name. ``None`` when docker
-    cannot be read (absent, no permission, error). Read-only: runs exactly
-    :func:`lane_health_argv`.
+    (healthy, unhealthy, no healthcheck) is ``"running"``. A row is kept only
+    when its project label is one of ``candidates`` (default:
+    :func:`compose_project_candidates`; the watcher passes a cached set). A
+    container with no compose service label is keyed by its container name.
+    ``None`` when docker cannot be read (absent, no permission, error).
+    Read-only: runs exactly :data:`LANE_HEALTH_ARGV`.
     """
-    result = _probe(lane_health_argv(deploy_dir))
+    result = _probe(lane_health_argv())
     if result is None or getattr(result, "returncode", 1) != 0:
         return None
+    if candidates is None:
+        candidates = compose_project_candidates(deploy_dir)
     try:
         mapping = _service_log_names(deploy_dir, _compose_files(deploy_dir))
     except OSError:
@@ -1336,9 +1369,9 @@ def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
     health: dict[str, str] = {}
     for line in (result.stdout or "").splitlines():
         parts = line.split("\t")
-        if len(parts) < 3:
+        if len(parts) < 4 or parts[0].strip() not in candidates:
             continue
-        service, name, status = parts[0].strip(), parts[1].strip(), parts[2]
+        service, name, status = parts[1].strip(), parts[2].strip(), parts[3]
         key = mapping.get(service, service) if service else name
         if not key:
             continue

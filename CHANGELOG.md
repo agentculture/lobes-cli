@@ -28,6 +28,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A failed card detection is retried at most once a minute instead of being cached for the life of the process.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.
 - The pre-start bind-source setup lives only in the `_before_up` chokepoint.
+- Lane health no longer depends on guessing one compose project name: `docker ps` lists every compose-labelled container with its project label, and rows are kept when the label is one of the deployment's candidates (`COMPOSE_PROJECT_NAME`, the top-level `name:`, and the basename of the deployment dir both as given and with symlinks resolved). A symlinked `~/.lobes` no longer leaves lane health empty and the boot guard silently off. The watcher unit's `--compose-dir` keeps the symlink so the watcher derives the same candidates.
 - A top-level compose `name:` is interpolated (`${VAR}`, `${VAR:-default}`, `${VAR-default}`, against the process env then the deployment `.env`) and unquoted; an unresolvable one is ignored instead of being normalised into a wrong project name.
 
 ## [0.87.0] - 2026-10-17

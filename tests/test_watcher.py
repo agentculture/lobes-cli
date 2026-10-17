@@ -240,7 +240,10 @@ def test_watcher_runs_no_mutating_docker_command(tmp_path, monkeypatch):
 
     def fake_probe(argv, **k):
         seen.append(list(argv))
-        return subprocess.CompletedProcess(argv, 0, "vllm-worker\tmodel-gear-vllm-worker\tUp\n", "")
+        project = _compose.compose_project_name(deploy)
+        return subprocess.CompletedProcess(
+            argv, 0, f"{project}\tvllm-worker\tmodel-gear-vllm-worker\tUp\n", ""
+        )
 
     monkeypatch.setattr(_machine, "_run", fake_machine_run)
     monkeypatch.setattr(_machine, "_current_cli", lambda: None)
@@ -558,6 +561,7 @@ def test_embed_overlay_lane_marker_is_live_not_stale(tmp_path, monkeypatch):
         return subprocess.CompletedProcess(
             argv,
             0,
+            f"{_compose.compose_project_name(deploy)}\t"
             "embed-nemotron-embed\tembed-nemotron-embed\tUp 3 minutes (health: starting)\n",
             "",
         )
@@ -570,10 +574,7 @@ def test_embed_overlay_lane_marker_is_live_not_stale(tmp_path, monkeypatch):
     actions = w.tick()
     assert actions[0]["stale"] is False
     assert actions[0]["action"] == "cleared"  # gated lanes never block their own clear
-    assert (
-        seen
-        and f"label=com.docker.compose.project={_compose.compose_project_name(deploy)}" in seen[0]
-    )
+    assert seen and seen[0] == _compose.lane_health_argv(deploy)
 
 
 def test_watcher_does_not_defer_for_a_held_lane(tmp_path):
