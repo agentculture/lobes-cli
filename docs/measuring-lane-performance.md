@@ -106,6 +106,42 @@ a fresh clean run against an older one taken under unknown load. Re-measuring a
 number you already have is cheap; a wrong conclusion drawn from mismatched
 conditions is not.
 
+## Rule 4 — lock the clocks, and keep the window honest (#304)
+
+Rule 3 says to record clocks; `lobes benchmark` now enforces them where the
+machine allows. The window is for operators and for agents running a
+comparison.
+
+- **What it does.** `lobes benchmark` takes a per-host file lock
+  (`$XDG_RUNTIME_DIR/lobes-benchmark-window.lock`, so two runs cannot overlap),
+  reads `window show`, runs `window store`, then `window lock` (clocks and fan
+  to max), runs the load, and calls `window restore` exactly once in a
+  `finally` (SIGINT and SIGTERM included). Only `benchmark` enters the window;
+  `init`, `serve`, `switch`, `up` and `fleet` never do.
+- **Opt out.** `--no-lock` runs unlocked and records `locked: false, reason:
+  disabled`. If the machine CLI is missing, ungranted or unsupported, the run
+  proceeds **unlocked** and the same block records why. A run never fails
+  because the clocks could not be locked.
+- **What gets recorded.** Single-model and `--all-lobes` results carry
+  `host.conditions` with `locked`, `reason`, and `start` / `end` snapshots
+  (`power_mode`, `clocks`, `fan_profile`, `temps_c`). Compare `start` and
+  `end` temperatures: a hot end means thermal throttling may have shaped the
+  number. **`lobes measure` and `lobes benchmark --profile` do not record
+  conditions yet (issue #312)**, so for those, write the conditions down by hand
+  as Rule 3 says.
+- **Per card.** The GB10 reports no supported clock lock, so on the DGX Spark
+  the window runs **unlocked** (the conditions say so). The Orin and Thor
+  paths need the machine CLI releases (jetson-orin-cli 0.7.0, jetson-thor-cli
+  0.6.0, dgx-spark-cli 0.9.0), which are implemented but **not yet released**.
+  Thor fan-profile switching and the Orin `jetson_clocks --fan` behaviour are
+  **unverified**, and every Thor line is **DECLARED/UNVALIDATED (#108)**.
+- **Doctor.** `lobes doctor` warns `jetson_clocks_locked` when `window show`
+  reports `active` and no benchmark holds the host lock, i.e. a crashed run left
+  the box pinned at max clocks.
+
+Contract: `docs/contracts/machine-cli-window.md`. The live Spark acceptance
+under sustained load has not run (issue #313).
+
 ## Which measurements need a quiet box, and which do not
 
 Not every metric has the same sensitivity to machine load, and treating them

@@ -1563,6 +1563,41 @@ memory that a cache clear would hand back. The watcher closes that gap.
   disables the unit and removes exactly the files the manifest lists.
 - `lobes watcher status` — read-only: installed, active, linger, last clear.
 
+## The six lane-safety features (issues #304, #307, #308, #309)
+
+For operators and agents. Each has an off value in the deployment `.env`
+(`lobes/templates/fleet/env.example`, "Lane safety"); the Thor is code-only
+during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
+
+- **Boot hold** (`LOBES_BOOT_DELAY_S`, `_BOOT_ORDER`, `_BOOT_STAGGER_S`;
+  off `LOBES_BOOT_DELAY_S=0`): each lane waits for host uptime, then a
+  per-lane stagger, so a reboot does not race every lane for memory.
+- **Compile cache** (`LOBES_COMPILE_CACHE_DIR`, `LOBES_VLLM_CACHE_ROOT`;
+  off `LOBES_VLLM_CACHE_ROOT=/root/.cache/vllm`): vLLM's compiled kernels
+  persist per lane on a host bind mount. Verified on the nightly and v0.31.0.
+- **Crash backoff and memory gate** (`LOBES_START_MAX`, `_START_WINDOW_S`,
+  `LOBES_MEM_GATE`, `_MEM_GATE_TIMEOUT_S`; off `LOBES_START_MAX=0`,
+  `LOBES_MEM_GATE=0`): a lane holds after repeated starts, and waits for free
+  memory before starting. Clear a hold with `lobes up <role> --apply`.
+- **Cache clear, grant, watcher**: lifecycle verbs clear the page cache when a
+  passwordless rule is granted (never prompts, never fails the verb); `lobes
+  watcher install` does it for a gated lane. `lobes doctor` reports
+  `drop_caches_grant_missing`, `watcher_inactive` and `logwrap_stale`
+  (`lobes doctor --refresh-logwrap --apply`).
+- **Thermal shedding** (`LOBES_THERMAL_ZONES`, `_SHED_C`, `_RESUME_C`; off:
+  empty): a 429 with `X-Lobes-Shed-Signal: thermal`. INERT in the gateway
+  container until issue #311; the latch advances on a request or `GET /status`;
+  Spark bands come from #304's batch-job governor, not a serving measurement.
+- **Benchmark window** (`lobes benchmark`, `--no-lock`): locked clocks and
+  `host.conditions` on single-model and `--all-lobes` results only (#312);
+  the GB10 has no supported clock lock, so the Spark runs unlocked. The machine
+  CLI verbs (dgx-spark-cli 0.9.0, jetson-thor-cli 0.6.0, jetson-orin-cli 0.7.0)
+  are implemented, not yet released.
+
+The live Spark acceptance under sustained load has not run (issue #313).
+Docs: `docs/operating-a-deployment.md`, `docs/measuring-lane-performance.md`,
+`docs/gateway-fleet.md`, `docs/machine-profiles.md`.
+
 This is the first host unit lobes ships. `lobes init` never copies its unit
 template into a deployment dir. Contract: `docs/contracts/lane-safety-runtime.md`
 sections 4 and 5.
