@@ -191,6 +191,23 @@ class Governor:
         status = self._status()
         if status in ("exited", "dead", "missing"):
             return False
+        if not self._own_the_pause_state(status):
+            return True
+        temp = self._read_temp()
+        self.last_temp = temp
+        if temp is None:
+            return True
+        d = decide(temp, paused=self.we_paused, bands=self.bands)
+        if d.kind == "pause":
+            self._pause(temp)
+        elif d.kind == "resume":
+            self._resume(d.cpus, temp)
+        elif d.kind == "cpus" and d.cpus != self.cur:
+            self._set_cpus(d.cpus, temp)
+        return True
+
+    def _own_the_pause_state(self, status: str) -> bool:
+        """Reconcile our pause flag with the container; False = a foreign pause, hands off."""
         # dry-run never really pauses, so simulate our own pause
         paused = status == "paused" or (not self.apply and self.we_paused)
         if self.we_paused and not paused:
@@ -200,34 +217,29 @@ class Governor:
             if not self._foreign_noted:
                 self._foreign_noted = True
                 self._log("foreign pause (not ours): leaving container alone")
-            return True
+            return False
         self._foreign_noted = False
-        temp = self._read_temp()
-        self.last_temp = temp
-        if temp is None:
-            return True
-        d = decide(temp, paused=self.we_paused, bands=self.bands)
-        if d.kind == "pause":
-            if self._do("pause", self.container):
-                self.we_paused = True
-                self.last_action = "pause"
-                self._log("pause", temp)
-            else:
-                self._log("FAILED docker pause", temp)
-        elif d.kind == "resume":
-            # cap first so the thawed container does not resume at full speed
-            if self._do("update", "--cpus", str(d.cpus), self.container) and self._do(
-                "unpause", self.container
-            ):
-                self.we_paused = False
-                self.cur = d.cpus
-                self.last_action = f"resume cpus={d.cpus}"
-                self._log(f"resume cpus={d.cpus}", temp)
-            else:
-                self._log("FAILED docker resume", temp)
-        elif d.kind == "cpus" and d.cpus != self.cur:
-            self._set_cpus(d.cpus, temp)
         return True
+
+    def _pause(self, temp: float) -> None:
+        if self._do("pause", self.container):
+            self.we_paused = True
+            self.last_action = "pause"
+            self._log("pause", temp)
+        else:
+            self._log("FAILED docker pause", temp)
+
+    def _resume(self, cpus: int, temp: float) -> None:
+        # cap first so the thawed container does not resume at full speed
+        if self._do("update", "--cpus", str(cpus), self.container) and self._do(
+            "unpause", self.container
+        ):
+            self.we_paused = False
+            self.cur = cpus
+            self.last_action = f"resume cpus={cpus}"
+            self._log(f"resume cpus={cpus}", temp)
+        else:
+            self._log("FAILED docker resume", temp)
 
     def cleanup(self) -> None:
         """On exit: top-band cap back, and unpause only a pause we made."""

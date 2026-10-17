@@ -115,7 +115,8 @@ def test_steps_through_bands_and_logs_each_change():
         gv.tick()
     assert [c[3] for c in d.mutations()] == ["16", "12", "8", "4", "16"]
     assert len(lines) == 5  # unchanged ticks log nothing
-    assert "cpus=12" in lines[1] and "85.0" in lines[1]
+    assert "cpus=12" in lines[1]
+    assert "85.0" in lines[1]
 
 
 def test_pause_then_resume_only_own_pause():
@@ -147,7 +148,8 @@ def test_dry_run_changes_nothing():
     for _ in range(3):
         gv.tick()
     assert d.mutations() == []
-    assert lines and all(ln.startswith("dry-run") or "dry-run" in ln for ln in lines)
+    assert lines
+    assert all("dry-run" in ln for ln in lines)
     assert any("pause" in ln for ln in lines)
     assert any("resume" in ln for ln in lines)
 
@@ -156,7 +158,8 @@ def test_unknown_temperature_does_nothing():
     d = FakeDocker()
     gv, lines = _gov(d, [None])
     gv.tick()
-    assert d.mutations() == [] and lines == []
+    assert d.mutations() == []
+    assert lines == []
 
 
 def test_exited_container_ends_loop():
@@ -239,7 +242,8 @@ def test_cli_once_dry_run(tmp_path, monkeypatch, capsys):
     )
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["dry_run"] is True and out["temp_c"] == 89.0
+    assert out["dry_run"] is True
+    assert out["temp_c"] == 89.0
     assert out["action"] == "cpus=8"
     calls = (tmp_path / "calls").read_text().splitlines()
     assert all(c.startswith("inspect") for c in calls)
