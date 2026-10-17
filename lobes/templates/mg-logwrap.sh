@@ -104,6 +104,155 @@ if [ "$_delay" -gt 0 ]; then
     fi
 fi
 
+# --- Lane state dir (lane-safety contract, sections 3 and 4) ----------------
+# Holds the start counter and the memory-gate marker. If it cannot be created
+# the counter and the marker are skipped (one log line) — the gate itself only
+# needs /proc and still runs.
+_state="${dir}/lane-state"
+if mkdir -p "$_state" 2>/dev/null && [ -w "$_state" ]; then
+    :
+else
+    printf 'lobes: %s not writable; start counter and gate marker skipped\n' "$_state"
+    _state=""
+fi
+_now() { printf '%(%s)T' -1; }
+
+# --- Crash backoff: the start counter (contract section 3) ------------------
+# File: lane-state/<name>.starts, one epoch second per line. A start HOLDS when
+# the file already holds LOBES_START_MAX or more starts inside
+# LOBES_START_WINDOW_S — with the defaults (3 in 600 s) the 4th start inside
+# 600 s holds. It re-checks every 30 s until the oldest start ages out or the
+# file is deleted (`lobes up <role> --apply` deletes it). The start is recorded
+# when the lane proceeds past the hold, and lines outside the window (or not
+# integers) are dropped on that rewrite. LOBES_START_MAX=0 turns it off.
+_count_starts() {
+    # sets _kept (in-window epochs) from the counter file
+    _kept=()
+    local _e _cut=$(($(_now) - _window))
+    [ -f "$_starts" ] || return 0
+    while read -r _e _; do
+        case "$_e" in '' | *[!0-9]*) continue ;; esac
+        [ "$((10#$_e))" -gt "$_cut" ] && _kept+=("$((10#$_e))")
+    done 2>/dev/null <"$_starts" || true
+}
+_max="$(_num "${LOBES_START_MAX-}" 3)"
+if [ "$_max" -gt 0 ] && [ -n "$_state" ]; then
+    _window="$(_num "${LOBES_START_WINDOW_S-}" 600)"
+    [ "$_window" -gt 0 ] || _window=600
+    _starts="${_state}/${name}.starts"
+    case "$name" in # lane name -> role name, for the clear instruction
+        primary) _role=cortex ;;
+        multimodal) _role=senses ;;
+        embed) _role=embedder ;;
+        rerank) _role=reranker ;;
+        *) _role="$name" ;;
+    esac
+    _count_starts
+    if [ "${#_kept[@]}" -ge "$_max" ]; then
+        printf "lobes: %s starts in %ss — holding; clear with 'lobes up %s --apply' or delete %s\n" \
+            "${#_kept[@]}" "$_window" "$_role" "$_starts"
+        while :; do
+            sleep 30 || true
+            [ -f "$_starts" ] || break
+            _count_starts
+            [ "${#_kept[@]}" -lt "$_max" ] && break
+        done
+        _count_starts
+    fi
+    _kept+=("$(_now)")
+    printf '%s\n' "${_kept[@]}" >"$_starts" 2>/dev/null || true
+fi
+
+# --- Crash backoff: the memory gate (contract section 4) --------------------
+# Runs after the boot hold and stagger (c42). need = ceil(util x MemTotal),
+# util being this lane's own --gpu-memory-utilization (`=X` or `X` form); have
+# = MemAvailable. Polled every 5 s with lane-state/<name>.gated (JSON) present
+# while waiting; removed on pass or give-up. After LOBES_MEM_GATE_TIMEOUT_S of
+# polling (counted in poll sleeps, not wall clock) it exits 75 before exec, and
+# Docker's restart counts as a start (section 3). No util flag (llama.cpp,
+# sidecars) skips it; an unparseable util or unreadable meminfo skips it with a
+# log line. LOBES_MEM_GATE=0 turns it off. Integer math only (util scaled to 9
+# decimal places), no awk/bc.
+_meminfo() {
+    _total=""
+    _avail=""
+    local _k _v
+    while read -r _k _v _; do
+        case "$_k" in
+            MemTotal:) _total="$_v" ;;
+            MemAvailable:) _avail="$_v" ;;
+        esac
+    done 2>/dev/null <"${LOBES_PROC_ROOT:-/proc}/meminfo" || true
+    case "$_total" in '' | *[!0-9]*) return 1 ;; esac
+    case "$_avail" in '' | *[!0-9]*) return 1 ;; esac
+}
+_util=""
+_has_util=0
+_prev=""
+for _arg in "$@"; do
+    if [ "$_prev" = "--gpu-memory-utilization" ]; then
+        _util="$_arg"
+        _has_util=1
+    fi
+    case "$_arg" in
+        --gpu-memory-utilization=*)
+            _util="${_arg#*=}"
+            _has_util=1
+            ;;
+    esac
+    _prev="$_arg"
+done
+if [ "$(_num "${LOBES_MEM_GATE-}" 1)" != 0 ] && [ "$_has_util" = 1 ]; then
+    _scaled=""
+    case "$_util" in
+        *[!0-9.]* | *.*.* | . | '') ;;
+        *)
+            _ip="${_util%%.*}"
+            _fp=""
+            case "$_util" in *.*) _fp="${_util#*.}" ;; esac
+            _fp="${_fp}000000000"
+            _fp="${_fp:0:9}"
+            _scaled=$((10#${_ip:-0} * 1000000000 + 10#$_fp))
+            ;;
+    esac
+    if [ -z "$_scaled" ]; then
+        printf "lobes: memory gate skipped (unparseable --gpu-memory-utilization '%s')\n" "$_util"
+    elif ! _meminfo; then
+        printf 'lobes: memory gate skipped (cannot read %s/meminfo)\n' "${LOBES_PROC_ROOT:-/proc}"
+    else
+        _need=$(((_total * _scaled + 999999999) / 1000000000))
+        _gtimeout="$(_num "${LOBES_MEM_GATE_TIMEOUT_S-}" 900)"
+        _marker=""
+        [ -n "$_state" ] && _marker="${_state}/${name}.gated"
+        _since="$(_now)"
+        _waited=0
+        while [ "$_avail" -lt "$_need" ]; do
+            if [ -n "$_marker" ]; then
+                if [ "$_waited" = 0 ]; then
+                    trap 'rm -f "$_marker"' EXIT
+                    trap 'exit 143' TERM
+                    trap 'exit 130' INT
+                fi
+                printf '{"lane": "%s", "since": %s, "need_kib": %s, "avail_kib": %s}\n' \
+                    "$name" "$_since" "$_need" "$_avail" >"$_marker" 2>/dev/null || true
+            fi
+            if [ "$_waited" -ge "$_gtimeout" ]; then
+                printf "lobes: memory gate timed out (need %s KiB, have %s KiB) — run 'lobes watcher install' or the machine CLI's drop-caches\n" \
+                    "$_need" "$_avail"
+                [ -n "$_marker" ] && rm -f "$_marker"
+                exit 75
+            fi
+            sleep 5 || true
+            _waited=$((_waited + 5))
+            _meminfo || break # meminfo vanished: never block serving
+        done
+        if [ -n "$_marker" ]; then
+            rm -f "$_marker"
+            trap - EXIT TERM INT
+        fi
+    fi
+fi
+
 # exec the real command: this DOES replace the shell, so the server (not bash) is
 # the container's main process — it receives SIGTERM directly (graceful shutdown)
 # and its exit code becomes the container's (so `restart:` behaves as before).
