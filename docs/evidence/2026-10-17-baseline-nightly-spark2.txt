@@ -1,0 +1,225 @@
+BASELINE — spark2 (DGX Spark GB10) on the incumbent nightly, before the vLLM 0.31.0 move
+Issue #310 · plan vllm-0-31-0-fleet task t11 · 2026-10-17 · operator: lobes (Claude)
+
+PURPOSE
+  The incumbent GB10 baseline, unrecoverable once spark2 switches engines. It is also
+  the Spark's comparator (decision c51): the Spark runs no cortex today.
+
+ENGINE UNDER TEST
+  vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695
+  local image id sha256:49d2eb65dc2a… (arm64) — vllm 0.26.1rc1.dev942+g5a4c8d992
+  (this also explains the 49d2eb65 id in docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt:
+   it is the local image id of the same 8bd082c2 pull, not a different engine)
+
+METHOD (and its limits — read before comparing)
+  * Run FROM the Spark, through an ssh tunnel localhost:18000 -> spark2:8000 (spark2's gateway),
+    with lobes 0.88.0 from repo source (spark2 has no lobes CLI and no uv). A scratch deployment
+    dir carried only spark2's gateway key (copied, never printed) and VLLM_PORT=18000.
+  * cortex measured through the member lane cortex-spark2 (benchmark, --tools, --strict-tools,
+    --preserve-thinking). EXCEPTION: `assess --probes --role cortex` sends the plain `cortex`
+    alias regardless of --model; spark2 is the mesh's only cortex host today, so it resolved
+    locally on spark2.
+  * embedder/reranker probes called lobes.assess.run_role_probes directly with the member lanes
+    embedder-spark2 / reranker-spark2 (the CLI's role registry is built from a full .env).
+  * Benchmark = `lobes benchmark --model cortex-spark2` single-model path: purpose balanced,
+    input 1000 / output 1000, 2 decode runs, single stream. No concurrency ramp, no separate TTFT.
+    The JSON's `host` block describes the Spark (the CLI host), NOT spark2 — ignore it. The same holds for every
+    "Host-side" line in assess output (it reports the Spark's local image, not spark2's).
+  * Thermal: the pause-only governor (~/odm/telemetry/governor.sh, HI 93 C / LO 84 C) was attached
+    to model-gear-vllm-primary on spark2 for the whole session; a 10 s sampler logged temps.
+  * Nothing on spark2 was recreated or reconfigured (start times below, before = after).
+
+LANE CONFIG (spark2 ~/.lobes/.env)
+  cortex: unsloth/Qwen3.8-27B-NVFP4, util 0.58, max_model_len 262144, DSpark
+          (RadixArk/Qwen3.8-27B-DSpark, k=7), tool parser qwen3_coder_thinking via plugin,
+          preserve_thinking on. Co-resident on the box: embed, rerank, hand.
+
+BEFORE (2026-10-17T18:24Z)
+model-gear-vllm-primary 2026-10-07T02:09:15.53898704Z sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+model-gear-vllm-embed 2026-10-07T02:10:57.986887184Z sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+model-gear-vllm-rerank 2026-10-07T02:09:53.251694092Z sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+model-gear-vllm-hand 2026-10-07T02:11:27.250691531Z sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303
+model-gear-gateway 2026-10-16T04:23:22.955228112Z sha256:ec5d00d19bfe6a19f9c483f070b06b94ce2c0bc934a3069a09b74d0f971680c4
+vllm 0.26.1rc1.dev942+g5a4c8d992
+sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303 [vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695] arm64
+
+CORRECTNESS PROBES
+--- cortex-probes
+### lobes assess --probes --role cortex --model cortex-spark2 (from the Spark via ssh tunnel localhost:18000 -> spark2:8000; lobes 0.88.0 from repo source)
+2026-10-17T18:32:34Z
+## Per-role correctness probes
+| Role | Probe | Result | Evidence | Latency |
+|---|---|---|---|---|
+| cortex | known_answer | PASS | {"content": "paris", "expected": "paris"} | 364.9 ms |
+**Overall: PASS**
+exit=0
+--- cortex-tools
+### lobes assess --tools --model cortex-spark2 (from the Spark via ssh tunnel localhost:18000 -> spark2:8000; lobes 0.88.0 from repo source)
+2026-10-17T18:32:35Z
+### Host-side
+- Image: `nvcr.io/nvidia/vllm:26.04-py3`  ·  GPU memory (EngineCore): ?
+## Assessment — `cortex-spark2`
+- Endpoint: `http://localhost:18000` · `/health` 200 · `max_model_len` None
+| Check | Result |
+|---|---|
+| `17 * 23 = 391` | PASS (finish=stop, 56 tok) |
+| train 14:45→17:10 = 145 min | PASS (finish=stop, 87 tok) |
+| reasoning trace field | `reasoning` (len 152) |
+| tool calling (`tool_choice:auto`) | PASS — called finish |
+exit=0
+--- cortex-strict
+### lobes assess --strict-tools --model cortex-spark2 (from the Spark via ssh tunnel localhost:18000 -> spark2:8000; lobes 0.88.0 from repo source)
+2026-10-17T18:32:41Z
+### Strict tool-calling matrix (colleague#320)
+| leg | ok | clean call | tool_calls | error |
+|---|---|---|---|---|
+| baseline | PASS | True | ['finish'] | — |
+| strict_thinking | PASS | True | ['finish'] | — |
+| strict_nothink | PASS | True | ['finish'] | — |
+**matrix: PASS**
+exit=0
+--- cortex-pt
+### lobes assess --preserve-thinking --model cortex-spark2 (from the Spark via ssh tunnel localhost:18000 -> spark2:8000; lobes 0.88.0 from repo source)
+2026-10-17T18:32:47Z
+## preserve_thinking diagnostic — `cortex-spark2`
+- Endpoint: `http://localhost:18000` · trace field `reasoning`
+| Turn-2 request | prompt_tokens |
+|---|---|
+| reasoning re-sent (`preserve_thinking`) | 364 |
+| content-only | 232 |
+delta +132 tokens → preserve_thinking is LIVE (the reasoning trace survives into turn 2)
+exit=0
+--- embedder + reranker (direct run_role_probes)
+<stdin>:7: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+### direct lobes.assess.run_role_probes (lobes 0.88.0 repo source) via ssh tunnel -> spark2:8000; 2026-10-17T18:33:46.661810Z
+### endpoints: embedder -> embedder-spark2, reranker -> reranker-spark2, hand n/a; auth header present: True
+{
+ "embedder": {
+  "role": "embedder",
+  "probe": "embed_similarity",
+  "ok": true,
+  "evidence": {
+   "sim_paraphrase": 0.8947,
+   "sim_unrelated": 0.2337
+  },
+  "latency_ms": 128.2,
+  "error": null
+ },
+ "reranker": {
+  "role": "reranker",
+  "probe": "rerank_relevance",
+  "ok": true,
+  "evidence": {
+   "top_index": 0,
+   "expected_index": 0,
+   "ranking": [
+    0,
+    2,
+    1
+   ],
+   "prompt_tokens": {
+    "total": 264,
+    "per_pair": 88.0
+   }
+  },
+  "latency_ms": 818.2,
+  "error": null
+ }
+}
+--- hand (assess --tools --model hand-spark2)
+### lobes assess --tools --model hand-spark2 (from the Spark via ssh tunnel localhost:18000 -> spark2:8000; lobes 0.88.0 from repo source)
+2026-10-17T18:33:03Z
+### Host-side
+- Image: `nvcr.io/nvidia/vllm:26.04-py3`  ·  GPU memory (EngineCore): ?
+## Assessment — `hand-spark2`
+- Endpoint: `http://localhost:18000` · `/health` 200 · `max_model_len` None
+| Check | Result |
+|---|---|
+| `17 * 23 = 391` | PASS (finish=stop, 75 tok) |
+| train 14:45→17:10 = 145 min | PASS (finish=stop, 196 tok) |
+| reasoning trace field | `(none)` (len 0) |
+| tool calling (`tool_choice:auto`) | PASS — called finish |
+exit=0
+
+THROUGHPUT — lobes benchmark --model cortex-spark2 --json (start 2026-10-17T18:33:58Z)
+{
+ "model": "cortex-spark2",
+ "endpoint": "http://localhost:18000",
+ "max_model_len": null,
+ "purpose": "balanced",
+ "input_len": 1000,
+ "output_len": 1000,
+ "decode_rates": [
+  17.0,
+  16.9
+ ],
+ "prefill": {
+  "prompt_tokens": 887,
+  "seconds": 1.04
+ }
+}
+  => decode 17.0 / 16.9 tok/s single-stream; prefill 887 prompt tokens in 1.04 s (incl. first token)
+
+ENGINE-SIDE (spark2 lane log ~/.lobes/logs/primary-20261007T020916Z.log; docker logs span older boots)
+  -rw-r--r-- 1 root root 22535168 Oct 17 18:36 /home/spark2/.lobes/logs/primary-20261007T020916Z.log
+  (EngineCore pid=195) INFO 10-07 02:12:21 [model_runner.py:385] Model loading took 24.45 GiB memory and 150.550059 seconds
+  (EngineCore pid=195) INFO 10-07 02:12:42 [kv_cache_utils.py:1916] GPU KV cache size: 535,186 tokens, Maximum concurrency for 262,144 tokens per request: 2.04x
+  DSpark during the benchmark window (18:33:59-18:35:59Z, 13 x 10 s windows):
+    10-17 18:33:59 Mean acceptance length: 6.00
+    10-17 18:34:09 Mean acceptance length: 2.09
+    10-17 18:34:19 Mean acceptance length: 1.83
+    10-17 18:34:29 Mean acceptance length: 1.82
+    10-17 18:34:39 Mean acceptance length: 1.81
+    10-17 18:34:49 Mean acceptance length: 2.01
+    10-17 18:34:59 Mean acceptance length: 2.29
+    10-17 18:35:09 Mean acceptance length: 2.01
+    10-17 18:35:19 Mean acceptance length: 1.85
+    10-17 18:35:29 Mean acceptance length: 1.82
+    10-17 18:35:39 Mean acceptance length: 1.81
+    10-17 18:35:49 Mean acceptance length: 2.00
+    10-17 18:35:59 Mean acceptance length: 2.24
+  engine generation throughput while running: 15.2-19.6 tok/s
+
+THERMAL (spark2, 10 s samples; tz_max in m°C, then GPU temp, util, SM clock, power)
+  18:33:58 tz_max=46800 44, 0 %, 2411 MHz, 10.98 W
+  18:34:08 tz_max=56400 51, 96 %, 2561 MHz, 33.57 W
+  18:34:18 tz_max=58700 53, 96 %, 2561 MHz, 33.92 W
+  18:34:28 tz_max=60700 54, 96 %, 2541 MHz, 34.22 W
+  18:34:38 tz_max=62100 56, 96 %, 2535 MHz, 34.46 W
+  18:34:48 tz_max=63200 57, 96 %, 2535 MHz, 34.74 W
+  18:34:59 tz_max=64300 58, 96 %, 2541 MHz, 34.83 W
+  18:35:09 tz_max=65000 59, 96 %, 2541 MHz, 35.00 W
+  18:35:19 tz_max=65600 59, 96 %, 2535 MHz, 35.08 W
+  18:35:29 tz_max=66500 60, 96 %, 2535 MHz, 35.32 W
+  18:35:39 tz_max=67000 60, 96 %, 2541 MHz, 32.50 W
+  18:35:49 tz_max=67700 61, 96 %, 2535 MHz, 35.56 W
+  18:35:59 tz_max=63100 58, 0 %, 2405 MHz, 12.20 W
+  18:36:09 tz_max=57900 55, 0 %, 2405 MHz, 11.73 W
+  18:36:19 tz_max=55800 53, 0 %, 2405 MHz, 11.51 W
+  18:36:29 tz_max=54800 52, 0 %, 2411 MHz, 11.30 W
+  18:36:39 tz_max=53200 51, 0 %, 2411 MHz, 11.11 W
+  18:36:49 tz_max=52600 50, 0 %, 2411 MHz, 11.03 W
+  governor log: empty — no pause was triggered (peak tz 67.7 C)
+
+AFTER — container start times / restart counts (unchanged)
+  model-gear-vllm-primary 2026-10-07T02:09:15.53898704Z 0
+  model-gear-vllm-embed 2026-10-07T02:10:57.986887184Z 4
+  model-gear-vllm-rerank 2026-10-07T02:09:53.251694092Z 1
+  model-gear-vllm-hand 2026-10-07T02:11:27.250691531Z 4
+  model-gear-gateway 2026-10-16T04:23:22.955228112Z 0
+
+VERDICT
+  Every probe PASSES on the nightly: cortex known-answer, arithmetic, tool call, strict matrix
+  (baseline / strict+thinking / strict+no-think), preserve_thinking (+132 prompt tokens);
+  embedder ranking; reranker ordering; hand arithmetic + tool call.
+  Baseline numbers to beat on 0.31.0 (same box, same lane): decode ~17 tok/s single-stream,
+  prefill 887 tok / 1.04 s, KV pool 535,186 tokens (2.04x @ 262144) with embed/rerank/hand
+  co-resident, DSpark mean acceptance length ~1.8-2.3.
+  Comparator caveat for the Spark (t12): the Spark hosts cortex WITHOUT embed/rerank/hand, so
+  its KV pool is not comparable to this one (the Spark's own 2026-10-06 figure: 774,355 = 2.95x).
+
+FOUND WHILE MEASURING (follow-ups, not fixed here)
+  * `lobes assess --port N` silently drops the gateway key: resolve_port_soft returns
+    deploy_dir=None when a port is passed, so gateway_auth_headers attaches nothing -> 401.
+  * `lobes assess --probes --role cortex` ignores --model and always sends `cortex`, so it cannot
+    target a member lane during a mixed-engine pool window (c34).
