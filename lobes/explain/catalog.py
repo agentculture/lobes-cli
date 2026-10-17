@@ -1575,6 +1575,8 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
 - **Compile cache** (`LOBES_COMPILE_CACHE_DIR`, `LOBES_VLLM_CACHE_ROOT`;
   off `LOBES_VLLM_CACHE_ROOT=/root/.cache/vllm`): vLLM's compiled kernels
   persist per lane on a host bind mount. Verified on the nightly and v0.31.0.
+  FlashInfer's JIT cache gets its own bind, `<lane>-flashinfer` at
+  `/cache/flashinfer` (`LOBES_FLASHINFER_WORKSPACE_BASE`; off `/root`).
 - **Crash backoff and memory gate** (`LOBES_START_MAX`, `_START_WINDOW_S`,
   `LOBES_MEM_GATE`, `_MEM_GATE_TIMEOUT_S`; off `LOBES_START_MAX=0`,
   `LOBES_MEM_GATE=0`): a lane holds after repeated starts, and waits for free

@@ -27,6 +27,7 @@ behaviour from before this work.
 | `LOBES_MEM_GATE` | `1` | `0` | wrapper | Wait for enough free host memory before starting. |
 | `LOBES_MEM_GATE_TIMEOUT_S` | `900` | — | wrapper | How long the gate waits before giving up. |
 | `LOBES_VLLM_CACHE_ROOT` | `/cache/vllm` | `/root/.cache/vllm` | compose | Container path vLLM uses for its compile cache (`VLLM_CACHE_ROOT`). The off value points vLLM at the writable layer; the host bind (fixed target `/cache/vllm`) goes unused. |
+| `LOBES_FLASHINFER_WORKSPACE_BASE` | `/cache/flashinfer` | `/root` | compose | Base FlashInfer builds its JIT cache under (`FLASHINFER_WORKSPACE_BASE`; the cache is `<base>/.cache/flashinfer`). The off value is the image's home, so FlashInfer writes to `/root/.cache/flashinfer` in the writable layer; the host bind (fixed target `/cache/flashinfer`) goes unused. |
 | `LOBES_COMPILE_CACHE_DIR` | `./compile-cache` | — | compose, init, doctor | Host directory holding one subdirectory per lane. |
 | `LOBES_THERMAL_ZONES` | empty (per-card `[host_env]`) | empty | gateway, status | Comma-separated thermal zone `type` names to watch. Empty means no thermal signal. |
 | `LOBES_THERMAL_SHED_C` | empty (per-card) | empty | gateway | Shed above this temperature. |
@@ -125,16 +126,30 @@ hold     = release − host uptime, if positive
   `/root/.cache/vllm` would put the bind mount on the default path and the cache
   would still persist on the host. With the target fixed, the off value points
   vLLM at the writable layer and the bind mount goes unused.
+- Each vLLM lane also mounts `${LOBES_COMPILE_CACHE_DIR}/<lane>-flashinfer` at
+  the fixed path `/cache/flashinfer` and sets
+  `FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}`
+  (deviation d7). FlashInfer's JIT cache lives under the container's home, not
+  under `VLLM_CACHE_ROOT`, so the `/cache/vllm` bind alone loses it on every
+  recreate, and a fresh container rebuilds kernels such as `fp8_gemm_cutlass`
+  at boot. That rebuild is where the Thor cold-boot crash happens
+  ([vllm#62149](https://github.com/vllm-project/vllm/issues/62149)). The same
+  fixed-target rule applies: the off value `/root` points FlashInfer back at
+  `/root/.cache/flashinfer` in the writable layer. On the host, the cache lands
+  at `<lane>-flashinfer/.cache/flashinfer/<flashinfer version>/<arch>/`, because
+  FlashInfer appends `.cache/flashinfer` to the base.
 - Lanes are the services whose command is `vllm serve`, plus clef-vllm decider
   sidecars (vLLM runs in-process there). `<lane>` is the lane's `MG_LOG_NAME`
   (the decider service name for deciders). `llamacpp-primary`, `comfyui`, the
   gateway, the audio services and `embed-gemma2-embed` get no mount.
-- `lobes init` and `lobes doctor --fix --apply` create the host directory, owned
+- `lobes init` and `lobes doctor --fix --apply` create the host directories (both
+  `<lane>` and `<lane>-flashinfer`), owned
   by the invoking user, before any container mounts it.
-- Wipe a lane's cache by deleting its directory with no lane running. No sudo is
-  needed.
+- Wipe a lane's cache by deleting its directory (or its `-flashinfer` sibling)
+  with no lane running. No sudo is needed.
 - `lobes doctor` reports `compile_cache_unmounted` (warn: a vLLM service lacks
-  the `/cache/vllm` bind or `VLLM_CACHE_ROOT`; the remediation is
+  the `/cache/vllm` bind, `VLLM_CACHE_ROOT`, the `/cache/flashinfer` bind or
+  `FLASHINFER_WORKSPACE_BASE`; the remediation, which carries both binds, is
   `docker-compose.override.yml` lines, never `init --force`) and
   `compile_cache_size` (info). Alongside them: `logwrap_stale` (warn; fixed by
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
@@ -175,6 +190,34 @@ hold     = release − host uptime, if positive
     matched and new `<hash_key>` subdirectories are written beside the old ones
     in the same per-lane directory. Stale entries are never read; wipe the lane
     directory to reclaim space.
+- **Verified 2026-10-17 (FlashInfer, d7)** by the same read-only inspection of
+  the same two images. FlashInfer is `0.6.17` in the nightly and `0.7.0.post1`
+  in v0.31.0. Paths are under
+  `/usr/local/lib/python3.12/dist-packages/flashinfer/`; line numbers are
+  nightly / v0.31.0.
+  - `FLASHINFER_BASE_DIR` is `os.getenv("FLASHINFER_WORKSPACE_BASE",
+    pathlib.Path.home())` (`jit/env.py:58-59` / `:66-67`). The image sets no
+    FlashInfer variable and `HOME=/root`, so the default base is `/root`.
+  - `FLASHINFER_CACHE_DIR` is `<base>/.cache/flashinfer` (`jit/env.py:62` /
+    `:70`). The JIT workspace is `<cache>/<flashinfer version>/<arch>`
+    (`_get_workspace_dir_name`, `:148-157` / `:355-364`), with built ops in
+    `cached_ops` and generated sources in `generated` below it (`:161-163` /
+    `:368-370`). Downloaded cubins default to `<cache>/cubins` unless
+    `FLASHINFER_CUBIN_DIR` is set (`:106-107` / `:114-115`).
+  - vLLM sets no FlashInfer cache variable in either image. Its flashinfer
+    autotune cache is under `VLLM_CACHE_ROOT` and is already covered by t8.
+  - **Residue the variable does not move:** a few FlashInfer paths are
+    hard-coded to the home directory and stay in the writable layer:
+    `trace_apply/loaders/python.py:44` and the MoE-EP knob cache
+    (`moe_ep/kernel_src/cutedsl_megamoe/shim/knob_cache.py:66`), in both
+    images. Neither is the JIT build that crashes. In v0.31.0, vLLM's snapshot
+    feature also lists `~/.cache/flashinfer` as a cache root
+    (`vllm/snapshot/runtime.py:92`). lobes does not use snapshots.
+  - **Difference between the images:** in the nightly,
+    `cute_dsl/sparse/blk64/loader.py:44` reads the same variable with a
+    different default (`<home>/.cache/flashinfer` as the base). With the
+    variable set, that path also lands under `/cache/flashinfer`, so the mount
+    covers it.
 
 ## 7. Thermal signal
 

@@ -147,6 +147,11 @@ inspection on both the pinned nightly and v0.31.0 (contract section 6). To
 wipe a lane, delete its directory with the lane stopped; no sudo is needed
 because `lobes init` and `lobes doctor --fix --apply` create the directories as
 you. `lobes doctor` reports `compile_cache_unmounted` and `compile_cache_size`.
+FlashInfer keeps its JIT cache under the container's home, so each lane also
+binds `<lane>-flashinfer` at `/cache/flashinfer` and sets
+`FLASHINFER_WORKSPACE_BASE` from `LOBES_FLASHINFER_WORKSPACE_BASE`; a fresh
+container then skips the JIT build where the Thor cold-boot crash happens
+(vllm#62149, deviation d7).
 
 **Crash backoff and the memory gate (#308).** Before, a lane that could not get
 memory crash-looped and each crash made the next boot harder. Now the wrapper
@@ -195,6 +200,7 @@ under sustained load has **not** run (issue #313).
 | Start counter | `LOBES_START_MAX=0` |
 | Memory gate | `LOBES_MEM_GATE=0` |
 | Compile cache | `LOBES_VLLM_CACHE_ROOT=/root/.cache/vllm` |
+| FlashInfer JIT cache | `LOBES_FLASHINFER_WORKSPACE_BASE=/root` |
 | Thermal shed | `LOBES_THERMAL_SHED_C=` (empty) |
 | Watcher | `lobes watcher uninstall --apply` |
 

@@ -57,6 +57,10 @@ _PLUGIN_DEST_PATH = "/opt/lobes/qwen3_thinking_tool_parser.py"
 _PLUGIN_PARSER_NAME = "qwen3_coder_thinking"
 
 _EXPECTED_NON_PRIMARY_HASHES = {
+    # Recomputed for lane-safety d7 (FlashInfer JIT cache, vllm#62149): every vLLM
+    # lane moved by GAINING FLASHINFER_WORKSPACE_BASE and a
+    # ./compile-cache/<lane>-flashinfer bind at /cache/flashinfer; the non-vLLM
+    # services (llamacpp-primary, comfyui, gateway) did not.
     # Recomputed for lane-safety t8 (per-lane compile cache): every vLLM lane moved
     # by GAINING VLLM_CACHE_ROOT and a ./compile-cache/<lane> bind mount; the
     # non-vLLM services (llamacpp-primary, comfyui, gateway) did not.
@@ -300,18 +304,18 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (default 0, mirroring vllm-primary) so a 1M-window lane can cap its
     # sequences. ONLY vllm-associate moved; every other hash here is
     # byte-identical. See tests/test_associate_compose.py.
-    "vllm-associate": "f1e694ec499ddd07a827551f4e185306412ada83fa897425d7b80ed0ca037a6a",
-    "vllm-embed": "1ec69bfea72eaff110def1abfe777aa6e8b77442a7fab8035279b59af04ba2a6",
-    "vllm-embed-deep": "a3c2fcf33c3b415f7d2134679343820a4d3e464123ac278646d5b6b82a29889e",
-    "vllm-hand": "4bedb2fadb1a6ead7d0722534e113ee5e13f6c24769f19548048bbf0ccca41c4",
-    "vllm-middle": "35852f875e74456fab9215e6b083e9c09cfdc2e23b15b1abda07d401a28d82a5",
-    "vllm-minor": "08deba358885c91948f13cd2a841f806913453ff4c950409c8db3abc90fd33ae",
-    "vllm-multimodal": "06a939e0a0ca4537dbf2172d8c1cf944bf8aeb6039829064ac855fc8f9738833",
-    "vllm-multimodal-coder": "e06e605ea936e9a4c9ac8b722105bfbdab82c35c32ecc70dd703d4a0152db6d2",
-    "vllm-muse": "0bc127de38ebe375ef5c272a62eae3964831b31311a72181ba5ec23a17fe6755",
+    "vllm-associate": "c611137f81182944a155f5bd9727205f3a6725d155db4d4a2d489ef2ec6ee398",
+    "vllm-embed": "ee7cb60f3d764f8871ed1423954f117b7f4609125e2e3a642a78add342d8888a",
+    "vllm-embed-deep": "9ac7fc0458ea88618e4b8382584b0e5445c15a4d266474f6e1733f3cac48e528",
+    "vllm-hand": "f170d7affc2b51eea1f7952754dd121e96ef7027182dc2dd391a4b6bbbd8112f",
+    "vllm-middle": "97ea5ec8da91f9ab84807a20d2fc3129c0c8f6e60a2c8441ba0b405d8a740717",
+    "vllm-minor": "ae0017e69d4f4a5ce0e035e9f605692af9bea43ffe11d7f661dc5de44f75de7e",
+    "vllm-multimodal": "77cbc0a1a5c223acbdabca5071557dd7448104c8d2732216f4970c2b610333de",
+    "vllm-multimodal-coder": "487934e71c2e401de532a5398f0b937e9d2812e7d8e79ac25e357142aacfa03d",
+    "vllm-muse": "5c5a1f4cd68dc904ddc45975b9c66b3863542962df39a5b029b05f3302f21b1e",
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
-    "vllm-rerank": "80d0197e958ae522ebb0aa6b16b85654e752654bb8ea38258adde61c5da8ac5a",
+    "vllm-rerank": "dd177cd83b45a7e2bf2433a21f6f3dc704bf7e79bdc6534c15a4b0c1c0d44ce0",
     # Recomputed 2026-09-10 for the worker recipe knobs (worker-recipe-knobs
     # t3): ONLY `vllm-worker` moved, and only its `command` string +
     # environment comments — it grew the ${VAR:+…} / ${VAR-} slots for
@@ -323,7 +327,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # against real `docker compose config` in
     # tests/test_worker_recipe_knobs.py); this tripwire is hashing the
     # TEMPLATE text, which did change.
-    "vllm-worker": "6b9a492cc959d2780d22167e970623b15981b166222fefab6b611a9fb28acd5a",
+    "vllm-worker": "32b5ecd7e025d89a734f2c65cbdef41d1bfbe9f6772c0f3d2f37a4e2b0624168",
 }
 
 

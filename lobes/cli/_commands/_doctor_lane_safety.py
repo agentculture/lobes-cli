@@ -8,7 +8,8 @@ each returns ``None`` — no row at all — when it does not apply:
   packaged template, so the boot hold / start counter / memory gate may be
   missing. Absent wrapper: skipped (``scaffold_files`` already reports it).
 * ``compile_cache_unmounted`` (warn) — a vLLM service lacks the ``/cache/vllm``
-  bind or ``VLLM_CACHE_ROOT``. A hand-kept compose fires this on purpose; the
+  bind or ``VLLM_CACHE_ROOT``, or (d7) the ``/cache/flashinfer`` bind or
+  ``FLASHINFER_WORKSPACE_BASE``. A hand-kept compose fires this on purpose; the
   remediation is override-file lines, never ``init --force``.
 * ``compile_cache_size`` (info) — bytes under the compile-cache dir.
 * ``jetson_clocks_locked`` (warn) — the machine CLI's ``window show`` reports
@@ -44,6 +45,12 @@ _REFRESH_FLAG = "lobes doctor --refresh-logwrap --apply"
 _GRANT_CARDS = ("spark", "thor", "orin")
 _CACHE_TARGET = "/cache/vllm"
 _ENV_LINE = "VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}"
+# Lane-safety d7: FlashInfer's JIT cache (vllm#62149), a second fixed target.
+_FI_TARGET = "/cache/flashinfer"
+_FI_ENV_KEY = "FLASHINFER_WORKSPACE_BASE"
+_FI_ENV_LINE = f"{_FI_ENV_KEY}=${{LOBES_FLASHINFER_WORKSPACE_BASE:-{_FI_TARGET}}}"
+_FI_SUFFIX = "-flashinfer"
+_STATE_KEYS = ("mount", "env", "fi_mount", "fi_env")
 _SIZE_WALK_LIMIT = 200_000  # entries; a bounded walk, never a runaway scan
 
 
@@ -148,8 +155,13 @@ def _runs_vllm(lines: list[str]) -> bool:
     return " vllm serve " in joined or "Dockerfile.decider-vllm" in joined
 
 
+def _binds(bare: str, target: str) -> bool:
+    """True when a volume token binds onto ``target`` (``src:target`` or ``src:target:ro``)."""
+    return f":{target}" in bare and (bare.endswith(target) or f"{target}:" in bare)
+
+
 def _vllm_mount_state(deploy_dir: Path) -> dict[str, dict[str, bool]]:
-    """Per vLLM service: ``{"mount": bool, "env": bool}``, merged across the chain."""
+    """Per vLLM service: ``mount``/``env`` (t8) + ``fi_mount``/``fi_env`` (d7), merged."""
     state: dict[str, dict[str, bool]] = {}
     vllm: set[str] = set()
     for name in _compose_chain(deploy_dir):
@@ -158,17 +170,19 @@ def _vllm_mount_state(deploy_dir: Path) -> dict[str, dict[str, bool]]:
         except OSError:
             continue
         for service, lines in _service_blocks(text).items():
-            entry = state.setdefault(service, {"mount": False, "env": False})
+            entry = state.setdefault(service, dict.fromkeys(_STATE_KEYS, False))
             if _runs_vllm(lines):
                 vllm.add(service)
             for line in lines:
                 bare = line.strip("-'\" ")
-                if f":{_CACHE_TARGET}" in bare and (
-                    bare.endswith(_CACHE_TARGET) or f"{_CACHE_TARGET}:" in bare
-                ):
+                if _binds(bare, _CACHE_TARGET):
                     entry["mount"] = True
+                if _binds(bare, _FI_TARGET):
+                    entry["fi_mount"] = True
                 if bare.startswith("VLLM_CACHE_ROOT=") or bare.startswith("VLLM_CACHE_ROOT:"):
                     entry["env"] = True
+                if bare.startswith(f"{_FI_ENV_KEY}=") or bare.startswith(f"{_FI_ENV_KEY}:"):
+                    entry["fi_env"] = True
     parked: set[str] = set()
     shape = deploy_dir / _compose.SHAPE_OVERLAY
     if shape.is_file():
@@ -181,15 +195,28 @@ def _override_snippet(deploy_dir: Path, services: list[str]) -> str:
     lines = ["services:"]
     for svc in services:
         lane = log_names.get(svc, svc)
+        root = f"${{{_compose.COMPILE_CACHE_ENV}:-./{_compose.COMPILE_CACHE_DIRNAME}}}"
         lines += [
             f"  {svc}:",
             "    environment:",
             f"      - {_ENV_LINE}",
+            f"      - {_FI_ENV_LINE}",
             "    volumes:",
-            f"      - ${{{_compose.COMPILE_CACHE_ENV}:-./{_compose.COMPILE_CACHE_DIRNAME}}}"
-            f"/{lane}:{_CACHE_TARGET}",
+            f"      - {root}/{lane}:{_CACHE_TARGET}",
+            f"      - {root}/{lane}{_FI_SUFFIX}:{_FI_TARGET}",
         ]
     return "\n".join(lines)
+
+
+def _first_gap(entry: dict[str, bool]) -> str:
+    """The first missing piece, t8's original gaps before d7's."""
+    gaps = {
+        "mount": "no mount",
+        "env": "no VLLM_CACHE_ROOT",
+        "fi_mount": "no FlashInfer mount",
+        "fi_env": f"no {_FI_ENV_KEY}",
+    }
+    return next(gaps[k] for k in _STATE_KEYS if not entry[k])
 
 
 def compile_cache_unmounted_check(deploy_dir: Path) -> dict | None:
@@ -197,17 +224,16 @@ def compile_cache_unmounted_check(deploy_dir: Path) -> dict | None:
     state = _vllm_mount_state(deploy_dir)
     if not state:
         return None
-    lacking = [s for s, e in state.items() if not (e["mount"] and e["env"])]
+    lacking = [s for s, e in state.items() if not all(e[k] for k in _STATE_KEYS)]
     if not lacking:
         return _check(
             "compile_cache_unmounted",
             True,
             "info",
-            f"all {len(state)} vLLM service(s) mount the compile cache at {_CACHE_TARGET}",
+            f"all {len(state)} vLLM service(s) mount the compile cache at {_CACHE_TARGET} "
+            f"and the FlashInfer JIT cache at {_FI_TARGET}",
         )
-    detail = ", ".join(
-        f"{s} ({'no mount' if not state[s]['mount'] else 'no VLLM_CACHE_ROOT'})" for s in lacking
-    )
+    detail = ", ".join(f"{s} ({_first_gap(state[s])})" for s in lacking)
     return _check(
         "compile_cache_unmounted",
         False,

@@ -87,13 +87,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary-flashinfer:/cache/flashinfer
       # Think-aware tool-parser plugin (t2, cortex/main lane only): `lobes init`
       # materialises this file from the packaged lobes.vllm_plugins module
       # (importlib.resources — single source of truth, not a templates copy);
@@ -463,13 +467,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -554,12 +562,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-deep:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-deep-flashinfer:/cache/flashinfer
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -620,13 +632,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/rerank:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/rerank-flashinfer:/cache/flashinfer
       # Reranker chat template (issue #227) — vendored verbatim from the
       # pinned vLLM image's own examples/pooling/score/qwen3_reranker_online.py
       # serving line (see _compose.RERANK_TEMPLATE's comment for provenance/
@@ -742,13 +758,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/minor:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/minor-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-minor:8000 on the compose net.
     expose:
       - "8000"
@@ -844,13 +864,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/hand:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/hand-flashinfer:/cache/flashinfer
       # LoRA adapters, read-only. The host path is where `unsloth-cli` writes a
       # trained adapter; HAND_LORA_MODULES names paths UNDER the in-container
       # mount point, not host paths. Mounted unconditionally (an absent host
@@ -966,13 +990,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/middle:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/middle-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-middle:8000 on the compose net.
     expose:
       - "8000"
@@ -1074,13 +1102,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-multimodal:8000 on the compose net.
     expose:
       - "8000"
@@ -1235,12 +1267,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal-coder:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal-coder-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-multimodal-coder:8000 on the compose net.
     expose:
       - "8000"
@@ -1348,12 +1384,16 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/muse:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/muse-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-muse:8000 on the compose net.
     expose:
       - "8000"
@@ -1468,13 +1508,17 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/worker:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/worker-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-worker:8000 on the compose net.
     expose:
       - "8000"
@@ -1757,7 +1801,10 @@ services:
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
+      # Lane-safety d7: FlashInfer's JIT cache, same pattern (vllm#62149); off
+      # value /root restores /root/.cache/flashinfer in the writable layer.
       - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
       # Same PRIMARY_ALLOW_LONG_MAX_MODEL_LEN passthrough as vllm-primary
       # above (~line 84): OFF by default, so a plain associate boot is
       # byte-identical to before this knob existed. A shape serving a
@@ -1771,6 +1818,7 @@ services:
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
       - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/associate:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/associate-flashinfer:/cache/flashinfer
     # No host port — reachable only as http://vllm-associate:8000 on the
     # compose net, i.e. only through the gateway, which carries the opt-in
     # GATEWAY_API_KEY bearer gate (lightning-on-orin plan t10).
