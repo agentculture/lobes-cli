@@ -166,16 +166,24 @@ counts as a start. Known limit: on Jetson, freed memory can stay out of
 would fit; the start counter is the backstop.
 
 **Cache clear, grant and watcher (#309).** `lobes up`, `serve`, `switch`,
-`stop` and `fleet` clear the page cache around down/up and delete the
+`stop` and `fleet` clear the page cache around down/up (on a detected Spark,
+Thor or Orin; elsewhere the step is skipped silently) and delete the
 start-counter files of the lanes they start on purpose, so deliberate restarts
-never count. The clear needs a passwordless rule. `lobes doctor` reports
+never count. They create `logs/lane-state/` and the compile-cache directories
+as you before any container starts; a `lane-state/` a root container created
+first blocks the reset, which the verb reports on stderr and `lobes doctor`
+reports as `lane_state_writable`. The clear needs a passwordless rule. `lobes doctor` reports
 `drop_caches_grant_missing`; the machine CLI's `grant-permissions` installs the
 single rule (the Thor already has an equivalent one, which is reused). With no
 grant, the verb prints one stderr line and carries on; it never prompts and
 never fails. For a lane stuck at the gate, `lobes watcher install --apply`
-(user unit; needs linger, or `--system`) polls the `.gated` markers and runs
+(user unit; needs linger, or `--system`; the unit runs `lobes watcher run
+--apply`, and `run` without `--apply` only logs what it would clear) polls the
+`.gated` markers and runs
 `drop-caches` at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (300). The watcher
-never runs a docker command. Check it with `lobes watcher status`; `lobes
+skips a marker older than twice `LOBES_MEM_GATE_TIMEOUT_S` or whose lane has
+no running container, and defers the clear while another lane is still
+starting; its only docker call is a read-only `docker ps`. Check it with `lobes watcher status`; `lobes
 doctor` reports `watcher_inactive`. The machine-CLI verbs (`window`,
 `drop-caches`, `grant-permissions`) ship in dgx-spark-cli 0.9.1, jetson-thor-cli
 0.6.1 and jetson-orin-cli 0.7.1 (install with `lobes-cli[spark|thor|orin]`).
@@ -186,8 +194,9 @@ when the card runs hot; see `gateway-fleet.md`. A deployment scaffolded before
 issue #311 lacks the gateway passthrough and stays inert until its compose is
 updated, and the Spark bands are not a serving measurement.
 
-**Benchmark window (#304).** `lobes benchmark` locks clocks for its run and
-records the host conditions; see `measuring-lane-performance.md`.
+**Benchmark window (#304).** `lobes benchmark --lock` locks clocks for its run;
+plain `lobes benchmark` is read-only and only records the host conditions. See
+`measuring-lane-performance.md`.
 
 **What none of this does:** no lobes code pauses, `docker update`s or restarts a
 serving container, nothing clears the page cache inside a container, and no

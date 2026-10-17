@@ -79,8 +79,19 @@ hold     = release − host uptime, if positive
   `rerank` → `reranker`, any other lane is its own name).
 - **Unwritable log dir:** the counter and the gate marker are skipped, with one
   log line. The memory gate still runs.
+- **Directory owner:** every lifecycle verb that starts a lane (and `lobes
+  init`) creates `logs/` and `logs/lane-state/` as the invoking user before any
+  container starts; a new `lane-state/` is mode `0775`, and under `sudo` both are
+  chowned to `SUDO_UID`/`SUDO_GID`. Left to the first root container, the
+  directory would be root `0755` and the operator could not delete a counter.
+  An existing directory is never changed.
 - **Reset:** a lifecycle verb that starts a lane on purpose deletes that lane's
-  file first, so deliberate restarts never count.
+  file first, so deliberate restarts never count. A missing file is fine. A
+  file the verb cannot delete is reported as one stderr line naming the files,
+  `sudo rm <file>` and `lobes doctor`; the verb still runs, but the lane may
+  stay held. `lobes doctor` reports `lane_state_writable` (warn) when
+  `lane-state/` exists and the operator cannot write it; the fix is
+  `sudo chown -R "$(id -un)" <dir>`.
 
 ## 4. Crash backoff: the memory gate
 
@@ -110,13 +121,68 @@ hold     = release − host uptime, if positive
   therefore wait when vLLM would fit, or pass when vLLM still refuses. The start
   counter is the backstop (plan risk r4).
 
-## 5. The host watcher
+## 5. The page-cache clear: lifecycle verbs and the host watcher
+
+### Lifecycle verbs
+
+- `lobes up`, `serve`, `switch`, `stop` and `fleet` clear the page cache
+  after a `down` and before an `up` (one clear per down→up pair).
+- The clear is attempted only on a detected Spark, Thor or Orin. On any other
+  card it is skipped silently: no `sudo -n -l` probe, no stderr line. Card
+  detection runs at most once per process.
+- On a supported card with no grant, the verb prints one stderr line and
+  carries on. It never prompts and never fails.
+
+### The host watcher
 
 - Polls `<deployment>/logs/lane-state/*.gated`.
-- On a marker, it runs the machine CLI's `drop-caches` (see
+- `lobes watcher run` is a dry run unless `--apply` (operator decision d8): it
+  logs `action=would-clear` and neither clears nor writes its state file. The
+  installed unit's `ExecStart` passes `--apply`. `lobes doctor`'s
+  `watcher_inactive` warns when an active unit lacks it (installed before d8).
+- On a live marker, it runs the machine CLI's `drop-caches` (see
   `machine-cli-window.md`), at most once per `LOBES_WATCHER_MIN_INTERVAL_S`.
   With no grant it logs and does nothing else.
-- It never runs a `docker` command.
+- **Stale markers.** A marker whose `since` (its mtime, if the JSON is
+  malformed) is older than 2 × `LOBES_MEM_GATE_TIMEOUT_S`, or whose lane has no
+  running container, is stale. A wrapper killed by SIGKILL never removes its
+  marker. A stale marker is logged once (`action=ignored:stale`) and never
+  triggers a clear.
+
+### Not while another lane boots
+
+Dropping the page cache while a sibling vLLM lane is mid-boot can trip vLLM's
+memory profiling on unified memory, because free memory jumps between its two
+reads. So both the lifecycle clear and the watcher skip the clear while any
+OTHER lane is starting.
+
+- **Signal: docker health, read-only.** "Starting" is docker's
+  `health: starting`: the lane is inside its healthcheck `start_period` and not
+  yet healthy. Both callers read it with one fixed argv,
+  `docker ps --filter name=model-gear- --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.LANE_HEALTH_ARGV`), and map each compose service to its
+  `MG_LOG_NAME`.
+- **Why not the lane-state markers.** A `.starts` entry is written before the
+  memory gate and long before vLLM's profiling step, which for a 27B lane runs
+  minutes after the start. A fixed "fresh start" window (for example 120 s)
+  would miss it. A lane that waited at the gate would be missed entirely, and
+  `LOBES_START_MAX=0` writes no entry at all. Docker's health status covers the
+  whole boot.
+- **Gated lanes do not count.** A lane held at the memory gate (or a boot or
+  start-counter hold) is also `health: starting`, because it has not exec'd
+  vLLM yet. Lanes with a `.gated` marker are excluded, so they never block
+  their own clear. A lane in the boot hold or a start-counter hold has no
+  marker and does count, so after a reboot the clear waits for the staggered
+  boot to settle. That is deliberately conservative.
+- **Docker unreadable** (absent, no permission, error): the state is unknown.
+  The clear proceeds as before, and the watcher ages markers only by time.
+- The lifecycle verb prints one stderr line naming the starting lanes. The
+  watcher logs `action=deferred:lane-starting` once per lane, and a deferral
+  does not spend the rate limit.
+- **The watcher never changes a container.** The `docker ps` above is its only
+  docker call. It never starts, stops, updates or execs into anything. Before
+  review-b the watcher ran no docker command at all. The read-only `ps` is the
+  one exception, and the test suite pins it to that exact argv.
 
 ## 6. Compile cache
 
@@ -142,18 +208,23 @@ hold     = release − host uptime, if positive
   sidecars (vLLM runs in-process there). `<lane>` is the lane's `MG_LOG_NAME`
   (the decider service name for deciders). `llamacpp-primary`, `comfyui`, the
   gateway, the audio services and `embed-gemma2-embed` get no mount.
-- `lobes init` and `lobes doctor --fix --apply` create the host directories (both
-  `<lane>` and `<lane>-flashinfer`), owned
-  by the invoking user, before any container mounts it.
+- `lobes init`, `lobes doctor --fix --apply` and every lifecycle verb that
+  starts a lane (`serve`, `fleet up`, `up`, `switch`, under `--apply` only)
+  create the host directories (both `<lane>` and `<lane>-flashinfer`), owned by
+  the invoking user, before any container mounts them. A dry run creates
+  nothing.
 - Wipe a lane's cache by deleting its directory (or its `-flashinfer` sibling)
   with no lane running. No sudo is needed.
 - `lobes doctor` reports `compile_cache_unmounted` (warn: a vLLM service lacks
   the `/cache/vllm` bind, `VLLM_CACHE_ROOT`, the `/cache/flashinfer` bind or
   `FLASHINFER_WORKSPACE_BASE`; the remediation, which carries both binds, is
   `docker-compose.override.yml` lines, never `init --force`) and
-  `compile_cache_size` (info). Alongside them: `logwrap_stale` (warn; fixed by
+  `compile_cache_size` (info). Alongside them: `lane_state_writable` (warn,
+  section 3), `logwrap_stale` (warn; fixed by
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
-  then the packaged wrapper and nothing else), `jetson_clocks_locked` (warn:
+  then the packaged wrapper and nothing else; the wrapper is written to a temp
+  file and renamed over the old name, so running containers, which bind-mount
+  the old inode, keep reading intact bytes until they are recreated), `jetson_clocks_locked` (warn:
   `window show` reports `clocks_locked`, or `active` from an older CLI,
   while no benchmark window holds the host lock),
   `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
@@ -226,6 +297,10 @@ hold     = release − host uptime, if positive
   a zone whose `temp` read fails (Orin `cv0..cv2-thermal` return ENODATA, read
   2026-10-17) or is outside −40 °C to 150 °C.
 - No matching zone means `thermal_c: null`, which is never a reason to shed.
+- The gateway reads the three knobs from its own environment; the compose
+  passes them from the deployment `.env`. `lobes status --pressure` runs on the
+  host, so it reads them from the resolved deployment `.env` (best-effort: no
+  deployment is fine), and a key set in the CLI's own environment wins.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

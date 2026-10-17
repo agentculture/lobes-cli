@@ -3,7 +3,8 @@
 For whoever implements or calls the per-machine CLIs: **`spark`**
 (`dgx-spark-cli`), **`thor`** (`jetson-thor-cli`) and **`orin`**
 (`jetson-orin-cli`). lobes is the first caller. It runs a benchmark inside a
-locked-clocks window, and it clears the page cache around lane start/stop. The
+locked-clocks window when asked (`lobes benchmark --lock`; plain `benchmark`
+only calls `window show`), and it clears the page cache around lane start/stop. The
 machine work itself (clocks, fans, sudo) lives in these CLIs, not in lobes
 (lane-safety frame, decision c25).
 

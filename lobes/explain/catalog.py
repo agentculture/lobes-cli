@@ -1545,14 +1545,21 @@ memory that a cache clear would hand back. The watcher closes that gap.
   300). The last attempt is persisted in `<deployment>/.lobes-watcher-state.json`
   so a restart cannot bypass the rate limit.
 - With no grant it logs `action=skipped:not_granted` and does nothing else.
-- It **never** runs a docker command.
+- A marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`, or whose lane has no
+  running container, is stale: logged once, never acted on.
+- While any other lane is still booting (docker `health: starting`) the clear
+  is deferred: a drop mid-boot can trip vLLM's memory profiling.
+- Its only docker call is a fixed, read-only `docker ps`; it **never** changes
+  a container.
 - Every action is one stderr line (the unit's journal): lane, need/avail,
-  `cleared` / `skipped:<reason>` / `rate-limited`, and a stale flag for a
-  marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`.
+  `cleared` / `skipped:<reason>` / `rate-limited` / `deferred:lane-starting` /
+  `ignored:stale`.
 
 ## Verbs
 
-- `lobes watcher run [--once] [--poll S]` — the loop (the unit's ExecStart).
+- `lobes watcher run [--once] [--poll S] [--apply]` — the loop (the unit's
+  ExecStart, which passes `--apply`). Without `--apply` it is a dry run: it logs
+  `would-clear` and changes nothing.
 - `lobes watcher install [--system] [--apply]` — WRITE, dry-run by default.
   The default is a **user** unit (`~/.config/systemd/user/lobes-watcher.service`)
   and it REQUIRES linger (`sudo loginctl enable-linger $USER`); `--system`
@@ -1584,14 +1591,16 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
 - **Cache clear, grant, watcher**: lifecycle verbs clear the page cache when a
   passwordless rule is granted (never prompts, never fails the verb); `lobes
   watcher install` does it for a gated lane. `lobes doctor` reports
-  `drop_caches_grant_missing`, `watcher_inactive` and `logwrap_stale`
+  `drop_caches_grant_missing`, `watcher_inactive`, `lane_state_writable` (a
+  root-owned `logs/lane-state/` blocks counter resets) and `logwrap_stale`
   (`lobes doctor --refresh-logwrap --apply`).
 - **Thermal shedding** (`LOBES_THERMAL_ZONES`, `_SHED_C`, `_RESUME_C`; off:
   empty): a 429 with `X-Lobes-Shed-Signal: thermal`. The compose passes the
   keys to the gateway (#311); the latch advances on a request or `GET /status`;
   Spark bands come from #304's batch-job governor, not a serving measurement.
-- **Benchmark window** (`lobes benchmark`, `--no-lock`): locked clocks and
-  `host.conditions` on single-model and `--all-lobes` results only (#312);
+- **Benchmark window** (`lobes benchmark --lock`, opt-in; plain `benchmark`
+  is read-only and records `locked: false`, reason `not_requested`): locked
+  clocks and `host.conditions` on single-model and `--all-lobes` results only (#312);
   the GB10 has no supported clock lock, so the Spark runs unlocked. The machine
   CLI verbs ship in dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and
   jetson-orin-cli 0.7.1 (`lobes-cli[spark|thor|orin]`).

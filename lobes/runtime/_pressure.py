@@ -172,7 +172,9 @@ def read_thermal_c(env: "os._Environ[str] | dict[str, str] | None" = None) -> fl
     return hottest
 
 
-def sample_pressure() -> dict[str, float | None]:
+def sample_pressure(
+    env: "os._Environ[str] | dict[str, str] | None" = None,
+) -> dict[str, float | None]:
     """Sample host memory pressure and return a snapshot dict.
 
     Reads ``/proc/meminfo`` once for swap metrics and ``/proc/stat`` twice
@@ -183,6 +185,10 @@ def sample_pressure() -> dict[str, float | None]:
         - ``"swap_used_percent"``: fraction of swap device in use (0–100).
         - ``"iowait_percent"``: CPU iowait % over the last ~150 ms interval (0–100).
         - ``"thermal_c"``: hottest selected zone in deg C, ``None`` if unknown.
+
+    ``env`` is passed to :func:`read_thermal_c` (default: this process's
+    environment); ``lobes status --pressure`` passes the deployment ``.env``
+    merged under the process env.
 
     Raises:
         OSError: if ``/proc/meminfo`` or ``/proc/stat`` cannot be read.
@@ -201,5 +207,5 @@ def sample_pressure() -> dict[str, float | None]:
     return {
         "swap_used_percent": parse_swap_percent(meminfo_text),
         "iowait_percent": parse_iowait_percent(stat_before, stat_after),
-        "thermal_c": read_thermal_c(),
+        "thermal_c": read_thermal_c(env=env),
     }

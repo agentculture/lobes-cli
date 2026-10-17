@@ -330,6 +330,10 @@ def default_deployment_dir() -> Path:
     return Path.home() / ".lobes"
 
 
+#: Lane-safety state dir under the durable-log dir (contract sections 3-4).
+LANE_STATE_DIRNAME = "lane-state"
+
+
 def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
     """Host directory holding the per-boot vLLM logs that ``mg-logwrap`` writes.
 
@@ -346,18 +350,39 @@ def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None
 
 
 def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
-    """Create the durable-log dir before ``docker compose up``.
+    """Create the durable-log dir and its ``lane-state/`` before ``docker compose up``.
 
     The compose bind-mounts this host dir into each vLLM container; if it doesn't
     exist when compose runs, Docker creates it **root-owned**. Creating it here (as
-    the invoking user) keeps the logs user-readable. Best-effort — returns the dir
-    even if mkdir fails (the wrapper falls back to plain exec, never blocking serve).
+    the invoking user) keeps the logs user-readable.
+
+    ``lane-state/`` (the start counters and gate markers, lane-safety contract
+    sections 3-4) is created too (review-b #1): left to the first root container
+    that writes a counter, it ends up root 0755 and the operator's ``lobes up
+    <role> --apply`` can no longer delete ``<lane>.starts``. A newly created
+    ``lane-state/`` is made group-writable (0775); under ``sudo`` every dir this
+    call creates is chowned to ``SUDO_UID``/``SUDO_GID``, as
+    :func:`ensure_compile_cache_dirs` does. An existing dir is never touched.
+    Best-effort — returns the log dir even if mkdir fails (the wrapper falls back
+    to plain exec, never blocking serve).
     """
     d = durable_log_dir(deploy_dir, configured)
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    state = d / LANE_STATE_DIRNAME
+    owner = _sudo_owner()
+    for path, mode in ((d, None), (state, 0o775)):
+        if path.exists():
+            continue
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if mode is not None:
+                os.chmod(path, mode)
+        except OSError:
+            break
+        if owner is not None:
+            try:
+                os.chown(path, *owner)
+            except OSError:
+                pass
     return d
 
 
@@ -1084,7 +1109,6 @@ def _probe(argv: list[str], *, timeout: int = 10):
 
 
 CACHE_CLEAR_PLAN_LINE = "clear the page cache (when the drop-caches grant is present)"
-LANE_STATE_DIRNAME = "lane-state"
 
 # One clear per down->up pair (``switch``): a clear after ``down`` is consumed by
 # the next ``up`` instead of clearing twice. Process-local; reset by every ``up``.
@@ -1099,8 +1123,13 @@ def cache_clear_plan_line() -> str:
 def clear_page_cache() -> bool:
     """Clear the page cache when granted; never fails the verb, never prompts.
 
-    Ungranted (or failed) prints ONE stderr line and returns False.
+    Only attempted on a detected Spark/Thor/Orin (the cards with a machine CLI
+    and a drop-caches grant to look for); anywhere else it returns False
+    silently, without probing ``sudo -n -l``. Ungranted (or failed) on a
+    supported card prints ONE stderr line and returns False.
     """
+    if _machine.detected_card() not in _machine.CARD_CLIS:
+        return False
     try:
         result = _machine.drop_caches()
     except Exception as exc:  # the clear must never break a lifecycle verb
@@ -1114,6 +1143,85 @@ def clear_page_cache() -> bool:
         file=sys.stderr,
     )
     return False
+
+
+#: The ONE docker call the lane-health read makes (review-b #3): fixed argv,
+#: read-only (``docker ps`` lists, never changes), shared with the host watcher.
+LANE_HEALTH_ARGV = [
+    "docker",
+    "ps",
+    "--filter",
+    "name=model-gear-",
+    "--format",
+    '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+]
+
+
+def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
+    """Running ``model-gear-*`` lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
+
+    ``"starting"`` is docker's ``health: starting`` (inside the healthcheck's
+    start period, not yet healthy) — the window where a page-cache drop can
+    trip vLLM's memory profiling on unified memory. Every other running state
+    (healthy, unhealthy, no healthcheck) is ``"running"``. A container with no
+    compose service label is keyed by its container name. ``None`` when docker
+    cannot be read (absent, no permission, error). Read-only: runs exactly
+    :data:`LANE_HEALTH_ARGV`.
+    """
+    result = _probe(list(LANE_HEALTH_ARGV))
+    if result is None or getattr(result, "returncode", 1) != 0:
+        return None
+    try:
+        mapping = _service_log_names(deploy_dir, _compose_files(deploy_dir))
+    except OSError:
+        mapping = {}
+    health: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        service, name, status = parts[0].strip(), parts[1].strip(), parts[2]
+        key = mapping.get(service, service) if service else name
+        if not key:
+            continue
+        health[key] = "starting" if "health: starting" in status else "running"
+    return health
+
+
+def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    state = durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+    try:
+        return {p.name[: -len(".gated")] for p in state.glob("*.gated")}
+    except OSError:
+        return set()
+
+
+def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str]:
+    """Lanes docker reports mid-boot, minus ``exclude`` (gated lanes: held, not booting)."""
+    if not health:
+        return []
+    return sorted(k for k, v in health.items() if v == "starting" and k not in exclude)
+
+
+def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
+    """The lifecycle clear, skipped while another lane is mid-boot (review-b #3).
+
+    A gated lane shows ``health: starting`` too (it is held before ``exec``), so
+    gated lanes never defer the clear. Docker unreadable: clear as before.
+    """
+    if _machine.detected_card() not in _machine.CARD_CLIS:
+        return False  # clear_page_cache would skip anyway; don't run docker ps
+    booting = lanes_starting(lane_health(deploy_dir), gated_lanes(deploy_dir))
+    if booting:
+        print(
+            "lobes: page-cache clear deferred - lane(s) still starting: "
+            f"{', '.join(booting)} (a drop mid-boot can trip vLLM's memory profiling)",
+            file=sys.stderr,
+        )
+        return False
+    return clear_page_cache()
 
 
 def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:
@@ -1160,21 +1268,51 @@ def reset_start_counters(
             wanted.add(mapping.get(svc, svc))
         targets = [state / f"{n}.starts" for n in sorted(wanted)]
     removed = []
+    failed: list[tuple[Path, OSError]] = []
     for t in targets:
         try:
             t.unlink()
             removed.append(t.name)
-        except OSError:
+        except FileNotFoundError:
             pass
+        except OSError as exc:
+            failed.append((t, exc))
+    if failed:
+        # Never silent (review-b #1): a counter the operator cannot delete keeps
+        # the lane held while the verb reports success.
+        names = ", ".join(t.name for t, _ in failed)
+        reason = failed[0][1].strerror or failed[0][1].__class__.__name__
+        files = " ".join(str(t) for t, _ in failed)
+        print(
+            f"lobes: could not reset the start counter ({names}) in {state} ({reason})"
+            f" - the lane may stay held; run 'sudo rm {files}' or see 'lobes doctor'"
+            " (lane_state_writable)",
+            file=sys.stderr,
+        )
     return removed
+
+
+def prepare_bind_sources(deploy_dir: os.PathLike | str) -> None:
+    """Create every host bind source a starting lane writes into, as the operator.
+
+    The durable-log dir + ``lane-state/`` (:func:`ensure_log_dir`) and the
+    compile-cache dirs (:func:`ensure_compile_cache_dirs`). Called from the
+    pre-start chokepoint, so EVERY lifecycle path that starts containers
+    (``serve``, ``fleet up``, ``up``, ``switch``, the role swap) gets it, and
+    only under ``--apply`` (review-b #7). Best-effort: never raises.
+    """
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    ensure_log_dir(deploy_dir, configured)
+    ensure_compile_cache_dirs(deploy_dir)
 
 
 def _before_up(deploy_dir, services: list[str] | None, compose_files: list[str] | None = None):
     global _cleared_after_down
+    prepare_bind_sources(deploy_dir)
     if _cleared_after_down:
         _cleared_after_down = False  # the preceding down already cleared
     else:
-        clear_page_cache()
+        _guarded_clear(deploy_dir)
     reset_start_counters(deploy_dir, services, compose_files)
 
 
@@ -1184,7 +1322,7 @@ def compose_down(deploy_dir: os.PathLike | str):
         ["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir)
     )
     if getattr(result, "returncode", 1) == 0:
-        _cleared_after_down = clear_page_cache()
+        _cleared_after_down = _guarded_clear(deploy_dir)
     return result
 
 
@@ -1288,7 +1426,7 @@ def run_compose(deploy_dir: os.PathLike | str, argv: list[str]):
         _before_up(deploy_dir, rest or None, files or None)
     result = _run(argv, cwd=str(deploy_dir))
     if sub == "down" and getattr(result, "returncode", 1) == 0:
-        _cleared_after_down = clear_page_cache()
+        _cleared_after_down = _guarded_clear(deploy_dir)
     return result
 
 

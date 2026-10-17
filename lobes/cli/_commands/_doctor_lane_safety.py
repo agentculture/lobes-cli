@@ -1,12 +1,15 @@
 """``lobes doctor`` lane-safety findings and the targeted wrapper refresh (t16).
 
-Contract: ``docs/contracts/lane-safety-runtime.md``. Six read-only findings,
+Contract: ``docs/contracts/lane-safety-runtime.md``. Seven read-only findings,
 none of them ``error`` (lane safety never makes a deployment "unhealthy"), and
 each returns ``None`` — no row at all — when it does not apply:
 
 * ``logwrap_stale`` (warn) — the deployed ``mg-logwrap.sh`` differs from the
   packaged template, so the boot hold / start counter / memory gate may be
   missing. Absent wrapper: skipped (``scaffold_files`` already reports it).
+* ``lane_state_writable`` (warn) — ``logs/lane-state/`` exists but the operator
+  cannot write it (a root container created it first), so lifecycle verbs
+  cannot reset start counters. Absent: skipped.
 * ``compile_cache_unmounted`` (warn) — a vLLM service lacks the ``/cache/vllm``
   bind or ``VLLM_CACHE_ROOT``, or (d7) the ``/cache/flashinfer`` bind or
   ``FLASHINFER_WORKSPACE_BASE``. A hand-kept compose fires this on purpose; the
@@ -24,7 +27,8 @@ each returns ``None`` — no row at all — when it does not apply:
 The refresh (``lobes doctor --refresh-logwrap``) is its own named flag, after
 the ``--repin-version`` precedent: plain ``--fix`` stays missing-only (#174),
 and the refresh writes exactly two paths — ``mg-logwrap.sh.bak`` (the current
-file) then the packaged ``mg-logwrap.sh``.
+file) then the packaged ``mg-logwrap.sh``, renamed into place from a temp file
+so a running lane's bind-mounted inode is never rewritten.
 """
 
 from __future__ import annotations
@@ -33,10 +37,12 @@ import fcntl
 import hashlib
 import os
 import shutil
+import stat
+import tempfile
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
-from lobes.runtime import _compose, _detect, _machine, _window
+from lobes.runtime import _compose, _detect, _env, _machine, _window
 from lobes.watcher import _install
 
 _TEMPLATES_PACKAGE = "lobes.templates"
@@ -279,14 +285,43 @@ def compile_cache_size_check(deploy_dir: Path) -> dict | None:
     )
 
 
+# --- lane_state_writable (review-b #1) ----------------------------------------
+
+
+def _lane_state_dir(deploy_dir: Path) -> Path:
+    configured = _env.read_env(deploy_dir / _compose.ENV_FILE, _compose.LOG_DIR_ENV) or None
+    return _compose.durable_log_dir(deploy_dir, configured) / _compose.LANE_STATE_DIRNAME
+
+
+def lane_state_writable_check(deploy_dir: Path) -> dict | None:
+    """``lane-state/`` must be writable by the operator, or counter resets fail.
+
+    A root container that wrote the first start counter before any lobes verb
+    created the dir leaves it root 0755: ``lobes up <role> --apply`` then cannot
+    delete ``<lane>.starts`` and the lane stays held. Absent: skipped (the next
+    lifecycle verb creates it as the operator).
+    """
+    state = _lane_state_dir(Path(deploy_dir))
+    if not state.is_dir():
+        return None
+    if os.access(state, os.W_OK | os.X_OK):
+        return _check("lane_state_writable", True, "info", f"{state} is writable by this user")
+    return _check(
+        "lane_state_writable",
+        False,
+        "warn",
+        f"{state} is not writable by this user (created by a root container): "
+        "lifecycle verbs cannot reset a lane's start counter, so a held lane stays held",
+        f"run 'sudo chown -R \"$(id -un)\" {state}' (the root containers can still write it)",
+    )
+
+
 # --- machine findings -------------------------------------------------------
 
 
 def _detected_card() -> str | None:
-    try:
-        return _detect.detect_card().resolved
-    except Exception:  # detection must never break doctor
-        return None
+    # per-process cached (review-b #10); never raises
+    return _machine.detected_card(_detect.detect_card)
 
 
 def _benchmark_window_active() -> bool:
@@ -404,6 +439,19 @@ def _watcher_active_state(system: bool) -> str:
     return stdout.strip() or "unknown"
 
 
+def _unit_runs_dry(manifest: dict) -> bool:
+    """True when an installed unit's ExecStart runs ``watcher run`` without ``--apply``."""
+    for f in manifest.get("files") or []:
+        try:
+            text = Path(str(f)).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.startswith("ExecStart=") and "watcher run" in line:
+                return "--apply" not in line.split()
+    return False
+
+
 def watcher_inactive_check(deploy_dir: Path) -> dict | None:
     manifest = _install.read_manifest(Path(deploy_dir))
     if manifest is None:
@@ -416,6 +464,15 @@ def watcher_inactive_check(deploy_dir: Path) -> dict | None:
         )
     system = manifest.get("unit_type") == "system"
     state = _watcher_active_state(system)
+    if state == "active" and _unit_runs_dry(manifest):
+        return _check(
+            "watcher_inactive",
+            False,
+            "warn",
+            "host watcher is active but its unit runs 'lobes watcher run' without "
+            "--apply (installed before d8), so it only logs what it would clear",
+            "reinstall it: 'lobes watcher uninstall --apply' then 'lobes watcher install --apply'",
+        )
     if state == "active":
         return _check("watcher_inactive", True, "info", "host watcher is active")
     systemctl = "sudo systemctl" if system else "systemctl --user"
@@ -437,6 +494,7 @@ def lane_safety_checks(deploy_dir: Path) -> list[dict]:
     deploy_dir = Path(deploy_dir)
     candidates = [
         logwrap_stale_check(deploy_dir),
+        lane_state_writable_check(deploy_dir),
         compile_cache_unmounted_check(deploy_dir),
         compile_cache_size_check(deploy_dir),
         jetson_clocks_locked_check(),
@@ -483,11 +541,31 @@ def refresh_logwrap_plan(deploy_dir: Path) -> list[str]:
 
 
 def apply_refresh_logwrap(deploy_dir: Path) -> list[str]:
-    """Back up then replace a STALE wrapper. Writes exactly two paths, or none."""
+    """Back up then replace a STALE wrapper. Writes exactly two paths, or none.
+
+    The new wrapper goes to a temp file in the same dir and is ``os.replace``d
+    over the old name (review-b #2): running containers bind-mount the old
+    INODE and a held lane's bash is still reading it, so truncating and
+    rewriting in place would make bash resume at a stale offset in the new
+    bytes. The rename leaves the old inode intact for them; the ``.bak`` is an
+    independent copy. The old file's mode is kept.
+    """
     if _refresh_state(deploy_dir) != "stale":
         return []
     wrapper = Path(deploy_dir) / _compose.LOG_WRAPPER
     backup = wrapper.with_name(wrapper.name + _BACKUP_SUFFIX)
     shutil.copy2(wrapper, backup)
-    wrapper.write_text(_packaged_logwrap(), encoding="utf-8")
+    mode = stat.S_IMODE(wrapper.stat().st_mode)
+    fd, tmp = tempfile.mkstemp(prefix=f".{wrapper.name}.", dir=str(wrapper.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(_packaged_logwrap())
+        os.chmod(tmp, mode)
+        os.replace(tmp, wrapper)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return [f"backed up {wrapper.name} -> {backup.name}", f"wrote packaged {wrapper.name}"]

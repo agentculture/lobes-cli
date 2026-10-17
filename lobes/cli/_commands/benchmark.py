@@ -304,7 +304,8 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
     headers = _runtime_ops.gateway_auth_headers(deploy_dir)
 
     with _assess.auth_headers(headers), _runtime_ops.friendly_unauthorized_errors(deploy_dir):
-        lock_clocks = not bool(getattr(args, "no_lock", False))
+        # d8: a read-only verb by default; --lock opts into the locked window.
+        lock_clocks = bool(getattr(args, "lock", False))
         if getattr(args, "profile", None):
             with benchmark_window(lock_clocks=lock_clocks):
                 return _run_profile_mode(args, json_mode)
@@ -403,9 +404,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         ),
     )
     p.add_argument(
-        "--no-lock",
+        "--lock",
         action="store_true",
-        help="Do not lock clocks for the run (conditions record locked:false, reason disabled).",
+        help=(
+            "Opt in to the benchmark window: take the per-host lock, lock clocks (and "
+            "the fan) to max via the machine CLI for the run, and always restore them. "
+            "Default: no window; host.conditions records locked:false, reason "
+            "not_requested."
+        ),
     )
     # --profile branch: RUNTIME-ONLY fleet-profile comparison (issue #81, t9).
     # A third, independent mode from --all-lobes: probes via lobes.roles_measure

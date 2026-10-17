@@ -302,7 +302,11 @@ def thermal_bands_from_env(environ: Mapping[str, str]) -> tuple[float | None, fl
 THERMAL_SHED_C, THERMAL_RESUME_C = thermal_bands_from_env(os.environ)
 
 
-def thermal_hot(thermal_c: float | None, latched: bool = False) -> bool:
+def thermal_hot(
+    thermal_c: float | None,
+    latched: bool = False,
+    bands: tuple[float | None, float | None] | None = None,
+) -> bool:
     """Is *thermal_c* inside the shed band, given whether the box was ALREADY
     shedding on heat (*latched*)?
 
@@ -315,8 +319,12 @@ def thermal_hot(thermal_c: float | None, latched: bool = False) -> bool:
     Idempotent in *latched*: ``thermal_hot(t, thermal_hot(t, prev)) ==
     thermal_hot(t, prev)``, so a caller may pass either the previous latch
     state or the one :meth:`ThermalLatch.update` just returned for *t*.
+
+    *bands* is an explicit ``(shed_c, resume_c)`` (``lobes status --pressure``
+    reads them from the deployment ``.env``); ``None`` uses the module
+    constants (the gateway, which reads them from its own process env).
     """
-    shed = THERMAL_SHED_C
+    shed, resume = bands if bands is not None else (THERMAL_SHED_C, THERMAL_RESUME_C)
     if shed is None or thermal_c is None:
         return False
     try:
@@ -327,7 +335,7 @@ def thermal_hot(thermal_c: float | None, latched: bool = False) -> bool:
         return False
     if t > shed:
         return True
-    resume = THERMAL_RESUME_C if THERMAL_RESUME_C is not None else shed
+    resume = resume if resume is not None else shed
     return bool(latched) and t >= resume
 
 
@@ -498,6 +506,7 @@ def decide(
     engine_capacity: float | None = None,
     thermal_c: float | None = None,
     thermal_latched: bool = False,
+    thermal_bands: tuple[float | None, float | None] | None = None,
 ) -> dict:
     """Map system pressure + a requested tier to a busy/shed routing decision.
 
@@ -541,6 +550,10 @@ def decide(
         held by the caller's :class:`ThermalLatch` so this function stays
         pure. Above ``THERMAL_SHED_C`` sheds; once latched, shedding holds
         down to ``THERMAL_RESUME_C``. See :func:`thermal_hot`.
+    thermal_bands:
+        Explicit ``(shed_c, resume_c)`` overriding the module constants (the
+        one-shot CLI reads them from the deployment ``.env``); ``None`` keeps
+        the gateway's process-env bands.
 
     Returns
     -------
@@ -582,7 +595,7 @@ def decide(
 
     # `mode` is UNCHANGED by d1: it reports the HOST, and both signals are
     # honest observations of it. Only the shed band below narrowed.
-    thermal_over = thermal_hot(thermal_c, thermal_latched)
+    thermal_over = thermal_hot(thermal_c, thermal_latched, thermal_bands)
 
     # `mode` is the host report: a box over its thermal band is under pressure
     # exactly as a paging one is, and peers read `mode`/`shed` from /status.
