@@ -325,3 +325,90 @@ def test_gate_runs_after_boot_hold(tmp_path):
     assert res.returncode == 0
     assert sleeps == ["20", "5"]  # boot hold first, then the gate (c42)
     assert not gated.exists()
+
+
+# --- SIGTERM while held (2026-10-17 hardware finding) ------------------------
+# A lane held by the start counter or the memory gate must stop on `docker
+# stop` / a TERM to its client. A foreground `sleep` defers bash traps until it
+# returns (and bash as PID 1 ignores TERM with no handler), so the wrapper
+# waits with `sleep N & wait $!` under a TERM/INT handler. These tests use the
+# REAL sleep: the shim records instantly and would hide the deferral.
+
+
+def _spawn_held(tmp_path: Path, env: dict[str, str], *args: str, **extra: str):
+    real = {**env, **extra, "PATH": os.environ["PATH"]}  # real sleep, not the shim
+    return subprocess.Popen(
+        ["bash", str(SCRIPT), "echo", "served", *args],
+        env=real,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _wait_for_log(tmp_path: Path, needle: str, deadline_s: float = 2.0) -> None:
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        logs = list((tmp_path / "logs").glob("worker-2*.log"))
+        if logs and needle in logs[0].read_text():
+            time.sleep(0.1)  # let bash reach the wait
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"wrapper never logged {needle!r}")
+
+
+def _term_and_time(proc: subprocess.Popen, sig=None) -> tuple[int, float]:
+    import signal
+
+    start = time.monotonic()
+    proc.send_signal(sig or signal.SIGTERM)
+    try:
+        rc = proc.wait(timeout=2.5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise AssertionError("wrapper did not exit within 2.5 s of the signal")
+    return rc, time.monotonic() - start
+
+
+def test_sigterm_while_start_counter_holds_exits_143_promptly(tmp_path):
+    env = _world(tmp_path)
+    now = int(time.time())
+    starts = _starts(tmp_path)
+    starts.parent.mkdir(parents=True)
+    starts.write_text(f"{now - 100}\n{now - 50}\n{now - 10}\n")
+    proc = _spawn_held(tmp_path, env)
+    _wait_for_log(tmp_path, "holding")
+    rc, took = _term_and_time(proc)
+    assert rc == 143
+    assert took < 2.0
+    assert len(starts.read_text().split()) == 3  # the aborted start is not recorded
+
+
+def test_sigint_while_start_counter_holds_exits_130(tmp_path):
+    import signal
+
+    env = _world(tmp_path)
+    now = int(time.time())
+    starts = _starts(tmp_path)
+    starts.parent.mkdir(parents=True)
+    starts.write_text(f"{now - 100}\n{now - 50}\n{now - 10}\n")
+    proc = _spawn_held(tmp_path, env)
+    _wait_for_log(tmp_path, "holding")
+    rc, took = _term_and_time(proc, signal.SIGINT)
+    assert rc == 130
+    assert took < 2.0
+
+
+def test_sigterm_while_memory_gate_waits_exits_143_and_removes_marker(tmp_path):
+    env = _world(tmp_path, avail_kib=GIB_KIB)
+    proc = _spawn_held(tmp_path, env, "--gpu-memory-utilization=0.45")
+    gated = _gated(tmp_path)
+    end = time.monotonic() + 2.0
+    while not gated.exists() and time.monotonic() < end:
+        time.sleep(0.02)
+    assert gated.exists(), "gate marker never written"
+    time.sleep(0.1)  # let bash reach the wait
+    rc, took = _term_and_time(proc)
+    assert rc == 143
+    assert took < 2.0
+    assert not gated.exists()

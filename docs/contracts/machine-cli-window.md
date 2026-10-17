@@ -46,6 +46,7 @@ Every JSON object carries `ok` (bool) and `reason` (string, or `null` when
 ```json
 {"ok": true, "reason": null,
  "active": false, "stored": false, "supported": true,
+ "clocks_locked": false,
  "power_mode": "MAXN",
  "clocks": {"gpu_mhz": 612, "gpu_min_mhz": 306, "gpu_max_mhz": 1300, "emc_mhz": 3199},
  "fan_profile": "cool",
@@ -53,8 +54,21 @@ Every JSON object carries `ok` (bool) and `reason` (string, or `null` when
  "detail": {}}
 ```
 
-- `active` — clocks are locked by a window (stored state exists and lock was
-  applied).
+- `active` — clocks are locked by a lobes window (stored state exists and
+  lock was applied). It tracks lobes' own window state only.
+- `clocks_locked` — `true|false|null`, read from the hardware, not from lobes'
+  state: `true` when the GPU devfreq node's `min_freq` equals its `max_freq`
+  (on Jetson; the EMC/`bwmgr` node too when it is readable), `false` when they
+  differ, `null` when unreadable (the GB10). **A lock can exist without a
+  window**: an operator ran `jetson_clocks`, or a crashed run left the box
+  pinned. `active` stays `false` in both cases; `clocks_locked` does not.
+  *Contract addition, 2026-10-17.* Motivating reading, Jetson AGX Orin
+  2026-10-17: `/sys/class/devfreq/17000000.gpu` cur = min = max = 1300500000
+  and `/sys/class/devfreq/bwmgr` cur = min = max = 3199000000 (the operator had
+  run `jetson_clocks`), yet `window show` reported `"active": false` and
+  `lobes doctor` said the clocks were not locked (issue #308). A caller that
+  gets no `clocks_locked` key (a CLI from before this addition) falls back to
+  `active`.
 - `stored` — a saved state exists.
 - `supported` — the card accepts a clock lock at all. The GB10 is unverified
   (frame park v2); `spark` returns `supported: false` until a lock is shown to

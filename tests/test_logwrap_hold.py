@@ -115,3 +115,49 @@ def test_missing_or_garbled_uptime_never_blocks_serving(tmp_path):
     assert res.returncode == 0
     assert sleeps == []
     assert "served" in res.stdout
+
+
+def test_sigterm_during_boot_hold_exits_143_promptly(tmp_path):
+    """A lane in its boot hold stops on TERM (2026-10-17 hardware finding).
+
+    Uses the REAL sleep: the hold is a 120 s wait, and a foreground `sleep`
+    would defer the trap until it returned.
+    """
+    import signal
+    import time
+
+    proc_root = tmp_path / "proc"
+    proc_root.mkdir()
+    (proc_root / "uptime").write_text("10.00 1.00\n")
+    p = subprocess.Popen(
+        ["bash", str(SCRIPT), "echo", "served"],
+        env={
+            "PATH": os.environ["PATH"],
+            "LOBES_PROC_ROOT": str(proc_root),
+            "MG_LOG_DIR": str(tmp_path / "logs"),
+            "MG_LOG_NAME": "primary",
+        },
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    end = time.monotonic() + 2.0
+    while time.monotonic() < end:
+        logs = list((tmp_path / "logs").glob("primary-2*.log"))
+        if logs and "holding" in logs[0].read_text():
+            break
+        time.sleep(0.02)
+    else:
+        p.kill()
+        raise AssertionError("wrapper never entered the boot hold")
+    time.sleep(0.1)
+    start = time.monotonic()
+    p.send_signal(signal.SIGTERM)
+    try:
+        rc = p.wait(timeout=2.5)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        raise AssertionError("wrapper ignored SIGTERM during the boot hold")
+    assert rc == 143
+    assert time.monotonic() - start < 2.0
+    assert not (tmp_path / "logs" / "lane-state" / "primary.starts").exists()

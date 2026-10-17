@@ -77,6 +77,32 @@ fi
 # host's /proc/uptime is not namespaced by docker. Any bad knob or unreadable
 # uptime means no hold: this can never stop the model from serving.
 _num() { case "$1" in '' | *[!0-9]*) echo "$2" ;; *) echo "$((10#$1))" ;; esac; }
+
+# --- Stoppable waits (2026-10-17 hardware finding) ---------------------------
+# Every hold below (boot hold, start counter, memory gate) must stop on `docker
+# stop`. Two bash rules defeat a plain `sleep N`: bash defers a trap until the
+# FOREGROUND child returns (so TERM waits out a 30 s poll, or a 120 s hold),
+# and bash as a container's PID 1 ignores TERM unless a handler is set — on
+# Spark, Orin and Thor a held lane ran until docker's kill timeout. So each wait
+# is `sleep N & wait $!` (the `wait` builtin returns at once on a trapped
+# signal) under a TERM/INT handler that kills the pending sleep, removes the
+# gate marker (if any) and exits 143/130. The handlers are cleared before the
+# final exec, so the server gets default signal handling.
+_sleep_pid=""
+_marker=""
+_on_signal() {
+    [ -n "$_sleep_pid" ] && kill "$_sleep_pid" 2>/dev/null
+    [ -n "$_marker" ] && rm -f "$_marker"
+    exit "$1"
+}
+trap '_on_signal 143' TERM
+trap '_on_signal 130' INT
+_wait() {
+    sleep "$1" &
+    _sleep_pid=$!
+    wait "$_sleep_pid" || true
+    _sleep_pid=""
+}
 _delay="$(_num "${LOBES_BOOT_DELAY_S-}" 120)"
 if [ "$_delay" -gt 0 ]; then
     _stagger="$(_num "${LOBES_BOOT_STAGGER_S-}" 20)"
@@ -99,7 +125,7 @@ if [ "$_delay" -gt 0 ]; then
         if [ "$_hold" -gt 0 ]; then
             printf 'lobes: host up %ss, holding %ss (boot delay %ss + stagger %ss)\n' \
                 "$((10#$_up))" "$_hold" "$_delay" "$_off"
-            sleep "$_hold" || true
+            _wait "$_hold"
         fi
     fi
 fi
@@ -152,7 +178,7 @@ if [ "$_max" -gt 0 ] && [ -n "$_state" ]; then
         printf "lobes: %s starts in %ss — holding; clear with 'lobes up %s --apply' or delete %s\n" \
             "${#_kept[@]}" "$_window" "$_role" "$_starts"
         while :; do
-            sleep 30 || true
+            _wait 30
             [ -f "$_starts" ] || break
             _count_starts
             [ "${#_kept[@]}" -lt "$_max" ] && break
@@ -228,11 +254,7 @@ if [ "$(_num "${LOBES_MEM_GATE-}" 1)" != 0 ] && [ "$_has_util" = 1 ]; then
         _waited=0
         while [ "$_avail" -lt "$_need" ]; do
             if [ -n "$_marker" ]; then
-                if [ "$_waited" = 0 ]; then
-                    trap 'rm -f "$_marker"' EXIT
-                    trap 'exit 143' TERM
-                    trap 'exit 130' INT
-                fi
+                [ "$_waited" = 0 ] && trap 'rm -f "$_marker"' EXIT
                 printf '{"lane": "%s", "since": %s, "need_kib": %s, "avail_kib": %s}\n' \
                     "$name" "$_since" "$_need" "$_avail" >"$_marker" 2>/dev/null || true
             fi
@@ -242,16 +264,22 @@ if [ "$(_num "${LOBES_MEM_GATE-}" 1)" != 0 ] && [ "$_has_util" = 1 ]; then
                 [ -n "$_marker" ] && rm -f "$_marker"
                 exit 75
             fi
-            sleep 5 || true
+            _wait 5
             _waited=$((_waited + 5))
             _meminfo || break # meminfo vanished: never block serving
         done
         if [ -n "$_marker" ]; then
             rm -f "$_marker"
-            trap - EXIT TERM INT
+            trap - EXIT
         fi
+        _marker=""
     fi
 fi
+
+# The waits are over: drop the TERM/INT handlers so the server starts with
+# default signal dispositions (exec resets caught signals anyway; this keeps
+# the intent explicit and covers no-wait paths too).
+trap - TERM INT
 
 # exec the real command: this DOES replace the shell, so the server (not bash) is
 # the container's main process — it receives SIGTERM directly (graceful shutdown)

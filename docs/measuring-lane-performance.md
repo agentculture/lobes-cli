@@ -136,8 +136,10 @@ comparison.
   Thor fan-profile switching and the Orin `jetson_clocks --fan` behaviour are
   **unverified**, and every Thor line is **DECLARED/UNVALIDATED (#108)**.
 - **Doctor.** `lobes doctor` warns `jetson_clocks_locked` when `window show`
-  reports `active` and no benchmark holds the host lock, i.e. a crashed run left
-  the box pinned at max clocks.
+  reports locked clocks and no benchmark holds the host lock, i.e. a crashed run
+  left the box pinned at max clocks. With the CLI's `clocks_locked` field it
+  also warns when the clocks are locked outside any lobes window (an operator's
+  `jetson_clocks`, which may be on purpose); without it, only `active` counts.
 
 Contract: `docs/contracts/machine-cli-window.md`. The live Spark acceptance
 under sustained load has not run (issue #313).

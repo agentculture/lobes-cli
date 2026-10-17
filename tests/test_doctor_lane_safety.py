@@ -252,6 +252,78 @@ def test_clocks_locked_does_not_warn_during_a_benchmark_window(monkeypatch) -> N
     assert "benchmark window" in check["message"]
 
 
+# clocks_locked (contract addition 2026-10-17): the CLI reads the devfreq
+# min == max state directly, so a lock made OUTSIDE any lobes window (operator
+# jetson_clocks, a crashed run) is visible even though `active` is false. The
+# Orin on 2026-10-17 read gpu cur=min=max=1300500000 with `active: false`.
+
+
+def _held_window():
+    fd = os.open(_window.lock_path(), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return fd
+
+
+def test_clocks_locked_outside_any_window_warns_with_jetson_clocks_restore(monkeypatch) -> None:
+    payload = {"active": False, "stored": False, "clocks_locked": True}
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "orin"))
+    check = ls.jetson_clocks_locked_check()
+    assert check["passed"] is False
+    assert check["severity"] == "warn"
+    assert "outside any lobes window" in check["message"]
+    assert "operator jetson_clocks or a crashed run" in check["message"]
+    assert "on purpose" in check["message"]
+    assert "sudo jetson_clocks --restore" in check["remediation"]
+    assert "reboot" in check["remediation"]
+    assert "window restore" not in check["remediation"]
+
+
+def test_clocks_locked_with_a_stored_window_points_at_window_restore(monkeypatch) -> None:
+    payload = {"active": True, "stored": True, "clocks_locked": True}
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "orin"))
+    check = ls.jetson_clocks_locked_check()
+    assert check["passed"] is False
+    assert check["severity"] == "warn"
+    assert "locked by a lobes window" in check["message"]
+    assert "window restore" in check["remediation"]
+    assert "jetson_clocks --restore" not in check["remediation"]
+
+
+def test_clocks_locked_during_a_benchmark_window_is_info(monkeypatch) -> None:
+    payload = {"active": True, "stored": True, "clocks_locked": True}
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "orin"))
+    fd = _held_window()
+    try:
+        check = ls.jetson_clocks_locked_check()
+    finally:
+        os.close(fd)
+    assert check["passed"] is True
+    assert check["severity"] == "info"
+    assert "benchmark window" in check["message"]
+
+
+def test_clocks_not_locked_passes_even_if_active_is_stale(monkeypatch) -> None:
+    payload = {"active": True, "stored": True, "clocks_locked": False}
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "orin"))
+    check = ls.jetson_clocks_locked_check()
+    assert check["passed"] is True
+    assert check["severity"] == "info"
+
+
+@pytest.mark.parametrize("payload", [{"active": True, "clocks_locked": None}, {"active": True}])
+def test_clocks_locked_null_or_missing_falls_back_to_active(monkeypatch, payload) -> None:
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "spark"))
+    check = ls.jetson_clocks_locked_check()
+    assert check["passed"] is False  # active and no benchmark lock: the old rule
+    assert "window restore" in check["remediation"]
+
+
+@pytest.mark.parametrize("payload", [{"active": False, "clocks_locked": None}, {"active": False}])
+def test_clocks_locked_null_or_missing_and_inactive_passes(monkeypatch, payload) -> None:
+    _show(monkeypatch, _machine.MachineResult(True, None, payload, "spark"))
+    assert ls.jetson_clocks_locked_check()["passed"] is True
+
+
 # --- drop_caches_grant_missing ----------------------------------------------
 
 
