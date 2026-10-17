@@ -85,17 +85,20 @@ def test_boot_hold_keeps_a_held_marker_then_removes_it(tmp_path):
     env = _world(tmp_path, uptime="30.0")
     before = int(time.time())
     res, rows = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert [r[0] for r in rows] == ["90"]
     body = json.loads(rows[0][1])
-    assert body["lane"] == "worker" and body["reason"] == "boot_hold"
+    assert body["lane"] == "worker"
+    assert body["reason"] == "boot_hold"
     assert before - 1 <= body["since"] <= int(time.time()) + 1
     assert not _held(tmp_path).exists()
 
 
 def test_no_hold_writes_no_held_marker(tmp_path):
     res, rows = _run(tmp_path, _world(tmp_path))
-    assert res.returncode == 0 and rows == []
+    assert res.returncode == 0
+    assert rows == []
     assert not _held(tmp_path).exists()
 
 
@@ -106,7 +109,8 @@ def test_start_counter_hold_keeps_a_held_marker_then_removes_it(tmp_path):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{now - 100}\n{now - 50}\n{now - 10}\n")
     res, rows = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert [r[0] for r in rows] == ["30"]
     body = json.loads(rows[0][1])
     assert body == {"lane": "worker", "since": body["since"], "reason": "start_counter"}
@@ -133,7 +137,8 @@ def test_memory_gate_wait_is_gated_not_held(tmp_path):
     assert res.returncode == 0
     rows = (tmp_path / "sleeps").read_text().splitlines()
     assert rows == ["5\tnone"]
-    assert not gated.exists() and not _held(tmp_path).exists()
+    assert not gated.exists()
+    assert not _held(tmp_path).exists()
 
 
 def _wait_for(path: Path, deadline_s: float = 15.0) -> None:
@@ -191,7 +196,8 @@ def test_unwritable_lane_state_holds_without_a_marker(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")
     res, rows = _run(tmp_path, env, MG_LOG_DIR=str(blocker / "sub"))
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert rows == [["90", "none"]]
 
 
@@ -216,7 +222,8 @@ def test_lane_state_and_written_files_are_aligned_to_the_log_dir(tmp_path):
     env = _world(tmp_path, uptime="30.0", hook=f'rm -f "{starts}"')
     rec = _owner_shims(tmp_path, env)
     res, _ = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     logs = tmp_path / "logs"
     calls = rec.read_text().splitlines()
     assert f"--reference={logs} {logs / 'lane-state'}" in calls
@@ -228,7 +235,8 @@ def test_ownership_falls_back_to_stat_when_reference_is_unsupported(tmp_path):
     env = _world(tmp_path)
     rec = _owner_shims(tmp_path, env, reference_ok=False)
     res, _ = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     calls = rec.read_text().splitlines()
     assert f"stat -c %u:%g {tmp_path / 'logs'}" in calls
     assert f"1234:5678 {tmp_path / 'logs' / 'lane-state'}" in calls
@@ -242,7 +250,8 @@ def test_a_failing_chown_never_blocks_the_lane(tmp_path):
         (bindir / name).write_text("#!/bin/bash\necho denied >&2\nexit 1\n")
         (bindir / name).chmod(0o755)
     res, _ = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert "denied" not in res.stdout + res.stderr  # silent
     assert len(_starts(tmp_path).read_text().split()) == 1
 
@@ -252,5 +261,6 @@ def test_a_stale_held_marker_from_a_killed_run_is_dropped_at_start(tmp_path):
     held.parent.mkdir(parents=True)
     held.write_text('{"lane": "worker", "since": 1, "reason": "boot_hold"}\n')
     res, rows = _run(tmp_path, _world(tmp_path))
-    assert res.returncode == 0 and rows == []
+    assert res.returncode == 0
+    assert rows == []
     assert not held.exists()

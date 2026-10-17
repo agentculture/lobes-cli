@@ -137,7 +137,8 @@ def test_failed_reset_prints_one_line_with_remediation(tmp_path, monkeypatch, ca
     assert _compose.reset_start_counters(d) == []
     err = capsys.readouterr().err
     assert err.count("\n") == 1
-    assert "primary.starts" in err and "hand.starts" in err
+    assert "primary.starts" in err
+    assert "hand.starts" in err
     assert f"sudo rm {state / 'hand.starts'}" in err
     assert "lobes doctor" in err
     assert "held" in err
@@ -156,7 +157,8 @@ def test_targeted_up_reports_a_root_owned_counter(tmp_path, monkeypatch, capsys,
     _deny_unlink(monkeypatch, state)
     _compose.run_compose(d, ["docker", "compose", "up", "-d", "--no-deps", "vllm-hand"])
     err = capsys.readouterr().err
-    assert "could not reset" in err and "hand.starts" in err
+    assert "could not reset" in err
+    assert "hand.starts" in err
     assert no_docker == ["up -d --no-deps vllm-hand"]  # the verb still runs
 
 
@@ -167,7 +169,8 @@ def test_doctor_lane_state_writable_passes(tmp_path):
     d = _deploy(tmp_path)
     _counters(d)
     c = ls.lane_state_writable_check(d)
-    assert c["id"] == "lane_state_writable" and c["passed"] is True
+    assert c["id"] == "lane_state_writable"
+    assert c["passed"] is True
 
 
 def test_doctor_lane_state_writable_skips_when_absent(tmp_path):
@@ -182,7 +185,8 @@ def test_doctor_lane_state_writable_warns_when_not_writable(tmp_path, monkeypatc
         os, "access", lambda p, m, *a, **k: False if Path(p) == state else real(p, m, *a, **k)
     )
     c = ls.lane_state_writable_check(d)
-    assert c["passed"] is False and c["severity"] == "warn"
+    assert c["passed"] is False
+    assert c["severity"] == "warn"
     assert str(state) in c["message"]
     assert "sudo chown" in c["remediation"]
 

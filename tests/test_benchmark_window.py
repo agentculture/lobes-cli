@@ -36,8 +36,10 @@ def test_success_order(fake):
         calls.append("run")
     assert calls == ["show", "store", "lock", "run", "restore", "show"]
     d = cond.as_dict()
-    assert d["locked"] is True and d["reason"] is None
-    assert d["start"]["power_mode"] == "MAXN" and d["end"]["fan_profile"] == "cool"
+    assert d["locked"] is True
+    assert d["reason"] is None
+    assert d["start"]["power_mode"] == "MAXN"
+    assert d["end"]["fan_profile"] == "cool"
 
 
 def test_exception_restores_once(fake):
@@ -45,7 +47,8 @@ def test_exception_restores_once(fake):
     with pytest.raises(RuntimeError):
         with _window.benchmark_window():
             raise RuntimeError("boom")
-    assert calls.count("restore") == 1 and calls[-1] == "show"
+    assert calls.count("restore") == 1
+    assert calls[-1] == "show"
 
 
 def test_sigint_restores_once(fake):
@@ -87,7 +90,8 @@ def test_no_cli_runs_unlocked(fake):
         pass
     assert calls == ["show", "store", "show"]
     d = cond.as_dict()
-    assert d["locked"] is False and d["reason"] == "tool_missing"
+    assert d["locked"] is False
+    assert d["reason"] == "tool_missing"
     assert d["start"] == {"available": False, "reason": "tool_missing"}
 
 
@@ -108,8 +112,10 @@ def test_no_lock_records_conditions_without_a_window(fake):
             pass
     assert calls == ["show", "show", "store", "lock", "restore", "show", "show"]
     d = cond.as_dict()
-    assert d["locked"] is False and d["reason"] == "not_requested"
-    assert d["start"]["power_mode"] == "MAXN" and d["end"]["power_mode"] == "MAXN"
+    assert d["locked"] is False
+    assert d["reason"] == "not_requested"
+    assert d["start"]["power_mode"] == "MAXN"
+    assert d["end"]["power_mode"] == "MAXN"
 
 
 def _bench(monkeypatch):
@@ -167,4 +173,5 @@ def test_other_verbs_never_use_window():
         if not f.exists():
             continue
         text = f.read_text()
-        assert "_window" not in text and "window(" not in text, f
+        assert "_window" not in text, f
+        assert "window(" not in text, f

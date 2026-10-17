@@ -130,7 +130,8 @@ def test_clear_skipped_silently_off_supported_cards(rec, monkeypatch, capsys, ca
     probes: list[list[str]] = []
     monkeypatch.setattr(_machine, "_run", lambda argv, **k: probes.append(argv))
     assert _compose.clear_page_cache() is False
-    assert events == [] and probes == []  # no drop_caches, no `sudo -n -l`
+    assert events == []
+    assert probes == []
     assert capsys.readouterr().err == ""
 
 
@@ -245,7 +246,9 @@ def test_up_defers_clear_while_another_lane_starts(rec, tmp_path, monkeypatch, c
     assert events == ["docker up -d --no-deps vllm-hand"]  # no clear, verb still runs
     assert calls == [_compose.lane_health_argv(tmp_path)]
     err = capsys.readouterr().err
-    assert err.count("\n") == 1 and "deferred" in err and "primary" in err
+    assert err.count("\n") == 1
+    assert "deferred" in err
+    assert "primary" in err
 
 
 def test_up_clears_when_no_lane_is_starting(rec, tmp_path, monkeypatch):
@@ -362,7 +365,8 @@ def test_always_ungranted_on_an_undetected_card_names_the_sudo_rule(
     assert _compose.clear_page_cache(tmp_path) is False
     err = capsys.readouterr().err
     assert err.count("\n") == 1
-    assert "vm.drop_caches" in err and "LOBES_PAGE_CACHE_CLEAR=never" in err
+    assert "vm.drop_caches" in err
+    assert "LOBES_PAGE_CACHE_CLEAR=never" in err
 
 
 # --- review2-b #1: lanes are found by compose project, not by name prefix ----
@@ -435,7 +439,8 @@ def test_a_booting_embed_lane_defers_the_clear(rec, tmp_path, monkeypatch, capsy
     )
     _ps(monkeypatch, "embed-qwen3vl-embed\tembed-qwen3vl-embed\tUp 1 minute (health: starting)\n")
     _compose.compose_up_detached(tmp_path)
-    assert "clear" not in events and events[-1].endswith("up -d")
+    assert "clear" not in events
+    assert events[-1].endswith("up -d")
     assert "qwen3vl-embed" in capsys.readouterr().err
 
 
@@ -474,7 +479,8 @@ def test_a_held_lane_does_not_hide_another_booting_lane(rec, tmp_path, monkeypat
     _compose.compose_up_detached(tmp_path)
     assert events == ["docker up -d"]
     err = capsys.readouterr().err
-    assert "hand" in err and "primary" not in err.split("starting:")[1]
+    assert "hand" in err
+    assert "primary" not in err.split("starting:")[1]
 
 
 # --- review3 #2: a top-level ``name:`` is interpolated, never taken raw ------

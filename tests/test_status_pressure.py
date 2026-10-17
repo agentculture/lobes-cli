@@ -382,7 +382,8 @@ def test_status_pressure_reads_thermal_knobs_from_the_deployment_env(capsys, the
         "band": "above_shed",
         "shedding": True,
     }
-    assert payload["shed"] is True and payload["shed_signal"] == "thermal"
+    assert payload["shed"] is True
+    assert payload["shed_signal"] == "thermal"
 
 
 def test_status_pressure_process_env_overrides_the_deployment_env(
@@ -432,7 +433,8 @@ def test_status_pressure_reads_the_iowait_threshold_from_the_deployment_env(caps
     """An Orin-style deployment (iowait threshold 100) at 60 % iowait is not busy."""
     assert main(["status", "--pressure", "--json", "--compose-dir", str(orin_deploy)]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["mode"] == "warm" and payload["shed"] is False
+    assert payload["mode"] == "warm"
+    assert payload["shed"] is False
 
 
 def test_status_pressure_process_env_threshold_wins(capsys, monkeypatch, orin_deploy):
@@ -451,6 +453,7 @@ def test_status_pressure_default_thresholds_without_the_keys(capsys, monkeypatch
 
 def test_decide_explicit_thresholds_override_the_module_constants():
     d = _P.decide(80.0, 60.0, requested_tier="main", thresholds=(90.0, 100.0))
-    assert d["mode"] == "warm" and d["shed"] is False
+    assert d["mode"] == "warm"
+    assert d["shed"] is False
     d = _P.decide(1.0, 60.0, requested_tier="main", thresholds=(90.0, 50.0))
     assert d["shed_signal"] == "iowait"

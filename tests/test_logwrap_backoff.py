@@ -83,7 +83,8 @@ def test_each_start_appends_an_epoch(tmp_path):
     before = int(time.time())
     for _ in range(3):
         res, sleeps = _run(tmp_path, env)
-        assert res.returncode == 0 and "served" in res.stdout
+        assert res.returncode == 0
+        assert "served" in res.stdout
     lines = _starts(tmp_path).read_text().split()
     assert len(lines) == 3
     assert all(before - 1 <= int(x) <= int(time.time()) + 1 for x in lines)
@@ -97,7 +98,8 @@ def test_fourth_start_inside_window_holds_until_file_deleted(tmp_path):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{now - 100}\n{now - 50}\n{now - 10}\n")
     res, sleeps = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == ["30"]
     msg = (
         f"lobes: 3 starts in 600s — holding; clear with 'lobes up worker --apply' "
@@ -122,7 +124,8 @@ def test_hold_releases_when_oldest_start_ages_out(tmp_path):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{now - 100}\n{now - 50}\n{now - 10}\n")
     res, sleeps = _run(tmp_path, env)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == ["30", "30"]
     kept = [int(x) for x in starts.read_text().split()]
     assert now - 900 not in kept  # pruned on rewrite
@@ -136,7 +139,8 @@ def test_clean_window_resets(tmp_path):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{old}\n{old}\n{old}\n{old}\ngarbage\n")
     res, sleeps = _run(tmp_path, env)
-    assert res.returncode == 0 and sleeps == []
+    assert res.returncode == 0
+    assert sleeps == []
     assert len(starts.read_text().split()) == 1  # old + garbage pruned
 
 
@@ -161,7 +165,8 @@ def test_start_max_zero_turns_counter_off(tmp_path):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{now}\n" * 10)
     res, sleeps = _run(tmp_path, env, LOBES_START_MAX="0")
-    assert res.returncode == 0 and sleeps == []
+    assert res.returncode == 0
+    assert sleeps == []
     assert len(starts.read_text().split()) == 10  # not touched
 
 
@@ -173,7 +178,8 @@ def test_invalid_counter_knobs_fall_back_to_defaults(tmp_path, bad):
     starts.parent.mkdir(parents=True)
     starts.write_text(f"{now - 500}\n{now - 5}\n{now - 5}\n")
     res, sleeps = _run(tmp_path, env, LOBES_START_MAX=bad, LOBES_START_WINDOW_S=bad)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == ["30"]  # default 3 in 600 s
 
 
@@ -182,7 +188,8 @@ def test_unwritable_log_dir_skips_counter_but_serves(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")
     res, sleeps = _run(tmp_path, env, MG_LOG_DIR=str(blocker / "sub"))
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
     assert res.stdout.count("lane-state") == 1  # one skip line
 
@@ -193,7 +200,8 @@ def test_unwritable_log_dir_skips_counter_but_serves(tmp_path):
 def test_gate_passes_immediately_when_memory_is_free(tmp_path):
     env = _world(tmp_path, avail_kib=50 * GIB_KIB)
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization=0.45")
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
     assert not _gated(tmp_path).exists()
 
@@ -208,7 +216,8 @@ def test_gate_waits_writes_marker_then_passes(tmp_path):
     )
     env = _world(tmp_path, avail_kib=GIB_KIB, hook=hook)
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization", "0.45")
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == ["5", "5"]
     seen = json.loads((tmp_path / "marker-seen").read_text())
     assert seen["lane"] == "worker"
@@ -256,14 +265,16 @@ def test_need_is_ceil_of_util_times_memtotal(tmp_path, util, need):
 def test_need_boundary_passes_at_exact_ceil(tmp_path):
     env = _world(tmp_path, avail_kib=6081741)
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization=0.058")
-    assert res.returncode == 0 and sleeps == []
+    assert res.returncode == 0
+    assert sleeps == []
 
 
 @pytest.mark.parametrize("util", ["abc", "0.4.5", ".", "-0.3"])
 def test_garbage_util_skips_gate_with_log_line(tmp_path, util):
     env = _world(tmp_path, avail_kib=0)
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization", util)
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
     assert "memory gate skipped" in res.stdout
 
@@ -271,7 +282,8 @@ def test_garbage_util_skips_gate_with_log_line(tmp_path, util):
 def test_no_util_flag_skips_gate(tmp_path):
     env = _world(tmp_path, avail_kib=0)
     res, sleeps = _run(tmp_path, env, "--ctx-size", "4096")
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
     assert "memory gate" not in res.stdout
     assert not _gated(tmp_path).exists()
@@ -280,7 +292,8 @@ def test_no_util_flag_skips_gate(tmp_path):
 def test_mem_gate_zero_turns_gate_off(tmp_path):
     env = _world(tmp_path, avail_kib=0)
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization=0.45", LOBES_MEM_GATE="0")
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
 
 
@@ -288,7 +301,8 @@ def test_unreadable_meminfo_never_blocks_serving(tmp_path):
     env = _world(tmp_path)
     (tmp_path / "proc" / "meminfo").unlink()
     res, sleeps = _run(tmp_path, env, "--gpu-memory-utilization=0.45")
-    assert res.returncode == 0 and "served" in res.stdout
+    assert res.returncode == 0
+    assert "served" in res.stdout
     assert sleeps == []
 
 

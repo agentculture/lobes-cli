@@ -312,12 +312,14 @@ def test_flashinfer_cache_mount_only_on_vllm_services(rel: str, name: str, svc: 
     env = svc.get("environment") or []
     has_env = FI_ENV in env
     if _is_vllm_service(svc):
-        assert has_mount and has_env, f"{name}: vLLM lane without a FlashInfer JIT cache"
+        assert has_mount, f"{name}: vLLM lane without a FlashInfer JIT cache"
+        assert has_env, f"{name}: vLLM lane without a FlashInfer JIT cache"
         assert _fi_volume(_lane(svc)) in vols
         # t8's mount is untouched (the Orin's warm compile-cache/embed survives).
         assert _cache_volume(_lane(svc)) in vols
     else:
-        assert not has_mount and not has_env, f"{name}: non-vLLM service has a FlashInfer cache"
+        assert not has_mount, f"{name}: non-vLLM service has a FlashInfer cache"
+        assert not has_env, f"{name}: non-vLLM service has a FlashInfer cache"
         assert not any("FLASHINFER_WORKSPACE_BASE" in str(e) for e in env), name
 
 
@@ -336,7 +338,8 @@ def test_clef_vllm_decider_has_the_flashinfer_cache_and_python_decider_does_not(
             "general", {"backend": "clef", "model": "m", "mem_limit": "1g"}, "runtime"
         )
     )
-    assert "FLASHINFER" not in other and "/cache/flashinfer" not in other
+    assert "FLASHINFER" not in other
+    assert "/cache/flashinfer" not in other
 
 
 def test_rendered_decider_sidecars_carry_the_flashinfer_cache() -> None:

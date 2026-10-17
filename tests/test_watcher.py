@@ -137,7 +137,8 @@ def test_stale_marker_is_ignored_and_logged_once(tmp_path):
     w = _watcher(tmp_path, clear, Clock(), logs, min_interval_s=0)
     for _ in range(3):
         actions = w.tick()
-    assert actions[0]["stale"] is True and actions[0]["action"] == "ignored:stale"
+    assert actions[0]["stale"] is True
+    assert actions[0]["action"] == "ignored:stale"
     assert clear.calls == 0
     assert sum("stale" in line for line in logs) == 1
 
@@ -162,7 +163,8 @@ def test_malformed_marker_ages_by_mtime(tmp_path):
     _os.utime(bad, (1, 1))
     clear, logs = CountingClear(), []
     actions = _watcher(tmp_path, clear, Clock(), logs).tick()
-    assert actions[0]["action"] == "ignored:stale" and clear.calls == 0
+    assert actions[0]["action"] == "ignored:stale"
+    assert clear.calls == 0
 
 
 def test_marker_whose_lane_has_no_container_is_stale(tmp_path):
@@ -171,7 +173,8 @@ def test_marker_whose_lane_has_no_container_is_stale(tmp_path):
     w = _watcher(tmp_path, clear, Clock(), logs)
     w.health = lambda: {"primary": "running"}  # worker's container is gone
     actions = w.tick()
-    assert actions[0]["action"] == "ignored:stale" and actions[0]["stale"] is True
+    assert actions[0]["action"] == "ignored:stale"
+    assert actions[0]["stale"] is True
     assert clear.calls == 0
     assert any("no running container" in line for line in logs)
 
@@ -428,7 +431,9 @@ def test_install_apply_uninstall_round_trip(tmp_path):
     neighbour.write_text("x")
 
     st = _install.status(deploy, ctx)
-    assert st["installed"] is True and st["active"] == "active" and st["linger"] is True
+    assert st["installed"] is True
+    assert st["active"] == "active"
+    assert st["linger"] is True
 
     uplan = _install.plan_uninstall(deploy, ctx)
     assert uplan["files"] == [str(unit)]
@@ -446,7 +451,8 @@ def test_install_refuses_without_linger(tmp_path):
     deploy, runner = _deploy(tmp_path), FakeRunner(linger="no")
     ctx = _ctx(tmp_path, runner)
     plan = _install.plan_install(deploy, ctx)
-    assert plan.blockers and "enable-linger u" in plan.blockers[0]
+    assert plan.blockers
+    assert "enable-linger u" in plan.blockers[0]
     with pytest.raises(Exception) as exc:
         _install.apply_install(plan, ctx)
     assert "linger" in str(exc.value).lower()
@@ -459,12 +465,14 @@ def test_system_install_via_sudo_n(tmp_path):
     plan = _install.plan_install(deploy, ctx)
     assert plan.unit_type == "system"
     assert plan.blockers == []
-    assert "User=u" in plan.content and "WantedBy=multi-user.target" in plan.content
+    assert "User=u" in plan.content
+    assert "WantedBy=multi-user.target" in plan.content
     _install.apply_install(plan, ctx)
     assert plan.unit_path == tmp_path / "root" / "etc/systemd/system/lobes-watcher.service"
     assert plan.unit_path.is_file()
     installs = [c for c in runner.calls if c[:3] == ["sudo", "-n", "install"]]
-    assert installs and installs[0][-1] == str(plan.unit_path)
+    assert installs
+    assert installs[0][-1] == str(plan.unit_path)
     assert ["sudo", "-n", "systemctl", "enable", "--now", "lobes-watcher.service"] in runner.calls
     _install.apply_uninstall(deploy, ctx)
     assert not plan.unit_path.exists()
@@ -574,7 +582,8 @@ def test_embed_overlay_lane_marker_is_live_not_stale(tmp_path, monkeypatch):
     actions = w.tick()
     assert actions[0]["stale"] is False
     assert actions[0]["action"] == "cleared"  # gated lanes never block their own clear
-    assert seen and seen[0] == _compose.lane_health_argv(deploy)
+    assert seen
+    assert seen[0] == _compose.lane_health_argv(deploy)
 
 
 def test_watcher_does_not_defer_for_a_held_lane(tmp_path):
