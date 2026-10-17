@@ -1,0 +1,974 @@
+{
+  "slug": "lane-safety-and-quality-304-307-308-309",
+  "title": "lane safety and quality (#304 #307 #308 #309)",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-10-17T05:50:04Z",
+  "updated": "2026-10-17T06:28:26Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes lanes boot, compile and run safely: GPU services hold after a power cycle, the vLLM compile cache survives a recreate, a hot box sheds load instead of power-cycling, and clocks stay stock outside an explicit benchmark window",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "Every clause of the announcement maps to a merged PR in the stack (boot hold, compile cache, backoff + cache clear, thermal shedding, benchmark window) with its tests green",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "boundary",
+      "text": "Thor carries experimental work: this effort may change code, templates, tests, docs and goldens, but must NOT deploy, recreate or restart anything on the Thor; live Thor validation is deferred and stays DECLARED/UNVALIDATED (#108)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "No step in the delivery runs docker, compose or lobes write verbs against the Thor; Thor-facing claims are marked DECLARED/UNVALIDATED in docs",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "mg-logwrap.sh holds before its final exec until host uptime (/proc/uptime, not namespaced) >= LOBES_BOOT_DELAY_S (default 120, 0 = off), logging the hold; read with bash builtins (no cut/awk dependency); exec \"$@\" stays last so signals and exit codes are unchanged",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "A unit test runs mg-logwrap with a fake uptime source: below the delay it sleeps the remainder; at/after the delay or with LOBES_BOOT_DELAY_S=0 it does not sleep; exec stays the last statement",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "boundary",
+      "text": "restart: unless-stopped stays on every service (it is the only policy in every template today, no on-failure anywhere); the boot hold is what makes auto-restart safe, not a policy change",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "grep over every template and the shape renderer finds restart: unless-stopped on every service and no new restart policy introduced",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "requirement",
+      "text": "Healthcheck start_period is raised to cover the boot hold on every wrapped lane (vLLM lanes are 600s today) so a held container is not marked unhealthy, or the hold is shown to fit inside the existing start_period",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "Every held service's start_period >= its pre-change start_period + LOBES_BOOT_DELAY_S default, or a test proves the hold fits inside it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Every GPU service and the gateway honours the 120 s hold, including services that do not use mg-logwrap today (audio chatterbox/stt, embed-gemma2-embed, decider sidecars, comfyui, gateway): each receives LOBES_BOOT_DELAY_S and runs the hold in its own entrypoint",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "A test enumerates every service across fleet/single/embed/audio/audio-he templates and the decider sidecar renderer and asserts each one runs the hold before its real entrypoint",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "GPU services that do not use mg-logwrap are covered explicitly or named as out of scope: audio overlay (chatterbox, stt), embed-gemma2-embed sidecar, decider sidecars from shape_render, comfyui; each wrapped service must receive LOBES_BOOT_DELAY_S (env_file .env or an explicit environment passthrough)",
+          "kind": "requirement",
+          "reason": "operator q1: 120 s before everything"
+        }
+      ]
+    },
+    {
+      "id": "c7",
+      "kind": "assumption",
+      "text": "Editing mg-logwrap.sh changes its sha256 recorded in deployments/*/deployment.lock.toml and the verbatim deployments/*/mg-logwrap.sh copies; the repo-side catalog copies are NOT regenerated from a live box (Thor no-deploy) \u2014 lock_drift on a live box is the expected signal until each box re-scaffolds",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Template tests updated: test_cli_logs test_logwrap_template_shipped_and_safe gains assertions for the hold (default 120, 0 disables, exec stays last); tests/test_upgrade_compat fixtures refreshed deliberately if compose bytes change",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "uv run pytest -n auto passes with the updated logwrap/compose assertions and any refreshed upgrade_compat fixtures committed deliberately",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Every vLLM lane persists its compile cache across a recreate: VLLM_CACHE_ROOT (or /root/.cache/vllm) bind-mounted to a per-lane host dir under the deployment (single + fleet templates, embed overlay vLLM lanes), so a compose recreate reuses the known-good torch.compile/inductor artifacts instead of recompiling",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "Every vLLM service in every template mounts a per-lane compile-cache dir and sets VLLM_CACHE_ROOT to it; a test asserts it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The compile cache is keyed so it cannot be reused across a different image/model/knob set by accident (vLLM's own hash key or a per-lane, per-image subdir), and an operator can wipe it (documented path; a lobes verb is optional)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "The cache path includes a per-lane component and vLLM's own content hash still keys entries; docs name the wipe path",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "assumption",
+      "text": "Mounting the cache only masks the #309 device-side assert (index out of bounds 0 <= tmp13 < 1048576 in profile_run on nightly 0.26.1rc1.dev942); root-causing it or moving the Thor worker off the nightly is separate work and needs Thor time, so it is out of this code-only effort",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "A test drives the backoff with a fake failure history and asserts the lane holds/refuses after N failures in the window and resets after a clean window",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h26",
+          "text": "Unit tests drive the wrapper with fake /proc/meminfo, fake argv and a fake start log: gate waits until MemAvailable >= share then execs; times out with a logged reason; counter holds after N starts in the window and resets after a clean window",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "On Thor, crash-freed memory stays out of MemAvailable until drop_caches (mjolnir-agent incident Q7), and a container cannot clear caches: after a dockerd-driven restart (no lobes verb involved) the gate would wait forever. What clears the cache on that path \u2014 a host systemd unit/path watcher shipped via the machine CLI, a gate timeout that tells the operator to run the clear, or accept the hold as the safe outcome?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Both: (b) the memory gate times out with a logged reason telling the operator how to clear; AND (a) a host-side watcher that clears the cache when a lane is gated \u2014 owned by lobes, not the machine CLIs, because it is a lobes-specific need (operator, 2026-10-17)"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Crash backoff: a lane that fails startup repeatedly stops restarting into held memory instead of looping (e.g. mg-logwrap counts recent boot failures in the persisted log dir and sleeps/refuses after N), since unless-stopped restarts immediately with no backoff",
+          "kind": "requirement",
+          "reason": "operator q3: option C"
+        }
+      ]
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "lobes never clears caches from inside a container and never uses full sudo: the clear runs host-side only, through a single NOPASSWD sudoers rule for '/usr/sbin/sysctl -w vm.drop_caches=3' (mjolnir cachectl pattern), and never prompts \u2014 no grant means skip and say so",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "grep finds no drop_caches/sysctl in any template or container entrypoint, no 'sudo ' without -n in lobes/, and the only sudoers content is the single sysctl rule",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "lobes does not run drop_caches itself from a container or the CLI (it needs root on the host); #309's drop_caches-before-restart ask is met by documentation and, at most, a doctor/preflight hint \u2014 not an automated privileged step",
+          "kind": "non_goal",
+          "reason": "operator: add clear cache as mjolnir does"
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "The gateway pressure policy gains a fourth shed signal, thermal ('hot'): the hottest /sys/class/thermal zone above a per-card threshold sheds sheddable full tiers with 429 + Retry-After exactly like swap; hand (floor) and NEVER_SHED_ROLES (decider) are always served; X-Lobes-Override still bypasses",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "decide() with a hot sample sheds cortex/senses/worker/muse/associate with 429 + Retry-After, serves hand and decider, and honours X-Lobes-Override \u2014 unit tests for each",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "requirement",
+      "text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "With no readable thermal zone the sample carries thermal=None and decide() never sheds on it; status --pressure and GET /status show the value or 'n/a'",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "requirement",
+      "text": "Thermal bands are per-card [host_env] data (e.g. LOBES_THERMAL_SHED_C / resume), with hysteresis; only the Spark has measured values (84/88/91/93.5 \u00b0C vs 104.8 \u00b0C ACPI trip); Thor/Orin render no threshold (signal off) or a DECLARED value marked unmeasured (#108)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "spark.toml carries the measured bands; thor/orin goldens either stay byte-identical or carry values explicitly marked unmeasured; goldens regenerated and committed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "Serving lanes are NEVER paused and NEVER docker update'd by any lobes governor: pause freezes in-flight requests, and docker update --cpus is a correlated (unproven) suspect for cudaErrorNotPermitted on GPU containers (#304 comments 2 and 3)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "grep over lobes/ finds no docker pause or docker update invoked against a serving lane",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "requirement",
+      "text": "The gateway container can read host thermal zones: verify /sys/class/thermal is visible in the unprivileged gateway container on Spark/Orin (Thor deferred), else add an explicit read-only bind mount in the fleet compose gateway service",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "On the Spark and the Orin, the running gateway container reads /sys/class/thermal (transcript), or the compose adds a read-only bind mount that a test asserts",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "non_goal",
+      "text": "No batch-job governor ships in this effort: the ~/odm/telemetry pause governor (hardcoded container odm-clef-quant-w4a16, no lobes awareness) stays an operator script; batch training/quant moved to jev-factory (lobes only hosts)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "success_signal",
+      "text": "Spark sustained full-GPU serving load that previously risked a reset completes with the thermal signal live: report shed counts, peak zone temperature and zero hard resets (Spark only; Thor deferred)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "A Spark transcript under docs/evidence/ shows a sustained full-GPU serving load of >= 30 min with the thermal signal live, peak zone temperature, shed count and 0 hard resets",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "Every lobes benchmark/measure result records host conditions: nvpmodel -q, jetson_clocks --show (or devfreq cur/min/max), fan profile, hottest zone at start and end \u2014 best-effort, skipped cleanly on non-Jetson; extends the existing host block (image, gpu_memory)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "A benchmark --json result contains a host.conditions block (power mode, clocks, fan profile, temps start/end) or an explicit unavailable reason per field",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "doctor emits jetson_clocks_locked (warn) when the machine CLI reports locked clocks outside a window, and skips with no finding when the CLI/tool is absent \u2014 tests for both",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "boundary",
+      "text": "No persistent clock or fan change from lobes init, serve, switch or any deployment; production stays stock DVFS + the host's nvfancontrol profile",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "grep shows no clock/fan mutation in init/serve/switch/up code paths; only the benchmark window calls the lock verbs",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "open_question",
+      "text": "Should lobes itself lock clocks/fan inside the benchmark window (needs root: sudo jetson_clocks --store/lock/--restore with a trap), or only RECORD conditions and leave locking to the operator/mjolnir setup-thor.sh?",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "decision",
+      "text": "Benchmark windows LOCK clocks/fan (not just record) as the general standard; machine work lives in the per-machine CLIs \u2014 dgx-spark-cli (spark), jetson-thor-cli (thor), jetson-orin-cli (orin) \u2014 which lobes depends on and delegates to; PRs on those repos are in scope (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "decision",
+      "text": "Boot hold: LOBES_BOOT_DELAY_S default 120 before every service lobes starts, every card (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "decision",
+      "text": "Delivery: one bundle PR; quick pieces split out as stacked PRs to keep the bigger PRs focused (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "audience",
+      "text": "Operators of lobes boxes (DGX Spark, Jetson AGX Thor, Jetson AGX Orin) and the agents that run lobes verbs on them in loops; secondarily mesh callers who receive a 429 from a hot box",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The spec's user-facing docs (operating-a-deployment, measuring-lane-performance, gateway-fleet) address operators and agents by name",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "before_state",
+      "text": "Today: a power-cycled box restarts every lane within ~8 s of dockerd, before ssh is possible; every compose recreate recompiles torch.compile from scratch in the writable layer (2 of 3 fresh Thor compiles hit a device-side assert + Xid 43); a crashed lane restarts immediately into memory the crash still holds; the Spark power-cycled twice under sustained full-GPU load with no lobes thermal awareness; benchmark numbers carry no recorded power mode, clocks or temperatures",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "Each before-state fact cites an issue (#304/#307/#309) or evidence file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "why_it_matters",
+      "text": "A hung box that brings its own crash straight back cannot be rescued remotely, and a box that power-cycles under load loses in-flight work and evidence; unrecorded clocks make benchmark numbers irreproducible (docs/measuring-lane-performance.md Rule 2 already cost one wrong conclusion)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "The why is traceable to #304, #307 and docs/measuring-lane-performance.md Rule 2",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "after_state",
+      "text": "After a power cycle every lobes service waits until host uptime >= 120 s; a recreate reuses the lane's compile cache; a repeatedly crashing lane backs off instead of looping into held memory; a box over its per-card thermal threshold sheds sheddable tiers with 429 instead of heating further; lobes benchmark runs inside a locked-clocks window delegated to the machine CLI and always restores stock DVFS, recording conditions in the result",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "Each after-state clause maps to at least one requirement claim with its own test",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "assumption",
+      "text": "On a reboot dockerd restarts containers by restart policy alone and does NOT honour compose depends_on, so a boot hold must live in each container's own entrypoint; a single compose-level 'hold' service that others depend on would be skipped exactly when it matters",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "Tests with a fake machine CLI show lock then restore on success, on an exception and on SIGINT; with no CLI the result records unlocked + reason",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "Each machine CLI ships window verbs with --json and a restore that returns to the stored state, released before lobes pins a minimum version",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "Machine CLIs are OPTIONAL runtime dependencies of lobes (extras or PATH lookup), not hard pyproject dependencies: a gateway image or an unknown card must not pull three device CLIs",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "decision",
+      "text": "Crash backoff = Option C: wrapper start-rate counter as backstop + pre-exec memory gate on the lane's gpu-memory-utilization share; restart: unless-stopped kept (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "decision",
+      "text": "Add a page-cache clear (vm.drop_caches=3) the way thor-arena/mjolnir does it \u2014 proven in mjolnir-agent's Thor incidents (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "requirement",
+      "text": "Host-side lobes verbs that start or stop GPU lanes (serve/start, stop, switch, up, fleet up/down, init --apply when it starts lanes) clear the page cache (sync + vm.drop_caches=3) after teardown and before start when the grant exists; a one-time grant verb installs the single sudoers drop-in (0440, visudo-checked, explicit consent); doctor reports a missing grant on unified-memory cards (Spark/Thor/Orin)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "Tests with a fake sudo/machine CLI show: granted \u2192 clear runs after down and before up, in that order; not granted \u2192 no prompt (sudo -n), verb continues and prints the skip; dry-run prints the clear in the plan",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "decision",
+      "text": "The cache clear and its grant live in the machine CLIs (spark / thor / orin drop-caches + grant-permissions), consistent with c25 'machine work lives there'; lobes calls them, falling back to sudo -n sysctl when the rule exists but no machine CLI is installed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "decision",
+      "text": "Gated-lane cache clear: gate timeout + operator message (b) AND a lobes-owned host watcher (a) that clears the cache when a lane is gated; lobes owns it because it is a lobes-specific need (operator, 2026-10-17)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "lobes ships an opt-in host-side watcher (installed by an explicit lobes verb with --apply, removable, the first host unit lobes installs): it watches for a lane holding in the memory gate (a marker file the wrapper writes in the host-mounted log dir) and runs the granted page-cache clear, rate-limited and logged; without the sudoers grant it only logs; never touches containers (no docker pause/update/restart)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "Tests: a gate marker appearing triggers exactly one clear per rate-limit window via the granted command; no grant \u2192 log only; the watcher issues no docker command; install is dry-run by default and uninstall removes every file it wrote",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Root cause of the #309 device-side assert (index out of bounds in an inductor kernel during profile_run on nightly 0.26.1rc1.dev942, sm_110) \u2014 needs an empty-cache CUDA_LAUNCH_BLOCKING repro on Thor",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c11",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Spark firmware power-cut temperature and whether nvidia-smi -lgc works on GB10 (#304 open questions) \u2014 decides whether a root clock-cap lever exists beyond admission shedding",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c14",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Whether docker update --cpus actually breaks CUDA device cgroups on GB10 (correlated twice, small repro did not fail)",
+      "kind": "unknown_nonblocking",
+      "claim_id": "c17",
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Adaptive clocks daemon (thor-arena/mjolnir#29) \u2014 later phase of #308",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "Thor (operator message, this session)",
+      "finding": "operator: Thor has experimental work on it; update code only, no deploy",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/templates/mg-logwrap.sh",
+      "finding": "73-line bash wrapper (set -u, MG_LOG_NAME/MG_LOG_DIR, tee via process substitution, final exec \"$@\" at :73); no uptime/sleep/delay/drop_caches logic exists; uses only bash/date/mkdir/ln/printf/tee",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/**/docker-compose*.yml restart policies",
+      "finding": "every service in single, fleet, embed, audio templates and shape_render decider sidecars is restart: unless-stopped; no on-failure[:N], no deploy.restart_policy",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "fleet compose healthchecks",
+      "finding": "vLLM lanes: curl /health, interval 30s, timeout 10s, retries 5, start_period 600s; comfyui 90s; embed overlay 300s/900s env-overridable",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "non-wrapped GPU services",
+      "finding": "docker-compose.audio.yml/audio-he.yml contain no mg-logwrap; embed-gemma2-embed (embed.yml:30) has none; decider sidecars (shape_render.py:357-390) have no entrypoint; services without env_file never see .env keys (llama.cpp lane note at compose.yml:314)",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "deployments/*/ lock + mg-logwrap copies",
+      "finding": "deployments/jetson-agx-thor__thor-worker/deployment.lock.toml:69 records mg-logwrap.sh sha256:fd9dfb7d...; tests/test_deployment_lock.py covers locks; lobes init --force overwrites mg-logwrap.sh with no backup (memory lobes-init-force-overwrites-no-backup-20260913)",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "tests pinning mg-logwrap/compose",
+      "finding": "tests/test_cli_logs.py:201 asserts exec \"$@\"/tee -a/MG_LOG_*; tests/test_init.py asserts the entrypoint; tests/test_upgrade_compat.py sha256-pins compose fixtures under tests/fixtures/upgrade_compat/",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "compile cache (all templates + deployments/)",
+      "finding": "grep for VLLM_CACHE_ROOT|torch_compile_cache|TORCHINDUCTOR_CACHE|.cache/vllm over lobes/ and deployments/ returns nothing; mounted today: HF cache, ./logs, mg-logwrap:ro only; evidence logs (2026-07-31-accept-multimodal-cortex-spark.txt:52) show the cache at /root/.cache/vllm/torch_compile_cache in the writable layer",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "#309 issue body",
+      "finding": "the assert came from a FRESH compile (2 of 3 fresh compiles failed, every cached restart served); a mounted cache freezes whichever compile ran first \u2014 good or bad",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "docs/nvidia-qwen3.6-35b-a3b-nvfp4.md",
+      "finding": "worker lane pins vllm/vllm-openai@sha256:8bd082c2... (line 51, fleet-wide VLLM_NIGHTLY_IMAGE pin); no compile-time figures, no VLLM_CACHE_ROOT; operational trap 1 (lines 322-337) requires sudo drop_caches before recreating the lane",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "restart backoff",
+      "finding": "no on-failure:N, no deploy.restart_policy, no backoff in any template; memory thor-cuda-leak-needs-reboot (2026-08-11): crash leaked ~80 GiB unified memory, a restart could not have fit (needs ~57 GiB at util 0.45, ~23 GiB free)",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "root/sudo in lobes",
+      "finding": "no sudo/geteuid in lobes/**/*.py; drop_caches appears only as manual runbook steps (docs/machine-profiles.md:825, docs/nvidia-qwen3.6-35b-a3b-nvfp4.md:332) and a spike-scoped sudoers rule (docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt:37); lobes installs no systemd units (only the cloudflared tunnel process, lobes/runtime/_tunnel.py)",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "lobes/gateway/_pressure_policy.py",
+      "finding": "decide() chains swap / engine / iowait shed signals (SHED_SIGNAL_* at :301-310); thresholds via _env_float LOBES_*_DEGRADED_THRESHOLD (:242,:246); _FLOOR_TIER='hand' (:216); NEVER_SHED_ROLES={'decider'} (:289); BUSY_RETRY_AFTER_SECONDS=5 static (:271)",
+      "seeds": [
+        "c14"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "lobes/runtime/_pressure.py + _tier_request.PressureCache",
+      "finding": "sample_pressure() (:132) reads /proc/meminfo + /proc/stat only; PressureCache._read hard-codes the two keys (new key dropped unless added); 2.0 s interval; status.py _cmd_status_pressure calls sample_pressure on the host; GET /status payload server.py:~4427; peers read busy via _replicas.py:668-681",
+      "seeds": [
+        "c15"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "lobes/profiles/builtin/*.toml [host_env]",
+      "finding": "top-level [host_env] table exists (schema.py _host_env_from_dict :403, render.py profile_env :321 starts from host_env); only orin.toml:597 uses it; lock_keys() allowlists host_env keys automatically (_lock.py:136); goldens README requires other cards stay byte-identical for a one-card change",
+      "seeds": [
+        "c16"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "#304 operator scope + corrections",
+      "finding": "operator scope 2026-10-14: governor standard for every vLLM lane; never pause serving; docker update --cpus later correlated with two cudaErrorNotPermitted exits, cause NOT established; pause-only governor used for the batch quant",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "gateway compose service",
+      "finding": "gateway (fleet compose :1880-~2350) mounts only the mesh dir (:2342), runs uid 10001 on python:3.12-slim, no /sys mount, no privileged; nvidia-smi absent in image and useless on Jetson",
+      "seeds": [
+        "c18"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "~/odm/telemetry/governor*.sh, log.sh",
+      "finding": "governor.sh pause>=93000/resume<=84000 m\u00b0C, 2 s poll; governor2.sh docker update --cpus bands (RETIRED in governor.log); log.sh 5 s fsync'd telemetry; all hardcode odm-clef-quant-w4a16 and $HOME/odm paths; memory lobes-hosts-jev-factory-trains: distill/quant live in jev-factory",
+      "seeds": [
+        "c19"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "lobes/cli/_commands/benchmark.py, measure.py, assess.py",
+      "finding": "benchmark targets localhost (port from --port / VLLM_PORT / 8000) (:303) \u2014 host-local; JSON host block = {image, gpu_memory} only (:322-331); measure.py probes role endpoints over HTTP, no host block; assess --endpoint can be remote; _compose._probe (:978) is the fixed-argv 10 s subprocess helper; no code calls nvpmodel/jetson_clocks",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "lobes/cli/_commands/doctor.py",
+      "finding": "checks built with _check(id, passed, severity, message, remediation) (:73), appended in _deploy_dir_diagnostics (:1140) or _fleet_only_checks (:1114); doctor has no nvidia-smi/host probe today besides docker_available",
+      "seeds": [
+        "c22"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "docs/measuring-lane-performance.md",
+      "finding": "Rule 2 (:62-80): governed clock read at rest is not the clock under load \u2014 pin or measure during the run; Rule 3 (:96-107): enforce and record power mode/clocks, co-resident set, free memory, thermals before AND after; doc covers scripts/prefill-depth-curve.py, not lobes benchmark",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "docs/qwen3.8-27b-gguf-llamacpp.md thermal notes",
+      "finding": "jetson_clocks pinned GPU 612 MHz / EMC 3199 (:182); sudo nvpmodel -m 0 needs reboot (:264-301); thermal table ~25 C below throttle, 'No manual fan lock is needed' (:303-312) \u2014 counter-evidence for fan max; 2026-09-13 Thor prefill hit tj 106-109 C with nvfancontrol cool (docs/evidence/2026-09-13-spike-lightning-thor-v029.txt)",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "~/git/{dgx-spark-cli,jetson-thor-cli,jetson-orin-cli}",
+      "finding": "spark CLI 0.7.x has 'spark thermal' (thermal zones + hwmon, --json) and 'spark monitor' but no clock/fan lock verb; thor 0.4.1 and orin 0.5.0 CLIs are seeds (whoami/doctor/overview/explain/learn only) with no clocks/fan/thermal code \u2014 the lock verbs must land there first",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "../mjolnir/src/mjolnir-cli/mjolnir_cli/cachectl.py + ../mjolnir-agent/docs/incidents/2026-10-16-thor-safe-boot.md",
+      "finding": "mjolnir: grant-permissions installs /etc/sudoers.d/mjolnir-drop-caches (one rule: /usr/sbin/sysctl -w vm.drop_caches=3, NOPASSWD, never full sudo); drop-caches runs sudo -n and never prompts; run before serve up, after serve down, around benches (AGENTS.md:52). Incident: drop_caches returned 88 GB without reboot (08:36); a recreate without it failed vLLM's free-memory check 54.4 < 55.3 GB (12:35); P10 asks for on-failure:1 OR pre-start drop_caches + memory check",
+      "seeds": [
+        "c37",
+        "c38",
+        "c12"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "lobes host-side install surface",
+      "finding": "lobes installs no systemd units today; the only host process it manages is the cloudflared tunnel (lobes/runtime/_tunnel.py, PID file + log, lobes/cli/_commands/tunnel.py) \u2014 the watcher is a new host-install surface",
+      "seeds": [
+        "c41"
+      ]
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}
