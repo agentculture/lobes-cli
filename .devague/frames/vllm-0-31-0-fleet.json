@@ -4,18 +4,25 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T17:39:14Z",
+  "updated": "2026-10-17T17:47:12Z",
   "claims": [
     {
       "id": "c1",
       "kind": "announcement",
       "text": "Every lobes vLLM lane in the mesh runs official vLLM v0.31.0: the packaged templates default to one pinned v0.31.0 digest, and Spark, spark2, Thor and Orin each serve their hosted lanes on it with re-measured, evidence-backed budgets",
       "origin": "user",
-      "status": "confirmed",
-      "honesty_conditions": [],
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The announcement holds only when every box's in-scope vLLM lanes report vllm 0.31.0 AND the template default (not a per-box override) is what puts them there \u2014 a box still on an override counts as not done",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
-      "instruction": "",
+      "instruction": "per box: docker inspect every running vLLM container -> image digest = the v0.31.0-ubuntu2404 index/arm64 digest and python3 -c 'import vllm;print(vllm.__version__)' = 0.31.0; repo: git grep the old digests in lobes/templates returns nothing",
       "revisions": []
     },
     {
@@ -24,7 +31,14 @@
       "text": "Three vLLM engines are deployed today (live survey 2026-10-17): nightly 8bd082c2 (0.26.1rc1.dev942) on spark2's primary/embed/rerank/hand and Thor's embed/rerank; old nightly 7c5a10e9 (0.23.1rc1.dev672) on the Orin (.env VLLM_NIGHTLY_IMAGE still 7c5a10e9) and in Dockerfile.vllm-gemma4/embed-st/decider bases; v0.31.0-ubuntu2404 (digest 3fb023cc) already serving Thor's worker via a hand-typed override.yml image line. The Spark runs NO vLLM lane (COMPOSE_PROFILES=innereye).",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "The before-state is the live 2026-10-17 survey, re-checked on the day each box is switched (docker ps + image inspect), since the boxes drift",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -36,7 +50,14 @@
       "text": "The shared template pin moves: VLLM_NIGHTLY_IMAGE default changes from the 8bd082c2 digest to one pinned v0.31.0 digest at all 12 literal sites (fleet/env.example:48, fleet/docker-compose.yml:53,442,538,607,822,1464,1769, fleet/docker-compose.embed.yml:83,150,214,278), carried through HAND_IMAGE/WORKER_IMAGE/ASSOCIATE_IMAGE fallbacks",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "All 12 literal sites change together and no compose file keeps the 8bd082c2 default: 'git grep 8bd082c2 lobes/templates' returns nothing after the flip",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -48,7 +69,14 @@
       "text": "The qwen3_coder_thinking tool-parser plugin is made 0.31.0-compatible: lobes/vllm_plugins/qwen3_thinking_tool_parser.py:105 overrides get_structural_tag(self, request, *, reasoning=False) but v0.31.0 parser/abstract_parser.py calls it with strict_level=self.tool_strict_level -> TypeError on every strict tool call to cortex; the override must accept and forward strict_level (or **kwargs), and the plugin's tests (tests/test_vllm_plugin_thinking.py:97,202,216,235 stub the old signature) must exercise the new keyword",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "The plugin fix is proven on 0.31.0, not only in unit tests: a test calls the override with strict_level= and a live strict tool call to cortex on 0.31.0 returns a parsed tool call with no TypeError in the lane log; the fix also keeps working on the nightly until every box has moved",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -72,7 +100,14 @@
       "text": "Baseline the incumbent BEFORE any cutover, per docs/model-switch-playbook.md \u00a71/\u00a77 (an uncontrolled cross-engine comparison is exactly the 2026-07-31 lesson): on each box, benchmark every hosted lane on its current engine (TTFT, decode tok/s via usage.completion_tokens, spec acceptance, KV pool) and file a transcript under docs/evidence/ \u2014 the nightly baseline is unrecoverable afterwards",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "Each box's incumbent baseline transcript is filed under docs/evidence/ BEFORE that box's switch, and addresses member lanes (cortex-spark, cortex-spark2) or the lane directly, never pooled plain cortex; tok/s counts usage.completion_tokens, not SSE chunks",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -84,7 +119,14 @@
       "text": "Every MEASURED budget value that was measured on the nightly is demoted to DECLARED/UNVALIDATED (#108) until re-measured on 0.31.0, then re-promoted with a new docs/evidence transcript: spark-lobe util 0.58 / KV 760,806 / DSpark (spark-lobe.toml:146-181), thor-worker util 0.45 / fp8 KV / DFlash k=12 / 196.6 tok/s (thor-worker.toml:20-121), Thor sm_110 divergences (#105 #109, rerank enforce_eager), embed/rerank/hand on every card",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "No MEASURED value measured on the nightly is still labelled MEASURED once its box runs 0.31.0 without a new 0.31.0 transcript: every such line is either re-measured (new evidence cited) or relabelled DECLARED/UNVALIDATED (#108)",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -96,7 +138,14 @@
       "text": "Tests, goldens and catalog follow the pin: update the digest constants/asserts in tests/test_worker_compose.py:31, test_gemma4_compose.py:33, test_cli_fleet.py:580, test_nightly_migration_doc.py:34, test_gateway_fleet_doc.py:25, test_init.py:360-412 (asserts the digest appears exactly 7 times), test_embed_overlay.py:78; regenerate tests/goldens/template-defaults.env via 'uv run python tests/goldens/regen.py'; docs/vllm-nightly-migration.md and docs/gateway-fleet.md (asserted by tests) cite the new pin",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "The full suite passes with the new pin (uv run pytest -n auto) and 'uv run python tests/goldens/regen.py' leaves no diff; test_init's 'exactly 7' digest count is updated to the new digest, not deleted",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -108,7 +157,14 @@
       "text": "tests/fixtures/upgrade_compat stays frozen: it is a vendored copy of a previous main's scaffold (pins 7c5a10e9 and 26.04-py3) that proves new code still operates an OLD deployment; its README says never hand-edit, and the 2026-10-17 note records it was deliberately not refreshed",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "git diff main -- tests/fixtures/upgrade_compat is empty at merge",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -120,7 +176,14 @@
       "text": "The deployments/ catalog stays truthful: jetson-agx-thor__thor-worker and jetson-agx-orin__orin-embed pin 8bd082c2 in their verbatim compose files; after the move each is either re-captured from its live box (lock digests + VARIATION.md citing a 0.31.0 transcript) or its Measured result demoted to verbatim 'No measured result.' with evidence emptied, so tests/test_variation_catalog.py passes",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "uv run pytest tests/test_variation_catalog.py passes, and each deployments/ entry either cites a 0.31.0 transcript or says verbatim 'No measured result.' with an empty evidence field",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -132,7 +195,14 @@
       "text": "Thor's hand-typed override (~/.lobes/docker-compose.override.yml:23 image: vllm/vllm-openai:v0.31.0-ubuntu2404) is retired once the template default carries 0.31.0, so the box returns to template-driven pinning; until then the deployment diverges from the packaged template in exactly the way the 2026-08-25 lock incident (#214) warns about",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "After the Thor switch, grep image: ~/.lobes/docker-compose.override.yml on the Thor shows no vllm/vllm-openai line; the worker's image comes from VLLM_NIGHTLY_IMAGE/the template default",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -156,7 +226,14 @@
       "text": "Non-vLLM lanes keep their images unchanged: llamacpp-primary (ghcr.io/nvidia-ai-iot/llama_cpp@f7c67c10), Parakeet/whisper STT (FROM scitrera/dgx-spark-vllm:0.16.0-t4, a torch base, not a served vLLM), Chatterbox/ComfyUI (nvidia/cuda:13.0.1), gateway/realtime/bluetts (python:3.12-slim)",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The non-vLLM images' lines are unchanged: git diff main on Dockerfile.{parakeet,whisper-stt,chatterbox,chatterbox-ml,comfyui,gateway,realtime,bluetts} and the llamacpp image line is empty",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -228,7 +305,14 @@
       "text": "Fleet-wide means every box's hosted lanes, rolled out one box at a time with an incumbent baseline + rollback recipe per box (docs/model-switch-playbook.md \u00a79 rollback restores the previous VLLM_NIGHTLY_IMAGE digest); Thor's live validation waits until its current experimental work is finished (issue #310 Thor checkbox) \u2014 the 2026-10-17 survey found no mjolnir/flash-next container running there, only the image",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Boxes move one at a time: a box is switched only after the previous box's acceptance transcript has landed, and each switch has a written rollback (restore the prior VLLM_NIGHTLY_IMAGE value + .env backup); the Thor's switch happens only when no experiment container is running there",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [],
       "links": [],
       "instruction": "",
@@ -436,7 +520,14 @@
       "text": "The temperature-adaptive governor is the graded-band design from ~/odm/telemetry/governor2.sh: CPU quota follows the hottest thermal zone (<84 C -> 16 cpus, <88 -> 12, <91 -> 8, <93.5 -> 4, >=93.5 -> pause, resume <86 C at 4), polling every 3 s, no root; packaged in lobes rather than as a side script, next to the lane-safety host watcher and gateway thermal shed (#304/#308)",
       "origin": "llm",
       "status": "proposed",
-      "honesty_conditions": [],
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Before the graded governor runs on the cortex lane, a deliberate test shows that changing the CPU cap on a RUNNING vLLM container leaves it serving (a request before and after succeeds, no CUDA error in the log); if it fails, the cap is applied another way and that is recorded as a deviation",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [
         {
           "id": "q9",
@@ -467,19 +558,26 @@
       "kind": "requirement",
       "text": "The Spark brings cortex back up on vLLM 0.31.0 for now, serving unsloth/Qwen3.8-27B-NVFP4 \u2014 the same checkpoint and lane as spark2 \u2014 so the mesh has two cortex members again",
       "origin": "user",
-      "status": "confirmed",
-      "honesty_conditions": [],
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "The Spark's cortex is the same lane as spark2's (same checkpoint, served id, quantization, max_model_len 262144), boots on 0.31.0 from the Spark's existing PRIMARY_* knobs, and ComfyUI is stopped first",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
       "hard_questions": [
         {
           "id": "q10",
           "text": "Does ComfyUI (innereye, declared peak 31.42 GiB) drop while the Spark's cortex is live (the 2026-10-06 cortex lane was funded by dropping Gemma, not ComfyUI), or do cortex at util 0.58 (~74 GB) and ComfyUI co-reside on the 128 GB GB10 beside stt/realtime/bluetts?",
-          "resolved": false,
+          "resolved": true,
           "blocking": true,
-          "resolution": ""
+          "resolution": "Either cortex or innereye on the Spark, never both at once (operator, 2026-10-17)"
         }
       ],
       "links": [],
-      "instruction": "",
+      "instruction": "on the Spark: back up ~/.lobes/.env + docker-compose.shape.yml, stop model-gear-comfyui, set PRIMARY_FEASIBLE=true / INNEREYE_FEASIBLE=false and VLLM_NIGHTLY_IMAGE=<0.31.0-ubuntu2404 digest>, un-park vllm-primary, bring it up with lobes-deploy's lobes-compose.sh (--no-deps), then probe cortex-spark",
       "revisions": []
     },
     {
@@ -498,6 +596,113 @@
           "resolution": ""
         }
       ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "On the Spark it is either cortex or innereye (ComfyUI), never both at once: bringing cortex up stops ComfyUI, and bringing ComfyUI back stops cortex",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "audience",
+      "text": "The lobes operator rolling the engine across the four boxes, and every Colleague caller of the Spark/spark2/Thor/Orin lanes (cortex, worker, hand, embedder, reranker, the Orin's gemma2-embed and decider sidecars) whose answers must not change or degrade across the move",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Each named caller's role still answers its correctness probe after the move (cortex known-answer + tool call, embedder ranking, reranker ordering, hand known-answer, worker image input, gemma2-embed per-modality negative controls, decider top-1 agreement)",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "check the exported spec names the operator and the per-role callers",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "after_state",
+      "text": "After: every in-scope vLLM lane on Spark (cortex), spark2 (cortex, embed, rerank, hand), Thor (worker, embed, rerank) and Orin (embed, rerank; gemma2-embed and decider sidecars rebuilt on the new torch base) runs vllm/vllm-openai:v0.31.0-ubuntu2404 from the template default \u2014 no hand-typed image override left on any box \u2014 with each box's budgets re-MEASURED on 0.31.0 and backed by a docs/evidence transcript, the incumbent nightly baselines filed beside them, and the qwen3_coder_thinking plugin serving strict tool calls on 0.31.0",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The after-state is checked per box from the live box (docker inspect digests + vllm.__version__), not inferred from the template",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "on each box: docker inspect every running vLLM container's image digest + vllm.__version__; grep ~/.lobes/docker-compose.override.yml for image: lines",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "why_it_matters",
+      "text": "The nightly is a liability: #309 recorded a device-side assert + Xid 43 on 2 of 3 fresh torch.compile runs on the Thor worker under 0.26.1rc1.dev942, and the fleet today runs THREE engines (8bd082c2, 7c5a10e9, 0.31.0) with no engine version in the mesh fingerprint \u2014 one pinned official release makes the boxes comparable, debuggable and rebuildable",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The #309 numbers cited are the ones in docs/plans/2026-10-17-lane-safety-HANDOFF.md and #309 itself; the spec does not claim 0.31.0 cures the autotune crash (c14)",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "cite #309 and the 2026-10-17 live survey in the spec",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "success_signal",
+      "text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "Each numbered signal is checked and recorded in the delivery summary with its measured value, including any cortex regression below 90% stated as a named cost",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "count per box via docker inspect + the probe suite; compare benchmark transcripts",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "The two torch-only bases move to the fleet pin: Dockerfile.embed-st ARG ST_BASE_IMAGE and Dockerfile.decider ARG DECIDER_BASE_IMAGE default to vllm/vllm-openai:v0.31.0-ubuntu2404 (from 7c5a10e9); and, to keep ONE fleet pin, Dockerfile.decider-vllm moves from plain v0.31.0 (index c1c9f6fd) to the -ubuntu2404 index digest",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The Orin's gemma2-embed sidecar and the decider sidecars rebuild on the new base and pass their existing acceptance probes (EG2 per-modality negative controls; decider top-1 agreement vs bf16) on the Orin; tests/test_embed_overlay.py:78 and tests/test_decider_sidecar_vllm.py:362 assert the new digests",
+          "status": "proposed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
       "links": [],
       "instruction": "",
       "revisions": []
@@ -527,8 +732,8 @@
       "text": "The LiLiCorr DFlash drafter (nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr) size and its KV cost beside a 1M window are unknown; the 2026-08-25 d4 precedent is that a drafter's KV cost can force the window back down",
       "kind": "unknown_nonblocking",
       "claim_id": null,
-      "resolved": false,
-      "resolution": "",
+      "resolved": true,
+      "resolution": "Super VL is deferred to its own session (operator, 2026-10-17: 'New model -> new session'); this drafter unknown moves there",
       "resolution_claim_id": null
     }
   ],
