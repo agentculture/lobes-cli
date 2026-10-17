@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T18:02:00Z",
+  "updated": "2026-10-17T18:31:22Z",
   "claims": [
     {
       "id": "c1",
@@ -1337,6 +1337,28 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "grader-unverified",
+      "what": "t1's agent verified the plugin only against signature-shaped stubs, not the real images, and did not check that Qwen3EngineToolParser inherits get_structural_tag; the main agent closed it post-merge by importing the merged plugin inside vllm 0.31.0 and the 0.26.1rc1.dev942 nightly (guard passes in both; the parent class inherits the method, signatures as expected)",
+      "skipped_check": "load the plugin inside the real vllm images",
+      "refs": [
+        "t1"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t2's refresh rewrites the plugin in place (write_plugin_file force=True) while the logwrap refresh uses temp+os.replace; the agent expected this to be harmless because vLLM reads the plugin only at startup, but did not verify it \u2014 the box procedure (t6) recreates the cortex lane after a refresh, which makes it moot in practice",
+      "skipped_check": "a refresh against a running cortex lane",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": []
