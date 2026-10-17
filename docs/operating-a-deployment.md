@@ -124,6 +124,13 @@ restores the earlier behaviour (table at the end of this section). The Thor is
 code-only during this delivery, so every Thor line here is
 **DECLARED/UNVALIDATED (#108)**.
 
+To bring an existing box (a 0.86 scaffold, often hand-edited) up to these
+protections without re-scaffolding it, follow
+[`runbooks/lane-safety-r1-rollout.md`](runbooks/lane-safety-r1-rollout.md). It
+says which piece goes in `docker-compose.override.yml`, which `lobes doctor`
+lane writes which file, how to prepare now and recreate later, and how to roll
+back.
+
 **Boot hold (#308).** After a host reboot, dockerd restarts containers by
 restart policy and ignores compose `depends_on` (assumption c32, unverified on
 DGX OS and JetPack). Before, every lane raced for unified memory at once, which
