@@ -176,8 +176,16 @@ def test_spark_and_thor_share_every_other_knob() -> None:
         # only card that has DECLARED it (backing its own cortex/innereye
         # exclusive_roles group); thor has no opinion.
         "INNEREYE_DECLARED_PEAK_GIB=31.42",
+        # lane-safety host_env (t9): spark's measured thermal bands (#304) and
+        # `acpitz` zone; thor declares the Jetson zone and a gears-first order
+        # but no bands (unmeasured, #108).
+        "LOBES_THERMAL_ZONES=acpitz",
+        "LOBES_THERMAL_SHED_C=91",
+        "LOBES_THERMAL_RESUME_C=86",
     }
     assert only_in_thor == {
+        "LOBES_BOOT_ORDER=embed,rerank",
+        "LOBES_THERMAL_ZONES=tj-thermal",
         "PRIMARY_KV_CACHE_DTYPE=auto",
         "EMBED_ATTENTION_BACKEND=TRITON_ATTN",
         "RERANK_ATTENTION_BACKEND=TRITON_ATTN",
