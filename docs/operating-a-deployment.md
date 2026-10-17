@@ -166,7 +166,8 @@ counts as a start. Known limit: on Jetson, freed memory can stay out of
 would fit; the start counter is the backstop.
 
 **Cache clear, grant and watcher (#309).** `lobes up`, `serve`, `switch`,
-`stop` and `fleet` clear the page cache around down/up and delete the
+`stop` and `fleet` clear the page cache around down/up (on a detected Spark,
+Thor or Orin; elsewhere the step is skipped silently) and delete the
 start-counter files of the lanes they start on purpose, so deliberate restarts
 never count. The clear needs a passwordless rule. `lobes doctor` reports
 `drop_caches_grant_missing`; the machine CLI's `grant-permissions` installs the

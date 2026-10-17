@@ -110,7 +110,19 @@ hold     = release − host uptime, if positive
   therefore wait when vLLM would fit, or pass when vLLM still refuses. The start
   counter is the backstop (plan risk r4).
 
-## 5. The host watcher
+## 5. The page-cache clear: lifecycle verbs and the host watcher
+
+### Lifecycle verbs
+
+- `lobes up`, `serve`, `switch`, `stop` and `fleet` clear the page cache
+  after a `down` and before an `up` (one clear per down→up pair).
+- The clear is attempted only on a detected Spark, Thor or Orin. On any other
+  card it is skipped silently: no `sudo -n -l` probe, no stderr line. Card
+  detection runs at most once per process.
+- On a supported card with no grant, the verb prints one stderr line and
+  carries on. It never prompts and never fails.
+
+### The host watcher
 
 - Polls `<deployment>/logs/lane-state/*.gated`.
 - On a marker, it runs the machine CLI's `drop-caches` (see

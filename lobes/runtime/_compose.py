@@ -1099,8 +1099,13 @@ def cache_clear_plan_line() -> str:
 def clear_page_cache() -> bool:
     """Clear the page cache when granted; never fails the verb, never prompts.
 
-    Ungranted (or failed) prints ONE stderr line and returns False.
+    Only attempted on a detected Spark/Thor/Orin (the cards with a machine CLI
+    and a drop-caches grant to look for); anywhere else it returns False
+    silently, without probing ``sudo -n -l``. Ungranted (or failed) on a
+    supported card prints ONE stderr line and returns False.
     """
+    if _machine.detected_card() not in _machine.CARD_CLIS:
+        return False
     try:
         result = _machine.drop_caches()
     except Exception as exc:  # the clear must never break a lifecycle verb

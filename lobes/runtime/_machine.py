@@ -13,6 +13,7 @@ reason instead of raising.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -82,12 +83,27 @@ def machine_cli_for(card: str | None) -> str | None:
     return name
 
 
-def _current_cli() -> str | None:
+@functools.lru_cache(maxsize=8)
+def _resolve_card(detect) -> str | None:
+    """``detect().resolved``, memoised per detector object (review-b #10).
+
+    Keyed on the detector itself, so the real ``detect_card`` (nvidia-smi +
+    hostname probes) runs once per process, while a test that swaps the
+    detector gets a fresh answer. A failed detection is ``None``, cached too.
+    """
     try:
-        card = detect_card().resolved
+        return detect().resolved
     except Exception:  # detection must never break the adapter
         return None
-    return machine_cli_for(card)
+
+
+def detected_card(detect=None) -> str | None:
+    """The detected card name, probed at most once per process per detector."""
+    return _resolve_card(detect if detect is not None else detect_card)
+
+
+def _current_cli() -> str | None:
+    return machine_cli_for(detected_card())
 
 
 def _call_cli(cli: str, args: list[str]) -> MachineResult:

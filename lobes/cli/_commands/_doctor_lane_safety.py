@@ -283,10 +283,8 @@ def compile_cache_size_check(deploy_dir: Path) -> dict | None:
 
 
 def _detected_card() -> str | None:
-    try:
-        return _detect.detect_card().resolved
-    except Exception:  # detection must never break doctor
-        return None
+    # per-process cached (review-b #10); never raises
+    return _machine.detected_card(_detect.detect_card)
 
 
 def _benchmark_window_active() -> bool:
