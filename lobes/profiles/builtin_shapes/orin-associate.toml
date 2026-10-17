@@ -62,6 +62,19 @@ summary = "Jetson AGX Orin 64GB associate-lobe (VALIDATED live 2026-09-13 at 1M)
 # work once headroom is found (issue #216), not a decision this task makes.
 hosts = ["associate", "embedder", "reranker"]
 
+# The wrapper's release order after a host reboot (lane-safety LOBES_BOOT_ORDER,
+# docs/contracts/lane-safety-runtime.md section 2). On a reboot dockerd starts
+# every lane at once and ignores compose depends_on, so the associate-first
+# override described below cannot order that boot — this does. The Orin card's
+# default ("multimodal,embed,rerank") would hold associate LAST, i.e. gears
+# first, which is not the order the util 0.70 budget below was measured at
+# (associate-first, docs/evidence/2026-09-13-measure-associate-budget-orin-1m.txt).
+# Shape-level because the order follows the shape's budget, not the card: it
+# wins over any card's LOBES_BOOT_ORDER (shape_render.compose_profile). Names
+# are MG_LOG_NAMEs: associate, then the pooling gears embed and rerank.
+[host_env]
+LOBES_BOOT_ORDER = "associate,embed,rerank"
+
 [overrides.associate]
 # The full associate declaration lives HERE (not on the card) — see the header
 # comment and approved deviation d1. nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-

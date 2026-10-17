@@ -232,8 +232,11 @@ def test_no_other_card_gains_a_host_env_key_under_any_shape(card: str) -> None:
     """
     assert dict(resolve_profile(card).host_env) == {}
     for shape_name in builtin_shape_names():
-        env = shape_env(resolve_shape(shape_name), resolve_profile(card))
-        assert not any(k.startswith("LOBES_") for k in env)
+        shape = resolve_shape(shape_name)
+        env = shape_env(shape, resolve_profile(card))
+        # A key the SHAPE itself declares in its [host_env] (orin-associate's
+        # LOBES_BOOT_ORDER) follows the shape onto every card; nothing else may.
+        assert not any(k.startswith("LOBES_") and k not in shape.host_env for k in env)
 
 
 def test_only_the_base_goldens_carry_no_lobes_key() -> None:
@@ -246,8 +249,14 @@ def test_only_the_base_goldens_carry_no_lobes_key() -> None:
     goldens = [p for p in _GOLDENS_DIR.glob("*.env") if p.stem != "template-defaults"]
     goldens += list((_GOLDENS_DIR / "shapes").glob("*.env"))
     for path in goldens:
+        # A key a shape declares in its own [host_env] follows that shape onto
+        # every card (orin-associate's LOBES_BOOT_ORDER), so it does not count.
+        shape_keys: set[str] = set()
+        if path.parent.name == "shapes":
+            shape_keys = set(resolve_shape(path.stem.split("__")[0]).host_env)
         has_lobes_key = any(
-            line.startswith("LOBES_") for line in path.read_text(encoding="utf-8").splitlines()
+            line.startswith("LOBES_") and line.split("=", 1)[0] not in shape_keys
+            for line in path.read_text(encoding="utf-8").splitlines()
         )
         # t9: spark/thor now declare lane-safety LOBES_* keys too; only base is bare.
         expected = not (path.stem == "base" or path.stem.endswith("__base"))

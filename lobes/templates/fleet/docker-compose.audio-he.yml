@@ -70,8 +70,9 @@ services:
     build:
       dockerfile: Dockerfile.whisper-stt
     # Image CMD (Dockerfile.whisper-stt) respelled; the wrapper entrypoint is
-    # inherited from docker-compose.audio.yml.
-    command: ["python3", "/app/listen_server_whisper.py"]
+    # inherited from docker-compose.audio.yml, and the base image's ENTRYPOINT
+    # (/opt/nvidia/nvidia_entrypoint.sh) is chained first, as in that file.
+    command: ["/opt/nvidia/nvidia_entrypoint.sh", "python3", "/app/listen_server_whisper.py"]
     environment:
       # STT_MODEL: the Whisper checkpoint id, read by listen_server_whisper.py
       # (MODEL_NAME) and by lobes/roles.py's GET /capabilities advertisement

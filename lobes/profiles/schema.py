@@ -400,8 +400,11 @@ def _gpu_access_from_value(name: str, raw: Any) -> str:
     return raw
 
 
-def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
-    """Validate and build a profile's card-level ``host_env`` table.
+def _host_env_from_dict(name: str, raw: Any, kind: str = "profile") -> dict[str, str]:
+    """Validate and build a ``host_env`` table (a card profile's, or a shape's).
+
+    ``kind`` names the declaring file in every error (``"profile"`` or
+    ``"shape"``); the rules are identical for both.
 
     Rejects a non-mapping, a key that is not a valid env-var name, and a
     non-string value — the same loud-not-silent contract
@@ -409,14 +412,14 @@ def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
     """
     if not isinstance(raw, Mapping):
         raise _profile_error(
-            message=f"profile {name!r}: 'host_env' must be a table/mapping",
+            message=f"{kind} {name!r}: 'host_env' must be a table/mapping",
             remediation='declare it as a [host_env] table of KEY = "value" pairs',
         )
     host_env: dict[str, str] = {}
     for key, value in raw.items():
         if not isinstance(key, str) or not _ENV_NAME_RE.fullmatch(key):
             raise _profile_error(
-                message=f"profile {name!r}: host_env key {key!r} is not a valid env-var name",
+                message=f"{kind} {name!r}: host_env key {key!r} is not a valid env-var name",
                 remediation="use a plain env-var name (letters, digits, underscore; "
                 "never starting with a digit)",
             )
@@ -424,7 +427,7 @@ def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
             got = type(value).__name__
             raise _profile_error(
                 message=(
-                    f"profile {name!r}: host_env value for {key!r} must be str, "
+                    f"{kind} {name!r}: host_env value for {key!r} must be str, "
                     f"got {got} ({value!r})"
                 ),
                 remediation=f'quote it — host_env values are written to .env verbatim: {key} = "…"',
@@ -438,7 +441,7 @@ def _host_env_from_dict(name: str, raw: Any) -> dict[str, str]:
         if any(ch in value for ch in ("\n", "\r", "\x00")):
             raise _profile_error(
                 message=(
-                    f"profile {name!r}: host_env value for {key!r} contains a newline "
+                    f"{kind} {name!r}: host_env value for {key!r} contains a newline "
                     f"or NUL — it would corrupt .env, which is line-oriented KEY=VALUE"
                 ),
                 remediation="keep host_env values on a single line; move anything "

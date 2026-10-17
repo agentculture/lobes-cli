@@ -20,7 +20,7 @@ behaviour from before this work.
 | knob | default | off value | read by | meaning |
 |---|---|---|---|---|
 | `LOBES_BOOT_DELAY_S` | `120` | `0` | wrapper | Hold until host uptime reaches this many seconds. |
-| `LOBES_BOOT_ORDER` | empty (per-card `[host_env]`) | empty | wrapper | Comma-separated `MG_LOG_NAME` values, in release order. |
+| `LOBES_BOOT_ORDER` | empty (per-card `[host_env]`; a shape's `[host_env]` wins) | empty | wrapper | Comma-separated `MG_LOG_NAME` values, in release order. |
 | `LOBES_BOOT_STAGGER_S` | `20` | `0` | wrapper | Seconds between consecutive lanes in `LOBES_BOOT_ORDER`. |
 | `LOBES_START_MAX` | `3` | `0` | wrapper | Starts allowed inside the window before the lane holds. |
 | `LOBES_START_WINDOW_S` | `600` | — | wrapper | The start-counter window. |

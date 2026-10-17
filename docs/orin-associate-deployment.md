@@ -149,9 +149,15 @@ and that order is not measured for this budget (approved deviation d4,
 issue #260). Role-targeted starts (`lobes up <role> --apply`) pass `--no-deps`
 and ignore start order, so bring `associate` up before the gears when you use them.
 
-Two keys are **operator-typed** in the deployment's `.env` — they cannot be
-declared by the shape (a shape has no env mechanism) and must not be declared
-by the card (it would leak them onto shapes that drop associate):
+After a host reboot, dockerd restarts every lane at once and ignores
+`depends_on`; there the lane wrapper's boot hold sets the order instead. The
+shape's own `[host_env]` renders `LOBES_BOOT_ORDER=associate,embed,rerank`,
+which replaces the Orin card's senses-first default, so associate is released
+first there too.
+
+Two keys are **operator-typed** in the deployment's `.env`. The shape does not
+declare them (its `[host_env]` carries only `LOBES_BOOT_ORDER`), and the card
+must not (it would leak them onto shapes that drop associate):
 
 ```bash
 ASSOCIATE_IMAGE=vllm/vllm-openai:v0.27.1
