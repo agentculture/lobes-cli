@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T18:31:22Z",
+  "updated": "2026-10-17T18:55:03Z",
   "claims": [
     {
       "id": "c1",
@@ -1356,6 +1356,28 @@
       "skipped_check": "a refresh against a running cortex lane",
       "refs": [
         "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "control-absent",
+      "what": "t4's governor loop and SIGINT/SIGTERM path (run_forever) is pragma: no cover and untested; cleanup() is tested directly and a real --once dry run against model-gear-stt on the Spark read the live container + 67.0 C and changed nothing, but the signal-driven exit has not run for real \u2014 t12 exercises it on the cortex lane",
+      "skipped_check": "a real SIGTERM against an --apply loop",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "assumption-for-measurement",
+      "what": "t4's agent treats any docker inspect failure (including a daemon error) as 'container gone' and ends the loop, broader than governor2.sh's exists-then-exited check; behaviour chosen, not measured against a daemon hiccup",
+      "skipped_check": "docker daemon error handling",
+      "refs": [
+        "t4"
       ],
       "origin": "llm",
       "status": "proposed"
