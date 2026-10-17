@@ -24,3 +24,5 @@ so these files ARE what an old scaffold's `docker-compose.yml`/`.env` contain
 Do not hand-edit these files; re-vendor from a later `main` commit if the
 fixture ever needs to move forward (the invariant under test is that the
 CURRENT code still operates whatever these currently say).
+
+Note (2026-10-17, lane-safety change): these fixtures deliberately pin the OLD deployed tree and were NOT refreshed; `test_upgrade_compat.py` still passes against the new templates, which is the invariant under test.
