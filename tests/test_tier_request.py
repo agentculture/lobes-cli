@@ -396,7 +396,7 @@ def test_current_returns_seeded_sampler_value() -> None:
     sample = {"swap_used_percent": 12.0, "iowait_percent": 3.0}
     cache = PressureCache(sampler=lambda: dict(sample), interval=1000, start=False)
     try:
-        assert cache.current() == sample
+        assert cache.current() == {**sample, "thermal_c": None}
     finally:
         cache.stop()
 
@@ -415,7 +415,11 @@ def test_current_never_calls_the_sampler_on_the_request_path() -> None:
     cache = PressureCache(sampler=sampler, interval=1000, start=False)
     try:
         for _ in range(2000):
-            assert cache.current() == {"swap_used_percent": 7.0, "iowait_percent": 1.0}
+            assert cache.current() == {
+                "swap_used_percent": 7.0,
+                "iowait_percent": 1.0,
+                "thermal_c": None,
+            }
     finally:
         cache.stop()
     assert calls["n"] == 1  # only the constructor seed, never on .current()
@@ -444,7 +448,11 @@ def test_sampler_failure_seeds_zeros_not_crash() -> None:
 
     cache = PressureCache(sampler=boom, interval=1000, start=False)
     try:
-        assert cache.current() == {"swap_used_percent": 0.0, "iowait_percent": 0.0}
+        assert cache.current() == {
+            "swap_used_percent": 0.0,
+            "iowait_percent": 0.0,
+            "thermal_c": None,
+        }
     finally:
         cache.stop()
 
@@ -467,3 +475,23 @@ def test_background_thread_refreshes_the_cached_value() -> None:
         assert cache.current()["swap_used_percent"] >= 1.0
     finally:
         cache.stop()
+
+
+def test_pressure_cache_carries_thermal_c_and_unknown_is_none() -> None:
+    hot = PressureCache(
+        sampler=lambda: {"swap_used_percent": 1.0, "iowait_percent": 2.0, "thermal_c": 66.2},
+        start=False,
+    )
+    assert hot.current() == {"swap_used_percent": 1.0, "iowait_percent": 2.0, "thermal_c": 66.2}
+    # An old-shape sampler (no key) and a raising sampler both read as unknown, never 0.
+    legacy = PressureCache(sampler=lambda: {"swap_used_percent": 1.0}, start=False)
+    assert legacy.current()["thermal_c"] is None
+
+    def boom() -> dict:
+        raise OSError("x")
+
+    assert PressureCache(sampler=boom, start=False).current() == {
+        "swap_used_percent": 0.0,
+        "iowait_percent": 0.0,
+        "thermal_c": None,
+    }

@@ -23,7 +23,9 @@ can exercise the arithmetic with fixture strings (no live ``/proc`` or timing).
 
 from __future__ import annotations
 
+import os
 import time
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Pure parsers (accept file text as input — testable without /proc)
@@ -129,16 +131,58 @@ _PROC_STAT = "/proc/stat"
 _SAMPLE_INTERVAL_SECONDS = 0.150  # 150 ms between /proc/stat snapshots
 
 
-def sample_pressure() -> dict[str, float]:
+_THERMAL_MIN_C = -40.0
+_THERMAL_MAX_C = 150.0
+
+
+def read_thermal_c(env: "os._Environ[str] | dict[str, str] | None" = None) -> float | None:
+    """Return the hottest plausible temperature (deg C) of the selected zones.
+
+    Zones live under ``${LOBES_SYS_ROOT:-/sys}/class/thermal/thermal_zone*``; only
+    those whose ``type`` is listed in ``LOBES_THERMAL_ZONES`` (comma-separated,
+    whitespace-trimmed) count, and the hottest wins. A zone whose ``temp`` read
+    fails (e.g. ENODATA on the Orin cv0-2 zones) or lands outside -40..150 deg C is
+    skipped. Nothing matching (or the selector unset/empty) returns ``None`` --
+    unknown, never a reason to shed.
+
+    Container access: probed 2026-10-17, model-gear-gateway (uid 10001) on spark
+    and orin reads these zones with no extra mount.
+    """
+    environ = os.environ if env is None else env
+    wanted = {z.strip() for z in environ.get("LOBES_THERMAL_ZONES", "").split(",") if z.strip()}
+    if not wanted:
+        return None
+    root = Path(environ.get("LOBES_SYS_ROOT") or "/sys") / "class" / "thermal"
+    hottest: float | None = None
+    try:
+        zones = sorted(root.glob("thermal_zone*"))
+    except OSError:
+        return None
+    for zone in zones:
+        try:
+            if (zone / "type").read_text().strip() not in wanted:
+                continue
+            temp_c = int((zone / "temp").read_text().strip()) / 1000.0
+        except (OSError, ValueError):
+            continue
+        if not _THERMAL_MIN_C <= temp_c <= _THERMAL_MAX_C:
+            continue
+        if hottest is None or temp_c > hottest:
+            hottest = temp_c
+    return hottest
+
+
+def sample_pressure() -> dict[str, float | None]:
     """Sample host memory pressure and return a snapshot dict.
 
     Reads ``/proc/meminfo`` once for swap metrics and ``/proc/stat`` twice
     (150 ms apart) to compute a meaningful iowait percentage.
 
     Returns:
-        A dict with two float keys:
+        A dict with two float keys plus ``thermal_c`` (float or ``None``):
         - ``"swap_used_percent"``: fraction of swap device in use (0–100).
         - ``"iowait_percent"``: CPU iowait % over the last ~150 ms interval (0–100).
+        - ``"thermal_c"``: hottest selected zone in deg C, ``None`` if unknown.
 
     Raises:
         OSError: if ``/proc/meminfo`` or ``/proc/stat`` cannot be read.
@@ -157,4 +201,5 @@ def sample_pressure() -> dict[str, float]:
     return {
         "swap_used_percent": parse_swap_percent(meminfo_text),
         "iowait_percent": parse_iowait_percent(stat_before, stat_after),
+        "thermal_c": read_thermal_c(),
     }
