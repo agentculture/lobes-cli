@@ -293,3 +293,64 @@ def test_off_value_is_off_the_mount_target() -> None:
     would still capture the cache (the writable layer would not be restored)."""
     assert CACHE_ENV.endswith(":-/cache/vllm}")
     assert "/root/.cache/vllm" != CACHE_TARGET
+
+
+# --- d7: per-lane FlashInfer JIT cache (contract section 6, vllm#62149) -----
+
+FI_ENV = "FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}"
+FI_TARGET = "/cache/flashinfer"
+
+
+def _fi_volume(lane: str) -> str:
+    return f"${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{lane}-flashinfer:{FI_TARGET}"
+
+
+@pytest.mark.parametrize("rel,name,svc", _all_services())
+def test_flashinfer_cache_mount_only_on_vllm_services(rel: str, name: str, svc: dict) -> None:
+    vols = svc.get("volumes") or []
+    has_mount = any(v.endswith(f":{FI_TARGET}") for v in vols)
+    env = svc.get("environment") or []
+    has_env = FI_ENV in env
+    if _is_vllm_service(svc):
+        assert has_mount, f"{name}: vLLM lane without a FlashInfer JIT cache"
+        assert has_env, f"{name}: vLLM lane without a FlashInfer JIT cache"
+        assert _fi_volume(_lane(svc)) in vols
+        # t8's mount is untouched (the Orin's warm compile-cache/embed survives).
+        assert _cache_volume(_lane(svc)) in vols
+    else:
+        assert not has_mount, f"{name}: non-vLLM service has a FlashInfer cache"
+        assert not has_env, f"{name}: non-vLLM service has a FlashInfer cache"
+        assert not any("FLASHINFER_WORKSPACE_BASE" in str(e) for e in env), name
+
+
+def test_clef_vllm_decider_has_the_flashinfer_cache_and_python_decider_does_not() -> None:
+    from lobes.profiles.shape_render import _decider_service_lines
+
+    clef = "\n".join(
+        _decider_service_lines(
+            "general", {"backend": "clef-vllm", "model": "m", "mem_limit": "1g"}, "runtime"
+        )
+    )
+    assert FI_ENV in clef
+    assert "/decider-general-flashinfer:/cache/flashinfer" in clef
+    other = "\n".join(
+        _decider_service_lines(
+            "general", {"backend": "clef", "model": "m", "mem_limit": "1g"}, "runtime"
+        )
+    )
+    assert "FLASHINFER" not in other
+    assert "/cache/flashinfer" not in other
+
+
+def test_rendered_decider_sidecars_carry_the_flashinfer_cache() -> None:
+    for name, svc in _decider_services().items():
+        assert _fi_volume(name) in svc["volumes"], name
+        assert FI_ENV in svc["environment"], name
+
+
+def test_flashinfer_off_value_is_off_the_mount_target() -> None:
+    """FlashInfer appends ``.cache/flashinfer`` to the base, so the off value
+    ``/root`` (the image's home) resolves to the image default
+    ``/root/.cache/flashinfer`` in the writable layer, never under the bind."""
+    assert FI_ENV.endswith(":-/cache/flashinfer}")
+    assert not "/root/.cache/flashinfer".startswith(FI_TARGET)

@@ -532,8 +532,11 @@ resolve), `compose_present` (a deployment is scaffolded), `env_coherence`
 `scaffold_files` (every expected scaffold file is on disk — a partial scaffold
 can serve for hours with `/health` green while one lane is simply absent),
 `profile_staleness` (the deployed `.env` carries the knobs the resolved
-machine profile requires — a pre-#110 `.env` missing its card's validated
-divergences is issue #119's silent-hang incident; a key still carrying the
+machine profile requires, rendered with the deployment's recorded shape —
+`LOBES_SHAPE`, else the lock's `[variation] shape`, else machine-as-brain — so a
+shape's own `[host_env]` values are required, not overrides; a pre-#110
+`.env` missing its card's validated divergences is issue #119's silent-hang
+incident; a key still carrying the
 template default where the profile requires a divergence is named too, while
 a genuine operator override only downgrades to info), `health_reachable`
 (`/health` responds), and `gateway_version_match` (the deployed gateway's own
@@ -1528,6 +1531,92 @@ Orin's `orin-embed` shape (`lobes init --shape orin-embed --profile orin`).
 - `lobes explain roles` — the Colleague role contract
 """
 
+_WATCHER = """\
+# lobes watcher — the host watcher for memory-gated lanes
+
+While a lane waits on the crash-backoff memory gate, `mg-logwrap.sh` keeps a
+marker at `<log dir>/lane-state/<lane>.gated` (JSON: `lane`, `since`,
+`need_kib`, `avail_kib`). On Jetson, memory freed by a crash can stay out of
+`MemAvailable` until the page cache is dropped, so a gated lane may wait for
+memory that a cache clear would hand back. The watcher closes that gap.
+
+## What it does
+
+- Polls `<deployment>/logs/lane-state/*.gated` (every 10 s by default).
+- On a marker it runs the machine CLI's `drop-caches` (or the passwordless
+  sudo fallback), at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (default
+  300). The last attempt is persisted in `<deployment>/.lobes-watcher-state.json`
+  so a restart cannot bypass the rate limit.
+- With no grant it logs `action=skipped:not_granted` and does nothing else.
+- A marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`, or whose lane has no
+  running container, is stale: logged once, never acted on.
+- While any other lane is still booting (docker `health: starting`) the clear
+  is deferred: a drop mid-boot can trip vLLM's memory profiling.
+- Its only docker call is a fixed, read-only `docker ps`; it **never** changes
+  a container.
+- Every action is one stderr line (the unit's journal): lane, need/avail,
+  `cleared` / `skipped:<reason>` / `rate-limited` / `deferred:lane-starting` /
+  `ignored:stale`.
+
+## Verbs
+
+- `lobes watcher run [--once] [--poll S] [--apply]` — the loop (the unit's
+  ExecStart, which passes `--apply`). Without `--apply` it is a dry run: it logs
+  `would-clear` and changes nothing.
+- `lobes watcher install [--system] [--apply]` — WRITE, dry-run by default.
+  The default is a **user** unit (`~/.config/systemd/user/lobes-watcher.service`)
+  and it REQUIRES linger (`sudo loginctl enable-linger $USER`); `--system`
+  writes `/etc/systemd/system/lobes-watcher.service` with `User=<you>` via
+  `sudo -n` (never prompts). Every written file is recorded in
+  `<deployment>/.lobes-watcher.json`.
+- `lobes watcher uninstall [--apply]` — WRITE, dry-run by default; stops and
+  disables the unit and removes exactly the files the manifest lists.
+- `lobes watcher status` — read-only: installed, active, linger, last clear.
+
+## The six lane-safety features (issues #304, #307, #308, #309)
+
+For operators and agents. Each has an off value in the deployment `.env`
+(`lobes/templates/fleet/env.example`, "Lane safety"); the Thor is code-only
+during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
+
+- **Boot hold** (`LOBES_BOOT_DELAY_S`, `_BOOT_ORDER`, `_BOOT_STAGGER_S`;
+  off `LOBES_BOOT_DELAY_S=0`): each lane waits for host uptime, then a
+  per-lane stagger, so a reboot does not race every lane for memory.
+- **Compile cache** (`LOBES_COMPILE_CACHE_DIR`, `LOBES_VLLM_CACHE_ROOT`;
+  off `LOBES_VLLM_CACHE_ROOT=/root/.cache/vllm`): vLLM's compiled kernels
+  persist per lane on a host bind mount. Verified on the nightly and v0.31.0.
+  FlashInfer's JIT cache gets its own bind, `<lane>-flashinfer` at
+  `/cache/flashinfer` (`LOBES_FLASHINFER_WORKSPACE_BASE`; off `/root`).
+- **Crash backoff and memory gate** (`LOBES_START_MAX`, `_START_WINDOW_S`,
+  `LOBES_MEM_GATE`, `_MEM_GATE_TIMEOUT_S`; off `LOBES_START_MAX=0`,
+  `LOBES_MEM_GATE=0`): a lane holds after repeated starts, and waits for free
+  memory before starting. Clear a hold with `lobes up <role> --apply`.
+- **Cache clear, grant, watcher**: lifecycle verbs clear the page cache when a
+  passwordless rule is granted (never prompts, never fails the verb); `lobes
+  watcher install` does it for a gated lane. `lobes doctor` reports
+  `drop_caches_grant_missing`, `watcher_inactive`, `lane_state_writable` (a
+  root-owned `logs/lane-state/` blocks counter resets) and `logwrap_stale`
+  (`lobes doctor --refresh-logwrap --apply`).
+- **Thermal shedding** (`LOBES_THERMAL_ZONES`, `_SHED_C`, `_RESUME_C`; off:
+  empty): a 429 with `X-Lobes-Shed-Signal: thermal`. The compose passes the
+  keys to the gateway (#311); the latch advances on a request or `GET /status`;
+  Spark bands come from #304's batch-job governor, not a serving measurement.
+- **Benchmark window** (`lobes benchmark --lock`, opt-in; plain `benchmark`
+  is read-only and records `locked: false`, reason `not_requested`): locked
+  clocks and `host.conditions` on single-model and `--all-lobes` results only (#312);
+  the GB10 has no supported clock lock, so the Spark runs unlocked. The machine
+  CLI verbs ship in dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and
+  jetson-orin-cli 0.7.1 (`lobes-cli[spark|thor|orin]`).
+
+The live Spark acceptance under sustained load has not run (issue #313).
+Docs: `docs/operating-a-deployment.md`, `docs/measuring-lane-performance.md`,
+`docs/gateway-fleet.md`, `docs/machine-profiles.md`.
+
+This is the first host unit lobes ships. `lobes init` never copies its unit
+template into a deployment dir. Contract: `docs/contracts/lane-safety-runtime.md`
+sections 4 and 5.
+"""
+
 _MESH = """\
 # lobes mesh — the mesh-brain join
 
@@ -1818,4 +1907,6 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("mesh",): _MESH,
     ("mesh-brain",): _MESH,
     ("mesh-join",): _MESH,
+    ("watcher",): _WATCHER,
+    ("lane-safety",): _WATCHER,
 }

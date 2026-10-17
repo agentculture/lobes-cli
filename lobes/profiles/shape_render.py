@@ -372,6 +372,11 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
         # Lane-safety t8: clef-vllm runs vLLM in-process (LLM(...)), so it has a
         # torch_compile_cache to keep. Off value /root/.cache/vllm = writable layer.
         environment.append("VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}")
+        # Lane-safety d7: FlashInfer's JIT cache lives under $HOME, outside
+        # VLLM_CACHE_ROOT (vllm#62149). Off value /root = the writable layer.
+        environment.append(
+            "FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}"
+        )
     lines = [
         f"  {service}:",
         "    build:",
@@ -397,6 +402,10 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
     ]
     if runs_vllm:
         lines.append(f"      - ${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{service}:/cache/vllm")
+        lines.append(
+            f"      - ${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{service}-flashinfer"
+            ":/cache/flashinfer"
+        )
     lines += [
         '    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]',
         # The image ENTRYPOINT (Dockerfile.decider / .decider-vllm), respelled.

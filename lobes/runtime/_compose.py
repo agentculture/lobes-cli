@@ -9,11 +9,14 @@ shell) — the bandit ``B404``/``B603`` skips in ``pyproject.toml`` cover them.
 from __future__ import annotations
 
 import os
+import re
 import subprocess  # fixed argv lists only, never shell=True
+import sys
 from importlib.resources import files
 from pathlib import Path
 
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
+from lobes.runtime import _env, _machine
 
 CONTAINER = "model-gear-vllm"
 COMPOSE_FILE = "docker-compose.yml"
@@ -327,6 +330,10 @@ def default_deployment_dir() -> Path:
     return Path.home() / ".lobes"
 
 
+#: Lane-safety state dir under the durable-log dir (contract sections 3-4).
+LANE_STATE_DIRNAME = "lane-state"
+
+
 def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
     """Host directory holding the per-boot vLLM logs that ``mg-logwrap`` writes.
 
@@ -343,19 +350,135 @@ def durable_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None
 
 
 def ensure_log_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
-    """Create the durable-log dir before ``docker compose up``.
+    """Create the durable-log dir and its ``lane-state/`` before ``docker compose up``.
 
     The compose bind-mounts this host dir into each vLLM container; if it doesn't
     exist when compose runs, Docker creates it **root-owned**. Creating it here (as
-    the invoking user) keeps the logs user-readable. Best-effort — returns the dir
-    even if mkdir fails (the wrapper falls back to plain exec, never blocking serve).
+    the invoking user) keeps the logs user-readable.
+
+    ``lane-state/`` (the start counters and gate markers, lane-safety contract
+    sections 3-4) is created too (review-b #1): left to the first root container
+    that writes a counter, it ends up root 0755 and the operator's ``lobes up
+    <role> --apply`` can no longer delete ``<lane>.starts``. A newly created
+    ``lane-state/`` is made group-writable (0775); under ``sudo`` every dir this
+    call creates is chowned to ``SUDO_UID``/``SUDO_GID``, as
+    :func:`ensure_compile_cache_dirs` does. An existing dir is never touched.
+    Best-effort — returns the log dir even if mkdir fails (the wrapper falls back
+    to plain exec, never blocking serve).
     """
     d = durable_log_dir(deploy_dir, configured)
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        pass
+    state = d / LANE_STATE_DIRNAME
+    owner = _sudo_owner()
+    for path, mode in ((d, None), (state, 0o775)):
+        if path.exists():
+            continue
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if mode is not None:
+                os.chmod(path, mode)
+        except OSError:
+            break
+        if owner is not None:
+            try:
+                os.chown(path, *owner)
+            except OSError:
+                pass
     return d
+
+
+#: Lane-safety compile cache (contract ``docs/contracts/lane-safety-runtime.md``
+#: section 6): host dir holding two subdirectories per vLLM lane, bind-mounted
+#: at fixed container paths — ``<lane>`` at ``/cache/vllm`` (t8) and
+#: ``<lane>-flashinfer`` at ``/cache/flashinfer`` (d7, FlashInfer's JIT cache).
+COMPILE_CACHE_ENV = "LOBES_COMPILE_CACHE_DIR"
+COMPILE_CACHE_DIRNAME = "compile-cache"
+_COMPILE_CACHE_MOUNT_RE = re.compile(
+    r"\$\{" + COMPILE_CACHE_ENV + r":-[^}]*\}/([A-Za-z0-9_.-]+):/cache/(?:vllm|flashinfer)\b"
+)
+
+
+def compile_cache_dir(deploy_dir: os.PathLike | str, configured: str | None = None) -> Path:
+    """Host compile-cache root, mirroring compose's ``${LOBES_COMPILE_CACHE_DIR:-./compile-cache}``.
+
+    ``configured`` defaults to the deployment ``.env``'s value; a relative path
+    resolves against the deployment dir (where compose runs).
+    """
+    base = Path(deploy_dir).expanduser()
+    if configured is None:
+        configured = _env.read_env(base / ENV_FILE, COMPILE_CACHE_ENV) or None
+    if configured:
+        p = Path(configured).expanduser()
+        return p if p.is_absolute() else (base / p)
+    return base / COMPILE_CACHE_DIRNAME
+
+
+def compile_cache_lanes(deploy_dir: os.PathLike | str) -> list[str]:
+    """Per-lane subdirectory names every scaffolded compose file mounts.
+
+    Scans every ``docker-compose*.yml`` in the deployment (base, overlays,
+    generated shape override, operator override) for the
+    ``${LOBES_COMPILE_CACHE_DIR:-...}/<lane>:/cache/vllm`` and
+    ``.../<lane>-flashinfer:/cache/flashinfer`` binds. Creating a
+    directory for an overlay lane that never runs is harmless; NOT creating
+    one lets Docker create it root-owned on first mount.
+    """
+    lanes: set[str] = set()
+    for path in sorted(Path(deploy_dir).expanduser().glob("docker-compose*.yml")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            lanes.update(_COMPILE_CACHE_MOUNT_RE.findall(line))
+    return sorted(lanes)
+
+
+def _sudo_owner() -> tuple[int, int] | None:
+    """``(uid, gid)`` of the user behind ``sudo`` when running as root, else ``None``."""
+    try:
+        if os.geteuid() != 0:
+            return None
+        uid = int(os.environ["SUDO_UID"])
+        gid = int(os.environ.get("SUDO_GID", uid))
+    except (AttributeError, KeyError, ValueError):
+        return None
+    return uid, gid
+
+
+def ensure_compile_cache_dirs(
+    deploy_dir: os.PathLike | str, *, dry_run: bool = False
+) -> list[Path]:
+    """Create the compile-cache root + one dir per mounted bind, owned by the invoking user.
+
+    Must run before any container mounts them: a bind source Docker has to
+    create itself is root-owned, and wiping a lane's cache would then need
+    sudo (contract section 6). Running as the user needs no chown; under
+    ``sudo`` the created dirs are chowned to ``SUDO_UID``/``SUDO_GID``. Only
+    ABSENT dirs are created (never touches an existing one). Returns the dirs
+    created — or, with ``dry_run``, the dirs that would be. Best-effort: a
+    mkdir failure is skipped, never raised.
+    """
+    root = compile_cache_dir(deploy_dir)
+    wanted = [root, *(root / lane for lane in compile_cache_lanes(deploy_dir))]
+    missing = [d for d in wanted if not d.exists()]
+    if dry_run:
+        return missing
+    owner = _sudo_owner()
+    created: list[Path] = []
+    for d in missing:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            continue
+        created.append(d)
+        if owner is not None:
+            try:
+                os.chown(d, *owner)
+            except OSError:
+                pass
+    return created
 
 
 def resolve_deployment_dir(explicit: os.PathLike | str | None) -> Path:
@@ -985,8 +1108,454 @@ def _probe(argv: list[str], *, timeout: int = 10):
         return None
 
 
+CACHE_CLEAR_PLAN_LINE = "clear the page cache (when the drop-caches grant is present)"
+
+# One clear per down->up pair (``switch``): a clear after ``down`` is consumed by
+# the next ``up`` instead of clearing twice. Process-local; reset by every ``up``.
+_cleared_after_down = False
+
+
+def cache_clear_plan_line() -> str:
+    """The dry-run plan text for the page-cache clear step (lifecycle verbs)."""
+    return CACHE_CLEAR_PLAN_LINE
+
+
+#: ``auto`` (default: clear on a detected Spark/Thor/Orin, skip silently
+#: elsewhere) | ``always`` (attempt on any card) | ``never`` (skip everywhere).
+PAGE_CACHE_CLEAR_ENV = "LOBES_PAGE_CACHE_CLEAR"
+PAGE_CACHE_CLEAR_MODES = ("auto", "always", "never")
+
+
+def page_cache_clear_mode(deploy_dir: os.PathLike | str | None = None) -> str:
+    """``LOBES_PAGE_CACHE_CLEAR`` from the process env, then the deployment ``.env``.
+
+    Empty or unrecognised values mean ``auto`` (review2-b #5).
+    """
+    raw = os.environ.get(PAGE_CACHE_CLEAR_ENV, "").strip()
+    if not raw and deploy_dir is not None:
+        raw = (_env.read_env(Path(deploy_dir) / ENV_FILE, PAGE_CACHE_CLEAR_ENV) or "").strip()
+    mode = raw.lower()
+    return mode if mode in PAGE_CACHE_CLEAR_MODES else "auto"
+
+
+def _clear_wanted(deploy_dir: os.PathLike | str | None, mode: str | None = None) -> bool:
+    """Whether the clear is attempted; ``mode`` skips re-reading it (review3 #7)."""
+    if mode is None:
+        mode = page_cache_clear_mode(deploy_dir)
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    return _machine.detected_card() in _machine.CARD_CLIS
+
+
+def clear_page_cache(
+    deploy_dir: os.PathLike | str | None = None, *, mode: str | None = None
+) -> bool:
+    """Clear the page cache when granted; never fails the verb, never prompts.
+
+    ``LOBES_PAGE_CACHE_CLEAR`` decides where it is attempted: ``auto`` (the
+    default) only on a detected Spark/Thor/Orin (the cards with a machine CLI
+    and a drop-caches grant to look for) and anywhere else returns False
+    silently, without probing ``sudo -n -l``; ``always`` on any card (the
+    machine CLI if present, else the ``sudo -n`` fallback); ``never`` nowhere.
+    Ungranted (or failed) when attempted prints ONE stderr line and returns
+    False. A caller that already read the mode passes it as ``mode``.
+    """
+    if not _clear_wanted(deploy_dir, mode):
+        return False
+    try:
+        result = _machine.drop_caches()
+    except Exception as exc:  # the clear must never break a lifecycle verb
+        result = _machine.MachineResult(False, f"error: {exc}")
+    if result.ok:
+        return True
+    print(
+        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) - {_clear_hint()}",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _clear_hint() -> str:
+    """How to enable the clear: the machine CLI only when it is ON PATH (review3 #3).
+
+    Without it the adapter used (or would use) the ``sudo -n`` fallback, so the
+    hint names the sysctl sudoers rule, plus the extra that installs the CLI
+    when the card has one.
+    """
+    card = _machine.detected_card()
+    cli = _machine.machine_cli_for(card)
+    if cli is not None:
+        return f"run '{cli} grant-permissions' to enable it"
+    hint = "add a passwordless sudo rule for '/usr/sbin/sysctl -w vm.drop_caches=3'"
+    extra = _machine.CARD_CLIS.get(card or "")
+    if extra is not None:
+        hint += f" (or install the machine CLI: uv pip install 'lobes-cli[{extra}]')"
+    return hint + f" or set {PAGE_CACHE_CLEAR_ENV}=never"
+
+
+#: Docker's compose project label: every container compose creates carries it,
+#: whatever its ``container_name`` (review2-b #1: the embed overlay's
+#: ``embed-*`` vLLM lanes are not named ``model-gear-*`` but run the gate too).
+COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+COMPOSE_PROJECT_ENV = "COMPOSE_PROJECT_NAME"
+
+
+def _normalize_project_name(raw: str) -> str:
+    """docker compose's normalisation: lowercase, keep ``[a-z0-9_-]`` only."""
+    return re.sub(r"[^a-z0-9_-]", "", raw.lower()).lstrip("-_")
+
+
+_INTERP_RE = re.compile(
+    r"\$(?:(\$)|\{([A-Za-z_]\w*)(?:(:?[-?+])([^}]*))?\}|([A-Za-z_]\w*))", re.ASCII
+)
+
+
+def _resolve_ref(op: str | None, value: str | None, default: str | None) -> str | None:
+    """One ``${VAR…}`` reference: its value, or ``None`` when it cannot be resolved."""
+    if op is None:
+        return value
+    if op == ":-":
+        return value or default
+    if op == "-":
+        return default if value is None else value
+    return None  # ``?`` / ``+`` forms: not worth guessing here
+
+
+def _interpolate(raw: str, lookup) -> str | None:
+    """Resolve compose ``$VAR`` / ``${VAR}`` / ``${VAR:-d}`` / ``${VAR-d}`` in *raw*.
+
+    ``lookup(name)`` returns the value or ``None`` when unset. ``None`` when a
+    reference cannot be resolved (an unset bare ``${VAR}``, any ``?`` form, an
+    unknown operator): the caller then ignores the value rather than guessing.
+    """
+    misses: list[str] = []
+
+    def sub(m: re.Match) -> str:
+        escaped, braced, op, default, bare = m.groups()
+        if escaped:
+            return "$"
+        resolved = _resolve_ref(op, lookup(braced or bare), default)
+        if resolved is None:
+            misses.append(m.group(0))
+            return ""
+        return resolved
+
+    out = _INTERP_RE.sub(sub, raw)
+    return None if misses else out
+
+
+def _env_lookup(deploy_dir: os.PathLike | str):
+    """A ``name -> value | None`` lookup: process env first, then the deployment ``.env``."""
+    dotenv: dict[str, str] | None = None
+
+    def lookup(name: str) -> str | None:
+        nonlocal dotenv
+        if name in os.environ:
+            return os.environ[name]
+        if dotenv is None:
+            dotenv = _env.read_env_file(Path(deploy_dir) / ENV_FILE)
+        return dotenv.get(name)
+
+    return lookup
+
+
+def _top_level_name(deploy_dir: os.PathLike | str) -> str | None:
+    """The compose chain's top-level ``name:`` (last file wins), interpolated.
+
+    Quotes and a trailing comment are stripped; an unresolvable value is
+    ignored (``None``), silently (review3 #2).
+    """
+    try:
+        files = [a for a in _compose_files(deploy_dir) if a != "-f"] or [COMPOSE_FILE]
+    except OSError:
+        files = [COMPOSE_FILE]
+    found: str | None = None
+    for name in files:
+        try:
+            text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        m = re.search(r"^name:(.*)$", text, re.M)
+        if m:
+            found = m.group(1)
+    if found is None:
+        return None
+    value = found.strip()
+    if value[:1] in ("'", '"'):
+        quote = value[0]
+        end = value.find(quote, 1)
+        value = value[1:end] if end > 0 else value[1:]
+    else:
+        value = re.split(r"\s#", value, maxsplit=1)[0].strip()
+    resolved = _interpolate(value, _env_lookup(deploy_dir))
+    return resolved.strip() if resolved and resolved.strip() else None
+
+
+def compose_project_name(deploy_dir: os.PathLike | str) -> str:
+    """The compose project a deployment's containers carry, resolved as compose does.
+
+    lobes never passes ``-p``, so the order is: ``COMPOSE_PROJECT_NAME`` in
+    this process's env, then in the deployment ``.env``, then a top-level
+    ``name:`` in the compose chain (the last file that sets one, with
+    ``${VAR}`` references resolved — review3 #2), then the deployment dir's
+    basename — all normalised (``~/.lobes`` -> ``lobes``, the project every
+    live box runs).
+    """
+    raw = os.environ.get(COMPOSE_PROJECT_ENV, "").strip()
+    if not raw:
+        raw = (_env.read_env(Path(deploy_dir) / ENV_FILE, COMPOSE_PROJECT_ENV) or "").strip()
+    if not raw:
+        raw = _top_level_name(deploy_dir) or ""
+    if not raw:
+        raw = os.path.basename(os.path.abspath(deploy_dir))  # compose: Abs, no symlink resolve
+    return _normalize_project_name(raw)
+
+
+def compose_project_candidates(deploy_dir: os.PathLike | str) -> frozenset[str]:
+    """Every project name a deployment's containers may carry, normalised (review3 #1).
+
+    lobes cannot know which cwd compose saw: ``subprocess(cwd=...)`` hands it a
+    PHYSICAL cwd (symlinks resolved), while an operator who runs ``cd`` into
+    ``~/.lobes`` gives it the link name. With ``~/.lobes -> /data/lobes-prod``
+    one guess makes the CLI, the watcher and compose disagree and lane health
+    silently empty. So lane health matches the set: ``COMPOSE_PROJECT_NAME``
+    (process env, then ``.env``), the interpolated top-level ``name:``, and the
+    basename of both the absolute and the resolved deployment path. Empty
+    values are dropped.
+    """
+    raw = [
+        os.environ.get(COMPOSE_PROJECT_ENV, ""),
+        _env.read_env(Path(deploy_dir) / ENV_FILE, COMPOSE_PROJECT_ENV) or "",
+        _top_level_name(deploy_dir) or "",
+        os.path.basename(os.path.abspath(deploy_dir)),
+        os.path.basename(os.path.realpath(deploy_dir)),
+    ]
+    return frozenset(n for n in (_normalize_project_name(r.strip()) for r in raw) if n)
+
+
+#: The ONE docker call the lane-health read makes (review-b #3): fixed shape,
+#: read-only (``docker ps`` lists, never changes), shared with the host
+#: watcher. It lists every container that carries a compose project label and
+#: prints that label, so the caller filters rows against the deployment's
+#: :func:`compose_project_candidates` (review3 #1) — not one guessed name, and
+#: not a container-name prefix (review2-b #1).
+LANE_HEALTH_ARGV = [
+    "docker",
+    "ps",
+    "--filter",
+    f"label={COMPOSE_PROJECT_LABEL}",
+    "--format",
+    f'{{{{.Label "{COMPOSE_PROJECT_LABEL}"}}}}\t{{{{.Label "com.docker.compose.service"}}}}'
+    "\t{{.Names}}\t{{.Status}}",
+]
+
+
+def lane_health_argv(_deploy_dir: os.PathLike | str | None = None) -> list[str]:
+    """A copy of :data:`LANE_HEALTH_ARGV` (the argv no longer depends on the deployment)."""
+    return list(LANE_HEALTH_ARGV)
+
+
+def lane_health(
+    deploy_dir: os.PathLike | str, candidates: frozenset[str] | None = None
+) -> dict[str, str] | None:
+    """The project's running lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
+
+    ``"starting"`` is docker's ``health: starting`` (inside the healthcheck's
+    start period, not yet healthy) — the window where a page-cache drop can
+    trip vLLM's memory profiling on unified memory. Every other running state
+    (healthy, unhealthy, no healthcheck) is ``"running"``. A row is kept only
+    when its project label is one of ``candidates`` (default:
+    :func:`compose_project_candidates`; the watcher passes a cached set). A
+    container with no compose service label is keyed by its container name.
+    ``None`` when docker cannot be read (absent, no permission, error).
+    Read-only: runs exactly :data:`LANE_HEALTH_ARGV`.
+    """
+    result = _probe(lane_health_argv())
+    if result is None or getattr(result, "returncode", 1) != 0:
+        return None
+    if candidates is None:
+        candidates = compose_project_candidates(deploy_dir)
+    try:
+        mapping = _service_log_names(deploy_dir, _compose_files(deploy_dir))
+    except OSError:
+        mapping = {}
+    health: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 4 or parts[0].strip() not in candidates:
+            continue
+        service, name, status = parts[1].strip(), parts[2].strip(), parts[3]
+        key = mapping.get(service, service) if service else name
+        if not key:
+            continue
+        health[key] = "starting" if "health: starting" in status else "running"
+    return health
+
+
+def marker_lanes(state: Path, suffix: str) -> set[str]:
+    """Lane names with a ``<lane><suffix>`` marker in a ``lane-state/`` dir."""
+    try:
+        return {p.name[: -len(suffix)] for p in Path(state).glob(f"*{suffix}")}
+    except OSError:
+        return set()
+
+
+def lane_state_dir(deploy_dir: os.PathLike | str) -> Path:
+    """``<durable log dir>/lane-state`` for a deployment — the ONE resolver (review3 #5).
+
+    The log dir follows ``MODEL_GEAR_LOG_DIR`` in the deployment ``.env``
+    (:func:`durable_log_dir`). The lifecycle verbs, the start-counter reset,
+    the host watcher and ``lobes doctor`` all call this.
+    """
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    return durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+
+
+def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
+    return marker_lanes(lane_state_dir(deploy_dir), ".gated")
+
+
+def held_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.held`` marker (review2-b #2).
+
+    The wrapper keeps it for the boot hold/stagger and the start-counter hold:
+    the lane is held before ``exec`` (no GPU) though docker says ``starting``.
+    """
+    return marker_lanes(lane_state_dir(deploy_dir), ".held")
+
+
+def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str]:
+    """Lanes docker reports mid-boot, minus ``exclude`` (gated/held lanes: not booting)."""
+    if not health:
+        return []
+    return sorted(k for k, v in health.items() if v == "starting" and k not in exclude)
+
+
+def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
+    """The lifecycle clear, skipped while another lane is mid-boot (review-b #3).
+
+    A gated or held lane shows ``health: starting`` too (it is held before
+    ``exec``), so gated (``.gated``) and held (``.held``, review2-b #2) lanes
+    never defer the clear. Docker unreadable: clear as before.
+    """
+    mode = page_cache_clear_mode(deploy_dir)  # read once, passed down (review3 #7)
+    if not _clear_wanted(deploy_dir, mode):
+        return False  # clear_page_cache would skip anyway; don't run docker ps
+    state = lane_state_dir(deploy_dir)
+    idle = marker_lanes(state, ".gated") | marker_lanes(state, ".held")
+    booting = lanes_starting(lane_health(deploy_dir), idle)
+    if booting:
+        print(
+            "lobes: page-cache clear deferred - lane(s) still starting: "
+            f"{', '.join(booting)} (a drop mid-boot can trip vLLM's memory profiling)",
+            file=sys.stderr,
+        )
+        return False
+    return clear_page_cache(deploy_dir, mode=mode)
+
+
+def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:
+    """compose service name -> ``MG_LOG_NAME`` (text scan of the compose files)."""
+    names = [a for a in compose_files if a != "-f"] or [COMPOSE_FILE]
+    mapping: dict[str, str] = {}
+    for name in dict.fromkeys(names):
+        try:
+            text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        service = None
+        for line in text.splitlines():
+            m = re.match(r"^ {2}([A-Za-z0-9_.-]+):\s*$", line)
+            if m:
+                service = m.group(1)
+                continue
+            m = re.search(r"MG_LOG_NAME=([A-Za-z0-9_.-]+)", line)
+            if m and service:
+                mapping[service] = m.group(1)
+    return mapping
+
+
+def reset_start_counters(
+    deploy_dir: os.PathLike | str,
+    services: list[str] | None = None,
+    compose_files: list[str] | None = None,
+) -> list[str]:
+    """Delete the crash-backoff counter files of lanes about to start on purpose.
+
+    ``services=None`` means the whole project (every ``*.starts``). Missing
+    dir/file is fine. Returns the deleted file names.
+    """
+    state = lane_state_dir(deploy_dir)
+    if services is None:
+        targets = sorted(state.glob("*.starts"))
+    else:
+        mapping = _service_log_names(
+            deploy_dir, compose_files if compose_files is not None else _compose_files(deploy_dir)
+        )
+        wanted: set[str] = set()
+        for svc in services:
+            wanted.add(mapping.get(svc, svc))
+        targets = [state / f"{n}.starts" for n in sorted(wanted)]
+    removed = []
+    failed: list[tuple[Path, OSError]] = []
+    for t in targets:
+        try:
+            t.unlink()
+            removed.append(t.name)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            failed.append((t, exc))
+    if failed:
+        # Never silent (review-b #1): a counter the operator cannot delete keeps
+        # the lane held while the verb reports success.
+        names = ", ".join(t.name for t, _ in failed)
+        reason = failed[0][1].strerror or failed[0][1].__class__.__name__
+        files = " ".join(str(t) for t, _ in failed)
+        print(
+            f"lobes: could not reset the start counter ({names}) in {state} ({reason})"
+            f" - the lane may stay held; run 'sudo rm {files}' or see 'lobes doctor'"
+            " (lane_state_writable)",
+            file=sys.stderr,
+        )
+    return removed
+
+
+def prepare_bind_sources(deploy_dir: os.PathLike | str) -> None:
+    """Create every host bind source a starting lane writes into, as the operator.
+
+    The durable-log dir + ``lane-state/`` (:func:`ensure_log_dir`) and the
+    compile-cache dirs (:func:`ensure_compile_cache_dirs`). Called from the
+    pre-start chokepoint, so EVERY lifecycle path that starts containers
+    (``serve``, ``fleet up``, ``up``, ``switch``, the role swap) gets it, and
+    only under ``--apply`` (review-b #7). Best-effort: never raises.
+    """
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    ensure_log_dir(deploy_dir, configured)
+    ensure_compile_cache_dirs(deploy_dir)
+
+
+def _before_up(deploy_dir, services: list[str] | None, compose_files: list[str] | None = None):
+    global _cleared_after_down
+    prepare_bind_sources(deploy_dir)
+    if _cleared_after_down:
+        _cleared_after_down = False  # the preceding down already cleared
+    else:
+        _guarded_clear(deploy_dir)
+    reset_start_counters(deploy_dir, services, compose_files)
+
+
 def compose_down(deploy_dir: os.PathLike | str):
-    return _run(["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir))
+    global _cleared_after_down
+    result = _run(
+        ["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir)
+    )
+    if getattr(result, "returncode", 1) == 0:
+        _cleared_after_down = _guarded_clear(deploy_dir)
+    return result
 
 
 def compose_up_detached(deploy_dir: os.PathLike | str):
@@ -998,7 +1567,11 @@ def compose_up_detached(deploy_dir: os.PathLike | str):
     and ``lobes serve --apply`` on a shape deployment booted the dropped
     lobe). A plain deployment resolves ``[]``, keeping the bare argv
     byte-identical to the pre-#137 behaviour.
+
+    Lifecycle chokepoint (t11): clears the page cache (when granted) and the
+    crash-backoff start counters before starting.
     """
+    _before_up(deploy_dir, None)
     return _run(
         ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d"], cwd=str(deploy_dir)
     )
@@ -1010,6 +1583,7 @@ def compose_up_build(deploy_dir: os.PathLike | str):
     on a re-run; first run builds either way). When the ``--audio`` overlay is
     scaffolded, the audio services (built from ``Dockerfile.realtime`` /
     ``Dockerfile.parakeet``) are layered in via ``-f docker-compose.audio.yml``."""
+    _before_up(deploy_dir, None)
     return _run(
         ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d", "--build"],
         cwd=str(deploy_dir),
@@ -1062,8 +1636,30 @@ def compose_service_argv(
 
 
 def run_compose(deploy_dir: os.PathLike | str, argv: list[str]):
-    """Run a prebuilt ``docker compose ...`` argv in the deployment dir (t7)."""
-    return _run(argv, cwd=str(deploy_dir))
+    """Run a prebuilt ``docker compose ...`` argv in the deployment dir (t7).
+
+    An ``up`` argv gets the same pre-start chokepoint as the whole-project
+    helpers (page-cache clear + start-counter reset for the targeted services);
+    a ``down`` argv clears the cache after teardown.
+    """
+    global _cleared_after_down
+    cmd = list(argv[2:])
+    files: list[str] = []
+    i = 0
+    while i < len(cmd) and cmd[i].startswith("-"):
+        if cmd[i] == "-f" and i + 1 < len(cmd):
+            files += ["-f", cmd[i + 1]]
+            i += 2
+        else:
+            i += 1
+    sub = cmd[i] if i < len(cmd) else ""
+    if sub == "up":
+        rest = [a for a in cmd[i + 1 :] if not a.startswith("-")]
+        _before_up(deploy_dir, rest or None, files or None)
+    result = _run(argv, cwd=str(deploy_dir))
+    if sub == "down" and getattr(result, "returncode", 1) == 0:
+        _cleared_after_down = _guarded_clear(deploy_dir)
+    return result
 
 
 def docker_available() -> bool:

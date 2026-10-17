@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.88.0] - 2026-10-17
+
+### Added
+
+- `LOBES_PAGE_CACHE_CLEAR` (`auto` | `always` | `never`): `auto` clears the page cache around lifecycle verbs only on detected Spark/Thor/Orin cards; `always` tries the `sudo -n` fallback on any card.
+- The wrapper writes a `lane-state/<lane>.held` marker during the boot hold and the crash-backoff hold, so a held lane (which uses no GPU) never defers another lane's page-cache clear.
+- Crash backoff in mg-logwrap (#309): a per-lane start counter holds a lane after LOBES_START_MAX (3) starts inside LOBES_START_WINDOW_S (600 s), and a memory gate waits until MemAvailable covers the lane's --gpu-memory-utilization share before starting (LOBES_MEM_GATE, timeout LOBES_MEM_GATE_TIMEOUT_S, exit 75), writing a gate marker under logs/lane-state/
+- Page-cache clear around lifecycle verbs: compose down/up (serve, stop, switch, up, fleet) run the machine CLI's drop-caches when the single NOPASSWD sysctl rule is granted, never prompting, only on a detected Spark/Thor/Orin, and never while another lane is docker health: starting; deliberate starts reset the lane's start counter, and a counter the operator cannot delete is reported on stderr instead of silently ignored
+- Lifecycle verbs that start lanes create logs/lane-state/ (group-writable) and the compile-cache dirs as the operator before compose runs, so Docker never creates them root-owned
+- lobes status --pressure reads LOBES_THERMAL_ZONES / _SHED_C / _RESUME_C from the deployment .env (process env wins)
+- lobes watcher install|uninstall|status|run: an opt-in host watcher (user unit with linger, or --system) that clears the page cache when a lane is held in the memory gate, rate-limited by LOBES_WATCHER_MIN_INTERVAL_S; `watcher run` is dry-run unless --apply (the installed unit passes --apply); a .gated marker older than 2x LOBES_MEM_GATE_TIMEOUT_S, or whose lane has no running container, is logged once and ignored; its only docker call is a read-only docker ps
+- Thermal shedding (#304): a fourth pressure signal reads the card's LOBES_THERMAL_ZONES and sheds full tiers with 429 above LOBES_THERMAL_SHED_C (hysteresis to LOBES_THERMAL_RESUME_C); hand and decider are always served; the 429 carries X-Lobes-Shed-Signal: thermal; GET /status and lobes status --pressure show the reading. Inert in containers until the gateway passthrough lands (#311)
+- Benchmark window (#308): `lobes benchmark --lock` (opt-in, operator decision d8) takes an exclusive per-host lock, locks clocks and fan through the machine CLI (spark/thor/orin), always restores on exit, error or signal; every run records host.conditions (plain `benchmark` stays read-only: locked false, reason not_requested)
+- lobes doctor: logwrap_stale, lane_state_writable, compile_cache_unmounted, compile_cache_size, jetson_clocks_locked, drop_caches_grant_missing, watcher_inactive; lobes doctor --refresh-logwrap (backup + packaged wrapper, nothing else; the wrapper is renamed into place so running lanes keep their inode); init and doctor --fix create the compile-cache dirs owned by the operator
+- Per-lane FlashInfer JIT cache (deviation d7, vllm#62149): every vLLM lane (and the clef-vllm decider) also binds `${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/<lane>-flashinfer` at /cache/flashinfer with FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer} (off value /root), so a recreated container skips the fp8_gemm_cutlass JIT build behind the Thor cold-boot crash; lobes init/doctor --fix create the dirs and compile_cache_unmounted flags a missing FlashInfer bind
+- Optional extras lobes-cli[spark|thor|orin] for the machine CLIs; lobes/runtime/_machine.py adapter with a sudo -n fallback
+
+### Fixed
+
+- Review round 2: the lane-health check filters `docker ps` on the compose project label, so `embed-*` overlay lanes count. On every start, the wrapper hands a root-owned `lane-state/` back to the log dir's owner.
+- `status --pressure` reads the swap and iowait thresholds from the deployment `.env`, as the gateway does.
+- The gateway's threshold constants and `status --pressure` parse the swap/iowait thresholds with the same function (`_env_float`, now taking an `environ` mapping), so whitespace, empty and non-finite values are handled identically.
+- A failed card detection is retried at most once a minute instead of being cached for the life of the process.
+- The card-detection cache is bounded (8 detectors), and a detection that returns `unknown` is cached instead of re-running `nvidia-smi` every minute; only a detection that raised is retried.
+- `--refresh-logwrap` keeps the wrapper's owner when run as root.
+- The pre-start bind-source setup lives only in the `_before_up` chokepoint.
+- `lobes init` records the rendered shape as `LOBES_SHAPE`, and `lobes doctor`'s `profile_staleness` renders against it (else the lock's `[variation] shape`, else machine-as-brain). `orin-associate`'s `LOBES_BOOT_ORDER` / `LOBES_BOOT_STAGGER_S` no longer read as operator overrides, and a deleted stagger is reported missing and restored by `doctor --fix --apply`.
+- The `lane-state/` dir is resolved by one helper (`_compose.lane_state_dir`), used by the marker readers, the start-counter reset, the watcher and `lobes doctor`.
+- Fewer repeated reads: the lifecycle clear reads `LOBES_PAGE_CACHE_CLEAR` and the `lane-state/` dir once and passes them down, and the watcher caches the compose project candidates (re-read every 5 minutes or after `SIGHUP`) instead of recomputing them every poll.
+- Lane health no longer depends on guessing one compose project name: `docker ps` lists every compose-labelled container with its project label, and rows are kept when the label is one of the deployment's candidates (`COMPOSE_PROJECT_NAME`, the top-level `name:`, and the basename of the deployment dir both as given and with symlinks resolved). A symlinked `~/.lobes` no longer leaves lane health empty and the boot guard silently off. The watcher unit's `--compose-dir` keeps the symlink so the watcher derives the same candidates.
+- A top-level compose `name:` is interpolated (`${VAR}`, `${VAR:-default}`, `${VAR-default}`, against the process env then the deployment `.env`) and unquoted; an unresolvable one is ignored instead of being normalised into a wrong project name.
+- The page-cache clear's failure hint names `<card> grant-permissions` only when that CLI is on `PATH`; otherwise it names the sysctl sudoers rule and `uv pip install 'lobes-cli[<card>]'`.
+
 ## [0.87.0] - 2026-10-17
 
 ### Added

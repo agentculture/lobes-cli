@@ -1,0 +1,360 @@
+LANE SAFETY — REAL-HARDWARE VALIDATION (lane-safety plan, deviation d6)
+=======================================================================
+Date:      2026-10-17 (UTC times below)
+Boxes:     DGX Spark (GB10), Jetson AGX Orin 64GB, Jetson AGX Thor
+Code:      lobes-cli branch lane-safety-bundle @ aec2223 (first pass) and @ 23ba6e3
+           (re-tests); dgx-spark-cli 0.9.0 -> 0.9.1 (17af4d6), jetson-thor-cli 0.6.0
+           (e5dc979) -> 0.6.1 (05a8f93), jetson-orin-cli 0.7.0 -> 0.7.1 (e051ed1)
+Install:   throwaway venvs at ~/lane-safety-hw on each box (no deployment touched)
+Scope:     operator-approved: Spark, Orin, Thor; disruption up to ONE light-lane
+           recreate (done on Orin vllm-embed, twice). No reboot, no sustained soak.
+           Thor carries other work: its use was coordinated with that work's owner,
+           tests there were side-by-side only, and its serving lanes were never
+           recreated or reconfigured.
+
+RESULTS
+-------
+H1  machine-CLI verbs (show / grant --check / drop-caches)  PASS on all three
+H2  thor window round trip, jetson-thor-cli 0.6.0           FAIL: fan lock used a
+    non-existent `nvfancontrol -p`; window show clocks all null. Clock restore PASS.
+    -> fixed in 0.6.1; RE-TEST PASS 08:48Z (locked: GPU 1575/1575 MHz, EMC
+       FreqOverride=1, fan PWM 255; restored: GPU floor 314 MHz, EMC 665.6 MHz,
+       fan back under nvfancontrol PWM 68; serving worker healthy throughout)
+H3  mg-logwrap in throwaway containers on each host kernel  PASS (boot hold reads
+    host uptime and holds the exact remainder; memory gate passes at 0.01, times out
+    at 0.99 with exit 75 and a real gate marker; 3rd start inside 600 s holds)
+    FAIL: a held lane ignored SIGTERM -> fixed (cd4b328): docker stop 0.15 s / 143
+H4  thermal gateway in a real container (prod gateway image + branch lobes)  PASS
+    on all three: thermal_c from the card's zone, 429 + X-Lobes-Shed-Signal:
+    thermal for cortex, hand not shed
+H5  lobes watcher --once vs a real gate marker (Thor)        PASS (real clear,
+    MemAvailable +0.5 GB, next tick rate-limited)
+H6  per-lane compile cache, Orin vllm-embed recreated twice   PASS: cold 31.78 s
+    torch.compile / 44.15 s init -> warm 5.33 s / 16.03 s; healthy, 0 restarts
+H7  lobes doctor (read-only) on real deployments             PASS for stale
+    wrapper / unmounted lanes / missing grant; FAIL: missed Orin clocks pinned
+    outside a lobes window -> clocks_locked added; RE-TEST PASS (warns)
+NOT PROVEN ON HARDWARE: d7 FlashInfer cache mount (Orin embed uses TRITON_ATTN and
+    never JIT-builds FlashInfer; the proving lane is the Thor worker); a GB10 clock
+    lock (none supported); the boot hold across a real reboot; the 30 min Spark soak
+    (#313); a cross-box mesh relay of a live thermal 429.
+
+DEPLOYMENT CHANGES LEFT IN PLACE
+--------------------------------
+Orin ~/.lobes/docker-compose.override.yml: vllm-embed gains VLLM_CACHE_ROOT=/cache/vllm
+and ./compile-cache/embed:/cache/vllm. Backup:
+docker-compose.override.yml.bak-lane-safety-20261017T082531Z (restore + recreate the
+lane to undo). Nothing else on any box was changed.
+
+RAW LOG
+-------
+### [spark] 2026-10-17T08:09:34Z $ spark window show --json; echo; spark grant-permissions --check --json; echo; spark drop-caches --json; echo rc=$?
+{"ok": true, "reason": null, "active": false, "stored": false, "supported": false, "power_mode": null, "clocks": {"gpu_mhz": 2398, "gpu_min_mhz": null, "gpu_max_mhz": 3003, "emc_mhz": null}, "fan_profile": null, "temps_c": {"acpitz": 50.7, "nvme/Composite": 44.85, "nvme/Sensor 1": 46.85, "nvme/Sensor 2": 44.85, "mt7925_phy0": 50.0}, "detail": {"pstate": "P0", "power_draw_w": 11.65, "state_file": "/home/spark/.local/state/spark/window.json"}}
+
+{"ok": true, "reason": null, "drop_caches": {"granted": false, "rule": null, "source": "sudo -n -l"}, "window": {"granted": false, "rule": null, "supported": false}}
+
+{"ok": false, "reason": "not_granted", "cleared": false, "rule": null, "hint": "run 'spark grant-permissions'"}
+rc=2
+(exit 0)
+### [orin] 2026-10-17T08:09:34Z $ orin window show --json; echo; orin grant-permissions --check --json; echo; orin drop-caches --json; echo rc=$?
+{"ok": true, "reason": null, "active": false, "stored": false, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": 1300, "gpu_min_mhz": 1300, "gpu_max_mhz": 1300, "emc_mhz": null}, "fan_profile": null, "temps_c": {"cpu-thermal": 58.125, "gpu-thermal": 51.656, "soc0-thermal": 53.718, "soc1-thermal": 55.281, "soc2-thermal": 53.062, "tj-thermal": 58.125}, "detail": {"nvpmodel_id": "0", "state_file": "/home/orin/.local/state/orin/window.json"}}
+
+{"ok": true, "reason": null, "drop_caches": {"granted": false, "rule": null, "source": "sudo -n -l"}, "window": {"granted": false, "rule": null}}
+
+{"ok": false, "reason": "not_granted", "cleared": false, "rule": null}
+error: not_granted
+rc=2
+(exit 0)
+### [thor] 2026-10-17T08:09:35Z $ thor window show --json; echo; thor grant-permissions --check --json; echo; thor drop-caches --json; echo rc=$?
+{"ok": true, "reason": null, "active": false, "stored": false, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 46.437, "cpu-thermal": 46.437, "soc012-thermal": 46.156, "soc345-thermal": 45.343}, "detail": {}}
+
+{"ok": true, "reason": null, "drop_caches": {"granted": true, "rule": "sysctl", "source": "sudo -n -l"}, "window": {"granted": true, "rule": "all"}}
+
+{"ok": true, "reason": null, "cleared": true, "rule": "sysctl"}
+rc=0
+(exit 0)
+### [thor] 2026-10-17T08:10:09Z window round trip
+--- window store
+{"ok": true, "reason": null, "active": false, "stored": true, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 48.437, "gpu-thermal": 48.437, "cpu-thermal": 47.25, "soc012-thermal": 47.125, "soc345-thermal": 46.656}, "detail": {}, "action": "store"}
+ rc=0
+--- window lock
+{"ok": true, "reason": null, "active": true, "stored": true, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 48.437, "gpu-thermal": 48.437, "cpu-thermal": 47.531, "soc012-thermal": 47.468, "soc345-thermal": 46.75}, "detail": {"fan_error": "/usr/sbin/nvfancontrol: invalid option -- 'p'"}, "action": "lock"}
+ rc=0
+--- window show
+{"ok": true, "reason": null, "active": true, "stored": true, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 48.562, "gpu-thermal": 48.562, "cpu-thermal": 47.656, "soc012-thermal": 47.406, "soc345-thermal": 46.718}, "detail": {}}
+ rc=0
+--- window restore
+{"ok": true, "reason": null, "active": false, "stored": false, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 48.593, "gpu-thermal": 48.593, "cpu-thermal": 47.281, "soc012-thermal": 47.281, "soc345-thermal": 46.718}, "detail": {"fan_error": "/usr/sbin/nvfancontrol: invalid option -- 'p'"}, "action": "restore", "restored": true}
+ rc=0
+--- window show
+{"ok": true, "reason": null, "active": false, "stored": false, "supported": true, "power_mode": "MAXN", "clocks": {"gpu_mhz": null, "gpu_min_mhz": null, "gpu_max_mhz": null, "emc_mhz": null}, "fan_profile": "cool", "temps_c": {"tj-thermal": 48.687, "gpu-thermal": 48.687, "cpu-thermal": 47.812, "soc012-thermal": 47.625, "soc345-thermal": 46.781}, "detail": {}}
+ rc=0
+--- jetson_clocks --show (sudo)
+EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=4266000000 FreqOverride=0
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=69
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1_enable=1
+NV Power Mode: MAXN
+SOC family:tegra264  Machine:NVIDIA Jetson AGX Thor Developer Kit
+Online CPUs: 0-13, Offline CPUs: 
+cpu0:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=972000 IdleStates: WFI=1 cc7=1 
+cpu1:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1566000 IdleStates: WFI=1 cc7=1 
+cpu2:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1728000 IdleStates: WFI=1 cc7=1 
+cpu3:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=972000 IdleStates: WFI=1 cc7=1 
+cpu4:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=972000 IdleStates: WFI=1 cc7=1 
+cpu5:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=972000 IdleStates: WFI=1 cc7=1 
+cpu6:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1620000 IdleStates: WFI=1 cc7=1 
+cpu7:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1728000 IdleStates: WFI=1 cc7=1 
+cpu8:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1404000 IdleStates: WFI=1 cc7=1 
+cpu9:  Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=972000 IdleStates: WFI=1 cc7=1 
+cpu10: Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1566000 IdleStates: WFI=1 cc7=1 
+cpu11: Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1188000 IdleStates: WFI=1 cc7=1 
+cpu12: Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1404000 IdleStates: WFI=1 cc7=1 
+cpu13: Governor=schedutil MinFreq=972000 MaxFreq=2601000 CurrentFreq=1296000 IdleStates: WFI=1 cc7=1 
+gpu-gpc-0 MinFreq=314000000 MaxFreq=1575000000 CurrentFreq=1575000000
+gpu-nvd-0 MinFreq=314000000 MaxFreq=1692000000 CurrentFreq=1692000000
+EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=665600000 FreqOverride=0
+PVA0_VPS0: Online=0 MinFreq=0 MaxFreq=1215000000 CurrentFreq=1215000000
+PVA0_AXI:  Online=0 MinFreq=0 MaxFreq=909000000 CurrentFreq=909000000
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=69
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1_enable=1
+NV Power Mode: MAXN
+---
+Nvidia Fan Control Userspace Daemon
+
+Usage:
+nvfancontrol [-h | --help] [--verbose] [-q | --query] [-f | --file]
+	-h, --help:	Print this help info.
+	-f, --file:	nvfancontrol conf file path.
+	-q, --query:	print the current fan control status info.
+	--verbose:	Enable verbose log.
+---
+/etc/nvfancontrol.conf
+26:	FAN_PROFILE cool {
+45:	FAN_DEFAULT_PROFILE cool
+---
+8188050000.vic
+gpu-gpc-0
+gpu-nvd-0
+/sys/class/devfreq/8188050000.vic 1107000000 54000000 1107000000 
+/sys/class/devfreq/gpu-gpc-0 1575000000 314000000 1575000000 
+/sys/class/devfreq/gpu-nvd-0 1692000000 314000000 1692000000 
+Maximize jetson performance by setting static max frequency to CPU, GPU and EMC clocks.
+Usage:
+jetson_clocks [options]
+  options,
+  --help, -h         show this help message
+  --show             display current settings
+  --fan              set PWM fan speed to maximal
+  --store [file]     store current settings to a file (default: ${HOME}/l4t_dfs.conf)
+  --restore [file]   restore saved settings from a file (default: ${HOME}/l4t_dfs.conf)
+  run jetson_clocks without any option to set static max frequency to CPU, GPU and EMC clocks.
+---
+NVFAN ERROR: Sudo permissions are required to execute nvfancontrol user daemon
+/sys/class/devfreq/15340000.vic 729600000 115200000 729600000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/15380000.nvjpg 729600000 115200000 729600000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/15480000.nvdec 998400000 115200000 998400000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/154c0000.nvenc 998400000 115200000 998400000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/15540000.nvjpg 729600000 115200000 729600000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/15a50000.ofa 780800000 115200000 780800000 115200000 128000000 140800000 153600000 166400000 179200000 192000000 204800000 217600000 230400000 243200000 256000000 268800000 
+/sys/class/devfreq/17000000.gpu 1300500000 1300500000 1300500000 306000000 408000000 510000000 612000000 714000000 816000000 918000000 1020000000 1122000000 1224000000 1300500000 
+/sys/class/devfreq/bwmgr 3199000000 3199000000 3199000000 204000000 665600000 2133000000 3199000000 
+NVFAN ERROR: Sudo permissions are required to execute nvfancontrol user daemon
+inactive
+active
+total 28
+drwx------ 7 orin orin 4096 Sep 13 17:06 .
+drwxrwxr-x 7 orin orin 4096 Aug 23 09:42 ..
+drwxrwxr-x 3 orin orin 4096 Jul 16 23:09 claude
+drwxr-xr-x 2 orin orin 4096 Jul 17 01:22 gh
+drwx------ 2 orin orin 4096 Sep 14 10:53 nvsh
+drwxrwxr-x 3 orin orin 4096 Aug 30 14:15 webglass
+drwx------ 2 orin orin 4096 Aug 23 07:08 wireplumber
+conf_file_path
+status
+### [thor] 2026-10-17T08:11:24Z H3 wrapper
+image=lobes-gateway:worker host_uptime=11894s
+--- 1 boot hold: delay = uptime+6
+lobes: host up 11897s, holding 3s (boot delay 11900s + stagger 0s)
+rc=0 elapsed=6s
+lobes: host up 11897s, holding 3s (boot delay 11900s + stagger 0s)
+--- 2 memory gate pass (util 0.01)
+rc=0
+--- 3 memory gate timeout (util 0.99, 10 s)
+lsw.gated
+{"lane": "lsw", "since": 1792224690, "need_kib": 127502734, "avail_kib": 48594044}
+lobes: memory gate timed out (need 127502734 KiB, have 48592856 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+rc=75 elapsed=10s
+lobes: memory gate timed out (need 127502734 KiB, have 48592856 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+--- 4 start counter (max 2): starts 1,2 pass; 3 holds
+start 1 rc=0
+start 2 rc=0
+lobes: 2 starts in 600s — holding; clear with 'lobes up lsw --apply' or delete /logs/lane-state/lsw.starts
+### [orin] 2026-10-17T08:16:24Z H3 wrapper
+image=lobes-gateway host_uptime=4766898s
+--- 1 boot hold: delay = uptime+6
+lobes: host up 4766899s, holding 5s (boot delay 4766904s + stagger 0s)
+rc=0 elapsed=5s
+lobes: host up 4766899s, holding 5s (boot delay 4766904s + stagger 0s)
+--- 2 memory gate pass (util 0.01)
+rc=0
+--- 3 memory gate timeout (util 0.99, 10 s)
+lsw.gated
+{"lane": "lsw", "since": 1792224990, "need_kib": 63681596, "avail_kib": 12686688}
+lobes: memory gate timed out (need 63681596 KiB, have 12666884 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+rc=75 elapsed=10s
+lobes: memory gate timed out (need 63681596 KiB, have 12666884 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+--- 4 start counter (max 2): starts 1,2 pass; 3 holds
+start 1 rc=0
+start 2 rc=0
+lobes: 2 starts in 600s — holding; clear with 'lobes up lsw --apply' or delete /logs/lane-state/lsw.starts
+### [spark] 2026-10-17T08:21:24Z H3 wrapper
+image=lobes-gateway host_uptime=244122s
+--- 1 boot hold: delay = uptime+6
+lobes: host up 244122s, holding 6s (boot delay 244128s + stagger 0s)
+rc=0 elapsed=6s
+lobes: host up 244122s, holding 6s (boot delay 244128s + stagger 0s)
+--- 2 memory gate pass (util 0.01)
+rc=0
+--- 3 memory gate timeout (util 0.99, 10 s)
+lsw.gated
+{"lane": "lsw", "since": 1792225290, "need_kib": 126325216, "avail_kib": 102656528}
+lobes: memory gate timed out (need 126325216 KiB, have 102581312 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+rc=75 elapsed=10s
+lobes: memory gate timed out (need 126325216 KiB, have 102581312 KiB) — run 'lobes watcher install' or the machine CLI's drop-caches
+--- 4 start counter (max 2): starts 1,2 pass; 3 holds
+start 1 rc=0
+start 2 rc=0
+lobes: 2 starts in 600s — holding; clear with 'lobes up lsw --apply' or delete /logs/lane-state/lsw.starts
+start 3 rc=137
+lobes: 2 starts in 600s — holding; clear with 'lobes up lsw --apply' or delete /logs/lane-state/lsw.starts
+1
+rm: cannot remove '/d/lane-state/lsw.starts': Permission denied
+### [thor] 2026-10-17T08:22:36Z H4 thermal gateway
+image=lobes-gateway:worker site=/usr/local/lib/python3.12/site-packages zone=tj-thermal
+--- container lobes version: /usr/local/lib/python3.12/site-packages/lobes/__init__.py
+--- GET /status pressure
+{"iowait_percent": 0.0, "mode": "busy", "reason": "pressure", "shed": true, "shed_signal": "thermal", "swap_used_percent": 1.0346496662175786, "thermal_c": 47.937, "thermal_shedding": true}
+--- POST model=cortex (expect 429 thermal)
+HTTP/1.1 429 Too Many Requests
+Retry-After: 5
+X-Lobes-Tier-Reason: busy
+X-Lobes-Shed-Signal: thermal
+thermal
+--- POST model=hand (floor: must NOT be 429)
+503
+0
+### [thor] 2026-10-17T08:22:52Z H5 watcher --once
+MemAvailable:   48619548 kB
+lobes-watcher: lane=worker need_kib=57671680 avail_kib=1048576 action=cleared via=machine-cli
+1 gated lane(s) in /tmp/lsw-deploy-mLSw/logs/lane-state
+rc=0
+--- second tick inside the window (expect rate-limited)
+lobes-watcher: lane=worker need_kib=57671680 avail_kib=1048576 action=rate-limited
+1 gated lane(s) in /tmp/lsw-deploy-mLSw/logs/lane-state
+MemAvailable:   49146948 kB
+{"last_attempt": 1792225373.5968046, "last_clear": 1792225373.5968046, "last_result": "cleared"}
+### [spark] 2026-10-17T08:23:23Z H4 thermal gateway
+image=lobes-gateway site=/usr/local/lib/python3.12/site-packages zone=acpitz
+--- container lobes version: /usr/local/lib/python3.12/site-packages/lobes/__init__.py
+--- GET /status pressure
+{"iowait_percent": 44.44444444444444, "mode": "busy", "reason": "pressure", "shed": true, "shed_signal": "thermal", "swap_used_percent": 9.34007223487331, "thermal_c": 62.1, "thermal_shedding": true}
+--- POST model=cortex (expect 429 thermal)
+HTTP/1.1 429 Too Many Requests
+Retry-After: 5
+X-Lobes-Tier-Reason: busy
+X-Lobes-Shed-Signal: thermal
+thermal
+--- POST model=hand (floor: must NOT be 429)
+503
+0
+### [orin] 2026-10-17T08:23:25Z H4 thermal gateway
+image=lobes-gateway site=/usr/local/lib/python3.12/site-packages zone=tj-thermal
+--- container lobes version: /usr/local/lib/python3.12/site-packages/lobes/__init__.py
+--- GET /status pressure
+{"iowait_percent": 16.574585635359114, "mode": "busy", "reason": "pressure", "shed": true, "shed_signal": "thermal", "swap_used_percent": 0.0, "thermal_c": 57.937, "thermal_shedding": true}
+--- POST model=cortex (expect 429 thermal)
+HTTP/1.1 429 Too Many Requests
+Retry-After: 5
+X-Lobes-Tier-Reason: busy
+X-Lobes-Shed-Signal: thermal
+thermal
+--- POST model=hand (floor: must NOT be 429)
+503
+0
+### [spark] 2026-10-17T08:23:38Z H7 doctor (read-only)
+logwrap_stale warn FIRES | mg-logwrap.sh differs from this CLI's packaged copy (sha256 fd9dfb7d30ce vs b68e1df7eeff) — the lane boot hold, start counter and memory gate may be m
+compile_cache_unmounted warn FIRES | vLLM service(s) without a persistent compile cache: vllm-embed-deep (no mount), vllm-middle (no mount), vllm-minor (no mount), vllm-multimodal-coder (
+jetson_clocks_locked info pass | clocks are not locked by a window
+drop_caches_grant_missing warn FIRES | no passwordless page-cache clear on this spark: lifecycle verbs and the watcher skip the clear, so a crashed lane's memory can stay unreclaimed
+watcher_inactive info pass | host watcher not installed (optional; 'lobes watcher install' clears the page cache for memory-gated lanes)
+healthy: False
+### [orin] 2026-10-17T08:23:38Z H7 doctor (read-only)
+logwrap_stale warn FIRES | mg-logwrap.sh differs from this CLI's packaged copy (sha256 fd9dfb7d30ce vs b68e1df7eeff) — the lane boot hold, start counter and memory gate may be m
+compile_cache_unmounted warn FIRES | vLLM service(s) without a persistent compile cache: decider-general (no mount), embed-nemotron-embed (no mount), embed-nomic-code-embed (no mount), em
+jetson_clocks_locked info pass | clocks are not locked by a window
+drop_caches_grant_missing warn FIRES | no passwordless page-cache clear on this orin: lifecycle verbs and the watcher skip the clear, so a crashed lane's memory can stay unreclaimed
+watcher_inactive info pass | host watcher not installed (optional; 'lobes watcher install' clears the page cache for memory-gated lanes)
+healthy: False
+### [orin] 2026-10-17T08:25:31Z H6 compile cache: prepare
+backup=docker-compose.override.yml.bak-lane-safety-20261017T082531Z
+130:      RERANK_ENFORCE_EAGER: --enforce-eager
+138:      VLLM_CACHE_ROOT: /cache/vllm
+187:        target: /cache/vllm
+drwxrwxr-x 2 orin orin 4096 Oct 17 11:25 compile-cache/embed
+### [orin] 2026-10-17T08:25:42Z H6 recreate #1 (cold host cache)
+ Container model-gear-vllm-embed Starting 
+ Container model-gear-vllm-embed Started 
+recreate#1 health=healthy wall=129s restarts=0
+log=logs/embed-20261017T082546Z.log
+Using cache directory: /cache/vllm/torch_compile_cache/cca2e290ec/rank_0_0/backbone for vLLM's torch.compile
+Compiling a graph for compile range (1, 2048) takes 16.08 s
+torch.compile took 31.78 s in total
+init engine (profile, create kv cache, warmup model) took 44.15 s (compilation: 31.78 s)
+cache entries on host: 426 files, 39M
+### [orin] 2026-10-17T08:28:06Z H6 recreate #2 (warm host cache)
+ Container model-gear-vllm-embed Starting 
+ Container model-gear-vllm-embed Started 
+recreate#2 health=healthy wall=78s restarts=0
+log=logs/embed-20261017T082809Z.log
+Using cache directory: /cache/vllm/torch_compile_cache/cca2e290ec/rank_0_0/backbone for vLLM's torch.compile
+Directly load the compiled graph(s) for compile range (1, 2048) from the cache, took 1.493 s
+Directly load AOT compilation from path /cache/vllm/torch_compile_cache/torch_aot_compile/7f2ecd15f26685e719550ba28dbcc30ff21b93c538c8095b805c415131c6afd7/rank_0_0/model
+torch.compile took 5.33 s in total
+init engine (profile, create kv cache, warmup model) took 16.03 s (compilation: 5.33 s)
+cache entries on host: 426 files, 39M
+--- embedding request on the recreated lane
+dim 1024
+### [orin] 2026-10-17T08:31:39Z re-test after fixes: window show + doctor
+{'active': False, 'clocks_locked': True, 'clocks': {'gpu_mhz': 1300, 'gpu_min_mhz': 1300, 'gpu_max_mhz': 1300, 'emc_mhz': 3199}, 'fan_profile': 'cool'}
+compile_cache_unmounted warn FIRES | vLLM service(s) without a persistent compile cache: decider-general (no mount), embed-nemotron-embed (no mount), embed-nomic-code-embed (no mount), embed-qwen3vl-embed (no mount), embed-qwen3vl-rerank (no mount), vllm-as
+jetson_clocks_locked warn FIRES | clocks are locked outside any lobes window (operator jetson_clocks or a crashed run) — a warning, not an error: the operator may have locked them on purpose
+### [spark] 2026-10-17T08:31:40Z re-test: window show clocks_locked
+{'active': False, 'supported': False, 'clocks_locked': None}
+### [thor] 2026-10-17T08:48:08Z re-test jetson-thor-cli 0.6.1 window round trip
+thor 0.6.1
+--- window show
+   {'ok': True, 'reason': None, 'active': False, 'stored': False, 'clocks_locked': False, 'clocks': {'gpu_mhz': 1575, 'gpu_min_mhz': 314, 'gpu_max_mhz': 1575, 'emc_mhz': 665}, 'fan_profile': 'cool', 'detail': {'fan_max': False}}
+  sysfs gpu-gpc-0 min=314000000 max=1575000000 cur=1575000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=665600000 FreqOverride=0 FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=67 
+--- window store
+   {'ok': True, 'reason': None, 'active': False, 'stored': True, 'clocks_locked': False, 'clocks': {'gpu_mhz': 1575, 'gpu_min_mhz': 314, 'gpu_max_mhz': 1575, 'emc_mhz': 665}, 'fan_profile': 'cool', 'detail': {'fan_max': False}}
+  sysfs gpu-gpc-0 min=314000000 max=1575000000 cur=1575000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=665600000 FreqOverride=0 FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=67 
+--- window lock
+   {'ok': True, 'reason': None, 'active': True, 'stored': True, 'clocks_locked': True, 'clocks': {'gpu_mhz': 1575, 'gpu_min_mhz': 1575, 'gpu_max_mhz': 1575, 'emc_mhz': 4266}, 'fan_profile': 'cool', 'detail': {'fan_max': True}}
+  sysfs gpu-gpc-0 min=1575000000 max=1575000000 cur=1575000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=4266000000 FreqOverride=1 FAN Dynamic Speed Control=disabled hwmon1_pwm1=255 
+--- window show
+   {'ok': True, 'reason': None, 'active': True, 'stored': True, 'clocks_locked': True, 'clocks': {'gpu_mhz': 1575, 'gpu_min_mhz': 1575, 'gpu_max_mhz': 1575, 'emc_mhz': 4266}, 'fan_profile': 'cool', 'detail': {'fan_max': True}}
+  sysfs gpu-gpc-0 min=1575000000 max=1575000000 cur=1575000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=4266000000 FreqOverride=1 FAN Dynamic Speed Control=disabled hwmon1_pwm1=255 
+--- window restore
+   {'ok': True, 'reason': None, 'active': False, 'stored': False, 'clocks_locked': False, 'clocks': {'gpu_mhz': 1539, 'gpu_min_mhz': 314, 'gpu_max_mhz': 1575, 'emc_mhz': 4266}, 'fan_profile': 'cool', 'detail': {'fan_max': True}}
+  sysfs gpu-gpc-0 min=314000000 max=1575000000 cur=1458000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=4266000000 FreqOverride=0 FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=255 
+--- window show
+   {'ok': True, 'reason': None, 'active': False, 'stored': False, 'clocks_locked': False, 'clocks': {'gpu_mhz': 1359, 'gpu_min_mhz': 314, 'gpu_max_mhz': 1575, 'emc_mhz': 4266}, 'fan_profile': 'cool', 'detail': {'fan_max': True}}
+  sysfs gpu-gpc-0 min=314000000 max=1575000000 cur=1278000000 | EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=4266000000 FreqOverride=0 FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=255 
+{"ok": true, "reason": null, "drop_caches": {"granted": true, "rule": "sysctl", "source": "sudo -n -l"}, "window": {"granted": true, "rule": "all"}}
+### [thor] 2026-10-17T08:48:41Z after restore: wait for governors
+after 0s: pwm1=68
+gpu min=314000000 max=1575000000 cur=1575000000
+EMC MinFreq=665600000 MaxFreq=4266000000 CurrentFreq=665600000 FreqOverride=0
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1=68
+FAN Dynamic Speed Control=nvfancontrol hwmon1_pwm1_enable=1
+/model-gear-vllm-worker healthy

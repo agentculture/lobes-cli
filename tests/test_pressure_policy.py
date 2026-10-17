@@ -659,3 +659,184 @@ def test_a_never_shed_role_is_not_shed_under_any_pressure(swap: float, iowait: f
         assert d["mode"] == "busy"  # the host verdict stays honest
         assert d["requested_tier"] == role
         assert d["servable_tier"] == role
+
+
+# --- thermal: the fourth shed signal (lane-safety t14, contract §1/§7) -------
+
+
+class TestThermalShed:
+    """``thermal_c`` above the card's shed band sheds every full tier, with
+    hysteresis down to the resume band; ``None`` (no reading) never sheds."""
+
+    @pytest.fixture(autouse=True)
+    def _spark_band(self, monkeypatch):
+        import lobes.gateway._pressure_policy as P
+
+        monkeypatch.setattr(P, "THERMAL_SHED_C", 91.0)
+        monkeypatch.setattr(P, "THERMAL_RESUME_C", 86.0)
+
+    @pytest.mark.parametrize("tier", ["main", "cortex", "multimodal", "senses", "worker", "muse"])
+    def test_above_shed_band_sheds_full_tiers_with_thermal_signal(self, tier):
+        from lobes.gateway._pressure_policy import SHED_SIGNAL_THERMAL
+
+        d = decide(0.0, 0.0, tier, thermal_c=91.5)
+        assert d["shed"] is True
+        assert d["reason"] == "pressure"
+        assert d["shed_signal"] == SHED_SIGNAL_THERMAL == "thermal"
+        assert d["mode"] == "busy"
+        assert d["servable_tier"] == "hand"
+
+    def test_thermal_sheds_pooled_roles_too(self):
+        # Like swap, heat is first-party exhaustion: pooled or not.
+        assert decide(0.0, 0.0, "main", pooled=True, thermal_c=95.0)["shed_signal"] == "thermal"
+
+    def test_exactly_at_shed_band_does_not_shed(self):
+        d = decide(0.0, 0.0, "main", thermal_c=91.0)
+        assert d["shed"] is False
+        assert d["mode"] == "warm"
+
+    @pytest.mark.parametrize("tier", ["hand", "minor", "cheap"])
+    def test_hand_floor_is_served_when_hot(self, tier):
+        d = decide(0.0, 0.0, tier, thermal_c=99.0)
+        assert d["shed"] is False
+        assert d["shed_signal"] == ""
+        assert d["mode"] == "busy"
+
+    def test_never_shed_roles_are_served_when_hot(self):
+        from lobes.gateway._pressure_policy import NEVER_SHED_ROLES
+
+        for role in NEVER_SHED_ROLES:
+            d = decide(0.0, 0.0, role, thermal_c=99.0, thermal_latched=True)
+            assert d["shed"] is False
+
+    def test_none_never_sheds_even_when_latched(self):
+        d = decide(0.0, 0.0, "main", thermal_c=None, thermal_latched=True)
+        assert d["shed"] is False
+        assert d["mode"] == "warm"
+
+    def test_hysteresis_keeps_shedding_between_resume_and_shed(self):
+        assert decide(0.0, 0.0, "main", thermal_c=88.0)["shed"] is False  # not latched
+        latched = decide(0.0, 0.0, "main", thermal_c=88.0, thermal_latched=True)
+        assert latched["shed"] is True
+        assert latched["shed_signal"] == "thermal"
+        assert decide(0.0, 0.0, "main", thermal_c=86.0, thermal_latched=True)["shed"] is True
+        assert decide(0.0, 0.0, "main", thermal_c=85.9, thermal_latched=True)["shed"] is False
+
+    def test_swap_outranks_thermal_in_the_reported_signal(self):
+        assert decide(90.0, 0.0, "main", thermal_c=95.0)["shed_signal"] == "swap"
+
+    def test_band_off_never_sheds(self, monkeypatch):
+        import lobes.gateway._pressure_policy as P
+
+        monkeypatch.setattr(P, "THERMAL_SHED_C", None)
+        monkeypatch.setattr(P, "THERMAL_RESUME_C", None)
+        d = decide(0.0, 0.0, "main", thermal_c=120.0, thermal_latched=True)
+        assert d["shed"] is False
+        assert d["mode"] == "warm"
+
+    def test_latch_follows_the_hysteresis(self):
+        from lobes.gateway._pressure_policy import ThermalLatch
+
+        latch = ThermalLatch()
+        seq = [80.0, 90.0, 92.0, 89.0, 86.0, 85.0, 90.0, 91.1, None, 90.0]
+        got = [latch.update(t) for t in seq]
+        assert got == [False, False, True, True, True, False, False, True, False, False]
+        assert latch.shedding is False
+
+    def test_passing_the_current_latch_state_is_idempotent(self):
+        from lobes.gateway._pressure_policy import ThermalLatch
+
+        latch = ThermalLatch()
+        for t in (92.0, 88.0, 85.0):
+            hot = latch.update(t)
+            assert decide(0.0, 0.0, "main", thermal_c=t, thermal_latched=hot)["shed"] is hot
+
+    def test_override_style_default_args_keep_the_old_contract(self):
+        assert decide(0.0, 0.0, "main") == decide(0.0, 0.0, "main", thermal_c=None)
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        ({}, (None, None)),
+        ({"LOBES_THERMAL_SHED_C": ""}, (None, None)),
+        ({"LOBES_THERMAL_SHED_C": "hot"}, (None, None)),
+        ({"LOBES_THERMAL_SHED_C": "nan"}, (None, None)),
+        ({"LOBES_THERMAL_SHED_C": "91", "LOBES_THERMAL_RESUME_C": "86"}, (91.0, 86.0)),
+        ({"LOBES_THERMAL_SHED_C": "91"}, (91.0, 91.0)),
+        ({"LOBES_THERMAL_SHED_C": "91", "LOBES_THERMAL_RESUME_C": ""}, (91.0, 91.0)),
+        # A resume band ABOVE the shed band is nonsense; it clamps to the shed band.
+        ({"LOBES_THERMAL_SHED_C": "91", "LOBES_THERMAL_RESUME_C": "95"}, (91.0, 91.0)),
+        # RESUME alone, with no SHED, is off.
+        ({"LOBES_THERMAL_RESUME_C": "86"}, (None, None)),
+    ],
+)
+def test_thermal_bands_from_env(env, expected) -> None:
+    from lobes.gateway._pressure_policy import thermal_bands_from_env
+
+    assert thermal_bands_from_env(env) == expected
+
+
+# --- contract §8: no lobes code pauses or `docker update`s a container --------
+
+_DOCKER_PAUSE_UPDATE = [
+    # shell / string form: `docker pause`, `docker update`, `docker compose pause`
+    r"docker\s+(compose\s+)?(un)?(pause|update)\b",
+    # argv form: ["docker", ..., "pause"] / ["docker", "update", ...] on one line
+    r"""\[\s*["']docker["'][^\]\n]*["'](un)?(pause|update)["']""",
+]
+
+
+def test_no_docker_pause_or_update_anywhere_in_lobes() -> None:
+    """Thermal shedding answers 429s; it never throttles a container (§8)."""
+    import re
+    from pathlib import Path
+
+    import lobes
+
+    root = Path(lobes.__file__).parent
+    patterns = [re.compile(p) for p in _DOCKER_PAUSE_UPDATE]
+    hits = []
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix in {".pyc", ".png", ".jpg", ".wav"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if any(p.search(line) for p in patterns):
+                hits.append(f"{path.relative_to(root)}:{lineno}: {line.strip()}")
+    assert hits == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "docker pause vllm-primary",
+        "docker update --cpus 2 vllm-primary",
+        "docker compose pause",
+        '_run(["docker", "pause", name])',
+        "subprocess.run(['docker', 'update', '--memory', '1g', c])",
+    ],
+)
+def test_the_docker_pause_update_grep_is_not_vacuous(line: str) -> None:
+    import re
+
+    assert any(re.search(p, line) for p in _DOCKER_PAUSE_UPDATE)
+
+
+# --- review3 #6: one float parser for the gateway constants and the .env read --
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", " 80 ", "80", "1e2", "abc", "nan", "inf", "-inf"])
+def test_env_float_and_degraded_thresholds_parse_identically(raw):
+    from lobes.gateway import _pressure_policy as pp
+
+    environ = {} if raw is None else {pp.SWAP_THRESHOLD_ENV: raw}
+    via_env_float = pp._env_float(pp.SWAP_THRESHOLD_ENV, pp.SWAP_DEGRADED_THRESHOLD, environ)
+    assert pp.degraded_thresholds_from_env(environ)[0] == via_env_float
+    if raw is not None and raw.strip() in ("80", "1e2"):
+        assert via_env_float == float(raw)
+    else:
+        assert via_env_float == pp.SWAP_DEGRADED_THRESHOLD

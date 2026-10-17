@@ -22,7 +22,7 @@ Return keys from :func:`decide`:
     reason: "pressure" | "default"  — "pressure" when shed, else "default"
     servable_tier: str               — the floor when shedding, else normalized tier
     requested_tier: str              — normalize_tier(requested_tier)
-    shed_signal: str                 — "swap" | "engine" | "iowait" | "" (d1)
+    shed_signal: str                 — "swap" | "thermal" | "engine" | "iowait" | ""
 
 Tier vocabulary (main / minor / multimodal / worker / muse)
 -------------------------------------------------------------
@@ -59,6 +59,7 @@ probe read:
 | Condition                              | mode |
 +========================================+======+
 | swap > 75 %  OR  iowait > 50 %         | busy |
+| OR thermal in its shed band (t14)      |      |
 +----------------------------------------+------+
 | otherwise                              | warm |
 +----------------------------------------+------+
@@ -77,6 +78,15 @@ SERVE are different claims, and only some signals support the second one:
 +--------------------------------+---------------------+---------------------+
 | iowait > 50 % (alone)          | shed (``"iowait"``) | **served**          |
 +--------------------------------+---------------------+---------------------+
+| thermal_c > THERMAL_SHED_C,    | shed (``"thermal"``)| shed (``"thermal"``)|
+| held down to THERMAL_RESUME_C  |                     |                     |
++--------------------------------+---------------------+---------------------+
+
+Thermal (lane-safety t14) sheds like swap. Its band is per card
+(``LOBES_THERMAL_SHED_C`` / ``LOBES_THERMAL_RESUME_C``, empty = off) and it
+has HYSTERESIS: :func:`decide` takes the previous state as
+``thermal_latched`` and the caller holds it in a :class:`ThermalLatch`, so the
+function itself stays pure. ``thermal_c=None`` never sheds.
 
 Where that line sits, and why:
 
@@ -160,6 +170,8 @@ from __future__ import annotations
 
 import math
 import os
+import threading
+from typing import Mapping
 
 # ---------------------------------------------------------------------------
 # Tier vocabulary — mirror of catalog.TIER_ROLE (kept local so this module stays
@@ -218,19 +230,24 @@ _FLOOR_TIER = "hand"
 _KNOWN_TIERS: frozenset[str] = frozenset(_TIER_ROLE)
 
 
-def _env_float(key: str, default: float) -> float:
-    """Read a float from *key* in ``os.environ``; fall back to *default*.
+def _env_float(key: str, default: float, environ: Mapping[str, str] | None = None) -> float:
+    """Read a float from *key* in *environ* (default ``os.environ``); else *default*.
 
-    Non-finite values (``nan``, ``inf``, ``-inf``) are treated as parse
-    failures and return *default* — a non-finite threshold silently breaks
-    every ``>`` comparison (``nan > x`` is always ``False``).
+    The ONE parser for every float knob here (review3 #6): the gateway's
+    import-time constants and :func:`degraded_thresholds_from_env` both call
+    it. Surrounding whitespace is ignored; a missing, empty or
+    whitespace-only, unparsable or non-finite value (``nan``, ``inf``,
+    ``-inf``) returns *default* — a non-finite threshold silently breaks every
+    ``>`` comparison (``nan > x`` is always ``False``).
     """
-    try:
-        raw = os.environ.get(key)
-        value = float(raw) if raw is not None else float(default)
-        return value if math.isfinite(value) else float(default)
-    except (TypeError, ValueError):
+    raw = (os.environ if environ is None else environ).get(key)
+    if raw is None:
         return float(default)
+    try:
+        value = float(str(raw).strip())
+    except ValueError:
+        return float(default)
+    return value if math.isfinite(value) else float(default)
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +261,136 @@ SWAP_DEGRADED_THRESHOLD: float = _env_float("LOBES_SWAP_DEGRADED_THRESHOLD", 75.
 #: iowait_percent **above** this value: busy mode, shed non-minor requests.
 #: Env override: ``LOBES_IOWAIT_DEGRADED_THRESHOLD`` (default 50.0).
 IOWAIT_DEGRADED_THRESHOLD: float = _env_float("LOBES_IOWAIT_DEGRADED_THRESHOLD", 50.0)
+
+#: The two busy-threshold env keys, in ``(swap, iowait)`` order.
+SWAP_THRESHOLD_ENV = "LOBES_SWAP_DEGRADED_THRESHOLD"
+IOWAIT_THRESHOLD_ENV = "LOBES_IOWAIT_DEGRADED_THRESHOLD"
+
+
+def degraded_thresholds_from_env(environ: Mapping[str, str]) -> tuple[float, float]:
+    """``(swap, iowait)`` busy thresholds from *environ* (review2-b #4).
+
+    Parsed by the same :func:`_env_float` the gateway's import-time constants
+    use (review3 #6), so a caller that passes a merged env (the one-shot
+    ``lobes status --pressure`` reading the deployment ``.env``) gets exactly
+    the gateway's parsing: a missing, empty, invalid or non-finite key keeps
+    the module constant.
+    """
+    return (
+        _env_float(SWAP_THRESHOLD_ENV, SWAP_DEGRADED_THRESHOLD, environ),
+        _env_float(IOWAIT_THRESHOLD_ENV, IOWAIT_DEGRADED_THRESHOLD, environ),
+    )
+
+
+# --- Thermal shed band (lane-safety t14; contract §1 / §7) -------------------
+
+
+def _optional_float(raw: object) -> float | None:
+    """Parse *raw* as a finite float; ``None`` for missing/empty/invalid/non-finite."""
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
+
+def thermal_bands_from_env(environ: Mapping[str, str]) -> tuple[float | None, float | None]:
+    """``(shed_c, resume_c)`` from ``LOBES_THERMAL_SHED_C`` / ``LOBES_THERMAL_RESUME_C``.
+
+    Empty or invalid ``SHED`` means the thermal signal is OFF — ``(None, None)``
+    — whatever ``RESUME`` says (the off value restores pre-thermal behaviour,
+    contract §1). ``SHED`` set but ``RESUME`` missing/invalid means no
+    hysteresis: ``RESUME = SHED``. A ``RESUME`` above ``SHED`` is nonsense and
+    clamps to ``SHED`` rather than latching a box hot forever.
+    """
+    shed = _optional_float(environ.get("LOBES_THERMAL_SHED_C"))
+    if shed is None:
+        return None, None
+    resume = _optional_float(environ.get("LOBES_THERMAL_RESUME_C"))
+    if resume is None or resume > shed:
+        resume = shed
+    return shed, resume
+
+
+# ``THERMAL_SHED_C``: shed above this temperature (deg C); ``None`` = the
+# thermal signal is off. ``THERMAL_RESUME_C``: once shedding, stop below this
+# temperature (hysteresis). Env: ``LOBES_THERMAL_SHED_C`` /
+# ``LOBES_THERMAL_RESUME_C`` (empty = off / = the shed band). Read ONCE at
+# import, exactly like the swap/iowait thresholds above — the gateway gets them
+# from the deployment's ``.env`` at container start, so a changed band takes a
+# gateway restart. The spark card declares 91/86; thor and orin declare none.
+THERMAL_SHED_C, THERMAL_RESUME_C = thermal_bands_from_env(os.environ)
+
+
+def thermal_hot(
+    thermal_c: float | None,
+    latched: bool = False,
+    bands: tuple[float | None, float | None] | None = None,
+) -> bool:
+    """Is *thermal_c* inside the shed band, given whether the box was ALREADY
+    shedding on heat (*latched*)?
+
+    Strictly above ``THERMAL_SHED_C`` sheds (``>``, like every other band
+    here); once latched, shedding holds while the reading stays at or above
+    ``THERMAL_RESUME_C`` and stops below it. ``None`` (no zone, unreadable
+    zone) and a band that is off are never hot. Pure: the bands are read from
+    the module constants at call time so tests can patch them.
+
+    Idempotent in *latched*: ``thermal_hot(t, thermal_hot(t, prev)) ==
+    thermal_hot(t, prev)``, so a caller may pass either the previous latch
+    state or the one :meth:`ThermalLatch.update` just returned for *t*.
+
+    *bands* is an explicit ``(shed_c, resume_c)`` (``lobes status --pressure``
+    reads them from the deployment ``.env``); ``None`` uses the module
+    constants (the gateway, which reads them from its own process env).
+    """
+    shed, resume = bands if bands is not None else (THERMAL_SHED_C, THERMAL_RESUME_C)
+    if shed is None or thermal_c is None:
+        return False
+    try:
+        t = float(thermal_c)
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(t):
+        return False
+    if t > shed:
+        return True
+    resume = resume if resume is not None else shed
+    return bool(latched) and t >= resume
+
+
+class ThermalLatch:
+    """The hysteresis STATE :func:`decide` deliberately does not hold.
+
+    ``decide`` stays pure; the gateway holds one latch per server and feeds
+    each pressure reading through :meth:`update`, then passes the returned
+    state to ``decide(..., thermal_latched=...)``. A ``None`` reading clears
+    the latch (unknown is never a reason to shed, and must not leave a stale
+    "hot" behind for the next real reading). Thread-safe: handler threads
+    share it.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._hot = False
+
+    def update(self, thermal_c: float | None) -> bool:
+        """Advance the latch with one reading; return whether it now sheds."""
+        with self._lock:
+            self._hot = thermal_hot(thermal_c, self._hot)
+            return self._hot
+
+    @property
+    def shedding(self) -> bool:
+        """The latch's current state, without advancing it."""
+        with self._lock:
+            return self._hot
+
 
 # --- Retained-but-advisory thresholds (no longer cap the tier; see module doc) ---
 
@@ -305,6 +452,12 @@ SHED_SIGNAL_ENGINE = "engine"
 
 #: Host iowait alone. Sheds an UNPOOLED request only; see the module docstring.
 SHED_SIGNAL_IOWAIT = "iowait"
+
+#: The box is above its card's thermal shed band (lane-safety t14). Sheds any
+#: non-floor tier, pooled or not — heat, like paging, is first-party evidence
+#: that taking on more work makes things worse (the Spark hard-resets under
+#: sustained full-GPU load). Reported after ``swap`` when both hold.
+SHED_SIGNAL_THERMAL = "thermal"
 
 #: Nothing justified a shed.
 SHED_SIGNAL_NONE = ""
@@ -376,6 +529,10 @@ def decide(
     pooled: bool = False,
     engine_active: float | None = None,
     engine_capacity: float | None = None,
+    thermal_c: float | None = None,
+    thermal_latched: bool = False,
+    thermal_bands: tuple[float | None, float | None] | None = None,
+    thresholds: tuple[float, float] | None = None,
 ) -> dict:
     """Map system pressure + a requested tier to a busy/shed routing decision.
 
@@ -410,6 +567,24 @@ def decide(
         ``d5``, the gateway's request path leaves them at that default — the
         saturation verdict below is reachable only by a caller that opts into
         supplying them.  See the module docstring for why.
+    thermal_c:
+        The hottest watched thermal zone in deg C
+        (:func:`lobes.runtime._pressure.read_thermal_c`), or ``None`` when no
+        zone is watched/readable. ``None`` is never a reason to shed.
+    thermal_latched:
+        Whether the box was already shedding on heat — the hysteresis state,
+        held by the caller's :class:`ThermalLatch` so this function stays
+        pure. Above ``THERMAL_SHED_C`` sheds; once latched, shedding holds
+        down to ``THERMAL_RESUME_C``. See :func:`thermal_hot`.
+    thermal_bands:
+        Explicit ``(shed_c, resume_c)`` overriding the module constants (the
+        one-shot CLI reads them from the deployment ``.env``); ``None`` keeps
+        the gateway's process-env bands.
+    thresholds:
+        Explicit ``(swap, iowait)`` busy thresholds overriding
+        ``SWAP_DEGRADED_THRESHOLD`` / ``IOWAIT_DEGRADED_THRESHOLD`` (the
+        one-shot CLI reads them from the deployment ``.env``, review2-b #4);
+        ``None`` keeps the gateway's import-time constants.
 
     Returns
     -------
@@ -446,12 +621,21 @@ def decide(
     exactly equal to a threshold does **not** trigger busy mode.  For
     example, ``swap_used_percent == 75.0`` stays ``warm``; ``75.001`` is busy.
     """
-    swap_thrash = swap_used_percent > SWAP_DEGRADED_THRESHOLD
-    iowait_high = iowait_percent > IOWAIT_DEGRADED_THRESHOLD
+    swap_limit, iowait_limit = (
+        thresholds
+        if thresholds is not None
+        else (SWAP_DEGRADED_THRESHOLD, IOWAIT_DEGRADED_THRESHOLD)
+    )
+    swap_thrash = swap_used_percent > swap_limit
+    iowait_high = iowait_percent > iowait_limit
 
     # `mode` is UNCHANGED by d1: it reports the HOST, and both signals are
     # honest observations of it. Only the shed band below narrowed.
-    under_pressure = swap_thrash or iowait_high
+    thermal_over = thermal_hot(thermal_c, thermal_latched, thermal_bands)
+
+    # `mode` is the host report: a box over its thermal band is under pressure
+    # exactly as a paging one is, and peers read `mode`/`shed` from /status.
+    under_pressure = swap_thrash or iowait_high or thermal_over
     mode = "busy" if under_pressure else "warm"
 
     if requested_tier in NEVER_SHED_ROLES:
@@ -473,6 +657,10 @@ def decide(
     # full too — the more fundamental fact is the one worth naming).
     if swap_thrash:
         signal = SHED_SIGNAL_SWAP
+    elif thermal_over:
+        # Heat sheds like swap: every full tier, pooled or not (a pooled
+        # request is then forwarded to a cool replica by the caller, t8).
+        signal = SHED_SIGNAL_THERMAL
     elif _engine_saturated(engine_active, engine_capacity):
         signal = SHED_SIGNAL_ENGINE
     elif iowait_high and not pooled:

@@ -43,9 +43,26 @@ def offline_runtime(monkeypatch, tmp_path):
     monkeypatch.setattr(_role_swap, "MEMINFO", tmp_path / "no-meminfo")
     # No deployment scaffolded by default: point the home at an empty tmp dir.
     monkeypatch.delenv("LOBES_DIR", raising=False)
+    # The benchmark window's per-host lock lives here; keep xdist workers apart.
+    rt = tmp_path.parent / (tmp_path.name + "-run")
+    rt.mkdir(exist_ok=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var
     empty = tmp_path / "home-lobes"
     monkeypatch.setattr(_compose, "default_deployment_dir", lambda: empty)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cache_clear(monkeypatch, request) -> None:
+    """Lifecycle verbs clear the page cache around compose down/up (t11); never
+    let a test reach the real machine CLI or ``sudo``."""
+    from lobes.runtime import _machine
+
+    if request.module.__name__.rsplit(".", 1)[-1] in ("test_machine_adapter",):
+        return  # exercises the real adapter against fakes
+    monkeypatch.setattr(
+        _machine, "drop_caches", lambda: _machine.MachineResult(False, "not_granted")
+    )
 
 
 @pytest.fixture(autouse=True)

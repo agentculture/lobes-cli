@@ -26,8 +26,8 @@ built; that lives in the rest of `docs/`.
 | contract | covers | status |
 |---|---|---|
 | [realtime-tool-calling.md](realtime-tool-calling.md) | `GET /v1/realtime` — the duplex voice session: audio in and out, turn events, the tool-call round trip, interruption, the latency features as a client sees them | written 2026-09-18 from live session logs (DGX Spark, Hebrew stack) |
-| [machine-cli-window.md](machine-cli-window.md) | the `spark` / `thor` / `orin` CLIs' benchmark window (`window show\|store\|lock\|restore`), `drop-caches` and `grant-permissions` — verbs, JSON, exit codes, the sudoers grant | draft 2026-10-17, no live exchange yet (lane-safety plan t1) |
-| [lane-safety-runtime.md](lane-safety-runtime.md) | the lane wrapper's boot hold, staggered release, start counter and memory gate; their knobs, state files and the watcher's marker; compile cache; thermal signal | draft 2026-10-17, not yet implemented (lane-safety plan t1) |
+| [machine-cli-window.md](machine-cli-window.md) | the `spark` / `thor` / `orin` CLIs' benchmark window (`window show\|store\|lock\|restore`), `drop-caches` and `grant-permissions` — verbs, JSON, exit codes, the sudoers grant | implemented and released 2026-10-17; live exchanges in `docs/evidence/2026-10-17-accept-lane-safety-hardware.txt` |
+| [lane-safety-runtime.md](lane-safety-runtime.md) | the lane wrapper's boot hold, staggered release, start counter and memory gate; their knobs, state files and the watcher's marker; compile cache; thermal signal | implemented 2026-10-17 (lobes 0.87.0 / 0.88.0) |
 
 ## Not written yet
 

@@ -35,9 +35,9 @@ from pathlib import Path
 
 from lobes import __version__
 from lobes.cli import _runtime_ops
-from lobes.cli._commands import _role_probe
+from lobes.cli._commands import _doctor_lane_safety, _role_probe
 from lobes.cli._commands.capabilities import _fetch_gateway_capabilities
-from lobes.cli._commands.init import DEFAULT_SHAPE, _values_equal
+from lobes.cli._commands.init import DEFAULT_SHAPE, SHAPE_KEY, _values_equal
 from lobes.cli._commands.whoami import _find_culture_yaml
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
@@ -832,6 +832,42 @@ def _resolve_deployment_profile(deploy_dir: Path, recorded: str | None):
         )
 
 
+def _recorded_shape(deploy_dir: Path, deployed: dict[str, str]) -> tuple[str | None, str]:
+    """``(shape name, source)`` the deployment records, or ``(None, "")`` (review3 #8).
+
+    ``LOBES_SHAPE`` in ``.env`` (written by ``lobes init``) wins; else the
+    committed lock's ``[variation] shape``. A deployment scaffolded before
+    either existed records nothing, and the caller keeps the machine-as-brain
+    render it always used.
+    """
+    recorded = (deployed.get(SHAPE_KEY) or "").strip()
+    if recorded:
+        return recorded, SHAPE_KEY
+    path = deploy_dir / LOCK_FILENAME
+    if path.is_file():
+        try:
+            shape = load_lock(path).shape
+        except ModelGearError:
+            shape = None  # lock_drift reports a malformed lock; not this check's job
+        if shape:
+            return shape, LOCK_FILENAME
+    return None, ""
+
+
+def _resolve_deployment_shape(deploy_dir: Path, deployed: dict[str, str]):
+    """``(Shape, note)`` to render staleness against; machine-as-brain when unrecorded."""
+    name, source = _recorded_shape(deploy_dir, deployed)
+    if name is None:
+        return resolve_shape(DEFAULT_SHAPE), None
+    try:
+        return resolve_shape(name), None
+    except ModelGearError as err:
+        return resolve_shape(DEFAULT_SHAPE), (
+            f"recorded shape {name!r} ({source}) did not resolve ({err.message}); "
+            f"checked against {DEFAULT_SHAPE} instead"
+        )
+
+
 def _staleness_ok(profile_name: str, overridden: list[str], detail: str) -> dict:
     """The passing verdict — operator overrides only ever annotate it."""
     message = f"profile {profile_name}: every required .env key is present"
@@ -897,7 +933,11 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
     deployed = _env.read_env_file(env_path)
     recorded = deployed.get("LOBES_PROFILE") or None
     profile, note = _resolve_deployment_profile(deploy_dir, recorded)
-    rendered = render_shape(resolve_shape(DEFAULT_SHAPE), profile).env
+    # The deployment's OWN shape (review3 #8): a shape's [host_env] values
+    # (orin-associate's LOBES_BOOT_ORDER / LOBES_BOOT_STAGGER_S) are required
+    # there, not operator overrides of a machine-as-brain render.
+    shape, shape_note = _resolve_deployment_shape(deploy_dir, deployed)
+    rendered = render_shape(shape, profile).env
     dropped = _dropped_role_prefixes(deploy_dir)
     required = {k: str(v) for k, v in rendered.items() if not k.startswith(dropped)}
     # A shape-declared host_env key every render writes explicitly (so a shape
@@ -935,6 +975,8 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
         )
     if note:
         notes.append(note)
+    if shape_note:
+        notes.append(shape_note)
     return _staleness_verdict(profile.name, missing, stale, overridden, notes), missing
 
 
@@ -1052,7 +1094,10 @@ def _apply_fix(deploy_dir: Path) -> list[str]:
     _files_verdict, missing_files = _scaffold_files_check(deploy_dir)
     actions = _write_missing_files(deploy_dir, missing_files)
     _env_verdict, missing_env = _profile_staleness_check(deploy_dir)
-    return actions + _append_missing_env(deploy_dir, missing_env)
+    actions += _append_missing_env(deploy_dir, missing_env)
+    # Absent compile-cache dirs (lane safety t16) — creating a missing dir is
+    # missing-only by construction; an existing one is never touched.
+    return actions + _doctor_lane_safety.create_cache_dirs(deploy_dir)
 
 
 def _write_missing_file(deploy_dir: Path, dest: str, by_dest: dict[str, str]) -> None:
@@ -1140,7 +1185,11 @@ def _fleet_only_checks(deploy_dir: Path) -> tuple[list[dict], dict[str, object]]
     mesh_secrets_only_check = _mesh_key_secrets_env_only_check(deploy_dir)
     if mesh_secrets_only_check is not None:
         checks.append(mesh_secrets_only_check)
-    fix_plan = {"files": missing_files, "env": missing_env}
+    fix_plan = {
+        "files": missing_files,
+        "env": missing_env,
+        "dirs": _doctor_lane_safety.missing_cache_dirs(deploy_dir),
+    }
     return checks, fix_plan
 
 
@@ -1178,6 +1227,8 @@ def _deploy_dir_diagnostics(deploy_dir: Path) -> tuple[list[dict], int, dict[str
     lock_check = _lock_drift_check(deploy_dir)
     if lock_check is not None:
         checks.append(lock_check)
+    # Lane safety (t16) — warn/info only, each skips when not applicable.
+    checks.extend(_doctor_lane_safety.lane_safety_checks(deploy_dir))
     return checks, port, fix_plan
 
 
@@ -1261,10 +1312,12 @@ def _render_fix_plan_lines(plan: dict, *, applied: list[str] | None) -> list[str
         return lines
     files = plan.get("files") or []
     env = plan.get("env") or {}
+    dirs = plan.get("dirs") or []
     lines = ["", "fix plan (DRY RUN — re-run with --fix --apply to write):"]
     lines.extend(f"  would write {dest}" for dest in files)
     lines.extend(f"  would append {key}={env[key]}" for key in sorted(env))
-    if not files and not env:
+    lines.extend(f"  would create {d}" for d in dirs)
+    if not files and not env and not dirs:
         lines.append("  nothing to heal — no absent files or keys")
     return lines
 
@@ -1292,6 +1345,23 @@ def _render_repin_lines(report: dict) -> list[str]:
     return lines
 
 
+def _render_refresh_lines(report: dict) -> list[str]:
+    """The ``--refresh-logwrap`` section (lane safety t16)."""
+    applied = report.get("refresh_logwrap_applied")
+    if applied is not None:
+        lines = ["", "logwrap refresh applied:"]
+        lines.extend(f"  {action}" for action in applied)
+        if not applied:
+            lines.append("  nothing to refresh — mg-logwrap.sh is current or absent")
+        return lines
+    plan = report.get("refresh_logwrap_plan") or []
+    lines = ["", "logwrap refresh (DRY RUN — re-run with --apply to write):"]
+    lines.extend(f"  {action}" for action in plan)
+    if not plan:
+        lines.append("  nothing to refresh — mg-logwrap.sh is current")
+    return lines
+
+
 def _render_text(report: dict) -> str:
     status = "healthy" if report["healthy"] else "unhealthy"
     lines = [f"lobes doctor: {status}", ""]
@@ -1302,6 +1372,8 @@ def _render_text(report: dict) -> str:
         lines.extend(_render_fix_plan_lines(report["fix_plan"], applied=report.get("fix_applied")))
     if report.get("repin_requested"):
         lines.extend(_render_repin_lines(report))
+    if report.get("refresh_logwrap_requested"):
+        lines.extend(_render_refresh_lines(report))
     return "\n".join(lines)
 
 
@@ -1378,7 +1450,9 @@ def _run_repin(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     return report
 
 
-def _validate_doctor_flags(role: str | None, *, fix: bool, apply: bool, repin: bool) -> None:
+def _validate_doctor_flags(
+    role: str | None, *, fix: bool, apply: bool, repin: bool, refresh_logwrap: bool = False
+) -> None:
     """Refuse incoherent flag combinations BEFORE any branch consumes them.
 
     Front-loaded so `--role` cannot silently swallow a combination the scaffold
@@ -1387,10 +1461,10 @@ def _validate_doctor_flags(role: str | None, *, fix: bool, apply: bool, repin: b
     keep it under SonarCloud's cognitive-complexity ceiling — validation and
     dispatch are separate jobs and read better apart.
     """
-    if apply and not (fix or repin):
+    if apply and not (fix or repin or refresh_logwrap):
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="--apply requires --fix or --repin-version",
+            message="--apply requires --fix or --repin-version (or --refresh-logwrap)",
             remediation="run 'lobes doctor --fix' for the heal plan, then add --apply",
         )
     if not role:
@@ -1398,6 +1472,13 @@ def _validate_doctor_flags(role: str | None, *, fix: bool, apply: bool, repin: b
     # `--role` probes a RUNNING lane; the write lanes touch the scaffold's
     # files and .env. Different questions, no shared work — so pairing them is
     # a mistake worth naming rather than silently resolving one way.
+    if refresh_logwrap:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--role cannot be combined with --refresh-logwrap",
+            remediation="run 'lobes doctor --refresh-logwrap --apply' first, then "
+            f"'lobes doctor --role {role}'",
+        )
     if repin:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
@@ -1439,12 +1520,36 @@ def _run_fix(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     return report
 
 
+def _run_refresh_logwrap(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
+    """The ``--refresh-logwrap`` lane (t16) — a sibling of :func:`_run_repin`.
+
+    Its own flag for the same reason: ``--fix`` only writes ABSENT files, and
+    replacing an existing one is opt-in. Writes ``mg-logwrap.sh.bak`` then the
+    packaged ``mg-logwrap.sh`` and nothing else.
+    """
+    deploy_dir = _compose.resolve_deployment_dir(compose_dir)
+    if apply:
+        emit_diagnostic(f">> refreshing {_compose.LOG_WRAPPER} in {deploy_dir}")
+        applied = _doctor_lane_safety.apply_refresh_logwrap(deploy_dir)
+        carried = {
+            k: report[k]
+            for k in ("fix_applied", "fix_requested", "repin_applied", "repin_requested")
+            if k in report
+        }
+        report = {**_diagnose(compose_dir), **carried, "refresh_logwrap_applied": applied}
+    else:
+        report["refresh_logwrap_plan"] = _doctor_lane_safety.refresh_logwrap_plan(deploy_dir)
+    report["refresh_logwrap_requested"] = True
+    return report
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     role = getattr(args, "role", None)
     fix = bool(getattr(args, "fix", False))
     apply = bool(getattr(args, "apply", False))
     repin = bool(getattr(args, "repin_version", False))
-    _validate_doctor_flags(role, fix=fix, apply=apply, repin=repin)
+    refresh = bool(getattr(args, "refresh_logwrap", False))
+    _validate_doctor_flags(role, fix=fix, apply=apply, repin=repin, refresh_logwrap=refresh)
     if role:
         return _cmd_doctor_role(args, role)
     compose_dir = getattr(args, "compose_dir", None)
@@ -1454,6 +1559,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         report = _run_fix(report, compose_dir, apply=apply)
     if repin:
         report = _run_repin(report, compose_dir, apply=apply)
+    if refresh:
+        report = _run_refresh_logwrap(report, compose_dir, apply=apply)
     emit_result(report if json_mode else _render_text(report), json_mode=json_mode)
     return 0 if report["healthy"] else 1
 
@@ -1474,7 +1581,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--apply",
         action="store_true",
-        help="With --fix: actually write the heal plan (absent files/keys only).",
+        help="With --fix / --repin-version / --refresh-logwrap: actually write "
+        "the plan (--fix writes absent files/keys/dirs only).",
     )
     p.add_argument(
         "--repin-version",
@@ -1482,6 +1590,13 @@ def register(sub: argparse._SubParsersAction) -> None:
         help=f"Rewrite {_VERSION_PIN_KEY} in .env to this CLI's version "
         "(issue #99). The ONE key doctor may rewrite, hence its own flag: "
         "--fix --apply never touches an existing line. Dry-run; --apply commits.",
+    )
+    p.add_argument(
+        "--refresh-logwrap",
+        action="store_true",
+        help="Replace a stale mg-logwrap.sh with this CLI's packaged copy, "
+        "backing the current one up to mg-logwrap.sh.bak first. Writes those two "
+        "files only; never part of --fix. Dry-run; --apply commits.",
     )
     p.add_argument(
         "--role",

@@ -1082,7 +1082,7 @@ fleet down`. `lobes switch <model>` is a down+up with a model swap. `lobes statu
 `fleet down`, `tunnel`) default to **dry-run**; require `--apply` to commit. Agents
 call CLIs in loops, so safe-by-default is mandatory. The read-only verbs (`status`,
 `assess`, `benchmark`, `logs`, `overview`, `whoami`, `explain`, `doctor`) never
-change the world — with two opt-in exceptions, both on `doctor`:
+change the world — with three opt-in exceptions, all on `doctor`:
 
 - **`doctor --fix`** is the heal lane (#119) and follows the same convention
   (`--fix` alone prints the missing-only heal plan; `--fix --apply` writes
@@ -1094,6 +1094,21 @@ change the world — with two opt-in exceptions, both on `doctor`:
   was broken), so the re-pin gets its own named flag rather than relaxing
   that lane. Same dry-run convention — `--repin-version` alone prints the
   plan, `--apply` commits it.
+- **`doctor --refresh-logwrap`** (lane safety, t16) replaces a STALE
+  `mg-logwrap.sh` with the packaged copy, writing exactly two paths:
+  `mg-logwrap.sh.bak` (the current file) then `mg-logwrap.sh`. Its own flag
+  for the same reason as `--repin-version`; same dry-run convention.
+
+**Lane safety (#304, #307, #308, #309).** Lane start, stop and crash are
+guarded by a boot hold, a per-lane vLLM compile cache, a start counter and
+memory gate, a page-cache clear with a host watcher, a gateway thermal shed
+signal, and an exclusive benchmark window. Every knob has an off value in the
+fleet `env.example`. Read `docs/contracts/lane-safety-runtime.md` and
+`docs/contracts/machine-cli-window.md` first, then `docs/operating-a-deployment.md`,
+`docs/measuring-lane-performance.md`, `docs/gateway-fleet.md` and `lobes explain
+lane-safety`. Open items: host conditions are on single-model/`--all-lobes` benchmarks only (#312), the
+live Spark acceptance has not run (#313), and every Thor line is
+DECLARED/UNVALIDATED (#108).
 
 ## Build / test / publish
 

@@ -545,8 +545,9 @@ def _dry_run(
     verb_word = "STOP" if action == "stop" else "START"
     text = (
         f"DRY RUN — would run: {command} in {deploy_dir} "
-        f"({verb_word} target {target}: {', '.join(services)}).\n"
-        "Re-run with --apply to execute."
+        f"({verb_word} target {target}: {', '.join(services)})"
+        + (f"; first: {_compose.cache_clear_plan_line()}" if action == "up" else "")
+        + ".\nRe-run with --apply to execute."
     )
     emit_result(payload if json_mode else text, json_mode=json_mode)
     _emit_innereye_hints(deploy_dir, target, action)
@@ -566,13 +567,8 @@ def _apply(
     command = " ".join(argv)
     verb_word = "stopping" if action == "stop" else "starting"
     emit_diagnostic(f">> {verb_word} {target} ({', '.join(services)}) in {deploy_dir}")
-    if action == "up":
-        # Create the durable-log dir (user-owned) before compose bind-mounts it —
-        # the same guard serve / fleet up use.
-        _compose.ensure_log_dir(
-            deploy_dir,
-            _env.read_env(deploy_dir / _compose.ENV_FILE, _compose.LOG_DIR_ENV) or None,
-        )
+    # An `up` argv's bind sources (logs, lane-state, compile cache) are created
+    # by run_compose's pre-start chokepoint (_before_up), never here.
     _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), command)
     # Mesh-brain-join (t8 follow-up): starting or stopping a role changes what
     # this box serves, so peers should learn it within one probe refresh
@@ -937,7 +933,6 @@ def _commit_swap(
             emit_diagnostic(f">> .env backed up to {backup.name}")
             _role_swap.write_env(env_path, changes)
         emit_diagnostic(f">> starting {target} ({', '.join(services)})")
-        _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
         _runtime_ops.compose_check(_compose.run_compose(deploy_dir, argv), " ".join(argv))
     except (ModelGearError, OSError) as exc:
         _stop_target(deploy_dir, target, services, swap)

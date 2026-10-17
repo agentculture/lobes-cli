@@ -144,3 +144,12 @@ beside a live deployment, never to a catalog entry.
 **Re-capture after any change.** There is no capture verb; the writer is a
 library (`lobes/runtime/_lock.py`'s `capture_lock`). Re-run it after a
 `lobes switch` or a hand edit, or the drift check will fire.
+
+**Predates the lane-safety change (2026-10-17).** The captured
+`mg-logwrap.sh` and compose files predate the lane-safety work (boot hold,
+start counter, memory gate, compile-cache mounts, wrapped services; plan
+`docs/plans/2026-10-17-lane-safety-and-quality-304-307-308-309.md`, claim c7).
+A box restored from, or compared against, this lock will therefore show
+`lock_drift` for `mg-logwrap.sh` and `docker-compose*.yml` until the lock is
+re-captured. That drift is expected; no captured file was rewritten from a
+live box for this note.

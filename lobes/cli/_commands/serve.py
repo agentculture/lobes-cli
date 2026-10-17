@@ -60,14 +60,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
             )
         else:
             emit_result(
-                f"DRY RUN — would run: docker compose up -d in {deploy_dir}, "
+                f"DRY RUN — would {_compose.cache_clear_plan_line()}, then run: "
+                f"docker compose up -d in {deploy_dir}, "
                 f"then wait for health on :{port}.\nRe-run with --apply to execute.",
                 json_mode=False,
             )
     else:
         emit_diagnostic(f">> starting the vLLM server in {deploy_dir}")
-        # Ensure the durable-log dir exists (user-owned) before compose bind-mounts it.
-        _compose.ensure_log_dir(deploy_dir, _env.read_env(env_path, _compose.LOG_DIR_ENV) or None)
+        # The durable-log dir, lane-state/ and compile-cache bind sources are
+        # created by compose_up_detached's pre-start chokepoint (_before_up).
         _runtime_ops.compose_check(_compose.compose_up_detached(deploy_dir), "docker compose up -d")
         _health.wait_health(port, container=_liveness_container(deploy_dir, env_path))
         result = {"serving": True, "port": port, "deployment_dir": str(deploy_dir)}

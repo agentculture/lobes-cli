@@ -3,11 +3,12 @@
 For whoever implements or calls the per-machine CLIs: **`spark`**
 (`dgx-spark-cli`), **`thor`** (`jetson-thor-cli`) and **`orin`**
 (`jetson-orin-cli`). lobes is the first caller. It runs a benchmark inside a
-locked-clocks window, and it clears the page cache around lane start/stop. The
+locked-clocks window when asked (`lobes benchmark --lock`; plain `benchmark`
+only calls `window show`), and it clears the page cache around lane start/stop. The
 machine work itself (clocks, fans, sudo) lives in these CLIs, not in lobes
 (lane-safety frame, decision c25).
 
-**Status: draft, 2026-10-17. No live exchange exists yet.** The JSON below is
+**Status: implemented and released 2026-10-17** (dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1, jetson-orin-cli 0.7.1). Live exchanges on all three boxes are in `docs/evidence/2026-10-17-accept-lane-safety-hardware.txt`. Some examples below are still shapes, not captured payloads. The JSON below is
 the required *shape*, not a captured payload. Replace each example with a real
 one from a box (box + date) when the verbs ship. Tracked by the lane-safety plan,
 tasks t2 to t4 (issues #304, #308, #309).
@@ -46,6 +47,7 @@ Every JSON object carries `ok` (bool) and `reason` (string, or `null` when
 ```json
 {"ok": true, "reason": null,
  "active": false, "stored": false, "supported": true,
+ "clocks_locked": false,
  "power_mode": "MAXN",
  "clocks": {"gpu_mhz": 612, "gpu_min_mhz": 306, "gpu_max_mhz": 1300, "emc_mhz": 3199},
  "fan_profile": "cool",
@@ -53,8 +55,21 @@ Every JSON object carries `ok` (bool) and `reason` (string, or `null` when
  "detail": {}}
 ```
 
-- `active` — clocks are locked by a window (stored state exists and lock was
-  applied).
+- `active` — clocks are locked by a lobes window (stored state exists and
+  lock was applied). It tracks lobes' own window state only.
+- `clocks_locked` — `true|false|null`, read from the hardware, not from lobes'
+  state: `true` when the GPU devfreq node's `min_freq` equals its `max_freq`
+  (on Jetson; the EMC/`bwmgr` node too when it is readable), `false` when they
+  differ, `null` when unreadable (the GB10). **A lock can exist without a
+  window**: an operator ran `jetson_clocks`, or a crashed run left the box
+  pinned. `active` stays `false` in both cases; `clocks_locked` does not.
+  *Contract addition, 2026-10-17.* Motivating reading, Jetson AGX Orin
+  2026-10-17: `/sys/class/devfreq/17000000.gpu` cur = min = max = 1300500000
+  and `/sys/class/devfreq/bwmgr` cur = min = max = 3199000000 (the operator had
+  run `jetson_clocks`), yet `window show` reported `"active": false` and
+  `lobes doctor` said the clocks were not locked (issue #308). A caller that
+  gets no `clocks_locked` key (a CLI from before this addition) falls back to
+  `active`.
 - `stored` — a saved state exists.
 - `supported` — the card accepts a clock lock at all. The GB10 is unverified
   (frame park v2); `spark` returns `supported: false` until a lock is shown to
@@ -98,9 +113,14 @@ state returns `ok: true`, `"restored": false`.
   drop-in `/etc/sudoers.d/<cli>-lobes` with one `sudo install`. One rule per
   command. Never full sudo.
 - **Window rules** (Jetson): `/usr/bin/jetson_clocks`, `/usr/bin/jetson_clocks
-  --store <path>`, `/usr/bin/jetson_clocks --restore <path>`, plus the fan
-  control the CLI uses. The CLI owns the exact list and prints it before
-  installing.
+  --store <path>`, `/usr/bin/jetson_clocks --restore <path>`,
+  `/usr/bin/jetson_clocks --fan` (the fan lock) and `/usr/bin/jetson_clocks
+  --show` (EMC clock and fan state for `window show`). The CLI owns the exact
+  list and prints it before installing.
+  - `nvfancontrol` has no runtime profile switch. Its options are only `-q`,
+    `-f` and `--verbose`, and `-q` needs root (read on a Thor, 2026-10-17).
+  - The fan is locked with `jetson_clocks --fan` and restored by
+    `jetson_clocks --restore`, whose stored file includes the fan PWM state.
 - **No grant, no prompt.** Every verb uses `sudo -n`. A missing grant is exit
   `2` with `reason: "not_granted"`.
 

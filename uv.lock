@@ -270,6 +270,15 @@ nvtx = [
 ]
 
 [[package]]
+name = "dgx-spark-cli"
+version = "0.9.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b0/ff/6e3c25c2187e90b66c8fe2b3e82a11abd1b9381e3e52a3aea08def6e357a/dgx_spark_cli-0.9.1.tar.gz", hash = "sha256:f7f38efb009812ed7d2d08d1260156abf7e7b2d06a684fa21d42e546233a1c56", size = 254194, upload-time = "2026-10-17T10:25:42.796Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/44/a3/a786c09c8a5b546a864a9c6e6cbeeca761fe7b73ead8f1f73f5ef27087a5/dgx_spark_cli-0.9.1-py3-none-any.whl", hash = "sha256:93a774712fea0fc931207b7dac0cac5fce19358718404d9e5ad79945cc8e03d6", size = 103839, upload-time = "2026-10-17T10:25:41.579Z" },
+]
+
+[[package]]
 name = "execnet"
 version = "2.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -480,6 +489,24 @@ wheels = [
 ]
 
 [[package]]
+name = "jetson-orin-cli"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/a3/09e0c81f809910f14dbd700b347c06957b40c7d3cac634ec896598750adc/jetson_orin_cli-0.7.1.tar.gz", hash = "sha256:b64d571ccd6c512779533c2aa18999fa4bce0e63f10293a4fae4bd20a265ef49", size = 264755, upload-time = "2026-10-17T10:25:53.2Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/46/cf/0e64c9beb4d90ad725957d9053775870a4a43eff3dbe5b63d301c177caca/jetson_orin_cli-0.7.1-py3-none-any.whl", hash = "sha256:046397e5330f0b3ffce0424d77b4c5e1c2bc449118ba4a4dc897e3931a1c8292", size = 114435, upload-time = "2026-10-17T10:25:51.849Z" },
+]
+
+[[package]]
+name = "jetson-thor-cli"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/93/53e175a1a5832b107290e29a071a1a528baeb54dab74a348a246a391cdd5/jetson_thor_cli-0.6.1.tar.gz", hash = "sha256:b668778fa78c8b2c7213c94cd602372e02d0d9b688c21f3ef09c51ab29e2456b", size = 278548, upload-time = "2026-10-17T10:25:45.958Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/fd/4b627ce392ef5a227a68ff47043627b6582d98c850b6576e87af899dd7fe/jetson_thor_cli-0.6.1-py3-none-any.whl", hash = "sha256:fa71323fac8b43c1953c149865c9332f8e4726d182a14acda04f4b42981985e6", size = 118407, upload-time = "2026-10-17T10:25:44.907Z" },
+]
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -493,7 +520,7 @@ wheels = [
 
 [[package]]
 name = "lobes-cli"
-version = "0.87.0"
+version = "0.88.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -518,6 +545,9 @@ embed-sidecar = [
     { name = "fastapi" },
     { name = "uvicorn", extra = ["standard"] },
 ]
+orin = [
+    { name = "jetson-orin-cli" },
+]
 realtime = [
     { name = "fastapi" },
     { name = "httpx" },
@@ -527,6 +557,12 @@ realtime = [
     { name = "silero-vad" },
     { name = "torch" },
     { name = "uvicorn", extra = ["standard"] },
+]
+spark = [
+    { name = "dgx-spark-cli" },
+]
+thor = [
+    { name = "jetson-thor-cli" },
 ]
 
 [package.dev-dependencies]
@@ -543,6 +579,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "dgx-spark-cli", marker = "extra == 'spark'", specifier = ">=0.9.1" },
     { name = "fastapi", marker = "extra == 'bluetts'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox-ml'", specifier = ">=0.115" },
@@ -550,6 +587,8 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'embed-sidecar'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'realtime'", specifier = ">=0.28" },
+    { name = "jetson-orin-cli", marker = "extra == 'orin'", specifier = ">=0.7.1" },
+    { name = "jetson-thor-cli", marker = "extra == 'thor'", specifier = ">=0.6.1" },
     { name = "numpy", marker = "extra == 'realtime'", specifier = ">=2.0" },
     { name = "phonikud-onnx", marker = "extra == 'chatterbox-ml'", specifier = ">=1.0" },
     { name = "python-multipart", marker = "extra == 'realtime'", specifier = ">=0.0.9" },
@@ -563,7 +602,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'embed-sidecar'", specifier = ">=0.34" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'realtime'", specifier = ">=0.34" },
 ]
-provides-extras = ["realtime", "chatterbox", "chatterbox-ml", "bluetts", "embed-sidecar", "decider-sidecar"]
+provides-extras = ["spark", "thor", "orin", "realtime", "chatterbox", "chatterbox-ml", "bluetts", "embed-sidecar", "decider-sidecar"]
 
 [package.metadata.requires-dev]
 dev = [

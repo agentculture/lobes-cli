@@ -404,3 +404,60 @@ def test_capabilities_lists_no_decider_member_lanes(mesh_env):
     payload = S.capabilities_payload(table, cfg, {}, mesh_snapshot=snap)
     decider = payload["decider"] if "decider" in payload else payload["roles"]["decider"]
     assert "member_lanes" not in decider
+
+
+# --- a peer's thermal 429 relays unchanged (lane-safety t14) -----------------
+
+_THERMAL_BODY = (
+    b'{"error": {"message": "cortex is under pressure; retry shortly", '
+    b'"type": "server_busy", "code": "busy", "shed_signal": "thermal"}}'
+)
+_THERMAL_HEADERS = [
+    ("Retry-After", "5"),
+    ("X-Lobes-Tier-Reason", "busy"),
+    ("X-Lobes-Shed-Signal", "thermal"),
+    ("Content-Type", "application/json"),
+]
+
+
+class _HotPeer:
+    """A peer gateway that sheds on heat: its own thermal 429, verbatim."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, backend, path, fwd_body, headers, *, connect_timeout, read_timeout):
+        self.calls.append(backend.base_url)
+        return _FakeUpstream(429, _THERMAL_BODY, headers=list(_THERMAL_HEADERS))
+
+
+def _relayed_body(resp):
+    return resp.body if resp.upstream is None else resp.upstream.read_all()
+
+
+def _assert_thermal_relayed(resp):
+    assert resp.status == 429
+    assert _relayed_body(resp) == _THERMAL_BODY
+    for name, value in _THERMAL_HEADERS:
+        assert value in _hdr(resp, name), name
+    assert _hdr(resp, S.SHED_SIGNAL_HEADER) == ["thermal"]  # once, not re-stamped
+    assert _hdr(resp, "X-Lobes-Tier-Reason") == ["busy"]
+
+
+def test_member_lane_forward_relays_the_peers_thermal_429_unchanged(mesh_env):
+    table, cfg = build_config({})
+    peer = _HotPeer()
+    resp = _post(table, cfg, "cortex-spark2", peer, snap=_snap(_member("spark2", SPARK2)))
+    assert [u.rstrip("/") for u in peer.calls] == [SPARK2]  # exactly one forward
+    _assert_thermal_relayed(resp)
+
+
+def test_peer_only_forward_relays_the_peers_thermal_429_unchanged(mesh_env):
+    # This box does not host cortex; the mesh pool (two agreeing members)
+    # answers it, and the chosen member is hot. Its 4xx is never retried.
+    table, cfg = build_config({"PRIMARY_FEASIBLE": "false"})
+    peer = _HotPeer()
+    resp = _post(table, cfg, "cortex", peer, snap=_two_member_snapshot(_fp(), _fp()))
+    assert len(peer.calls) == 1
+    assert peer.calls[0].rstrip("/") in {"http://a", "http://b"}
+    _assert_thermal_relayed(resp)

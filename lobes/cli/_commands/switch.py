@@ -526,7 +526,8 @@ def _emit_dry_run(deploy_dir, env_path, plan, messages, notices, port, probe, js
     lines += [f"  {m}" for m in messages]
     lines += [f"  NOTE: {notice}" for notice in notices]
     lines.append(
-        f"  then: docker compose down && up -d in {deploy_dir}, wait for health on :{port}"
+        f"  then: docker compose down, {_compose.cache_clear_plan_line()}, "
+        f"up -d in {deploy_dir}, wait for health on :{port}"
     )
     if probe:
         lines.append("  then: probe tool calling (tool_choice:auto)")

@@ -425,7 +425,8 @@ author spells the exact bytes — and a key that collides with a role knob loses
 to the role table (`host_env` is rendered first, precisely so it can never
 shadow a measured budget).
 
-Exactly one built-in uses it today:
+Every built-in uses it today. The Orin's gateway-pressure key is the original
+case; lane safety (below) added boot-order and thermal keys on all three cards:
 
 ```toml
 # lobes/profiles/builtin/orin.toml
@@ -445,9 +446,33 @@ left at `75`: swap is measured honestly there and stays the real guard.
 
 It is declared on the **card**, not on a deployment shape, because it is a fact
 about the board — so every shape rendered over `orin` inherits it, including
-the default `machine-as-brain` that a bare `lobes init` renders. No other card
-declares a `[host_env]`, so no other card's rendering moves by a single byte
-(pinned by `tests/goldens/` and `tests/test_orin_lobe_shape.py`).
+the default `machine-as-brain` that a bare `lobes init` renders. The iowait key remains Orin-only (pinned by `tests/goldens/` and
+`tests/test_orin_lobe_shape.py`).
+
+#### Lane-safety keys in `[host_env]` (#304, #307, #308, #309)
+
+Lane safety reuses `[host_env]` for card facts the wrapper and the gateway
+read. The knobs, defaults and off values are in
+`docs/contracts/lane-safety-runtime.md` section 1 and the fleet `env.example`;
+this table is what each card declares.
+
+| card | `LOBES_BOOT_ORDER` | `LOBES_THERMAL_ZONES` | shed / resume | status |
+|---|---|---|---|---|
+| Spark | absent (no order measured, #108) | `acpitz` | 91 / 86 C | bands from #304's batch-job governor, **not** a serving measurement |
+| Thor | `embed,rerank` (gears first) | `tj-thermal` | absent (unset) | **DECLARED/UNVALIDATED (#108)**; the Thor is code-only in this delivery |
+| Orin | `multimodal,embed,rerank` | `tj-thermal` | absent (unset) | order measured 2026-08-04; bands unmeasured (#108) |
+
+- **Boot order.** Lane names are the wrapper's `MG_LOG_NAME` (`multimodal` is
+  senses, `embed` the embedder, `rerank` the reranker). An unlisted lane is
+  held last. The order is shape-dependent: the `orin-associate` shape's own
+  measured order is associate first, so that shape's operator types
+  `LOBES_BOOT_ORDER` in `.env` (a shape has no env mechanism).
+- **Thermal.** An empty band means the shed signal is off, which is why Thor
+  and Orin shed nothing on temperature. The fleet compose passes the three
+  thermal keys to the gateway container (issue #311); see `gateway-fleet.md`.
+  The live Spark acceptance under sustained load has not run (issue #313).
+- **Compile cache.** Not a card fact: every card mounts the same
+  per-lane cache (`docs/operating-a-deployment.md`).
 
 ### `gpu_access` — how this board's container runtime is asked for the GPU
 

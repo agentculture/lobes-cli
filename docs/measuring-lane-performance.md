@@ -106,6 +106,49 @@ a fresh clean run against an older one taken under unknown load. Re-measuring a
 number you already have is cheap; a wrong conclusion drawn from mismatched
 conditions is not.
 
+## Rule 4 — lock the clocks, and keep the window honest (#304)
+
+Rule 3 says to record clocks; `lobes benchmark --lock` enforces them where the
+machine allows. The window is for operators and for agents running a
+comparison.
+
+- **Opt in with `--lock`.** `lobes benchmark` is a read-only verb, so by
+  default it opens no window: it takes no lock, changes no clock, and records
+  `locked: false, reason: not_requested` with the `window show` conditions at
+  start and end (operator decision d8). Pass `--lock` for a comparison run.
+- **What `--lock` does.** It takes a per-host file lock
+  (`$XDG_RUNTIME_DIR/lobes-benchmark-window.lock`, so two locked runs cannot
+  overlap), reads `window show`, runs `window store`, then `window lock` (clocks
+  and fan to max), runs the load, and calls `window restore` exactly once in a
+  `finally` (SIGINT and SIGTERM included). Only `benchmark --lock` enters the
+  window; `init`, `serve`, `switch`, `up` and `fleet` never do.
+- **When the lock is not possible.** If the machine CLI is missing, ungranted
+  or unsupported, a `--lock` run proceeds **unlocked** and the same block
+  records why. A run never fails because the clocks could not be locked.
+- **What gets recorded.** Single-model and `--all-lobes` results carry
+  `host.conditions` with `locked`, `reason`, and `start` / `end` snapshots
+  (`power_mode`, `clocks`, `fan_profile`, `temps_c`). Compare `start` and
+  `end` temperatures: a hot end means thermal throttling may have shaped the
+  number. **`lobes measure` and `lobes benchmark --profile` do not record
+  conditions yet (issue #312)**, so for those, write the conditions down by hand
+  as Rule 3 says.
+- **Per card.** The GB10 reports no supported clock lock, so on the DGX Spark
+  the window runs **unlocked** (the conditions say so). The Orin and Thor
+  paths need the machine CLIs (jetson-orin-cli >= 0.7.1, jetson-thor-cli
+  >= 0.6.1, dgx-spark-cli >= 0.9.1; `lobes-cli[orin|thor|spark]`). The Thor
+  lock and restore, fan included (`jetson_clocks --fan`), are validated on
+  hardware (2026-10-17, `docs/evidence/2026-10-17-accept-lane-safety-hardware.txt`).
+  The Orin lock path has not run on hardware: its clocks were already pinned by
+  an operator `jetson_clocks` run, which `lobes doctor` now reports.
+- **Doctor.** `lobes doctor` warns `jetson_clocks_locked` when `window show`
+  reports locked clocks and no benchmark holds the host lock, i.e. a crashed run
+  left the box pinned at max clocks. With the CLI's `clocks_locked` field it
+  also warns when the clocks are locked outside any lobes window (an operator's
+  `jetson_clocks`, which may be on purpose); without it, only `active` counts.
+
+Contract: `docs/contracts/machine-cli-window.md`. The live Spark acceptance
+under sustained load has not run (issue #313).
+
 ## Which measurements need a quiet box, and which do not
 
 Not every metric has the same sensitivity to machine load, and treating them

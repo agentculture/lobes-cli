@@ -1,0 +1,1267 @@
+{
+  "plan_slug": "lane-safety-and-quality-304-307-308-309",
+  "schema_version": 2,
+  "created": "2026-10-17T07:09:35Z",
+  "updated": "2026-10-17T10:41:37Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t14 additionally adds LOBES_THERMAL_ZONES / LOBES_THERMAL_SHED_C / LOBES_THERMAL_RESUME_C passthroughs to the fleet gateway service's environment: list in lobes/templates/fleet/docker-compose.yml (and regenerates tests/goldens/template-defaults.env)",
+      "task_ref": "t14",
+      "reason": "Found by t13: the gateway service deliberately has no env_file (only scoped keys, compose.yml ~1890), so without explicit passthroughs thermal_c is always None in the container and the thermal shed signal can never be live; no confirmed task owned this compose edit",
+      "affects": [
+        "t8",
+        "t13",
+        "c14",
+        "c15",
+        "c18"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t15 records host.conditions on the single-model and --all-lobes benchmark results only: 'lobes measure' gets no conditions and 'lobes benchmark --profile' runs inside the window but emits none",
+      "task_ref": "t15",
+      "reason": "measure's --json is a dict keyed exactly by role (tests/test_cli_measure.py asserts set(payload)==set(ROLES)) and --profile JSON is keyed by profile name; adding a host key breaks both existing JSON contracts, and measure is a short probe, not a load run",
+      "affects": [
+        "c21",
+        "h16"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "t16's doctor.py change is more than the single registration call: it adds the --refresh-logwrap flag, its dispatcher, flag validation/rendering, fix_plan.dirs and one _apply_fix call; all finding logic stays in _doctor_lane_safety.py. It also edited CLAUDE.md (Mutation safety lists --refresh-logwrap) and the runtime contract \u00a76",
+      "task_ref": "t16",
+      "reason": "argparse flags and the --fix apply path live in doctor.py and cannot be wired from outside it; following the --repin-version precedent requires the flag beside it",
+      "affects": [
+        "c45"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "t19 (live Spark acceptance, >= 30 min sustained serving load with the thermal signal live) is not run in this delivery; it continues in issue #313",
+      "task_ref": "t19",
+      "reason": "it needs d1 (#311, gateway thermal passthrough, unconfirmed) to be meaningful and explicit operator approval at run time for a live, reset-prone load on the Spark (#304); neither arrived before the code waves finished",
+      "affects": [
+        "c20",
+        "h15",
+        "t20"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "t18 did not refresh tests/fixtures/upgrade_compat; it kept them and added a dated README note explaining why",
+      "task_ref": "t18",
+      "reason": "the fixtures are verbatim copies of a PREVIOUS lobes init scaffold and the test asserts an old deployment upgrades with zero byte changes; refreshing them to the new templates would defeat the test, and it already passes against the new templates",
+      "affects": [
+        "c8",
+        "h6"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "Add a real-hardware validation pass (Spark, Orin, Thor) beyond t19: machine-CLI verbs on each box, the wrapper (hold, counter, memory gate) in throwaway containers on host kernels, the watcher against real markers, a side-by-side dev gateway proving thermal_c and the thermal 429, doctor read-only, and one light-lane recreate on Spark or Orin for the compile cache. Thor: side-by-side and machine-CLI only, no lane recreate",
+      "task_ref": "t19",
+      "reason": "operator, 2026-10-17: 'we must test on real hardware'; scope approved: Spark, Orin, Thor; disruption up to one light-lane recreate (no reboot, no sustained soak)",
+      "affects": [
+        "c3",
+        "c9",
+        "c12",
+        "c14",
+        "c33",
+        "c34",
+        "c41"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 40
+    },
+    {
+      "id": "d7",
+      "what": "Extend the per-lane compile cache (t8) with a per-lane /root/.cache/flashinfer mount for vLLM lanes",
+      "task_ref": "t8",
+      "reason": "mjolnir-agent's Thor finding: the cold-boot crash (vllm-project/vllm#62149) is in the FlashInfer fp8_gemm_cutlass JIT build, whose cache lives in /root/.cache/flashinfer, outside VLLM_CACHE_ROOT; Thor's working fix mounts both",
+      "affects": [
+        "c9",
+        "c10"
+      ],
+      "origin": "llm",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 41
+    },
+    {
+      "id": "d8",
+      "what": "lobes benchmark stays read-only by default and records host.conditions; locking clocks/fan is opt-in via --lock (replacing default-lock + --no-lock); lobes watcher run --once is dry-run unless --apply",
+      "task_ref": "t15",
+      "reason": "operator, 2026-10-17, after /code-review: CLAUDE.md lists benchmark as a read-only verb and requires safe-by-default for agents calling verbs in loops; supersedes plan decision c25's default-lock",
+      "affects": [
+        "c33",
+        "c25",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 64
+    }
+  ],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "audit: git diff main..lane-safety-bundle -- deployments/ + this session's ssh command log",
+      "behavior_text": "the only Thor change is a VARIATION.md note; the only Thor contact was read-only (thermal zones/uptime, ls /etc/sudoers.d, sudo -n -l); no docker/compose/lobes write verb",
+      "contract_text": "Thor carries experimental work: this effort may change code, templates, tests, docs and goldens, but must NOT deploy, recreate or restart anything on the Thor; live Thor validation is deferred and stays DECLARED/UNVALIDATED (#108)",
+      "evidence_type": "manual",
+      "strength": "execution",
+      "strength_basis": "audit performed against the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 6
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "tests/test_logwrap_hold.py (11 tests)",
+      "behavior_text": "below the delay the wrapper sleeps exactly the remainder (fake sleep shim), not at/after it or with LOBES_BOOT_DELAY_S=0; default 120; exec \"$@\" is the last statement",
+      "contract_text": "mg-logwrap.sh holds before its final exec until host uptime (/proc/uptime, not namespaced) >= LOBES_BOOT_DELAY_S (default 120, 0 = off), logging the hold; read with bash builtins (no cut/awk dependency); exec \"$@\" stays last so signals and exit codes are unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "tests/test_lane_safety_compose.py (restart-policy assertions)",
+      "behavior_text": "every service in single/fleet/audio/audio-he/embed templates and the rendered decider shape has restart: unless-stopped",
+      "contract_text": "restart: unless-stopped stays on every service (it is the only policy in every template today, no on-failure anywhere); the boot hold is what makes auto-restart safe, not a policy change",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "tests/test_lane_safety_compose.py (start_period assertions)",
+      "behavior_text": "every held service's start_period >= previous base + 180 s (default delay + max stagger for a <=3-lane order)",
+      "contract_text": "Healthcheck start_period is raised to cover the boot hold on every wrapped lane (vLLM lanes are 600s today) so a held container is not marked unhealthy, or the hold is shown to fit inside the existing start_period",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "tests/test_lane_safety_compose.py (hold/entrypoint/knob passthrough per service; 6 overlay entries skipped as merge-inherited)",
+      "behavior_text": "every GPU service and the gateway runs mg-logwrap before its real command and receives LOBES_BOOT_DELAY_S/ORDER/STAGGER_S",
+      "contract_text": "Every GPU service and the gateway honours the 120 s hold, including services that do not use mg-logwrap today (audio chatterbox/stt, embed-gemma2-embed, decider sidecars, comfyui, gateway): each receives LOBES_BOOT_DELAY_S and runs the hold in its own entrypoint",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o6",
+      "test_ref": "uv run pytest -n auto -q (7064 passed, 23 skipped) + black/isort/flake8/bandit/afi/markdownlint",
+      "behavior_text": "full suite and linters green; upgrade_compat fixtures deliberately unchanged (d5)",
+      "contract_text": "Template tests updated: test_cli_logs test_logwrap_template_shipped_and_safe gains assertions for the hold (default 120, 0 disables, exec stays last); tests/test_upgrade_compat fixtures refreshed deliberately if compose bytes change",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_lane_safety_compose.py (compile-cache assertions)",
+      "behavior_text": "every vLLM lane mounts ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/<lane>:/cache/vllm and sets VLLM_CACHE_ROOT; non-vLLM services have none",
+      "contract_text": "Every vLLM lane persists its compile cache across a recreate: VLLM_CACHE_ROOT (or /root/.cache/vllm) bind-mounted to a per-lane host dir under the deployment (single + fleet templates, embed overlay vLLM lanes), so a compose recreate reuses the known-good torch.compile/inductor artifacts instead of recompiling",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o8",
+      "test_ref": "docs/contracts/lane-safety-runtime.md \u00a76 'Verified 2026-10-17' (read-only docker run --rm on nightly sha256:8bd082c2 and vLLM 0.31.0)",
+      "behavior_text": "VLLM_CACHE_ROOT read at envs.py:702/707; cache at $VLLM_CACHE_ROOT/torch_compile_cache/<hash_key>; hash_key = sha256(env, config incl. vLLM version, code, compiler); VLLM_CACHE_ROOT in ignored_factors; wipe path documented",
+      "contract_text": "The compile cache is keyed so it cannot be reused across a different image/model/knob set by accident (vLLM's own hash key or a per-lane, per-image subdir), and an operator can wipe it (documented path; a lobes verb is optional)",
+      "evidence_type": "observation",
+      "strength": "fidelity",
+      "strength_basis": "source inspected inside both images by t8; closes lapse l1",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_logwrap_backoff.py (29 tests)",
+      "behavior_text": "counter holds on the 4th start inside 600 s with the logged clear path and resets after the window; memory gate waits for ceil(util x MemTotal), writes/removes the marker, times out with exit 75; skips without a util flag; both off switches",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o10",
+      "test_ref": "tests/test_machine_adapter.py + AST/regex scan of lobes/ for sudo argv + grep of lobes/templates",
+      "behavior_text": "every sudo argv starts with -n (scan: none without); no drop_caches/sysctl in any template or entrypoint; only the sysctl/tee drop_caches command is run privileged",
+      "contract_text": "lobes never clears caches from inside a container and never uses full sudo: the clear runs host-side only, through a single NOPASSWD sudoers rule for '/usr/sbin/sysctl -w vm.drop_caches=3' (mjolnir cachectl pattern), and never prompts \u2014 no grant means skip and say so",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o11",
+      "test_ref": "tests/test_pressure_policy.py + tests/test_gateway_busy_e2e.py",
+      "behavior_text": "thermal above the shed band sheds full tiers with 429 + Retry-After (hysteresis to resume); hand and decider served; X-Lobes-Override bypasses; None never sheds",
+      "contract_text": "The gateway pressure policy gains a fourth shed signal, thermal ('hot'): the hottest /sys/class/thermal zone above a per-card threshold sheds sheddable full tiers with 429 + Retry-After exactly like swap; hand (floor) and NEVER_SHED_ROLES (decider) are always served; X-Lobes-Override still bypasses",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_pressure.py + tests/test_tier_request.py + tests/test_status_pressure.py",
+      "behavior_text": "in-process: thermal_c flows sampler -> PressureCache -> /status and status --pressure; unreadable/absent zones give None and never shed",
+      "contract_text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o12",
+      "test_ref": "lobes/templates/fleet/docker-compose.yml gateway service environment: list",
+      "behavior_text": "the gateway container receives no LOBES_THERMAL_ZONES/SHED_C/RESUME_C (0 matches), so end to end in a container thermal_c is always None (issue #311, deviation d1)",
+      "contract_text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "template inspected at the named commit",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_profile_goldens.py + tests/test_shape_goldens.py + tests/test_deployment_lock.py::test_lane_safety_host_env_keys_render_and_are_locked",
+      "behavior_text": "spark carries acpitz 91/86; thor/orin tj-thermal with bands unset; base.env byte-identical; keys allowlisted in lock_keys()",
+      "contract_text": "Thermal bands are per-card [host_env] data (e.g. LOBES_THERMAL_SHED_C / resume), with hysteresis; only the Spark has measured values (84/88/91/93.5 \u00b0C vs 104.8 \u00b0C ACPI trip); Thor/Orin render no threshold (signal off) or a DECLARED value marked unmeasured (#108)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o14",
+      "test_ref": "tests/test_pressure_policy.py (docker pause/update grep test, non-vacuous)",
+      "behavior_text": "no docker pause/update (shell or argv form) anywhere under lobes/",
+      "contract_text": "Serving lanes are NEVER paused and NEVER docker update'd by any lobes governor: pause freezes in-flight requests, and docker update --cpus is a correlated (unproven) suspect for cudaErrorNotPermitted on GPU containers (#304 comments 2 and 3)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e16",
+      "obligation_ref": "o15",
+      "test_ref": "live read-only probes 2026-10-17: docker exec model-gear-gateway on spark and orin",
+      "behavior_text": "the unprivileged gateway (uid 10001) reads /sys/class/thermal on both (Spark 7 acpitz; Orin tj-thermal, cv0-2 ENODATA); no mount needed",
+      "contract_text": "The gateway container can read host thermal zones: verify /sys/class/thermal is visible in the unprivileged gateway container on Spark/Orin (Thor deferred), else add an explicit read-only bind mount in the fleet compose gateway service",
+      "evidence_type": "observation",
+      "strength": "fidelity",
+      "strength_basis": "direct observation on the live boxes; no run reference applies",
+      "outcome": "pass",
+      "run": null,
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 21
+    },
+    {
+      "id": "e17",
+      "obligation_ref": "o17",
+      "test_ref": "tests/test_benchmark_window.py (benchmark JSON host.conditions)",
+      "behavior_text": "single-model and --all-lobes benchmark --json carry host.conditions {locked, reason, start, end} with per-field availability; measure and --profile do not (d2, #312)",
+      "contract_text": "Every lobes benchmark/measure result records host conditions: nvpmodel -q, jetson_clocks --show (or devfreq cur/min/max), fan profile, hottest zone at start and end \u2014 best-effort, skipped cleanly on non-Jetson; extends the existing host block (image, gpu_memory)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 22
+    },
+    {
+      "id": "e18",
+      "obligation_ref": "o18",
+      "test_ref": "tests/test_doctor_lane_safety.py (jetson_clocks_locked)",
+      "behavior_text": "warns when window show reports active outside a held benchmark lock; skips when the CLI/tool is absent",
+      "contract_text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 23
+    },
+    {
+      "id": "e19",
+      "obligation_ref": "o19",
+      "test_ref": "tests/test_benchmark_window.py (grep guard)",
+      "behavior_text": "init/serve/switch/up/fleet/stop and _compose.py never call the window verbs",
+      "contract_text": "No persistent clock or fan change from lobes init, serve, switch or any deployment; production stays stock DVFS + the host's nvfancontrol profile",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 24
+    },
+    {
+      "id": "e20",
+      "obligation_ref": "o20",
+      "test_ref": "tests/test_benchmark_window.py",
+      "behavior_text": "store+lock before the run, restore exactly once on success, exception, SIGINT/SIGTERM and lock failure; no CLI -> unlocked with reason",
+      "contract_text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 25
+    },
+    {
+      "id": "e21",
+      "obligation_ref": "o21",
+      "test_ref": "../dgx-spark-cli tests/test_window.py (16) @c1b8bd8d3e98; ../jetson-thor-cli tests/test_window.py (34) @e5dc979c7e05; ../jetson-orin-cli tests/test_window.py (21) @4fea57d1cec1",
+      "behavior_text": "window store/lock/restore/show, drop-caches and grant-permissions per the contract, --json, restore to stored state (fakes only)",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "sibling suites ran green at their own named commits (run-commit is the thor CLI's)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "e5dc979c7e05"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 26
+    },
+    {
+      "id": "e22",
+      "obligation_ref": "o21",
+      "test_ref": "PyPI JSON API, 2026-10-17",
+      "behavior_text": "not released: PyPI latest is dgx-spark-cli 0.8.0, jetson-thor-cli 0.5.1, jetson-orin-cli 0.6.0 (branches carry 0.9.0 / 0.6.0 / 0.7.0); lobes extras stay unpinned",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "observed at the named commit",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 27
+    },
+    {
+      "id": "e23",
+      "obligation_ref": "o22",
+      "test_ref": "tests/test_lifecycle_cache_clear.py",
+      "behavior_text": "clear after down and before up (once per down/up pair); ungranted prints one skip line and continues; dry-run plans show the step and run nothing",
+      "contract_text": "Host-side lobes verbs that start or stop GPU lanes (serve/start, stop, switch, up, fleet up/down, init --apply when it starts lanes) clear the page cache (sync + vm.drop_caches=3) after teardown and before start when the grant exists; a one-time grant verb installs the single sudoers drop-in (0440, visudo-checked, explicit consent); doctor reports a missing grant on unified-memory cards (Spark/Thor/Orin)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 28
+    },
+    {
+      "id": "e24",
+      "obligation_ref": "o23",
+      "test_ref": "tests/test_watcher.py",
+      "behavior_text": "one granted clear per rate-limit window (persisted across restarts); no grant logs only; no argv contains docker; install dry-run default, apply/uninstall round trip removes exactly the manifest files",
+      "contract_text": "lobes ships an opt-in host-side watcher (installed by an explicit lobes verb with --apply, removable, the first host unit lobes installs): it watches for a lane holding in the memory gate (a marker file the wrapper writes in the host-mounted log dir) and runs the granted page-cache clear, rate-limited and logged; without the sudoers grant it only logs; never touches containers (no docker pause/update/restart)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 29
+    },
+    {
+      "id": "e25",
+      "obligation_ref": "o24",
+      "test_ref": "tests/test_logwrap_hold.py (stagger cases)",
+      "behavior_text": "release = delay + index x stagger; unlisted lanes release last; the memory gate runs after the stagger sleep (tests/test_logwrap_backoff.py ordering test)",
+      "contract_text": "The boot hold must not release every lane at the same instant: lanes are staggered (a per-lane offset on top of LOBES_BOOT_DELAY_S, ordered to match each card's measured boot order \u2014 e.g. Orin associate-first, Thor gears-first with embed/rerank before worker) and the memory gate re-checks after the stagger, because a synchronized release recreates the documented unified-memory first-boot race",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 30
+    },
+    {
+      "id": "e26",
+      "obligation_ref": "o25",
+      "test_ref": "tests/test_lifecycle_cache_clear.py (counter reset)",
+      "behavior_text": "a deliberate up deletes the targeted lanes' .starts (all on a whole-project up) before compose starts them",
+      "contract_text": "Host-side lobes verbs that intentionally (re)start a lane (up, serve, switch, fleet up, init --apply) reset that lane's start counter, so deliberate operator restarts never trip the crash-backoff hold; only unattended (dockerd) restarts accumulate",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 31
+    },
+    {
+      "id": "e27",
+      "obligation_ref": "o26",
+      "test_ref": "tests/test_lane_safety_knobs_documented.py",
+      "behavior_text": "all 13 contract knobs in fleet env.example with the contract's off values, each present in lobes/ code and the operator docs; per-feature tests named for off-value behaviour",
+      "contract_text": "Every new runtime behaviour has an env off-switch documented in env.example: LOBES_BOOT_DELAY_S=0, a memory-gate and start-counter disable (or N=0), compile-cache mount opt-out, thermal threshold unset = signal off, watcher uninstall \u2014 so a field regression is reverted by editing .env, not by a code rollback",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 32
+    },
+    {
+      "id": "e28",
+      "obligation_ref": "o27",
+      "test_ref": "tests/test_doctor_lane_safety.py (logwrap_stale, compile_cache_unmounted, --refresh-logwrap)",
+      "behavior_text": "doctor flags a stale wrapper and unmounted vLLM services with override lines; --refresh-logwrap --apply writes exactly mg-logwrap.sh.bak + mg-logwrap.sh; plain --fix never touches the wrapper",
+      "contract_text": "A safe rollout path for existing deployments: doctor reports a stale scaffold mg-logwrap.sh (digest differs from the packaged template) and a missing compile-cache mount, and a targeted refresh writes ONLY mg-logwrap.sh (with a backup) \u2014 because doctor --fix never rewrites existing files, init --force overwrites the whole compose with no backup, and the Spark's hand-edited compose must never be re-scaffolded",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 33
+    },
+    {
+      "id": "e29",
+      "obligation_ref": "o28",
+      "test_ref": "tests/test_doctor_lane_safety.py (ensure_compile_cache_dirs, compile_cache_size)",
+      "behavior_text": "init/doctor --fix create absent cache root + per-lane dirs owned by the invoking user (chown to SUDO_UID under sudo); size reported; wipe needs no sudo",
+      "contract_text": "The compile-cache host dir is created by lobes (init / doctor --fix) owned by the operator before first mount, and the documented wipe works without sudo; otherwise the root container creates it root-owned (the same trap as root-owned logs/, docs/operating-a-deployment.md:48) and growth is unbounded with no size report",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 34
+    },
+    {
+      "id": "e30",
+      "obligation_ref": "o29",
+      "test_ref": "tests/test_pressure.py (fake sysfs from the live Spark/Orin layouts)",
+      "behavior_text": "only zones named in LOBES_THERMAL_ZONES are read; ENODATA/implausible zones skipped; no match -> None",
+      "contract_text": "The thermal reader uses a per-card zone selector (host_env, e.g. LOBES_THERMAL_ZONES=tj-thermal on Jetson, acpitz on Spark) and skips zones whose temp read fails (ENODATA) or is implausible, instead of a blind 'hottest of all zones'",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 35
+    },
+    {
+      "id": "e31",
+      "obligation_ref": "o30",
+      "test_ref": "tests/test_benchmark_window.py (concurrent window)",
+      "behavior_text": "a second concurrent window is refused naming the holder pid and never restores; the lock is re-acquirable afterwards",
+      "contract_text": "Benchmark windows are exclusive per host: a lock file (or the machine CLI's own) makes a second concurrent window refuse or wait, so one run's restore never unlocks clocks under another run, and the stored state is never overwritten by a nested store",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 36
+    },
+    {
+      "id": "e32",
+      "obligation_ref": "o31",
+      "test_ref": "tests/test_watcher.py (linger/system install)",
+      "behavior_text": "user-unit install requires Linger=yes (refuses with remediation otherwise); --system via sudo -n install; status reports installed/active",
+      "contract_text": "The watcher must be running after a reboot without a login (the exact moment it matters): installed as a system unit (root, explicit consent) or a user unit with linger enabled \u2014 the install verb verifies whichever it uses and doctor reports it absent",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 37
+    },
+    {
+      "id": "e33",
+      "obligation_ref": "o32",
+      "test_ref": "tests/test_machine_adapter.py + sibling tests/test_window.py (grant listings incl. the real Thor sudo -n -l text)",
+      "behavior_text": "an existing sysctl/tee/NOPASSWD ALL rule is detected and reused; no visudo/install is planned",
+      "contract_text": "The grant step detects an existing equivalent NOPASSWD rule (sudo -n -l matching sysctl vm.drop_caches or tee /proc/sys/vm/drop_caches) and reuses it instead of installing a duplicate; Thor already carries /etc/sudoers.d/drop-caches",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 38
+    },
+    {
+      "id": "e34",
+      "obligation_ref": "o33",
+      "test_ref": "tests/test_gateway_busy_e2e.py + tests/test_gateway_member_lanes.py (two mesh relay tests)",
+      "behavior_text": "a thermal 429 carries X-Lobes-Shed-Signal: thermal and error.shed_signal; /status shows thermal_c/thermal_shedding; a mesh forward relays the peer's signal exactly once, unchanged",
+      "contract_text": "A thermal shed is observable mesh-wide: the 429 carries a thermal reason (X-Lobes-Tier-Reason / shed_signal 'thermal'), GET /status pressure includes the thermal reading and signal, and a mesh forward that receives it relays the peer's reason (no silent conversion to a generic busy)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "tests ran green at the named commit (uv run --python 3.12 pytest <file> -q)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T07:39:35Z",
+        "commit": "d72065f9d86d"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 39
+    },
+    {
+      "id": "e35",
+      "obligation_ref": "o2",
+      "test_ref": "H3 wrapper in throwaway containers on spark, orin, thor",
+      "behavior_text": "the branch mg-logwrap read true host uptime inside the container and held exactly the remainder (3-6 s) before exec on all three kernels",
+      "contract_text": "mg-logwrap.sh holds before its final exec until host uptime (/proc/uptime, not namespaced) >= LOBES_BOOT_DELAY_S (default 120, 0 = off), logging the hold; read with bash builtins (no cut/awk dependency); exec \"$@\" stays last so signals and exit codes are unchanged",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:11:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 42
+    },
+    {
+      "id": "e36",
+      "obligation_ref": "o9",
+      "test_ref": "H3 wrapper: memory gate + start counter on spark, orin, thor",
+      "behavior_text": "gate passed at util 0.01 and timed out at 0.99 after 10 s with exit 75 and a gate marker carrying real need/avail (thor need 127502734 KiB avail 48594044); the 3rd start inside 600 s held with the contract message",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:11:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 43
+    },
+    {
+      "id": "e37",
+      "obligation_ref": "o9",
+      "test_ref": "H3 wrapper: SIGTERM to a held container (timeout 8 docker run) on spark, orin, thor",
+      "behavior_text": "a lane held by the start counter ignored SIGTERM (bash deferred traps during foreground sleep) and kept running until killed \u2014 held lanes were not stoppable",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:16:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 44
+    },
+    {
+      "id": "e38",
+      "obligation_ref": "o9",
+      "test_ref": "docker run ubuntu:24.04, bash as PID 1, wrapper held by the start counter, docker stop (on the Spark host)",
+      "behavior_text": "after the fix (sleep & wait + TERM/INT handler) docker stop returned in 0.15 s with exit 143; the old script hit the stop timeout and was killed (137)",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:29:05Z",
+        "commit": "cd4b328"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 45
+    },
+    {
+      "id": "e39",
+      "obligation_ref": "o11",
+      "test_ref": "H4 branch gateway in a throwaway container (production gateway image, branch lobes mounted) on spark, orin, thor",
+      "behavior_text": "with the thermal keys passed as the fleet compose now passes them and SHED_C forced below the reading, model=cortex got 429 Retry-After 5 X-Lobes-Shed-Signal: thermal; model=hand was not shed (503: no backend)",
+      "contract_text": "The gateway pressure policy gains a fourth shed signal, thermal ('hot'): the hottest /sys/class/thermal zone above a per-card threshold sheds sheddable full tiers with 429 + Retry-After exactly like swap; hand (floor) and NEVER_SHED_ROLES (decider) are always served; X-Lobes-Override still bypasses",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:36Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 46
+    },
+    {
+      "id": "e40",
+      "obligation_ref": "o12",
+      "test_ref": "H4 GET /status in the container on spark (acpitz 62.1), orin (tj-thermal 57.937), thor (tj-thermal 47.937)",
+      "behavior_text": "thermal_c non-null in a real container from the card's zone selector; thermal_shedding true; shed_signal thermal",
+      "contract_text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:23Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 47
+    },
+    {
+      "id": "e41",
+      "obligation_ref": "o15",
+      "test_ref": "H4 unprivileged gateway container (uid 10001) on spark, orin, thor",
+      "behavior_text": "the container read /sys/class/thermal with no mount on all three boxes",
+      "contract_text": "The gateway container can read host thermal zones: verify /sys/class/thermal is visible in the unprivileged gateway container on Spark/Orin (Thor deferred), else add an explicit read-only bind mount in the fleet compose gateway service",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:23Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 48
+    },
+    {
+      "id": "e42",
+      "obligation_ref": "o33",
+      "test_ref": "H4 429 response headers/body on spark, orin, thor",
+      "behavior_text": "X-Lobes-Shed-Signal: thermal header and error.shed_signal 'thermal' present on the live 429",
+      "contract_text": "A thermal shed is observable mesh-wide: the 429 carries a thermal reason (X-Lobes-Tier-Reason / shed_signal 'thermal'), GET /status pressure includes the thermal reading and signal, and a mesh forward that receives it relays the peer's reason (no silent conversion to a generic busy)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:36Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 49
+    },
+    {
+      "id": "e43",
+      "obligation_ref": "o23",
+      "test_ref": "H5 lobes watcher run --once on thor against a real gate marker",
+      "behavior_text": "action=cleared via=machine-cli (real thor drop-caches; MemAvailable 48619548 -> 49146948 kB), the second tick inside the window action=rate-limited; state persisted",
+      "contract_text": "lobes ships an opt-in host-side watcher (installed by an explicit lobes verb with --apply, removable, the first host unit lobes installs): it watches for a lane holding in the memory gate (a marker file the wrapper writes in the host-mounted log dir) and runs the granted page-cache clear, rate-limited and logged; without the sudoers grant it only logs; never touches containers (no docker pause/update/restart)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:52Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 50
+    },
+    {
+      "id": "e44",
+      "obligation_ref": "o7",
+      "test_ref": "H6 Orin vllm-embed recreate #1 (empty host cache) then #2 (warm host cache) with the per-lane mount",
+      "behavior_text": "recreate #1 compiled (torch.compile 31.78 s, init 44.15 s, 426 files/39M written to ~/.lobes/compile-cache/embed); recreate #2 loaded from the host cache (torch.compile 5.33 s, init 16.03 s); healthy both times, 0 restarts, embeddings dim 1024",
+      "contract_text": "Every vLLM lane persists its compile cache across a recreate: VLLM_CACHE_ROOT (or /root/.cache/vllm) bind-mounted to a per-lane host dir under the deployment (single + fleet templates, embed overlay vLLM lanes), so a compose recreate reuses the known-good torch.compile/inductor artifacts instead of recompiling",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:28:06Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 51
+    },
+    {
+      "id": "e45",
+      "obligation_ref": "o8",
+      "test_ref": "H6 Orin vllm-embed log: cache directory + hash key",
+      "behavior_text": "both recreates used /cache/vllm/torch_compile_cache/cca2e290ec/... (same content-hash key as the old writable-layer cache), proving the relocation keeps the key",
+      "contract_text": "The compile cache is keyed so it cannot be reused across a different image/model/knob set by accident (vLLM's own hash key or a per-lane, per-image subdir), and an operator can wipe it (documented path; a lobes verb is optional)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:28:06Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 52
+    },
+    {
+      "id": "e46",
+      "obligation_ref": "o27",
+      "test_ref": "H7 lobes doctor (read-only) against the real ~/.lobes on spark and orin",
+      "behavior_text": "logwrap_stale and compile_cache_unmounted fire on the hand-kept deployments with exact override lines; no file written",
+      "contract_text": "A safe rollout path for existing deployments: doctor reports a stale scaffold mg-logwrap.sh (digest differs from the packaged template) and a missing compile-cache mount, and a targeted refresh writes ONLY mg-logwrap.sh (with a backup) \u2014 because doctor --fix never rewrites existing files, init --force overwrites the whole compose with no backup, and the Spark's hand-edited compose must never be re-scaffolded",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:38Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 53
+    },
+    {
+      "id": "e47",
+      "obligation_ref": "o18",
+      "test_ref": "H7 lobes doctor on orin while GPU/EMC devfreq min==max (operator jetson_clocks)",
+      "behavior_text": "jetson_clocks_locked reported 'clocks are not locked by a window' although the Orin clocks were pinned \u2014 a lock outside a lobes window was invisible",
+      "contract_text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:23:38Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 54
+    },
+    {
+      "id": "e48",
+      "obligation_ref": "o18",
+      "test_ref": "re-test on orin after the clocks_locked fix (orin 0.7.1 + lobes 23ba6e3)",
+      "behavior_text": "window show reports clocks_locked true (gpu 1300/1300/1300, emc 3199); doctor warns 'clocks are locked outside any lobes window (operator jetson_clocks or a crashed run)'",
+      "contract_text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:31:39Z",
+        "commit": "23ba6e3"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 55
+    },
+    {
+      "id": "e49",
+      "obligation_ref": "o21",
+      "test_ref": "H1 spark/orin/thor window show + grant-permissions --check + drop-caches on real boxes",
+      "behavior_text": "spark: supported false, not_granted exit 2, no prompt; orin: MAXN, gpu 1300, not_granted exit 2; thor: grant detected (sysctl rule), drop-caches cleared",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:34Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 56
+    },
+    {
+      "id": "e50",
+      "obligation_ref": "o21",
+      "test_ref": "H2 thor window store/lock/restore on a real Thor (jetson-thor-cli e5dc979)",
+      "behavior_text": "store/lock/restore ran ok via sudo -n jetson_clocks but the fan lock failed ('nvfancontrol: invalid option -- p') and window show reported every clock null",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:10:09Z",
+        "commit": "e5dc979"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 57
+    },
+    {
+      "id": "e51",
+      "obligation_ref": "o20",
+      "test_ref": "H2 thor window round trip clock restore",
+      "behavior_text": "after restore EMC returned to DVFS (665.6 MHz idle) and the GPU devfreq floor to 314 MHz (min != max): stock clocks restored",
+      "contract_text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:10:09Z",
+        "commit": "e5dc979"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 58
+    },
+    {
+      "id": "e52",
+      "obligation_ref": "o32",
+      "test_ref": "H1 thor grant-permissions --check on the real Thor sudo listing",
+      "behavior_text": "the existing /usr/sbin/sysctl -w vm.drop_caches=3 NOPASSWD rule was detected and reused (granted true, rule sysctl); nothing installed",
+      "contract_text": "The grant step detects an existing equivalent NOPASSWD rule (sudo -n -l matching sysctl vm.drop_caches or tee /proc/sys/vm/drop_caches) and reuses it instead of installing a duplicate; Thor already carries /etc/sudoers.d/drop-caches",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:35Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 59
+    },
+    {
+      "id": "e53",
+      "obligation_ref": "o10",
+      "test_ref": "H1 spark/orin drop-caches without a grant",
+      "behavior_text": "both exited 2 not_granted immediately with no password prompt (sudo -n)",
+      "contract_text": "lobes never clears caches from inside a container and never uses full sudo: the clear runs host-side only, through a single NOPASSWD sudoers rule for '/usr/sbin/sysctl -w vm.drop_caches=3' (mjolnir cachectl pattern), and never prompts \u2014 no grant means skip and say so",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:34Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 60
+    },
+    {
+      "id": "e54",
+      "obligation_ref": "o21",
+      "test_ref": "thor window show/store/lock/restore with jetson-thor-cli 0.6.1 on the real Thor",
+      "behavior_text": "lock: GPU devfreq min=max=1575 MHz, EMC FreqOverride=1 at 4266 MHz, fan Dynamic Speed Control disabled PWM 255; CLI reports clocks_locked true, fan_max true, clocks from devfreq (no root); restore: GPU floor 314 MHz, EMC back to 665.6 MHz FreqOverride=0, fan back under nvfancontrol PWM 68 within seconds",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on the real Jetson AGX Thor 2026-10-17 (window coordinated with the box's other user); transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:48:08Z",
+        "commit": "05a8f93"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 61
+    },
+    {
+      "id": "e55",
+      "obligation_ref": "o20",
+      "test_ref": "thor window round trip (0.6.1) with raw sysfs + jetson_clocks --show cross-checks",
+      "behavior_text": "clocks and fan locked to max for the window and returned to stock DVFS and nvfancontrol after restore; the serving worker stayed healthy",
+      "contract_text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on the real Jetson AGX Thor 2026-10-17 (window coordinated with the box's other user); transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:48:08Z",
+        "commit": "05a8f93"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 62
+    },
+    {
+      "id": "e56",
+      "obligation_ref": "o21",
+      "test_ref": "PyPI JSON API + publish workflow runs on each repo's main, 2026-10-17",
+      "behavior_text": "dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and jetson-orin-cli 0.7.1 are the latest releases on PyPI (Publish to PyPI: success on main); lobes extras pin them as minimums",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "released before lobes pins it: observed on PyPI after squash-merging the three PRs",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T10:28:30Z",
+        "commit": "a45f3f8"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 63
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "amended",
+      "behavior_text": "Thermal shedding is implemented end to end in-process but is inert inside a deployed gateway container: the fleet gateway service passes no LOBES_THERMAL_* keys, so thermal_c is always null there until issue #311 lands (proposed deviation d1)",
+      "caused_by": [
+        "c15",
+        "c14"
+      ],
+      "evidence_refs": [
+        "e13",
+        "e12"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "Host conditions are recorded only on single-model and --all-lobes 'lobes benchmark --json' results; 'lobes measure' and 'lobes benchmark --profile' record none (issue #312, proposed deviation d2)",
+      "caused_by": [
+        "c21"
+      ],
+      "evidence_refs": [
+        "e17"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "added",
+      "behavior_text": "'lobes benchmark --no-lock' runs without the clock window and records locked:false reason disabled (not in the plan; the default remains lock)",
+      "caused_by": [
+        "c33"
+      ],
+      "evidence_refs": [
+        "e20"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "added",
+      "behavior_text": "New wire fields: a thermal 429 carries the header X-Lobes-Shed-Signal: thermal and error.shed_signal; GET /status pressure gains thermal_c, thermal_shedding and shed_signal (only when the sample carries thermal_c); swap/iowait 429s are byte-identical",
+      "caused_by": [
+        "c52",
+        "c14"
+      ],
+      "evidence_refs": [
+        "e34"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "added",
+      "behavior_text": "Every service lobes renders, including the gateway, audio sidecars, the gemma2 embed sidecar and decider sidecars, now starts through mg-logwrap, and every healthcheck start_period grew by about 180 s",
+      "caused_by": [
+        "c6",
+        "c5"
+      ],
+      "evidence_refs": [
+        "e5",
+        "e4"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
+  "supersessions": []
+}
