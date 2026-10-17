@@ -33,6 +33,7 @@ behaviour from before this work.
 | `LOBES_THERMAL_SHED_C` | empty (per-card) | empty | gateway | Shed above this temperature. |
 | `LOBES_THERMAL_RESUME_C` | empty (per-card) | empty | gateway | Stop shedding below this temperature (hysteresis). |
 | `LOBES_WATCHER_MIN_INTERVAL_S` | `300` | — | watcher | Minimum seconds between two cache clears. |
+| `LOBES_PAGE_CACHE_CLEAR` | `auto` | `never` | lifecycle verbs | Where the lifecycle page-cache clear is attempted: `auto` on a detected Spark, Thor or Orin only; `always` on any card (machine CLI, else the `sudo -n` fallback); `never` nowhere. The process environment wins over the `.env`; an unrecognised value is `auto`. |
 
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal
@@ -127,13 +128,18 @@ hold     = release − host uptime, if positive
 
 - `lobes up`, `serve`, `switch`, `stop` and `fleet` clear the page cache
   after a `down` and before an `up` (one clear per down→up pair).
-- The clear is attempted only on a detected Spark, Thor or Orin. On any other
-  card it is skipped silently: no `sudo -n -l` probe, no stderr line. A
+- `LOBES_PAGE_CACHE_CLEAR` (section 1) decides where the clear is attempted.
+  With the default `auto`, only on a detected Spark, Thor or Orin. On any other
+  card it is skipped silently: no `sudo -n -l` probe, no stderr line. `always`
+  attempts it on any card, so an undetected box with a passwordless
+  `vm.drop_caches` sudo rule still gets its clear; `never` skips it (and the
+  `docker ps` below) everywhere. The knob governs the lifecycle verbs only; the
+  watcher is switched on and off by installing and uninstalling it. A
   successful card detection is cached for the life of the process; a failed or
   `unknown` one is retried, at most once per 60 s, so the long-running watcher
   recovers when `nvidia-smi` was not ready at boot.
-- On a supported card with no grant, the verb prints one stderr line and
-  carries on. It never prompts and never fails.
+- When the clear is attempted with no grant, the verb prints one stderr line
+  and carries on. It never prompts and never fails.
 
 ### The host watcher
 

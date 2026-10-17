@@ -278,3 +278,72 @@ def test_lane_health_none_on_docker_error(tmp_path, monkeypatch):
         lambda argv, **k: types.SimpleNamespace(returncode=1, stdout="", stderr="denied"),
     )
     assert _compose.lane_health(tmp_path) is None
+
+
+# --- review2-b #5: LOBES_PAGE_CACHE_CLEAR = auto | always | never ------------
+
+
+@pytest.mark.parametrize("card", ["unknown", None])
+def test_always_attempts_the_clear_on_an_undetected_card(rec, tmp_path, monkeypatch, card):
+    events, _ = rec
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: card)
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    assert _compose.clear_page_cache(tmp_path) is True
+    assert events == ["clear"]
+
+
+def test_always_from_the_deployment_env(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    monkeypatch.delenv("LOBES_PAGE_CACHE_CLEAR", raising=False)
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=always\n", encoding="utf-8")
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["clear", "docker up -d"]
+
+
+@pytest.mark.parametrize("card", ["spark", "unknown"])
+def test_never_skips_the_clear_everywhere(rec, tmp_path, monkeypatch, capsys, card):
+    events, _ = rec
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: card)
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=never\n", encoding="utf-8")
+    monkeypatch.delenv("LOBES_PAGE_CACHE_CLEAR", raising=False)
+    probes = _ps(monkeypatch, "")
+    _compose.compose_up_detached(tmp_path)
+    _compose.compose_down(tmp_path)
+    assert events == ["docker up -d", "docker down"]
+    assert probes == []  # no docker ps either
+    assert capsys.readouterr().err == ""
+
+
+def test_process_env_wins_over_the_deployment_env(rec, tmp_path, monkeypatch):
+    events, _ = rec
+    (tmp_path / ".env").write_text("LOBES_PAGE_CACHE_CLEAR=never\n", encoding="utf-8")
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    _compose.compose_up_detached(tmp_path)
+    assert events == ["clear", "docker up -d"]
+
+
+@pytest.mark.parametrize("value", ["auto", "", "bogus"])
+def test_auto_and_unknown_values_keep_the_card_gate(rec, tmp_path, monkeypatch, capsys, value):
+    events, _ = rec
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", value)
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    assert _compose.clear_page_cache(tmp_path) is False
+    assert events == []
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "orin")
+    assert _compose.clear_page_cache(tmp_path) is True
+
+
+def test_always_ungranted_on_an_undetected_card_names_the_sudo_rule(
+    rec, tmp_path, monkeypatch, capsys
+):
+    events, result = rec
+    result["ok"] = False
+    monkeypatch.setenv("LOBES_PAGE_CACHE_CLEAR", "always")
+    monkeypatch.setattr(_machine, "detected_card", lambda *a, **k: "unknown")
+    monkeypatch.setattr(_machine, "_current_cli", lambda: None)
+    assert _compose.clear_page_cache(tmp_path) is False
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1
+    assert "vm.drop_caches" in err and "LOBES_PAGE_CACHE_CLEAR=never" in err

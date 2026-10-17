@@ -167,7 +167,9 @@ would fit; the start counter is the backstop.
 
 **Cache clear, grant and watcher (#309).** `lobes up`, `serve`, `switch`,
 `stop` and `fleet` clear the page cache around down/up (on a detected Spark,
-Thor or Orin; elsewhere the step is skipped silently) and delete the
+Thor or Orin; elsewhere the step is skipped silently. `LOBES_PAGE_CACHE_CLEAR`
+overrides that: `always` attempts it on any card, which an undetected box with
+the sudo rule needs, and `never` turns it off) and delete the
 start-counter files of the lanes they start on purpose, so deliberate restarts
 never count. They create `logs/lane-state/` and the compile-cache directories
 as you before any container starts; a `lane-state/` a root container created

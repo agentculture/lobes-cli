@@ -1120,15 +1120,45 @@ def cache_clear_plan_line() -> str:
     return CACHE_CLEAR_PLAN_LINE
 
 
-def clear_page_cache() -> bool:
+#: ``auto`` (default: clear on a detected Spark/Thor/Orin, skip silently
+#: elsewhere) | ``always`` (attempt on any card) | ``never`` (skip everywhere).
+PAGE_CACHE_CLEAR_ENV = "LOBES_PAGE_CACHE_CLEAR"
+PAGE_CACHE_CLEAR_MODES = ("auto", "always", "never")
+
+
+def page_cache_clear_mode(deploy_dir: os.PathLike | str | None = None) -> str:
+    """``LOBES_PAGE_CACHE_CLEAR`` from the process env, then the deployment ``.env``.
+
+    Empty or unrecognised values mean ``auto`` (review2-b #5).
+    """
+    raw = os.environ.get(PAGE_CACHE_CLEAR_ENV, "").strip()
+    if not raw and deploy_dir is not None:
+        raw = (_env.read_env(Path(deploy_dir) / ENV_FILE, PAGE_CACHE_CLEAR_ENV) or "").strip()
+    mode = raw.lower()
+    return mode if mode in PAGE_CACHE_CLEAR_MODES else "auto"
+
+
+def _clear_wanted(deploy_dir: os.PathLike | str | None) -> bool:
+    mode = page_cache_clear_mode(deploy_dir)
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    return _machine.detected_card() in _machine.CARD_CLIS
+
+
+def clear_page_cache(deploy_dir: os.PathLike | str | None = None) -> bool:
     """Clear the page cache when granted; never fails the verb, never prompts.
 
-    Only attempted on a detected Spark/Thor/Orin (the cards with a machine CLI
-    and a drop-caches grant to look for); anywhere else it returns False
-    silently, without probing ``sudo -n -l``. Ungranted (or failed) on a
-    supported card prints ONE stderr line and returns False.
+    ``LOBES_PAGE_CACHE_CLEAR`` decides where it is attempted: ``auto`` (the
+    default) only on a detected Spark/Thor/Orin (the cards with a machine CLI
+    and a drop-caches grant to look for) and anywhere else returns False
+    silently, without probing ``sudo -n -l``; ``always`` on any card (the
+    machine CLI if present, else the ``sudo -n`` fallback); ``never`` nowhere.
+    Ungranted (or failed) when attempted prints ONE stderr line and returns
+    False.
     """
-    if _machine.detected_card() not in _machine.CARD_CLIS:
+    if not _clear_wanted(deploy_dir):
         return False
     try:
         result = _machine.drop_caches()
@@ -1136,10 +1166,17 @@ def clear_page_cache() -> bool:
         result = _machine.MachineResult(False, f"error: {exc}")
     if result.ok:
         return True
-    cli = _machine._current_cli() or "<machine-cli>"
+    card_cli = _machine.CARD_CLIS.get(_machine.detected_card() or "")
+    cli = _machine._current_cli() or card_cli
+    if cli is not None:
+        hint = f"run '{cli} grant-permissions' to enable it"
+    else:
+        hint = (
+            "add a passwordless sudo rule for '/usr/sbin/sysctl -w vm.drop_caches=3'"
+            f" or set {PAGE_CACHE_CLEAR_ENV}=never"
+        )
     print(
-        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) "
-        f"- run '{cli} grant-permissions' to enable it",
+        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) - {hint}",
         file=sys.stderr,
     )
     return False
@@ -1211,7 +1248,7 @@ def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
     A gated lane shows ``health: starting`` too (it is held before ``exec``), so
     gated lanes never defer the clear. Docker unreadable: clear as before.
     """
-    if _machine.detected_card() not in _machine.CARD_CLIS:
+    if not _clear_wanted(deploy_dir):
         return False  # clear_page_cache would skip anyway; don't run docker ps
     booting = lanes_starting(lane_health(deploy_dir), gated_lanes(deploy_dir))
     if booting:
@@ -1221,7 +1258,7 @@ def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
             file=sys.stderr,
         )
         return False
-    return clear_page_cache()
+    return clear_page_cache(deploy_dir)
 
 
 def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:

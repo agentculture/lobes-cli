@@ -16,6 +16,7 @@ off value restores the pre-change behaviour are:
 | LOBES_FLASHINFER_WORKSPACE_BASE (d7)                | tests/test_lane_safety_compose.py |
 | LOBES_THERMAL_* (zones, shed, resume)               | tests/test_pressure_policy.py |
 | LOBES_WATCHER_MIN_INTERVAL_S                        | tests/test_watcher.py |
+| LOBES_PAGE_CACHE_CLEAR                              | tests/test_lifecycle_cache_clear.py |
 """
 
 from __future__ import annotations
@@ -74,7 +75,7 @@ def _documented(path: Path) -> set[str]:
 
 def test_contract_table_parses() -> None:
     knobs = _contract_knobs()
-    assert len(knobs) == 14
+    assert len(knobs) == 15
     assert {k for k, v in knobs.items() if v is None} == NO_OFF_VALUE
 
 
