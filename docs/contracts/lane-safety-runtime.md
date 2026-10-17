@@ -55,6 +55,11 @@ hold     = release − host uptime, if positive
 - After a reboot, dockerd restarts containers by restart policy and does not
   honour compose `depends_on` (assumption c32, unverified on DGX OS and JetPack:
   lapse l2). So the hold lives in each container's own entrypoint.
+- Every hold (this one, the start counter, the memory gate) is stoppable: the
+  wrapper waits with `sleep N & wait $!` under a TERM/INT handler that removes
+  the gate marker and exits `143`/`130`, so `docker stop` ends a held lane at
+  once. Before 2026-10-17 a held lane ignored TERM until docker's kill timeout
+  (measured on Spark, Orin and Thor).
 
 ## 3. Crash backoff: the start counter
 
@@ -134,8 +139,9 @@ hold     = release − host uptime, if positive
   `compile_cache_size` (info). Alongside them: `logwrap_stale` (warn; fixed by
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
   then the packaged wrapper and nothing else), `jetson_clocks_locked` (warn:
-  `window show` reports `active` while no benchmark window holds the host
-  lock), `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
+  `window show` reports `clocks_locked`, or `active` from an older CLI,
+  while no benchmark window holds the host lock),
+  `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
   `watcher_inactive` (warn when the manifest exists and the unit is not
   active; not installed is an info pass). None is an error, and each is
   omitted when it does not apply.

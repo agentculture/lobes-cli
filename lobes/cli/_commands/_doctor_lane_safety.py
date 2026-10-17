@@ -12,7 +12,9 @@ each returns ``None`` — no row at all — when it does not apply:
   remediation is override-file lines, never ``init --force``.
 * ``compile_cache_size`` (info) — bytes under the compile-cache dir.
 * ``jetson_clocks_locked`` (warn) — the machine CLI's ``window show`` reports
-  locked clocks while no benchmark window holds the host lock.
+  locked clocks while no benchmark window holds the host lock. ``clocks_locked``
+  (the devfreq min == max read) also catches a lock made outside any lobes
+  window; without it (older CLI, unreadable) only ``active`` is consulted.
 * ``drop_caches_grant_missing`` (warn) — Spark/Thor/Orin only: no passwordless
   page-cache rule, so the lifecycle clear and the watcher do nothing.
 * ``watcher_inactive`` (warn) — the watcher manifest exists but its unit is not
@@ -276,6 +278,18 @@ def _benchmark_window_active() -> bool:
     return False
 
 
+def _clocks_locked(payload: dict) -> bool | None:
+    """The CLI's own read of the clock lock, or ``None`` to use ``active``.
+
+    ``clocks_locked`` (contract addition 2026-10-17) is the devfreq
+    ``min_freq == max_freq`` read, so it sees a lock made OUTSIDE any lobes
+    window. ``null`` (unreadable, e.g. GB10) or absent (an older CLI) falls
+    back to ``active``, which only tracks lobes' own window state.
+    """
+    value = payload.get("clocks_locked")
+    return value if isinstance(value, bool) else None
+
+
 def jetson_clocks_locked_check() -> dict | None:
     try:
         res = _machine.window("show")
@@ -283,8 +297,14 @@ def jetson_clocks_locked_check() -> dict | None:
         return None
     if not res.ok:
         return None  # tool_missing / unknown card / not_granted: not applicable
-    if not res.payload.get("active"):
-        return _check("jetson_clocks_locked", True, "info", "clocks are not locked by a window")
+    payload = res.payload
+    locked = _clocks_locked(payload)
+    window_state = bool(payload.get("active") or payload.get("stored"))
+    if locked is None:
+        locked = bool(payload.get("active"))
+        window_state = True  # the fallback only ever sees a lobes window
+    if not locked:
+        return _check("jetson_clocks_locked", True, "info", "clocks are not locked")
     if _benchmark_window_active():
         return _check(
             "jetson_clocks_locked",
@@ -293,13 +313,25 @@ def jetson_clocks_locked_check() -> dict | None:
             "clocks locked by a benchmark window in progress",
         )
     cli = _machine._current_cli() or "<machine-cli>"
+    if window_state:
+        return _check(
+            "jetson_clocks_locked",
+            False,
+            "warn",
+            "clocks are locked by a lobes window but no benchmark holds it (a "
+            "crashed or interrupted benchmark left them at max) — a warning, "
+            "not an error",
+            f"run '{cli} window restore' to return to the stored state",
+        )
     return _check(
         "jetson_clocks_locked",
         False,
         "warn",
-        "clocks are locked outside a benchmark window (a crashed or interrupted "
-        "benchmark left them at max)",
-        f"run '{cli} window restore' to return to the stored state",
+        "clocks are locked outside any lobes window (operator jetson_clocks or a "
+        "crashed run) — a warning, not an error: the operator may have locked "
+        "them on purpose",
+        "if unintended, run 'sudo jetson_clocks --restore' (needs a state saved "
+        "by 'jetson_clocks --store') or reboot the box to return to default clocks",
     )
 
 
