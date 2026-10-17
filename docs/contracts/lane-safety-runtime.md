@@ -35,6 +35,12 @@ behaviour from before this work.
 | `LOBES_WATCHER_MIN_INTERVAL_S` | `300` | — | watcher | Minimum seconds between two cache clears. |
 | `LOBES_PAGE_CACHE_CLEAR` | `auto` | `never` | lifecycle verbs | Where the lifecycle page-cache clear is attempted: `auto` on a detected Spark, Thor or Orin only; `always` on any card (machine CLI, else the `sudo -n` fallback); `never` nowhere. The process environment wins over the `.env`; an unrecognised value is `auto`. |
 
+A key that any built-in shape declares in its `[host_env]` (today
+`LOBES_BOOT_ORDER` and `LOBES_BOOT_STAGGER_S`, from `orin-associate`) is
+written to `.env` by every `lobes init --shape` render: the shape's value,
+else the card's, else the default above. Switching shapes therefore
+overwrites it, and a value typed by hand is replaced on the next render.
+
 Test seams, not operator knobs: `LOBES_PROC_ROOT` (default `/proc`) and
 `LOBES_SYS_ROOT` (default `/sys`) let tests point the wrapper and the thermal
 reader at a fake tree.

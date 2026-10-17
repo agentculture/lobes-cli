@@ -17,7 +17,11 @@ synthetic :class:`~lobes.profiles.schema.Profile` and hands that to the existing
 :func:`lobes.profiles.render.profile_env`. That is what makes the whole-brain
 ``machine-as-brain`` shape a strict no-op: hosting every role with no override
 yields exactly the bare card profile's rendering (the invariant the goldens
-pin).
+pin) -- plus one shape-axis addition every shape makes: each ``host_env`` key
+ANY built-in shape declares is rendered explicitly
+(:func:`lobes.profiles.render.shape_host_env_keys`), so a shape switch
+overwrites it. On a card that does not declare such a key, that is its
+documented default (``LOBES_BOOT_ORDER=`` / ``LOBES_BOOT_STAGGER_S=20``).
 
 **Core roles vs audio roles vs the opt-in `minor` gear.** The four
 Profile-machinery core roles (:data:`~lobes.profiles.schema.ROLES` —
@@ -73,7 +77,7 @@ from typing import Mapping
 from lobes.catalog import ENGINE_LLAMA_CPP, ENGINE_VLLM
 from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.lane_keys import lane_env_key
-from lobes.profiles.render import profile_env, role_engine
+from lobes.profiles.render import profile_env, role_engine, shape_host_env_defaults
 from lobes.profiles.schema import (
     GPU_ACCESS_RUNTIME,
     KNOB_LANE_ROLES,
@@ -561,7 +565,13 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
     exception is a key the SHAPE also declares in its own ``[host_env]``
     (:attr:`~lobes.profiles.shapes.Shape.host_env`): that key depends on what
     the shape hosts — ``LOBES_BOOT_ORDER`` names hosted lanes — so the shape's
-    value wins. A shape declaring none leaves the card's table untouched.
+    value wins. Because such a key can then differ between two shapes on one
+    card, and a re-render only ever writes keys, EVERY shape renders every key
+    any built-in shape declares (:func:`lobes.profiles.render.shape_host_env_keys`):
+    the shape's value, else the card's, else the documented default
+    (:data:`lobes.profiles.render.SHAPE_HOST_ENV_DEFAULTS`). Without that,
+    ``orin-associate`` then ``spark-lobe`` on a Spark would leave
+    ``LOBES_BOOT_ORDER=associate`` behind in ``.env``.
     """
     roles: dict[str, RoleProfile] = {}
     for role in ROLES:
@@ -596,7 +606,11 @@ def compose_profile(shape: Shape, profile: Profile) -> Profile:
         name=f"{shape.name}@{profile.name}",
         summary=f"shape={shape.name} card={profile.name}",
         roles=roles,
-        host_env={**profile.host_env, **shape.host_env},
+        # Every key ANY built-in shape declares is rendered by EVERY shape (its
+        # documented default when neither the card nor this shape declares it),
+        # so a shape switch overwrites it rather than leaving the previous
+        # shape's value behind in .env (render.shape_host_env_keys).
+        host_env={**shape_host_env_defaults(), **profile.host_env, **shape.host_env},
         gpu_access=profile.gpu_access,
     )
 
@@ -682,10 +696,11 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     activation keys that actually bring its gear up
     (:data:`OPT_IN_ACTIVATION_ENV` + :data:`OPT_IN_COMPOSE_PROFILE`): without
     them the service stays parked behind its Compose profile and the gateway
-    leaves the backend unwired (Qodo find on PR #121). Byte-identical to
-    ``profile_env(profile)`` for the whole-brain ``machine-as-brain`` shape
-    (hosts every role, no overrides, no opt-in gear), which is the invariant
-    the goldens pin.
+    leaves the backend unwired (Qodo find on PR #121). For the whole-brain
+    ``machine-as-brain`` shape (hosts every role, no overrides, no opt-in gear)
+    it equals ``profile_env(profile)`` plus the shape-declared ``host_env``
+    keys' defaults the card does not declare (:func:`compose_profile`), which
+    is the invariant the goldens pin.
     """
     composed = compose_profile(shape, profile)
     env = profile_env(composed)
@@ -786,8 +801,8 @@ class ShapeRender:
 
         Identical formatting to ``tests/goldens/regen.py``'s
         ``profile_env_text`` so a shape golden and a profile golden are the same
-        shape of file (and ``machine-as-brain`` is byte-identical to the bare
-        profile golden).
+        shape of file (and ``machine-as-brain`` is the bare profile golden plus
+        the shape-declared ``host_env`` defaults -- see :func:`compose_profile`).
         """
         lines = sorted(f"{key}={value}" for key, value in self.env.items())
         return "\n".join(lines) + "\n"

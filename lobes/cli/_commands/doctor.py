@@ -43,7 +43,7 @@ from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.cli._runtime_ops import resolve_init_profile
 from lobes.gateway._config import FEASIBLE_ENV
-from lobes.profiles.render import ROLE_ENV_PREFIX
+from lobes.profiles.render import ROLE_ENV_PREFIX, SHAPE_HOST_ENV_DEFAULTS
 from lobes.profiles.shape_render import ROLE_SERVICE, render_shape
 from lobes.profiles.shapes import resolve_shape
 from lobes.roles import ROLES
@@ -900,7 +900,14 @@ def _profile_staleness_check(deploy_dir: Path) -> tuple[dict, dict[str, str]]:
     rendered = render_shape(resolve_shape(DEFAULT_SHAPE), profile).env
     dropped = _dropped_role_prefixes(deploy_dir)
     required = {k: str(v) for k, v in rendered.items() if not k.startswith(dropped)}
-    missing = {k: v for k, v in required.items() if k not in deployed}
+    # A shape-declared host_env key every render writes explicitly (so a shape
+    # switch overwrites it) is not MISSING when absent at its documented
+    # default: the compose template's own ${VAR:-default} supplies that value.
+    missing = {
+        k: v
+        for k, v in required.items()
+        if k not in deployed and SHAPE_HOST_ENV_DEFAULTS.get(k) != v
+    }
     if _compose.audio_overlay_present(deploy_dir):
         missing.update({k: v for k, v in _audio_env_defaults().items() if k not in deployed})
     # The Hebrew layer's own keys, only on a deployment that HAS that layer —
