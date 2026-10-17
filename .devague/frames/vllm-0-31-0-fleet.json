@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "drafting",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T17:35:41Z",
+  "updated": "2026-10-17T17:39:14Z",
   "claims": [
     {
       "id": "c1",
@@ -275,7 +275,7 @@
       "kind": "requirement",
       "text": "The Spark is re-pinned AND brings up nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 under vLLM 0.31.0",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -287,7 +287,7 @@
       "kind": "assumption",
       "text": "NVIDIA does NOT name 0.31.0 for Super VL: the README Quick Start names vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2 (Docker Hub, pushed 2026-10-15, amd64+arm64) or v0.32.0 (no v0.32 tag on Docker Hub as of 2026-10-17). 0.31.0 registers the arch and accepts every flag, so serving on 0.31.0 is plausible but unproven until a live boot",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [
         {
@@ -307,7 +307,7 @@
       "kind": "requirement",
       "text": "Super VL is reached through an existing address, not a new role, unless the operator explicitly decides otherwise: docs/colleague-stack.md records that adding a role is effectively irreversible, and lobes has no catalog entry, compose lane, or role for Nemotron 3.5 Super VL today (git grep finds none)",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [
         {
@@ -327,7 +327,7 @@
       "kind": "assumption",
       "text": "The Spark's GPU budget is shared with what it hosts today (COMPOSE_PROFILES=innereye: ComfyUI, plus stt/realtime/bluetts): the recipe's util 0.75 on a 128 GB GB10 is ~96 GB, and the Spark hard-resets under sustained full-GPU load (thermal; heavy jobs run under ~/odm/telemetry/governor.sh, #304)",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [
         {
@@ -347,7 +347,7 @@
       "kind": "assumption",
       "text": "PRECEDENT: Super VL already served on this Spark under the chosen engine build. A standalone early-access run (2026-10-08 -> 10-14, ~5 days, outside the lobes stack, ComfyUI stopped first) ran vLLM 0.31.0 build 7746 / commit db9527a4 \u2014 the same build as vllm/vllm-openai:v0.31.0-ubuntu2404 \u2014 with: gpu_memory_utilization 0.70 (vendor profile asked 0.78, lowered to fit beside the box's other services), max_model_len 393216, kv_cache_dtype fp8, DFlash with the LiLiCorr drafter k=3, mamba-backend flashinfer, mamba-ssm-cache-dtype float16, stochastic rounding philox 5, enable-mamba-shared-prefix-checkpoint, prefix-match-unit 16, max-num-batched-tokens 8192, max-num-seqs 1, async-scheduling, load-format fastsafetensors, prefix caching, tool parser qwen3_coder + reasoning parser nemotron_v3, trust-remote-code. MEASURED in its log: weights 69.92 GiB, KV pool 1,186,732 tokens = 3.02x at 393,216, init 196.7 s (compile 27.4 s), logged decode up to ~46 tok/s. Caveat: an early-access checkpoint revision and a vendor chat template (reasoning-effort), not the public HF revision",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -359,7 +359,7 @@
       "kind": "decision",
       "text": "Super VL is the new worker; for now it is served on the Spark under the address 'worker2'",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -371,7 +371,7 @@
       "kind": "requirement",
       "text": "'worker2' is added as reversible data, not a new role: a named lane carrying worker's responsibility contract (execution, ground_work, drafting, repo_inspection, run_authorized_commands, tool_use, repo_action, image/video understanding; forbidden final_decision, security_decision), advertised in GET /capabilities and mesh-forwarded by name, like the gemma2-embed specialist-lane precedent (lobes/embed_lanes.py) \u2014 because docs/colleague-stack.md records that adding a role is effectively irreversible, and 'for now' implies it may later replace or pool with Thor's worker",
       "origin": "llm",
-      "status": "proposed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [
         {
@@ -391,7 +391,7 @@
       "kind": "decision",
       "text": "ComfyUI (innereye) drops while Super VL is live on the Spark; it comes back when Super VL stops",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
@@ -403,7 +403,7 @@
       "kind": "decision",
       "text": "Super VL serves at a 400K context window first; higher lengths (toward the 1M native) are explored afterwards as separate measured steps",
       "origin": "user",
-      "status": "confirmed",
+      "status": "rejected",
       "honesty_conditions": [],
       "hard_questions": [
         {
@@ -423,11 +423,11 @@
       "kind": "decision",
       "text": "The Spark lane gets adaptive CPU cores per temperature, as jev-factory did, which stopped the Spark's thermal resets",
       "origin": "user",
-      "status": "confirmed",
+      "status": "proposed",
       "honesty_conditions": [],
       "hard_questions": [],
       "links": [],
-      "instruction": "",
+      "instruction": "Applies to the Spark's cortex lane (vllm-primary) on 0.31.0 \u2014 the decision outlives the Super VL rejection",
       "revisions": []
     },
     {
@@ -441,6 +441,58 @@
         {
           "id": "q9",
           "text": "risk: ~/odm/telemetry/governor.log (2026-10-14) records the graded governor RETIRED after 'docker update --cpus broke CUDA' (two cudaErrorNotPermitted exits), then a later note 'unproven (see lobes#304 correction); cause not established' \u2014 and the pause-only governor replaced it. Before shipping it on a vLLM lane, does docker update --cpus on a RUNNING vLLM GPU container survive (a deliberate test), or should the cpu cap be applied via cgroup cpu.max / at create time instead?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "non_goal",
+      "text": "Nemotron 3.5 Super VL is deferred to its own session: a new model is a new frame, not part of the 0.31.0 engine move. The scope entries already recorded on this frame about it (HF checkpoint, the 0.31.0 registry/flag check, the Spark's earlier standalone run) are the head start for that session",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The Spark brings cortex back up on vLLM 0.31.0 for now, serving unsloth/Qwen3.8-27B-NVFP4 \u2014 the same checkpoint and lane as spark2 \u2014 so the mesh has two cortex members again",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q10",
+          "text": "Does ComfyUI (innereye, declared peak 31.42 GiB) drop while the Spark's cortex is live (the 2026-10-06 cortex lane was funded by dropping Gemma, not ComfyUI), or do cortex at util 0.58 (~74 GB) and ComfyUI co-reside on the 128 GB GB10 beside stt/realtime/bluetts?",
+          "resolved": false,
+          "blocking": true,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "assumption",
+      "text": "The mesh fingerprint does NOT include the engine version: Fingerprint is served_id, quantization, max_model_len, runtime (lobes/gateway/_mesh_wire.py:86-89, mirrored in _replicas.py:298). So during the per-box rollout a 0.31.0 Spark cortex and a nightly spark2 cortex agree and pool as one plain 'cortex' \u2014 invisible mixed engines; every baseline and re-measure must address the member lanes cortex-spark / cortex-spark2 (or the lane directly), never plain cortex",
+      "origin": "llm",
+      "status": "proposed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q11",
+          "text": "risk: Should the engine version (e.g. vllm 0.31.0 vs 0.26.1rc1) join the fingerprint so a mixed-engine pool is exposed rather than silently pooled, or is mixed-engine pooling acceptable for the rollout window?",
           "resolved": false,
           "blocking": false,
           "resolution": ""
@@ -679,6 +731,32 @@
       "seeds": [
         "c31",
         "q9"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "spark ~/.lobes/.env (PRIMARY_* knobs) + memory record of the 2026-10-06 Spark cortex lane",
+      "finding": "the Spark's .env still carries the cortex lane: PRIMARY_MODEL unsloth/Qwen3.8-27B-NVFP4, util 0.58, max_model_len 262144, fp8 KV, qwen3_coder_thinking tool parser, compressed-tensors, YaRN hf_overrides kept; it was turned off by a later PRIMARY_FEASIBLE=false (line 747) while innereye/ComfyUI runs (INNEREYE_DECLARED_PEAK_GIB 31.42); on 2026-10-06 this lane measured KV 774,355 tokens = 2.95x at 262144 with DSpark, boot ~7 min, beside the dropped Gemma senses; pre-change backups exist under ~/.lobes/*.bak-20261006-*",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "spark ~/.lobes/.env INNEREYE_* + COMPOSE_PROFILES=innereye",
+      "finding": "ComfyUI is today's resident; the earlier 'ComfyUI drops' decision was made for Super VL and was rejected with it, so cortex's co-residence is undecided",
+      "seeds": [
+        "c33",
+        "q10"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "lobes/gateway/_mesh_wire.py:79-99 + lobes/gateway/_replicas.py:298-308",
+      "finding": "four-field fingerprint, runtime is the string 'vllm'/'llamacpp' \u2014 no version; served_id/max_model_len live, the rest declared",
+      "seeds": [
+        "c34",
+        "q11"
       ]
     }
   ],
