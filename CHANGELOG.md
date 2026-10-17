@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.88.0] - 2026-10-17
+
+### Added
+
+- Crash backoff in mg-logwrap (#309): a per-lane start counter holds a lane after LOBES_START_MAX (3) starts inside LOBES_START_WINDOW_S (600 s), and a memory gate waits until MemAvailable covers the lane's --gpu-memory-utilization share before starting (LOBES_MEM_GATE, timeout LOBES_MEM_GATE_TIMEOUT_S, exit 75), writing a gate marker under logs/lane-state/
+- Page-cache clear around lifecycle verbs: compose down/up (serve, stop, switch, up, fleet) run the machine CLI's drop-caches when the single NOPASSWD sysctl rule is granted, never prompting; deliberate starts reset the lane's start counter
+- lobes watcher install|uninstall|status|run: an opt-in host watcher (user unit with linger, or --system) that clears the page cache when a lane is held in the memory gate, rate-limited by LOBES_WATCHER_MIN_INTERVAL_S; it never runs docker
+- Thermal shedding (#304): a fourth pressure signal reads the card's LOBES_THERMAL_ZONES and sheds full tiers with 429 above LOBES_THERMAL_SHED_C (hysteresis to LOBES_THERMAL_RESUME_C); hand and decider are always served; the 429 carries X-Lobes-Shed-Signal: thermal; GET /status and lobes status --pressure show the reading. Inert in containers until the gateway passthrough lands (#311)
+- Benchmark window (#308): lobes benchmark takes an exclusive per-host lock, locks clocks and fan through the machine CLI (spark/thor/orin), always restores on exit, error or signal, and records host.conditions; --no-lock opts out
+- lobes doctor: logwrap_stale, compile_cache_unmounted, compile_cache_size, jetson_clocks_locked, drop_caches_grant_missing, watcher_inactive; lobes doctor --refresh-logwrap (backup + packaged wrapper, nothing else); init and doctor --fix create the compile-cache dirs owned by the operator
+- Optional extras lobes-cli[spark|thor|orin] for the machine CLIs; lobes/runtime/_machine.py adapter with a sudo -n fallback
+
 ## [0.87.0] - 2026-10-17
 
 ### Added
