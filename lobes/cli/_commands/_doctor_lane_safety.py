@@ -166,6 +166,42 @@ def _binds(bare: str, target: str) -> bool:
     return f":{target}" in bare and (bare.endswith(target) or f"{target}:" in bare)
 
 
+def _sets_key(bare: str, key: str) -> bool:
+    """True when a env token assigns ``key`` (``KEY=value`` or ``KEY: value``)."""
+    return bare.startswith((f"{key}=", f"{key}:"))
+
+
+def _scan_service_lines(lines: list[str], entry: dict[str, bool]) -> None:
+    """Fold one service block's volume/env tokens into its ``entry`` flags."""
+    for line in lines:
+        bare = line.strip("-'\" ")
+        if _binds(bare, _CACHE_TARGET):
+            entry["mount"] = True
+        if _binds(bare, _FI_TARGET):
+            entry["fi_mount"] = True
+        if _sets_key(bare, "VLLM_CACHE_ROOT"):
+            entry["env"] = True
+        if _sets_key(bare, _FI_ENV_KEY):
+            entry["fi_env"] = True
+
+
+def _merge_compose_file(text: str, state: dict[str, dict[str, bool]], vllm: set[str]) -> None:
+    """Merge one compose file's services into ``state``, noting vLLM runners."""
+    for service, lines in _service_blocks(text).items():
+        entry = state.setdefault(service, dict.fromkeys(_STATE_KEYS, False))
+        if _runs_vllm(lines):
+            vllm.add(service)
+        _scan_service_lines(lines, entry)
+
+
+def _parked_services(deploy_dir: Path) -> set[str]:
+    """Services the shape overlay parks (not hosted here); empty without one."""
+    shape = deploy_dir / _compose.SHAPE_OVERLAY
+    if not shape.is_file():
+        return set()
+    return _compose.shape_parked_service_keys(shape.read_text(encoding="utf-8"))
+
+
 def _vllm_mount_state(deploy_dir: Path) -> dict[str, dict[str, bool]]:
     """Per vLLM service: ``mount``/``env`` (t8) + ``fi_mount``/``fi_env`` (d7), merged."""
     state: dict[str, dict[str, bool]] = {}
@@ -175,24 +211,8 @@ def _vllm_mount_state(deploy_dir: Path) -> dict[str, dict[str, bool]]:
             text = (deploy_dir / name).read_text(encoding="utf-8")
         except OSError:
             continue
-        for service, lines in _service_blocks(text).items():
-            entry = state.setdefault(service, dict.fromkeys(_STATE_KEYS, False))
-            if _runs_vllm(lines):
-                vllm.add(service)
-            for line in lines:
-                bare = line.strip("-'\" ")
-                if _binds(bare, _CACHE_TARGET):
-                    entry["mount"] = True
-                if _binds(bare, _FI_TARGET):
-                    entry["fi_mount"] = True
-                if bare.startswith("VLLM_CACHE_ROOT=") or bare.startswith("VLLM_CACHE_ROOT:"):
-                    entry["env"] = True
-                if bare.startswith(f"{_FI_ENV_KEY}=") or bare.startswith(f"{_FI_ENV_KEY}:"):
-                    entry["fi_env"] = True
-    parked: set[str] = set()
-    shape = deploy_dir / _compose.SHAPE_OVERLAY
-    if shape.is_file():
-        parked = _compose.shape_parked_service_keys(shape.read_text(encoding="utf-8"))
+        _merge_compose_file(text, state, vllm)
+    parked = _parked_services(deploy_dir)
     return {s: state[s] for s in sorted(vllm) if s not in parked}
 
 
