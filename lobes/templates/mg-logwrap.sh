@@ -77,6 +77,31 @@ fi
 # host's /proc/uptime is not namespaced by docker. Any bad knob or unreadable
 # uptime means no hold: this can never stop the model from serving.
 _num() { case "$1" in '' | *[!0-9]*) echo "$2" ;; *) echo "$((10#$1))" ;; esac; }
+
+# --- Stoppable waits (2026-10-17 hardware finding) ---------------------------
+# The boot hold below must stop on `docker stop`. Two bash rules defeat a plain
+# `sleep N`: bash defers a trap until the FOREGROUND child returns (so TERM
+# waits out a 120 s hold), and bash as a container's PID 1 ignores TERM unless
+# a handler is set — on Spark, Orin and Thor a held lane ran until docker's
+# kill timeout. So the wait is `sleep N & wait $!` (the `wait` builtin returns
+# at once on a trapped signal) under a TERM/INT handler that kills the pending
+# sleep, removes the gate marker (if any) and exits 143/130. The handlers are
+# cleared before the final exec, so the server gets default signal handling.
+_sleep_pid=""
+_marker=""
+_on_signal() {
+    [ -n "$_sleep_pid" ] && kill "$_sleep_pid" 2>/dev/null
+    [ -n "$_marker" ] && rm -f "$_marker"
+    exit "$1"
+}
+trap '_on_signal 143' TERM
+trap '_on_signal 130' INT
+_wait() {
+    sleep "$1" &
+    _sleep_pid=$!
+    wait "$_sleep_pid" || true
+    _sleep_pid=""
+}
 _delay="$(_num "${LOBES_BOOT_DELAY_S-}" 120)"
 if [ "$_delay" -gt 0 ]; then
     _stagger="$(_num "${LOBES_BOOT_STAGGER_S-}" 20)"
@@ -99,10 +124,15 @@ if [ "$_delay" -gt 0 ]; then
         if [ "$_hold" -gt 0 ]; then
             printf 'lobes: host up %ss, holding %ss (boot delay %ss + stagger %ss)\n' \
                 "$((10#$_up))" "$_hold" "$_delay" "$_off"
-            sleep "$_hold" || true
+            _wait "$_hold"
         fi
     fi
 fi
+
+# The waits are over: drop the TERM/INT handlers so the server starts with
+# default signal dispositions (exec resets caught signals anyway; this keeps
+# the intent explicit and covers no-wait paths too).
+trap - TERM INT
 
 # exec the real command: this DOES replace the shell, so the server (not bash) is
 # the container's main process — it receives SIGTERM directly (graceful shutdown)

@@ -126,3 +126,50 @@ def test_boot_order_blocks_are_not_read_as_dropped_lobes() -> None:
     assert "vllm-rerank" not in parked
     # The shape genuinely drops the two heavy default lobes; those ARE parked.
     assert {"vllm-primary", "vllm-multimodal"} <= parked
+
+
+# --- The wrapper's release order (lane-safety LOBES_BOOT_ORDER) ---------------
+# After a host reboot dockerd restarts every lane at once and compose
+# `depends_on` is ignored, so the override above cannot order the boot; the
+# wrapper's LOBES_BOOT_ORDER does. The Orin card default releases senses and the
+# gears first, which on this shape would hold associate LAST — the gears-first
+# order its util 0.70 budget was never measured at. The shape's own [host_env]
+# must put associate first.
+
+
+def _shape_env(shape_name: str, card: str = "orin") -> dict[str, str]:
+    from lobes.profiles.shape_render import render_shape
+
+    return dict(render_shape(resolve_shape(shape_name), resolve_profile(card)).env)
+
+
+def test_orin_associate_renders_an_associate_first_release_order() -> None:
+    assert _shape_env("orin-associate")["LOBES_BOOT_ORDER"] == "associate,embed,rerank"
+
+
+def test_orin_associate_golden_carries_the_associate_first_order() -> None:
+    golden = Path(__file__).resolve().parent / "goldens" / "shapes" / "orin-associate__orin.env"
+    assert "LOBES_BOOT_ORDER=associate,embed,rerank\n" in golden.read_text(encoding="utf-8")
+
+
+def test_the_shape_order_wins_on_every_card() -> None:
+    # The associate-first order is a property of the shape's budget, not the
+    # card's (the same reason the depends_on override above is card-independent).
+    for card in ("orin", "spark", "thor"):
+        assert _shape_env("orin-associate", card)["LOBES_BOOT_ORDER"] == "associate,embed,rerank"
+
+
+def test_the_senses_shape_keeps_the_card_default() -> None:
+    # The card default IS the measured senses-first order: orin-lobe keeps it.
+    assert _shape_env("orin-lobe")["LOBES_BOOT_ORDER"] == "multimodal,embed,rerank"
+    assert "host_env" not in resolve_shape("orin-lobe").to_dict()
+
+
+def test_shape_host_env_rejects_a_bad_key() -> None:
+    from lobes.cli._errors import ModelGearError
+    from lobes.profiles.shapes import Shape
+
+    with pytest.raises(ModelGearError, match="shape 'x'.*not a valid env-var name"):
+        Shape.from_dict("x", {"hosts": ["embedder"], "host_env": {"1BAD": "v"}})
+    with pytest.raises(ModelGearError, match="shape 'x'.*must be str"):
+        Shape.from_dict("x", {"hosts": ["embedder"], "host_env": {"OK": 3}})

@@ -131,11 +131,16 @@ def test_every_service_runs_the_hold(rel: str, name: str, svc: dict) -> None:
     _check_held(name, svc)
 
 
+# The ENTRYPOINT the stt images inherit from their base (scitrera/dgx-spark-vllm),
+# verified with `docker image inspect` on the built lobes-stt / model-gear-stt images.
+STT_BASE_ENTRYPOINT = "/opt/nvidia/nvidia_entrypoint.sh"
+
+
 def test_hebrew_stt_respells_the_whisper_command() -> None:
     he = _load("fleet/docker-compose.audio-he.yml")["services"]["stt"]
     en = _load("fleet/docker-compose.audio.yml")["services"]["stt"]
-    assert "listen_server_whisper.py" in " ".join(he["command"])
-    assert "listen_server.py" in " ".join(en["command"])
+    assert he["command"] == [STT_BASE_ENTRYPOINT, "python3", "/app/listen_server_whisper.py"]
+    assert en["command"] == [STT_BASE_ENTRYPOINT, "python3", "/app/listen_server.py"]
     assert "entrypoint" not in he  # inherited from the English overlay
     he_ml = _load("fleet/docker-compose.audio-he.yml")["services"]["chatterbox"]
     assert "chatterbox_multilingual_server" in " ".join(he_ml["command"])
@@ -148,7 +153,10 @@ def test_real_commands_match_the_dockerfiles() -> None:
     assert audio["chatterbox"]["command"][-2:] == ["-m", "lobes.realtime.chatterbox_server"]
     assert audio["realtime"]["command"] == ["python", "-m", "lobes.realtime"]
     assert fleet["gateway"]["command"] == ["python", "-m", "lobes.gateway"]
-    assert audio["stt"]["command"] == ["python3", "/app/listen_server.py"]
+    # stt's images (Dockerfile.parakeet, Dockerfile.whisper-stt) set only CMD;
+    # the base image's ENTRYPOINT (NVIDIA's entrypoint script) must still run,
+    # so it is chained between the wrapper and the CMD.
+    assert audio["stt"]["command"] == [STT_BASE_ENTRYPOINT, "python3", "/app/listen_server.py"]
     embed = _load("fleet/docker-compose.embed.yml")["services"]["embed-gemma2-embed"]
     assert embed["command"] == ["python3", "-m", "lobes.embed_sidecar.server"]
 
