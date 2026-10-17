@@ -44,7 +44,9 @@ def offline_runtime(monkeypatch, tmp_path):
     # No deployment scaffolded by default: point the home at an empty tmp dir.
     monkeypatch.delenv("LOBES_DIR", raising=False)
     # The benchmark window's per-host lock lives here; keep xdist workers apart.
-    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    rt = tmp_path.parent / (tmp_path.name + "-run")
+    rt.mkdir(exist_ok=True)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(rt))
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var
     empty = tmp_path / "home-lobes"
     monkeypatch.setattr(_compose, "default_deployment_dir", lambda: empty)
