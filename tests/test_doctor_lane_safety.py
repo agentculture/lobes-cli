@@ -488,6 +488,37 @@ def test_refresh_apply_writes_exactly_backup_and_wrapper(tmp_path: Path) -> None
     assert actions
 
 
+def test_refresh_replaces_the_wrapper_atomically_new_inode(tmp_path: Path) -> None:
+    """review-b #2: a held lane's bash is still reading the bind-mounted inode.
+
+    Truncate-and-rewrite would make it resume at a stale offset in new bytes;
+    the refresh must write a temp file and ``os.replace`` it, so the running
+    containers keep the old inode intact and the ``.bak`` is an independent copy.
+    """
+    d = _fleet(tmp_path)
+    old = '#!/bin/bash\n# hand-edited\nexec "$@"\n'
+    wrapper = d / _compose.LOG_WRAPPER
+    wrapper.write_text(old, encoding="utf-8")
+    wrapper.chmod(0o755)
+    held = open(wrapper, "rb")  # a running lane's view of the old inode
+    try:
+        inode_before = os.stat(wrapper).st_ino
+        ls.apply_refresh_logwrap(d)
+        assert os.stat(wrapper).st_ino != inode_before
+        assert held.read().decode() == old  # the old inode's bytes are untouched
+    finally:
+        held.close()
+    backup = d / "mg-logwrap.sh.bak"
+    assert backup.read_text(encoding="utf-8") == old
+    assert os.stat(backup).st_ino not in (inode_before, os.stat(wrapper).st_ino)
+    assert wrapper.read_text(encoding="utf-8") == _packaged_logwrap()
+    assert os.stat(wrapper).st_mode & 0o777 == 0o755  # mode preserved
+    assert sorted(p.name for p in d.iterdir() if p.name.startswith("mg-logwrap")) == [
+        "mg-logwrap.sh",
+        "mg-logwrap.sh.bak",
+    ]  # no temp file left behind
+
+
 def test_refresh_is_a_noop_when_current(tmp_path: Path) -> None:
     d = _fleet(tmp_path)
     before = _snapshot(d)

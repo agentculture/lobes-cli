@@ -27,7 +27,8 @@ each returns ``None`` — no row at all — when it does not apply:
 The refresh (``lobes doctor --refresh-logwrap``) is its own named flag, after
 the ``--repin-version`` precedent: plain ``--fix`` stays missing-only (#174),
 and the refresh writes exactly two paths — ``mg-logwrap.sh.bak`` (the current
-file) then the packaged ``mg-logwrap.sh``.
+file) then the packaged ``mg-logwrap.sh``, renamed into place from a temp file
+so a running lane's bind-mounted inode is never rewritten.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ import fcntl
 import hashlib
 import os
 import shutil
+import stat
+import tempfile
 from importlib.resources import files as _resource_files
 from pathlib import Path
 
@@ -516,11 +519,31 @@ def refresh_logwrap_plan(deploy_dir: Path) -> list[str]:
 
 
 def apply_refresh_logwrap(deploy_dir: Path) -> list[str]:
-    """Back up then replace a STALE wrapper. Writes exactly two paths, or none."""
+    """Back up then replace a STALE wrapper. Writes exactly two paths, or none.
+
+    The new wrapper goes to a temp file in the same dir and is ``os.replace``d
+    over the old name (review-b #2): running containers bind-mount the old
+    INODE and a held lane's bash is still reading it, so truncating and
+    rewriting in place would make bash resume at a stale offset in the new
+    bytes. The rename leaves the old inode intact for them; the ``.bak`` is an
+    independent copy. The old file's mode is kept.
+    """
     if _refresh_state(deploy_dir) != "stale":
         return []
     wrapper = Path(deploy_dir) / _compose.LOG_WRAPPER
     backup = wrapper.with_name(wrapper.name + _BACKUP_SUFFIX)
     shutil.copy2(wrapper, backup)
-    wrapper.write_text(_packaged_logwrap(), encoding="utf-8")
+    mode = stat.S_IMODE(wrapper.stat().st_mode)
+    fd, tmp = tempfile.mkstemp(prefix=f".{wrapper.name}.", dir=str(wrapper.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(_packaged_logwrap())
+        os.chmod(tmp, mode)
+        os.replace(tmp, wrapper)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return [f"backed up {wrapper.name} -> {backup.name}", f"wrote packaged {wrapper.name}"]

@@ -179,7 +179,9 @@ hold     = release − host uptime, if positive
   `compile_cache_size` (info). Alongside them: `lane_state_writable` (warn,
   section 3), `logwrap_stale` (warn; fixed by
   `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
-  then the packaged wrapper and nothing else), `jetson_clocks_locked` (warn:
+  then the packaged wrapper and nothing else; the wrapper is written to a temp
+  file and renamed over the old name, so running containers, which bind-mount
+  the old inode, keep reading intact bytes until they are recreated), `jetson_clocks_locked` (warn:
   `window show` reports `clocks_locked`, or `active` from an older CLI,
   while no benchmark window holds the host lock),
   `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
