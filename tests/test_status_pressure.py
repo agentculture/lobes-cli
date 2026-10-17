@@ -39,7 +39,18 @@ from lobes.runtime import _pressure as _pressure_mod
 _HAND_ID = "LiquidAI/LFM2.5-1.2B-Instruct"
 _PRIMARY_ID = "unsloth/Qwen3.8-27B-NVFP4"  # main tier (full)
 
-_KEYS = {"mode", "shed", "servable_tier", "model", "reason", "retry_after", "pressure"}
+_KEYS = {
+    "mode",
+    "shed",
+    "servable_tier",
+    "model",
+    "reason",
+    "retry_after",
+    "pressure",
+    # lane-safety t14: which signal sheds, and the thermal reading vs its band.
+    "shed_signal",
+    "thermal",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -236,3 +247,92 @@ def test_no_train_verb_registered() -> None:
         f"in the CLI parser — lobes is serve-only (issue #68); LoRA / fine-tuning "
         f"tooling belongs in a separate package."
     )
+
+
+# ---------------------------------------------------------------------------
+# Thermal (lane-safety t14) — the reading, its band, and the signal
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402
+
+from lobes.gateway import _pressure_policy as _P  # noqa: E402
+
+
+@pytest.fixture
+def spark_band(monkeypatch):
+    monkeypatch.setattr(_P, "THERMAL_SHED_C", 91.0)
+    monkeypatch.setattr(_P, "THERMAL_RESUME_C", 86.0)
+
+
+def _set_thermal(monkeypatch, t) -> None:
+    monkeypatch.setattr(
+        _pressure_mod,
+        "sample_pressure",
+        lambda: {"swap_used_percent": 1.0, "iowait_percent": 1.0, "thermal_c": t},
+    )
+
+
+def test_status_pressure_json_hot_sheds_with_thermal_signal(capsys, monkeypatch, spark_band):
+    _set_thermal(monkeypatch, 93.5)
+    assert main(["status", "--pressure", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == _KEYS
+    assert payload["shed"] is True
+    assert payload["mode"] == "busy"
+    assert payload["shed_signal"] == "thermal"
+    assert payload["servable_tier"] == "hand"
+    assert payload["thermal"] == {
+        "c": 93.5,
+        "shed_c": 91.0,
+        "resume_c": 86.0,
+        "band": "above_shed",
+        "shedding": True,
+    }
+
+
+def test_status_pressure_json_hysteresis_band_is_reported_honestly(capsys, monkeypatch, spark_band):
+    # A one-shot CLI has no latch history: inside the band it cannot know
+    # whether the gateway is still shedding, so it says so (shedding: null).
+    _set_thermal(monkeypatch, 88.0)
+    assert main(["status", "--pressure", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shed"] is False
+    assert payload["shed_signal"] == ""
+    assert payload["thermal"]["band"] == "hysteresis"
+    assert payload["thermal"]["shedding"] is None
+
+
+def test_status_pressure_json_unknown_reading_never_sheds(capsys, monkeypatch, spark_band):
+    _set_thermal(monkeypatch, None)
+    assert main(["status", "--pressure", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shed"] is False
+    assert payload["thermal"]["c"] is None
+    assert payload["thermal"]["band"] == "unknown"
+    assert payload["thermal"]["shedding"] is False
+
+
+def test_status_pressure_json_band_off(capsys, monkeypatch):
+    monkeypatch.setattr(_P, "THERMAL_SHED_C", None)
+    monkeypatch.setattr(_P, "THERMAL_RESUME_C", None)
+    _set_thermal(monkeypatch, 99.0)
+    assert main(["status", "--pressure", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["shed"] is False
+    assert payload["thermal"]["band"] == "off"
+    assert payload["thermal"]["shed_c"] is None
+
+
+def test_status_pressure_text_shows_thermal(capsys, monkeypatch, spark_band):
+    _set_thermal(monkeypatch, 93.5)
+    assert main(["status", "--pressure"]) == 0
+    out = capsys.readouterr().out
+    assert "thermal: 93.5 C" in out
+    assert "above shed 91.0 C" in out
+    assert "signal:  thermal" in out
+
+
+def test_status_pressure_text_thermal_na(capsys, monkeypatch):
+    _set_pressure(monkeypatch, swap=10.0, iowait=5.0)  # a sampler with no thermal key
+    assert main(["status", "--pressure"]) == 0
+    assert "thermal: n/a" in capsys.readouterr().out
