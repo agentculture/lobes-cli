@@ -9,11 +9,14 @@ shell) — the bandit ``B404``/``B603`` skips in ``pyproject.toml`` cover them.
 from __future__ import annotations
 
 import os
+import re
 import subprocess  # fixed argv lists only, never shell=True
+import sys
 from importlib.resources import files
 from pathlib import Path
 
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
+from lobes.runtime import _env, _machine
 
 CONTAINER = "model-gear-vllm"
 COMPOSE_FILE = "docker-compose.yml"
@@ -985,8 +988,109 @@ def _probe(argv: list[str], *, timeout: int = 10):
         return None
 
 
+CACHE_CLEAR_PLAN_LINE = "clear the page cache (when the drop-caches grant is present)"
+LANE_STATE_DIRNAME = "lane-state"
+
+# One clear per down->up pair (``switch``): a clear after ``down`` is consumed by
+# the next ``up`` instead of clearing twice. Process-local; reset by every ``up``.
+_cleared_after_down = False
+
+
+def cache_clear_plan_line() -> str:
+    """The dry-run plan text for the page-cache clear step (lifecycle verbs)."""
+    return CACHE_CLEAR_PLAN_LINE
+
+
+def clear_page_cache() -> bool:
+    """Clear the page cache when granted; never fails the verb, never prompts.
+
+    Ungranted (or failed) prints ONE stderr line and returns False.
+    """
+    try:
+        result = _machine.drop_caches()
+    except Exception as exc:  # the clear must never break a lifecycle verb
+        result = _machine.MachineResult(False, f"error: {exc}")
+    if result.ok:
+        return True
+    cli = _machine._current_cli() or "<machine-cli>"
+    print(
+        f"lobes: page-cache clear skipped ({result.reason or 'failed'}) "
+        f"- run '{cli} grant-permissions' to enable it",
+        file=sys.stderr,
+    )
+    return False
+
+
+def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:
+    """compose service name -> ``MG_LOG_NAME`` (text scan of the compose files)."""
+    names = [a for a in compose_files if a != "-f"] or [COMPOSE_FILE]
+    mapping: dict[str, str] = {}
+    for name in dict.fromkeys(names):
+        try:
+            text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
+        except OSError:
+            continue
+        service = None
+        for line in text.splitlines():
+            m = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", line)
+            if m:
+                service = m.group(1)
+                continue
+            m = re.search(r"MG_LOG_NAME=([A-Za-z0-9_.-]+)", line)
+            if m and service:
+                mapping[service] = m.group(1)
+    return mapping
+
+
+def reset_start_counters(
+    deploy_dir: os.PathLike | str,
+    services: list[str] | None = None,
+    compose_files: list[str] | None = None,
+) -> list[str]:
+    """Delete the crash-backoff counter files of lanes about to start on purpose.
+
+    ``services=None`` means the whole project (every ``*.starts``). Missing
+    dir/file is fine. Returns the deleted file names.
+    """
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    state = durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+    if services is None:
+        targets = sorted(state.glob("*.starts"))
+    else:
+        mapping = _service_log_names(
+            deploy_dir, compose_files if compose_files is not None else _compose_files(deploy_dir)
+        )
+        wanted: set[str] = set()
+        for svc in services:
+            wanted.add(mapping.get(svc, svc))
+        targets = [state / f"{n}.starts" for n in sorted(wanted)]
+    removed = []
+    for t in targets:
+        try:
+            t.unlink()
+            removed.append(t.name)
+        except OSError:
+            pass
+    return removed
+
+
+def _before_up(deploy_dir, services: list[str] | None, compose_files: list[str] | None = None):
+    global _cleared_after_down
+    if _cleared_after_down:
+        _cleared_after_down = False  # the preceding down already cleared
+    else:
+        clear_page_cache()
+    reset_start_counters(deploy_dir, services, compose_files)
+
+
 def compose_down(deploy_dir: os.PathLike | str):
-    return _run(["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir))
+    global _cleared_after_down
+    result = _run(
+        ["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir)
+    )
+    if getattr(result, "returncode", 1) == 0:
+        _cleared_after_down = clear_page_cache()
+    return result
 
 
 def compose_up_detached(deploy_dir: os.PathLike | str):
@@ -998,7 +1102,11 @@ def compose_up_detached(deploy_dir: os.PathLike | str):
     and ``lobes serve --apply`` on a shape deployment booted the dropped
     lobe). A plain deployment resolves ``[]``, keeping the bare argv
     byte-identical to the pre-#137 behaviour.
+
+    Lifecycle chokepoint (t11): clears the page cache (when granted) and the
+    crash-backoff start counters before starting.
     """
+    _before_up(deploy_dir, None)
     return _run(
         ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d"], cwd=str(deploy_dir)
     )
@@ -1010,6 +1118,7 @@ def compose_up_build(deploy_dir: os.PathLike | str):
     on a re-run; first run builds either way). When the ``--audio`` overlay is
     scaffolded, the audio services (built from ``Dockerfile.realtime`` /
     ``Dockerfile.parakeet``) are layered in via ``-f docker-compose.audio.yml``."""
+    _before_up(deploy_dir, None)
     return _run(
         ["docker", "compose"] + _compose_files(deploy_dir) + ["up", "-d", "--build"],
         cwd=str(deploy_dir),
@@ -1062,8 +1171,30 @@ def compose_service_argv(
 
 
 def run_compose(deploy_dir: os.PathLike | str, argv: list[str]):
-    """Run a prebuilt ``docker compose ...`` argv in the deployment dir (t7)."""
-    return _run(argv, cwd=str(deploy_dir))
+    """Run a prebuilt ``docker compose ...`` argv in the deployment dir (t7).
+
+    An ``up`` argv gets the same pre-start chokepoint as the whole-project
+    helpers (page-cache clear + start-counter reset for the targeted services);
+    a ``down`` argv clears the cache after teardown.
+    """
+    global _cleared_after_down
+    cmd = list(argv[2:])
+    files: list[str] = []
+    i = 0
+    while i < len(cmd) and cmd[i].startswith("-"):
+        if cmd[i] == "-f" and i + 1 < len(cmd):
+            files += ["-f", cmd[i + 1]]
+            i += 2
+        else:
+            i += 1
+    sub = cmd[i] if i < len(cmd) else ""
+    if sub == "up":
+        rest = [a for a in cmd[i + 1 :] if not a.startswith("-")]
+        _before_up(deploy_dir, rest or None, files or None)
+    result = _run(argv, cwd=str(deploy_dir))
+    if sub == "down" and getattr(result, "returncode", 1) == 0:
+        _cleared_after_down = clear_page_cache()
+    return result
 
 
 def docker_available() -> bool:

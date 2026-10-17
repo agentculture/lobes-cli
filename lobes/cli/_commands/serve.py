@@ -60,7 +60,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
             )
         else:
             emit_result(
-                f"DRY RUN — would run: docker compose up -d in {deploy_dir}, "
+                f"DRY RUN — would {_compose.cache_clear_plan_line()}, then run: "
+                f"docker compose up -d in {deploy_dir}, "
                 f"then wait for health on :{port}.\nRe-run with --apply to execute.",
                 json_mode=False,
             )
