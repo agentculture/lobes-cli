@@ -397,3 +397,21 @@ def test_a_well_formed_lock_still_loads(tmp_path: Path) -> None:
     )
     write_lock(tmp_path, lock)
     assert load_lock(lock_path(tmp_path)) == lock
+
+
+def test_lane_safety_host_env_keys_render_and_are_locked() -> None:
+    """t9: boot order / thermal zone / bands come from [host_env] alone."""
+    from lobes.profiles.loader import resolve_profile
+    from lobes.runtime._lock import lock_keys
+
+    spark = resolve_profile("spark").host_env
+    thor = resolve_profile("thor").host_env
+    orin = resolve_profile("orin").host_env
+    assert spark["LOBES_THERMAL_ZONES"] == "acpitz"
+    assert (spark["LOBES_THERMAL_SHED_C"], spark["LOBES_THERMAL_RESUME_C"]) == ("91", "86")
+    assert thor["LOBES_BOOT_ORDER"].split(",")[:2] == ["embed", "rerank"]
+    assert thor["LOBES_THERMAL_ZONES"] == orin["LOBES_THERMAL_ZONES"] == "tj-thermal"
+    for host_env in (thor, orin):
+        assert "LOBES_THERMAL_SHED_C" not in host_env
+    assert "LOBES_BOOT_ORDER" in orin
+    assert {"LOBES_BOOT_ORDER", "LOBES_THERMAL_ZONES", "LOBES_THERMAL_SHED_C"} <= lock_keys()

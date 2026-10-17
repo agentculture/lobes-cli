@@ -715,7 +715,22 @@ def test_shape_rendering_consults_no_host_state(tmp_path, monkeypatch) -> None:
 # anyway keeps the card's declaration visible next to the knobs it sits
 # beside, the same way COMPOSE_PROFILES's own rendered value is visible even
 # though nothing here expands it.
-_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset({"COMPOSE_PROFILES", "INNEREYE_DECLARED_PEAK_GIB"})
+#
+# The four lane-safety host_env keys (t9, #304/#307/#308/#309) are the third
+# class: they are read straight from the deployment's `.env` by the lane
+# wrapper (LOBES_BOOT_ORDER) and by the gateway/status verbs (LOBES_THERMAL_*)
+# per docs/contracts/lane-safety-runtime.md section 1, never ${substituted}
+# into a compose flag.
+_NOT_SUBSTITUTED_BY_TEMPLATE = frozenset(
+    {
+        "COMPOSE_PROFILES",
+        "INNEREYE_DECLARED_PEAK_GIB",
+        "LOBES_BOOT_ORDER",
+        "LOBES_THERMAL_ZONES",
+        "LOBES_THERMAL_SHED_C",
+        "LOBES_THERMAL_RESUME_C",
+    }
+)
 
 
 @pytest.mark.parametrize("card_name", sorted(builtin_names()))

@@ -51,6 +51,12 @@ def _scaffold_fleet(path, *, audio: bool = False, profile: str = "spark"):
     if audio:
         _compose.append_audio_env(path)
     _env.set_env(path / ".env", "LOBES_PROFILE", profile)
+    # `lobes init` also renders the card's host_env keys (t9: spark gained the
+    # lane-safety thermal keys); a scaffold without them reads as stale.
+    from lobes.profiles.loader import resolve_profile
+
+    for key, value in resolve_profile(profile).host_env.items():
+        _env.set_env(path / ".env", key, value)
     return path
 
 

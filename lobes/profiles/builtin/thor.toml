@@ -16,6 +16,24 @@
 name = "thor"
 summary = "Jetson AGX Thor (Blackwell-class sm_110, 128 GB unified) — load-tested divergences from spark"
 
+# --- lane-safety host_env (plan lane-safety #304/#307/#308/#309) -------------
+# docs/contracts/lane-safety-runtime.md section 1. Thor behaviour is
+# DECLARED/UNVALIDATED (#108).
+#
+# LOBES_BOOT_ORDER: gears-first - the two cheap pooling gears (MG_LOG_NAME
+# `embed`, `rerank`) release before any heavy lane (an unlisted lane is held
+# last). Evidence: the Thor unified-memory first-boot race that the template's
+# vllm-worker/vllm-muse depends_on comments cite (lobes/templates/fleet/
+# docker-compose.yml) and docs/machine-profiles.md "Thor caveats" (concurrent
+# first boots race vLLM's free-memory measurement; the senses health miss).
+#
+# LOBES_THERMAL_ZONES: the Jetson `tj-thermal` zone (read 2026-10-17).
+# LOBES_THERMAL_SHED_C / LOBES_THERMAL_RESUME_C are ABSENT on purpose: no Thor
+# thermal band has been measured (#108), so the shed signal stays off.
+[host_env]
+LOBES_BOOT_ORDER = "embed,rerank"
+LOBES_THERMAL_ZONES = "tj-thermal"
+
 [roles.cortex]
 feasible = true
 # unsloth/Qwen3.8-27B-NVFP4 — tracks the fleet default primary (spark.toml,
