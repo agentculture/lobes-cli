@@ -26,7 +26,7 @@ behaviour from before this work.
 | `LOBES_START_WINDOW_S` | `600` | — | wrapper | The start-counter window. |
 | `LOBES_MEM_GATE` | `1` | `0` | wrapper | Wait for enough free host memory before starting. |
 | `LOBES_MEM_GATE_TIMEOUT_S` | `900` | — | wrapper | How long the gate waits before giving up. |
-| `LOBES_VLLM_CACHE_ROOT` | `/cache/vllm` | `/root/.cache/vllm` | compose | Container path vLLM uses for its compile cache (`VLLM_CACHE_ROOT`). The off value is the writable layer, so the mount goes unused. |
+| `LOBES_VLLM_CACHE_ROOT` | `/cache/vllm` | `/root/.cache/vllm` | compose | Container path vLLM uses for its compile cache (`VLLM_CACHE_ROOT`). The off value points vLLM at the writable layer; the host bind (fixed target `/cache/vllm`) goes unused. |
 | `LOBES_COMPILE_CACHE_DIR` | `./compile-cache` | — | compose, init, doctor | Host directory holding one subdirectory per lane. |
 | `LOBES_THERMAL_ZONES` | empty (per-card `[host_env]`) | empty | gateway, status | Comma-separated thermal zone `type` names to watch. Empty means no thermal signal. |
 | `LOBES_THERMAL_SHED_C` | empty (per-card) | empty | gateway | Shed above this temperature. |
@@ -114,12 +114,50 @@ hold     = release − host uptime, if positive
 
 ## 6. Compile cache
 
-- Each vLLM lane mounts `${LOBES_COMPILE_CACHE_DIR}/<lane>` at
-  `${LOBES_VLLM_CACHE_ROOT}` and sets `VLLM_CACHE_ROOT` to it.
+- Each vLLM lane mounts `${LOBES_COMPILE_CACHE_DIR}/<lane>` at the fixed path
+  `/cache/vllm` and sets `VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}`.
+  The mount target is deliberately fixed: if it followed the knob, the off value
+  `/root/.cache/vllm` would put the bind mount on the default path and the cache
+  would still persist on the host. With the target fixed, the off value points
+  vLLM at the writable layer and the bind mount goes unused.
+- Lanes are the services whose command is `vllm serve`, plus clef-vllm decider
+  sidecars (vLLM runs in-process there). `<lane>` is the lane's `MG_LOG_NAME`
+  (the decider service name for deciders). `llamacpp-primary`, `comfyui`, the
+  gateway, the audio services and `embed-gemma2-embed` get no mount.
 - `lobes init` and `lobes doctor --fix --apply` create the host directory, owned
   by the invoking user, before any container mounts it.
 - Wipe a lane's cache by deleting its directory with no lane running. No sudo is
   needed.
+- **Verified 2026-10-17** by read-only inspection (`docker run --rm
+  --entrypoint bash`, no GPU, no server) of both the pinned nightly
+  (`vllm/vllm-openai@sha256:8bd082c2...`, vllm `0.26.1rc1.dev942+g5a4c8d992`) and
+  v0.31.0 (`lobes-decider-vllm:odm-local`, built from `vllm/vllm-openai:v0.31.0`,
+  vllm `0.31.0`). Paths are under `/usr/local/lib/python3.12/dist-packages/vllm/`;
+  line numbers are nightly / v0.31.0.
+  - `VLLM_CACHE_ROOT` is read in `envs.py:702` / `:707`; the default is
+    `~/.cache/vllm` (`$XDG_CACHE_HOME/vllm` if set), i.e. `/root/.cache/vllm`
+    (the image runs as uid 0, and that directory does not exist in either image).
+  - The compile cache directory is `$VLLM_CACHE_ROOT/torch_compile_cache/<hash_key>`
+    (`compilation/backends.py:1067-1069` / `:1063-1065`), then `rank_<r>_<dp>/<prefix>`
+    below it (`:1077` / `:1073`). The same root also holds `inductor_cache` and
+    `triton_cache` (`compiler_interface.py:475,478` / `:465`), `startup_plan`
+    (`v1/worker/startup_plan.py:83`), `modelinfos` (`model_executor/models/registry.py:923`
+    / `:959`), `deep_gemm`, `assets` and the flashinfer autotune cache.
+  - Entries are content-hashed, not path-keyed: `hash_key` is the first 10 hex
+    chars of sha256 over `[env_hash, config_hash, code_hash, compiler_hash]`
+    (`backends.py:1066` / `:1062`). `env_hash` is `envs.compile_factors()`;
+    `config_hash` is `vllm_config.compute_hash()` (includes the vLLM version,
+    `config/vllm.py:439-441` / `:483-486`); `code_hash` is sha256 of the traced
+    model source files' paths and text (`backends.py:1042-1055` / `:1038-1051`); `compiler_hash` comes from the compiler manager.
+  - `VLLM_CACHE_ROOT` is in `compile_factors`' `ignored_factors`
+    (`envs.py:2224` / `:2305`), so relocating the root does not change `hash_key`.
+    Moving the cache to a bind mount is safe: a warm directory is still hit.
+  - **Difference between the images: none that affects the mount.** Only line
+    numbers differ. A vLLM version change (the #310 upgrade to v0.31.0) changes
+    `config_hash` through the version factor, so existing entries are simply not
+    matched and new `<hash_key>` subdirectories are written beside the old ones
+    in the same per-lane directory. Stale entries are never read; wipe the lane
+    directory to reclaim space.
 
 ## 7. Thermal signal
 

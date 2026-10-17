@@ -193,3 +193,91 @@ def test_start_period_covers_the_hold_and_restart_unchanged(rel: str, name: str,
 def test_he_chatterbox_start_period_covers_hold() -> None:
     he = _load("fleet/docker-compose.audio-he.yml")["services"]["chatterbox"]
     assert _seconds(he["healthcheck"]["start_period"]) >= 300 + MAX_HOLD_S
+
+
+# --- t8: per-lane vLLM compile cache (contract section 6) -------------------
+
+CACHE_ENV = "VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}"
+CACHE_TARGET = "/cache/vllm"
+
+
+def _is_vllm_service(svc: dict) -> bool:
+    cmd = svc.get("command")
+    if isinstance(cmd, list):
+        cmd = " ".join(str(c) for c in cmd)
+    return "vllm serve" in " ".join(str(cmd or "").split()) or (
+        isinstance(svc.get("command"), list) and svc["command"][:2] == ["vllm", "serve"]
+    )
+
+
+def _lane(svc: dict) -> str:
+    for e in svc["environment"]:
+        if e.startswith("MG_LOG_NAME="):
+            return e.split("=", 1)[1]
+    raise AssertionError("no MG_LOG_NAME")
+
+
+def _cache_volume(lane: str) -> str:
+    return f"${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{lane}:{CACHE_TARGET}"
+
+
+@pytest.mark.parametrize("rel,name,svc", _all_services())
+def test_compile_cache_mount_only_on_vllm_services(rel: str, name: str, svc: dict) -> None:
+    vols = svc.get("volumes") or []
+    has_mount = any(v.endswith(f":{CACHE_TARGET}") for v in vols)
+    has_env = CACHE_ENV in (svc.get("environment") or [])
+    if _is_vllm_service(svc):
+        assert has_mount and has_env, f"{name}: vLLM lane without per-lane compile cache"
+        assert _cache_volume(_lane(svc)) in vols
+    else:
+        assert not has_mount and not has_env, f"{name}: non-vLLM service has a compile cache"
+
+
+def test_every_expected_vllm_lane_is_covered() -> None:
+    found = {
+        name for rel, name, svc in (p.values for p in _all_services()) if _is_vllm_service(svc)
+    }
+    assert found >= {
+        "vllm",
+        "vllm-primary",
+        "vllm-embed",
+        "vllm-embed-deep",
+        "vllm-rerank",
+        "vllm-minor",
+        "vllm-hand",
+        "vllm-middle",
+        "vllm-multimodal",
+        "vllm-multimodal-coder",
+        "vllm-muse",
+        "vllm-worker",
+        "vllm-associate",
+        "embed-qwen3vl-embed",
+        "embed-qwen3vl-rerank",
+        "embed-nemotron-embed",
+        "embed-nomic-code-embed",
+    }
+    assert "llamacpp-primary" not in found and "embed-gemma2-embed" not in found
+
+
+def test_clef_vllm_decider_has_the_cache_and_python_decider_does_not() -> None:
+    from lobes.profiles.shape_render import _decider_service_lines
+
+    clef = _decider_service_lines(
+        "general", {"backend": "clef-vllm", "model": "m", "mem_limit": "1g"}, "runtime"
+    )
+    text = "\n".join(clef)
+    assert CACHE_ENV in text
+    assert "/decider-general:/cache/vllm" in text
+    other = "\n".join(
+        _decider_service_lines(
+            "general", {"backend": "clef", "model": "m", "mem_limit": "1g"}, "runtime"
+        )
+    )
+    assert "VLLM_CACHE_ROOT" not in other and "/cache/vllm" not in other
+
+
+def test_off_value_is_off_the_mount_target() -> None:
+    """The opt-out value must differ from the fixed mount target, else the bind
+    would still capture the cache (the writable layer would not be restored)."""
+    assert CACHE_ENV.endswith(":-/cache/vllm}")
+    assert "/root/.cache/vllm" != CACHE_TARGET
