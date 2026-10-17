@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T10:28:30Z",
+  "updated": "2026-10-17T10:41:37Z",
   "deviations": [
     {
       "id": "d1",
@@ -109,6 +109,21 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 41
+    },
+    {
+      "id": "d8",
+      "what": "lobes benchmark stays read-only by default and records host.conditions; locking clocks/fan is opt-in via --lock (replacing default-lock + --no-lock); lobes watcher run --once is dry-run unless --apply",
+      "task_ref": "t15",
+      "reason": "operator, 2026-10-17, after /code-review: CLAUDE.md lists benchmark as a read-only verb and requires safe-by-default for agents calling verbs in loops; supersedes plan decision c25's default-lock",
+      "affects": [
+        "c33",
+        "c25",
+        "t12"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 64
     }
   ],
   "evidence": [
