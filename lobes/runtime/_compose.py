@@ -1396,14 +1396,20 @@ def marker_lanes(state: Path, suffix: str) -> set[str]:
         return set()
 
 
-def _lane_state(deploy_dir: os.PathLike | str) -> Path:
+def lane_state_dir(deploy_dir: os.PathLike | str) -> Path:
+    """``<durable log dir>/lane-state`` for a deployment — the ONE resolver (review3 #5).
+
+    The log dir follows ``MODEL_GEAR_LOG_DIR`` in the deployment ``.env``
+    (:func:`durable_log_dir`). The lifecycle verbs, the start-counter reset,
+    the host watcher and ``lobes doctor`` all call this.
+    """
     configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
     return durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
 
 
 def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
     """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
-    return marker_lanes(_lane_state(deploy_dir), ".gated")
+    return marker_lanes(lane_state_dir(deploy_dir), ".gated")
 
 
 def held_lanes(deploy_dir: os.PathLike | str) -> set[str]:
@@ -1412,7 +1418,7 @@ def held_lanes(deploy_dir: os.PathLike | str) -> set[str]:
     The wrapper keeps it for the boot hold/stagger and the start-counter hold:
     the lane is held before ``exec`` (no GPU) though docker says ``starting``.
     """
-    return marker_lanes(_lane_state(deploy_dir), ".held")
+    return marker_lanes(lane_state_dir(deploy_dir), ".held")
 
 
 def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str]:
@@ -1474,8 +1480,7 @@ def reset_start_counters(
     ``services=None`` means the whole project (every ``*.starts``). Missing
     dir/file is fine. Returns the deleted file names.
     """
-    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
-    state = durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+    state = lane_state_dir(deploy_dir)
     if services is None:
         targets = sorted(state.glob("*.starts"))
     else:

@@ -29,6 +29,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The card-detection cache is bounded (8 detectors), and a detection that returns `unknown` is cached instead of re-running `nvidia-smi` every minute; only a detection that raised is retried.
 - `--refresh-logwrap` keeps the wrapper's owner when run as root.
 - The pre-start bind-source setup lives only in the `_before_up` chokepoint.
+- The `lane-state/` dir is resolved by one helper (`_compose.lane_state_dir`), used by the marker readers, the start-counter reset, the watcher and `lobes doctor`.
 - Lane health no longer depends on guessing one compose project name: `docker ps` lists every compose-labelled container with its project label, and rows are kept when the label is one of the deployment's candidates (`COMPOSE_PROJECT_NAME`, the top-level `name:`, and the basename of the deployment dir both as given and with symlinks resolved). A symlinked `~/.lobes` no longer leaves lane health empty and the boot guard silently off. The watcher unit's `--compose-dir` keeps the symlink so the watcher derives the same candidates.
 - A top-level compose `name:` is interpolated (`${VAR}`, `${VAR:-default}`, `${VAR-default}`, against the process env then the deployment `.env`) and unquoted; an unresolvable one is ignored instead of being normalised into a wrong project name.
 - The page-cache clear's failure hint names `<card> grant-permissions` only when that CLI is on `PATH`; otherwise it names the sysctl sudoers rule and `uv pip install 'lobes-cli[<card>]'`.

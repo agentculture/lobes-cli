@@ -40,7 +40,7 @@ DEFAULT_MIN_INTERVAL_S = 300
 DEFAULT_GATE_TIMEOUT_S = 900  # mirrors mg-logwrap.sh's default
 DEFAULT_POLL_S = 10
 STATE_FILE = ".lobes-watcher-state.json"
-LANE_STATE_DIRNAME = "lane-state"
+LANE_STATE_DIRNAME = _compose.LANE_STATE_DIRNAME
 MARKER_SUFFIX = ".gated"
 
 
@@ -239,9 +239,8 @@ def _int_knob(env: dict[str, str], key: str, default: int) -> int:
 
 
 def lane_state_dir(deploy_dir: Path) -> Path:
-    env = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
-    log_dir = _compose.durable_log_dir(deploy_dir, env.get(_compose.LOG_DIR_ENV) or None)
-    return log_dir / LANE_STATE_DIRNAME
+    """The deployment's ``lane-state/`` dir (:func:`lobes.runtime._compose.lane_state_dir`)."""
+    return _compose.lane_state_dir(deploy_dir)
 
 
 def watcher_for(deploy_dir: Path, **kw: Any) -> Watcher:

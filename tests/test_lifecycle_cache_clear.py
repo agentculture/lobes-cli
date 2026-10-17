@@ -652,3 +652,37 @@ def test_detection_cache_is_bounded(monkeypatch):
     # the most recent detector is still a hit
     last = list(_machine._card_cache)[-1]
     assert _machine._card_cache[last][0] == "c49"
+
+
+# --- review3 #5: one lane-state dir resolver -----------------------------------
+
+
+def test_every_lane_state_reader_uses_the_one_resolver(tmp_path, monkeypatch):
+    from lobes.cli._commands import _doctor_lane_safety
+    from lobes.watcher import _run
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "hand.starts").write_text("1\n", encoding="utf-8")
+    (elsewhere / "hand.gated").write_text("{}", encoding="utf-8")
+    (elsewhere / "hand.held").write_text("{}", encoding="utf-8")
+    seen: list = []
+
+    def resolver(deploy_dir, *a, **k):
+        seen.append(deploy_dir)
+        return elsewhere
+
+    monkeypatch.setattr(_compose, "lane_state_dir", resolver)
+    assert _compose.gated_lanes(tmp_path) == {"hand"}
+    assert _compose.held_lanes(tmp_path) == {"hand"}
+    assert _compose.reset_start_counters(tmp_path) == ["hand.starts"]
+    assert _run.lane_state_dir(tmp_path) == elsewhere
+    assert _doctor_lane_safety._lane_state_dir(tmp_path) == elsewhere
+    assert len(seen) == 5
+
+
+def test_lane_state_dir_follows_the_log_dir_knob(tmp_path):
+    (tmp_path / ".env").write_text("MODEL_GEAR_LOG_DIR=custom-logs\n", encoding="utf-8")
+    assert _compose.lane_state_dir(tmp_path) == tmp_path / "custom-logs" / "lane-state"
+    (tmp_path / ".env").write_text("", encoding="utf-8")
+    assert _compose.lane_state_dir(tmp_path) == tmp_path / "logs" / "lane-state"
