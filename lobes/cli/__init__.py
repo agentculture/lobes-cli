@@ -98,6 +98,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import switch as _switch_cmd
     from lobes.cli._commands import tunnel as _tunnel_cmd
     from lobes.cli._commands import up as _up_cmd
+    from lobes.cli._commands import watcher as _watcher_cmd
     from lobes.cli._commands import whoami as _whoami_cmd
 
     parser = _ModelGearArgumentParser(
@@ -134,6 +135,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Mesh membership (mesh-brain-join, t10): status is read-only; request/
     # approve/revoke are write verbs — dry-run by default, --apply commits.
     _mesh_cmd.register(sub)
+    _watcher_cmd.register(sub)  # host watcher unit (lane-safety section 5)
 
     # Inference / eval verbs (read-only; no --apply needed).
     _eval_cmd.register(sub)

@@ -1528,6 +1528,46 @@ Orin's `orin-embed` shape (`lobes init --shape orin-embed --profile orin`).
 - `lobes explain roles` — the Colleague role contract
 """
 
+_WATCHER = """\
+# lobes watcher — the host watcher for memory-gated lanes
+
+While a lane waits on the crash-backoff memory gate, `mg-logwrap.sh` keeps a
+marker at `<log dir>/lane-state/<lane>.gated` (JSON: `lane`, `since`,
+`need_kib`, `avail_kib`). On Jetson, memory freed by a crash can stay out of
+`MemAvailable` until the page cache is dropped, so a gated lane may wait for
+memory that a cache clear would hand back. The watcher closes that gap.
+
+## What it does
+
+- Polls `<deployment>/logs/lane-state/*.gated` (every 10 s by default).
+- On a marker it runs the machine CLI's `drop-caches` (or the passwordless
+  sudo fallback), at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (default
+  300). The last attempt is persisted in `<deployment>/.lobes-watcher-state.json`
+  so a restart cannot bypass the rate limit.
+- With no grant it logs `action=skipped:not_granted` and does nothing else.
+- It **never** runs a docker command.
+- Every action is one stderr line (the unit's journal): lane, need/avail,
+  `cleared` / `skipped:<reason>` / `rate-limited`, and a stale flag for a
+  marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`.
+
+## Verbs
+
+- `lobes watcher run [--once] [--poll S]` — the loop (the unit's ExecStart).
+- `lobes watcher install [--system] [--apply]` — WRITE, dry-run by default.
+  The default is a **user** unit (`~/.config/systemd/user/lobes-watcher.service`)
+  and it REQUIRES linger (`sudo loginctl enable-linger $USER`); `--system`
+  writes `/etc/systemd/system/lobes-watcher.service` with `User=<you>` via
+  `sudo -n` (never prompts). Every written file is recorded in
+  `<deployment>/.lobes-watcher.json`.
+- `lobes watcher uninstall [--apply]` — WRITE, dry-run by default; stops and
+  disables the unit and removes exactly the files the manifest lists.
+- `lobes watcher status` — read-only: installed, active, linger, last clear.
+
+This is the first host unit lobes ships. `lobes init` never copies its unit
+template into a deployment dir. Contract: `docs/contracts/lane-safety-runtime.md`
+sections 4 and 5.
+"""
+
 _MESH = """\
 # lobes mesh — the mesh-brain join
 
@@ -1818,4 +1858,6 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("mesh",): _MESH,
     ("mesh-brain",): _MESH,
     ("mesh-join",): _MESH,
+    ("watcher",): _WATCHER,
+    ("lane-safety",): _WATCHER,
 }
