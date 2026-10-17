@@ -389,6 +389,33 @@ OTHER lane is starting.
 
 ## 8. What this does NOT do
 
-- No lobes code pauses, `docker update`s or restarts a serving container.
+- Nothing in the serving path (gateway, lifecycle verbs, watcher) pauses,
+  `docker update`s or restarts a serving container. The one exception is the
+  opt-in `lobes governor run --apply` (section 9), an operator-started
+  foreground process.
 - Nothing clears the page cache inside a container.
 - No clock or fan change outside a benchmark window.
+
+## 9. The graded thermal governor (`lobes governor`)
+
+Host-side and opt-in, beside the watcher; not part of the serving path. Code:
+`lobes/runtime/_governor.py` (pure `decide()` plus a `Governor` shell), verb
+`lobes/cli/_commands/governor.py`.
+
+- `lobes governor run --container NAME [--once] [--apply]`: dry-run unless
+  `--apply`. Polls every 3 s (`--poll`); the hottest thermal zone (every zone,
+  or `LOBES_THERMAL_ZONES` if set; `LOBES_SYS_ROOT` honoured, via
+  `read_thermal_c`) picks the cap: `<84 C` 16 cpus, `<88` 12, `<91` 8,
+  `<93.5` 4, `>=93.5` `docker pause`. A paused container resumes below 86 C at
+  4 cpus. `--bands`, `--top-cpus`, `--pause-c`, `--resume-c`, `--resume-cpus`
+  change the numbers. No root.
+- Mechanism: `docker update --cpus N` on the running container, `docker
+  pause` / `unpause` for the last band. Measured safe on a running vLLM 0.31.0
+  container (`docs/evidence/2026-10-17-verify-cpucap-running-vllm-spark.txt`).
+- Own-pause rule: it resumes, and on exit unpauses, ONLY a pause it issued. A
+  container found paused by anything else is left alone and noted once.
+- Log: one line per band change, `<UTC time> <action> tz=<C>`, appended to
+  `<deployment>/logs/governor.log` (`--log` or `$LOBES_GOVERNOR_LOG` override).
+  Dry-run prints to stderr and writes no file.
+- Exit: SIGINT/SIGTERM (or the container exiting) ends the loop; the cap goes
+  back to the top band and an own pause is lifted, each logged.

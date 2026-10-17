@@ -1618,6 +1618,24 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
   CLI verbs ship in dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and
   jetson-orin-cli 0.7.1 (`lobes-cli[spark|thor|orin]`).
 
+- **Graded thermal governor** (`lobes governor run --container NAME`;
+  dry-run unless `--apply`): the hottest thermal zone steps the container's
+  CPU cap 16 / 12 / 8 / 4 at 84 / 88 / 91 C, pauses at 93.5 C and resumes
+  below 86 C at 4 cpus (3 s poll, no root; `--bands`, `--pause-c`,
+  `--resume-c` change the numbers). It resumes, and on SIGINT/SIGTERM
+  unpauses, ONLY a pause it made itself, and restores the top cap on exit. One
+  log line per band change goes to `<deployment>/logs/governor.log`
+  (`--log` / `$LOBES_GOVERNOR_LOG`). History: the bash `governor2` (same
+  bands) was retired 2026-10-14 after the CPU-quota step was blamed for two
+  `cudaErrorNotPermitted` exits in a quantization job; that blame was later
+  marked unproven (#304), and the pause-only governor that replaced it also
+  resumed pauses it had not made. 2026-10-17 (#310 t3) measured the quota step
+  (`--cpus` on a live container) on a RUNNING vLLM 0.31.0 container stepping 16/12/8/4/12/16 under
+  load: 432/432 requests OK, 0 restarts, 0 CUDA errors
+  (`docs/evidence/2026-10-17-verify-cpucap-running-vllm-spark.txt`). That
+  covers a serving container; the quantization-job failure was never
+  reproduced either way.
+
 The live Spark acceptance under sustained load has not run (issue #313).
 Docs: `docs/operating-a-deployment.md`, `docs/measuring-lane-performance.md`,
 `docs/gateway-fleet.md`, `docs/machine-profiles.md`.
