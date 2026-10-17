@@ -405,3 +405,52 @@ def test_status_pressure_without_a_deployment_still_works(capsys, monkeypatch, t
     _set_thermal(monkeypatch, None)
     assert main(["status", "--pressure", "--json"]) == 0  # no deployment scaffolded
     assert json.loads(capsys.readouterr().out)["thermal"]["band"] == "off"
+
+
+# --- review2-b #4: the swap/iowait thresholds come from the deployment .env too --
+
+_THRESHOLD_ENV = ("LOBES_SWAP_DEGRADED_THRESHOLD", "LOBES_IOWAIT_DEGRADED_THRESHOLD")
+
+
+@pytest.fixture
+def orin_deploy(tmp_path, monkeypatch):
+    for key in (*_THERMAL_ENV, *_THRESHOLD_ENV):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(_P, "THERMAL_SHED_C", None)
+    monkeypatch.setattr(_P, "THERMAL_RESUME_C", None)
+    monkeypatch.setattr(_P, "SWAP_DEGRADED_THRESHOLD", 75.0)
+    monkeypatch.setattr(_P, "IOWAIT_DEGRADED_THRESHOLD", 50.0)
+    d = tmp_path / "dep"
+    d.mkdir()
+    (d / "docker-compose.yml").write_text("services: {}\n")
+    (d / ".env").write_text("LOBES_IOWAIT_DEGRADED_THRESHOLD=100\n")
+    _set_pressure(monkeypatch, swap=1.0, iowait=60.0)
+    return d
+
+
+def test_status_pressure_reads_the_iowait_threshold_from_the_deployment_env(capsys, orin_deploy):
+    """An Orin-style deployment (iowait threshold 100) at 60 % iowait is not busy."""
+    assert main(["status", "--pressure", "--json", "--compose-dir", str(orin_deploy)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "warm" and payload["shed"] is False
+
+
+def test_status_pressure_process_env_threshold_wins(capsys, monkeypatch, orin_deploy):
+    (orin_deploy / ".env").write_text("LOBES_IOWAIT_DEGRADED_THRESHOLD=70\n")
+    monkeypatch.setenv("LOBES_IOWAIT_DEGRADED_THRESHOLD", "90")
+    _set_pressure(monkeypatch, swap=1.0, iowait=80.0)
+    assert main(["status", "--pressure", "--json", "--compose-dir", str(orin_deploy)]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "warm"  # 80 < 90 (process env)
+
+
+def test_status_pressure_default_thresholds_without_the_keys(capsys, monkeypatch, orin_deploy):
+    (orin_deploy / ".env").write_text("OTHER=1\n")
+    assert main(["status", "--pressure", "--json", "--compose-dir", str(orin_deploy)]) == 0
+    assert json.loads(capsys.readouterr().out)["mode"] == "busy"  # 60 > default 50
+
+
+def test_decide_explicit_thresholds_override_the_module_constants():
+    d = _P.decide(80.0, 60.0, requested_tier="main", thresholds=(90.0, 100.0))
+    assert d["mode"] == "warm" and d["shed"] is False
+    d = _P.decide(1.0, 60.0, requested_tier="main", thresholds=(90.0, 50.0))
+    assert d["shed_signal"] == "iowait"

@@ -304,7 +304,11 @@ OTHER lane is starting.
 - The gateway reads the three knobs from its own environment; the compose
   passes them from the deployment `.env`. `lobes status --pressure` runs on the
   host, so it reads them from the resolved deployment `.env` (best-effort: no
-  deployment is fine), and a key set in the CLI's own environment wins.
+  deployment is fine), and a key set in the CLI's own environment wins. It
+  reads the gateway's swap/iowait busy thresholds
+  (`LOBES_SWAP_DEGRADED_THRESHOLD`, `LOBES_IOWAIT_DEGRADED_THRESHOLD`) the same
+  way, so a deployment that raises one (an Orin's iowait threshold) gets the
+  same verdict from `status --pressure` as from the gateway.
 - When shedding, the gateway's response carries `shed_signal: "thermal"`.
 
 ## 8. What this does NOT do

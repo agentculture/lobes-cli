@@ -29,7 +29,10 @@ adds a ``thermal`` block (the reading against ``LOBES_THERMAL_SHED_C`` /
 ``_RESUME_C`` live in the deployment ``.env`` (review-b #9), so they are read
 from the resolved deployment (``--compose-dir`` / ``$LOBES_DIR`` / ``~/.lobes``,
 best-effort: no deployment is fine), with this process's environment winning
-for any key it sets. That one ``.env`` read is the only deployment access.
+for any key it sets. ``LOBES_SWAP_DEGRADED_THRESHOLD`` /
+``LOBES_IOWAIT_DEGRADED_THRESHOLD`` are read the same way (review2-b #4), so an
+Orin's raised iowait threshold is honoured here too. That one ``.env`` read is
+the only deployment access.
 """
 
 from __future__ import annotations
@@ -50,14 +53,28 @@ _UNSET = "(unset)"
 #: Thermal knobs ``status --pressure`` reads from the deployment ``.env``.
 _THERMAL_KEYS = ("LOBES_THERMAL_ZONES", "LOBES_THERMAL_SHED_C", "LOBES_THERMAL_RESUME_C")
 _BAND_KEYS = _THERMAL_KEYS[1:]
+#: The busy thresholds ``decide()`` compares against (review2-b #4).
+_THRESHOLD_KEYS = (_pressure_policy.SWAP_THRESHOLD_ENV, _pressure_policy.IOWAIT_THRESHOLD_ENV)
 
 
-def _thermal_env(args: argparse.Namespace) -> dict[str, str]:
-    """The deployment ``.env``'s thermal keys, overridden by this process's env."""
+def _pressure_env(args: argparse.Namespace) -> dict[str, str]:
+    """The deployment ``.env``'s pressure keys, overridden by this process's env.
+
+    The thermal knobs and the swap/iowait busy thresholds — every knob
+    ``decide()`` reads — so the reported decision matches the gateway, which
+    gets them from that same ``.env``.
+    """
     dotenv = _runtime_ops.deployment_env_soft(args)
-    merged = {k: dotenv[k] for k in _THERMAL_KEYS if dotenv.get(k)}
+    merged = {k: dotenv[k] for k in (*_THERMAL_KEYS, *_THRESHOLD_KEYS) if dotenv.get(k)}
     merged.update(os.environ)
     return merged
+
+
+def _thresholds(env: dict[str, str]) -> tuple[float, float] | None:
+    """``(swap, iowait)`` from the merged env, or ``None`` (the constants) when unset."""
+    if not any(k in env for k in _THRESHOLD_KEYS):
+        return None
+    return _pressure_policy.degraded_thresholds_from_env(env)
 
 
 def _thermal_bands(env: dict[str, str]) -> tuple[float | None, float | None] | None:
@@ -130,9 +147,10 @@ def _cmd_status_pressure(args: argparse.Namespace, json_mode: bool) -> int:
     busy caller would get.  Calls the same :func:`decide` handle_post consults,
     so the reported decision matches a live request without issuing one.  No
     docker; the only deployment access is a best-effort read of the thermal
-    keys from its ``.env`` (review-b #9).
+    keys (review-b #9) and the swap/iowait thresholds (review2-b #4) from its
+    ``.env``.
     """
-    env = _thermal_env(args)
+    env = _pressure_env(args)
     bands = _thermal_bands(env)
     p = _pressure_mod.sample_pressure(env=env)
     thermal_c = p.get("thermal_c")
@@ -144,6 +162,7 @@ def _cmd_status_pressure(args: argparse.Namespace, json_mode: bool) -> int:
         requested_tier="main",
         thermal_c=thermal_c,
         thermal_bands=bands,
+        thresholds=_thresholds(env),
     )
     thermal = _thermal_report(thermal_c, bands)
     # Under pressure a full-tier (main / senses) request is shed with 429; the
