@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from lobes.cli import main
+from lobes.cli._errors import ModelGearError
 from lobes.runtime import _machine
 from lobes.runtime._machine import MachineResult
 from lobes.watcher import _install, _run
@@ -453,9 +454,8 @@ def test_install_refuses_without_linger(tmp_path):
     plan = _install.plan_install(deploy, ctx)
     assert plan.blockers
     assert "enable-linger u" in plan.blockers[0]
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ModelGearError, match="(?i)linger"):
         _install.apply_install(plan, ctx)
-    assert "linger" in str(exc.value).lower()
     assert not plan.unit_path.exists()
 
 
@@ -483,9 +483,8 @@ def test_system_install_refuses_without_passwordless_sudo(tmp_path):
     deploy, runner = _deploy(tmp_path), FakeRunner(sudo_ok=False)
     ctx = _ctx(tmp_path, runner, system=True)
     plan = _install.plan_install(deploy, ctx)
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ModelGearError, match="sudo"):
         _install.apply_install(plan, ctx)
-    assert "sudo" in str(exc.value)
     assert not (deploy / _install.MANIFEST).exists()
 
 
