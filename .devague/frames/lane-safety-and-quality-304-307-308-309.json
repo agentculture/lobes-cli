@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T05:50:04Z",
-  "updated": "2026-10-17T06:37:11Z",
+  "updated": "2026-10-17T07:04:47Z",
   "claims": [
     {
       "id": "c1",
@@ -1312,6 +1312,53 @@
       ],
       "origin": "llm",
       "status": "approved"
+    },
+    {
+      "id": "l3",
+      "code": "provenance-missing",
+      "what": "Scope finding s23 (machine CLIs have no clock/power code; thor/orin are seeds) was read from LOCAL checkouts that lagged origin/main: origin/main of all three already ships probe/power.py + machine/monitor/swap verbs (dgx-spark-cli 0.8.0, jetson-thor-cli 0.5.1, jetson-orin-cli 0.6.0)",
+      "skipped_check": "git fetch + read origin/main before recording the finding",
+      "refs": [
+        "s23",
+        "c34"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "assumption-for-measurement",
+      "what": "jetson-thor-cli t3: the nvfancontrol runtime profile switch ('nvfancontrol -p <profile>', '-q' parsed as 'Profile: <name>') and the 'jetson_clocks --show' parse are unverified guesses; mjolnir switches profiles by editing /etc/nvfancontrol.conf + service restart",
+      "skipped_check": "verify fan/clock argv on a real Thor (blocked: Thor code-only)",
+      "refs": [
+        "t3",
+        "c34"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "assumption-for-measurement",
+      "what": "jetson-orin-cli t4: assumes jetson_clocks --fan pins the fan and --store/--restore round-trips fan PWM; Orin devfreq/thermal sysfs paths unverified; supported always true",
+      "skipped_check": "verify on a real Orin",
+      "refs": [
+        "t4",
+        "c34"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "control-absent",
+      "what": "dgx-spark-cli t2: the supported clock-lock path (nvidia-smi -lgc/-rgc) is tested with fakes only; on this GB10 'Supported Clocks: N/A' so supported=false \u2014 the lock path has never run",
+      "skipped_check": "a box that reports supported clocks",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
     }
   ],
   "obligations": [

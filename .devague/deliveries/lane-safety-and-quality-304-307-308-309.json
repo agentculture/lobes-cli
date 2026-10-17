@@ -1,0 +1,42 @@
+{
+  "plan_slug": "lane-safety-and-quality-304-307-308-309",
+  "schema_version": 2,
+  "created": "2026-10-17T07:09:35Z",
+  "updated": "2026-10-17T07:10:40Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "t14 additionally adds LOBES_THERMAL_ZONES / LOBES_THERMAL_SHED_C / LOBES_THERMAL_RESUME_C passthroughs to the fleet gateway service's environment: list in lobes/templates/fleet/docker-compose.yml (and regenerates tests/goldens/template-defaults.env)",
+      "task_ref": "t14",
+      "reason": "Found by t13: the gateway service deliberately has no env_file (only scoped keys, compose.yml ~1890), so without explicit passthroughs thermal_c is always None in the container and the thermal shed signal can never be live; no confirmed task owned this compose edit",
+      "affects": [
+        "t8",
+        "t13",
+        "c14",
+        "c15",
+        "c18"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "t15 records host.conditions on the single-model and --all-lobes benchmark results only: 'lobes measure' gets no conditions and 'lobes benchmark --profile' runs inside the window but emits none",
+      "task_ref": "t15",
+      "reason": "measure's --json is a dict keyed exactly by role (tests/test_cli_measure.py asserts set(payload)==set(ROLES)) and --profile JSON is keyed by profile name; adding a host key breaks both existing JSON contracts, and measure is a short probe, not a load run",
+      "affects": [
+        "c21",
+        "h16"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "needs-follow-up",
+      "seq": 2
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
