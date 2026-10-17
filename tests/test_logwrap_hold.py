@@ -47,7 +47,8 @@ def _run(tmp_path: Path, uptime: str, **env: str) -> tuple[subprocess.CompletedP
 def test_holds_exact_remainder_default_delay(tmp_path):
     res, sleeps = _run(tmp_path, "30.50")
     assert res.returncode == 0
-    assert "served" in res.stdout and "--empty" not in res.stdout
+    assert "served" in res.stdout
+    assert "--empty" not in res.stdout
     assert sleeps == ["90"]
     assert "lobes: host up 30s, holding 90s (boot delay 120s + stagger 0s)" in res.stdout
     log = next((tmp_path / "logs").glob("primary-2*.log")).read_text()
