@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T21:10:18Z",
+  "updated": "2026-10-17T23:12:43Z",
   "claims": [
     {
       "id": "c1",
@@ -955,6 +955,30 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c54",
+      "kind": "decision",
+      "text": "GB10 gateways keep thermal shedding ON through the rollout: LOBES_THERMAL_SHED_C=91 / RESUME_C=86 from the spark profile (operator, 2026-10-17); the graded governor throttles the cortex container below that",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c55",
+      "kind": "decision",
+      "text": "Spark gateway thermal shed raised to 98 C (resume 94 C) after measuring its acpitz zones at ~88 C idle and 92 C under one benchmark stream; spark2 keeps the profile's 91/86 (it peaked at 67.7 C). Supersedes c54 for the Spark (operator, 2026-10-18)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -1412,6 +1436,31 @@
       "refs": [
         "t7",
         "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "control-absent",
+      "what": "t3 declared 'docker update --cpus is SAFE on a running vLLM container' from a test that only exercised an already-initialised server; it never re-initialised the GPU after an update. On this host (systemd cgroup driver, cgroup v2) docker update revokes NEW GPU access in the container: nvidia-smi 'Failed to initialize NVML: Unknown Error', torch.cuda.is_available() False (reproduced 2026-10-17 22:17Z with a throwaway container). In t12 the governor's first docker update (22:11:37Z) killed the Spark cortex lane's first boot with NVMLError_Unknown (22:11:38Z); the restart policy recovered it",
+      "skipped_check": "re-initialise the GPU (nvidia-smi / a new CUDA context / a booting engine) after docker update",
+      "refs": [
+        "t3",
+        "t4",
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "assumption-for-measurement",
+      "what": "Told the operator the strict+thinking regression 'narrows to an xgrammar runtime regression (0.2.3 -> 0.2.7)' from version correlation alone; an offline matcher test then showed nightly, 0.30.0 and 0.31.0 enforce the identical grammar identically (after one call both EOS and another <tool_call> are allowed), falsifying it. The cause is elsewhere in 0.31.0's generation under the grammar (DSpark interplay untested)",
+      "skipped_check": "test the grammar matcher per xgrammar version before naming a cause",
+      "refs": [
+        "t12",
+        "d3"
       ],
       "origin": "llm",
       "status": "proposed"
