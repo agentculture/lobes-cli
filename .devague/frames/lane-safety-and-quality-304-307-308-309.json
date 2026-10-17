@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T05:50:04Z",
-  "updated": "2026-10-17T07:04:47Z",
+  "updated": "2026-10-17T07:13:25Z",
   "claims": [
     {
       "id": "c1",
@@ -1356,6 +1356,18 @@
       "skipped_check": "a box that reports supported clocks",
       "refs": [
         "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "assumption-for-measurement",
+      "what": "t7 respelled the stt image's CMD as the wrapper's command without checking whether the scitrera/dgx-spark-vllm base image has an implicit ENTRYPOINT script that would now be bypassed; also the 180 s max-hold assumption pins default knobs and a boot order of <= 3 lanes",
+      "skipped_check": "docker inspect the stt image entrypoint; a live boot of the audio overlay",
+      "refs": [
+        "t7",
+        "c6"
       ],
       "origin": "llm",
       "status": "proposed"
