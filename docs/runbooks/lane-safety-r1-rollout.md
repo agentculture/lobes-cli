@@ -314,7 +314,21 @@ identical to the original copy (`diff -r` clean).
   Prepare steps 1 to 8 ahead; the recreate in step 9 is the **same window** as
   the switch to vLLM 0.31.0 (plan t13), and it waits until the Spark's cortex is
   verified, so plain `cortex` stays answerable mesh-wide.
-- **Jetson AGX Thor.** Its `~/.bashrc` exports `GATEWAY_API_KEY`, and a compose
+- **Jetson AGX Thor (measured on the first live run, 2026-10-17).** Three
+  things to know before step 9:
+  - **Clear the page cache after the old container stops, not only before.**
+    `lobes up` clears it first and then recreates, but a stopped engine's
+    memory stays "used" until a clear runs after it stops. A large lane
+    (the worker, about 58 GB) then waits at the memory gate
+    (`logs/lane-state/<lane>.gated`) indefinitely. Run
+    `sync; sudo sysctl -w vm.drop_caches=3` once the old container is gone,
+    or install the host watcher (step 8). On 2026-10-17 that clear returned
+    74 GiB.
+  - **The worker keeps its own warm caches** at `/root/.cache/{vllm,flashinfer}`.
+    Don't move them to `/cache/*`: cold caches crash most Thor boots (#309).
+  - **The gateway can't write `./logs`.** It runs as uid 10001, so the wrapper
+    skips its log file and start counter (by design; the boot hold still runs).
+- **Jetson AGX Thor (general).** Its `~/.bashrc` exports `GATEWAY_API_KEY`, and a compose
   run from that shell would arm the gateway's inbound key gate. Prefix every
   compose and `lobes up` call with `env -u GATEWAY_API_KEY`. The Thor is shared
   with another agent's work: agree the window before you recreate anything. It

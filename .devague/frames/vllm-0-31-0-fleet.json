@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T20:24:55Z",
+  "updated": "2026-10-17T21:10:18Z",
   "claims": [
     {
       "id": "c1",
@@ -1400,6 +1400,18 @@
       "skipped_check": "docker compose config on the merged chain; a real restart",
       "refs": [
         "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "n-below-claim",
+      "what": "t8 throughput comparison: lobes measure is one tiny batch per run (embedder 1.9-98 docs/s, reranker 3.6-65.5 docs/s across runs) against a ONE-run nightly baseline per role; the instrument's spread exceeds any difference, so no regression/speedup is claimed \u2014 a proper same-harness throughput run is still missing",
+      "skipped_check": "a multi-run, warmed throughput harness for pooling lanes",
+      "refs": [
+        "t7",
+        "t8"
       ],
       "origin": "llm",
       "status": "proposed"

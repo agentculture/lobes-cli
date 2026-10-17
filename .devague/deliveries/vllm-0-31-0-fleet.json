@@ -1,0 +1,26 @@
+{
+  "plan_slug": "vllm-0-31-0-fleet",
+  "schema_version": 2,
+  "created": "2026-10-17T20:53:11Z",
+  "updated": "2026-10-17T20:53:11Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Thor worker: recreate once with --mm-encoder-attn-backend=TORCH_SDPA (a serve flag the plan never named) to test whether the vision regression on vLLM 0.31.0 / sm_110 is the FLASH_ATTN ViT path; if it fixes the colour controls, the flag becomes a Thor worker knob carried into the template (R2); if not, fall back to rolling back to the nightly or withdrawing the image advert",
+      "task_ref": "t8",
+      "reason": "t8 acceptance found the worker on 0.31.0 misreading solid-colour images (red/blue -> Black/White) through the gateway and on the lane, while the same checkpoint was correct on the nightly 2026-09-10; worker log shows FLASH_ATTN chosen for the ViT on sm_110 (docs/evidence/2026-10-17-accept-vllm-031-thor.txt)",
+      "affects": [
+        "t8",
+        "t14",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
