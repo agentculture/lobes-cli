@@ -200,8 +200,9 @@ updated, and the Spark bands are not a serving measurement.
 plain `lobes benchmark` is read-only and only records the host conditions. See
 `measuring-lane-performance.md`.
 
-**What none of this does:** no lobes code pauses, `docker update`s or restarts a
-serving container, nothing clears the page cache inside a container, and no
+**What none of this does:** no serving-path code pauses, `docker update`s or
+restarts a serving container (the opt-in `lobes governor run --apply` is the one
+operator-started exception, see contract section 9), nothing clears the page cache inside a container, and no
 clock or fan changes outside a benchmark window. The live Spark acceptance
 under sustained load has **not** run (issue #313).
 

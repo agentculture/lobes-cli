@@ -84,6 +84,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import eval as _eval_cmd
     from lobes.cli._commands import explain as _explain_cmd
     from lobes.cli._commands import fleet as _fleet_cmd
+    from lobes.cli._commands import governor as _governor_cmd
     from lobes.cli._commands import init as _init_cmd
     from lobes.cli._commands import learn as _learn_cmd
     from lobes.cli._commands import logs as _logs_cmd
@@ -136,6 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # approve/revoke are write verbs — dry-run by default, --apply commits.
     _mesh_cmd.register(sub)
     _watcher_cmd.register(sub)  # host watcher unit (lane-safety section 5)
+    _governor_cmd.register(sub)  # graded thermal governor (lane-safety adjunct)
 
     # Inference / eval verbs (read-only; no --apply needed).
     _eval_cmd.register(sub)
