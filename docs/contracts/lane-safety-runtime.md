@@ -136,10 +136,49 @@ hold     = release − host uptime, if positive
 ### The host watcher
 
 - Polls `<deployment>/logs/lane-state/*.gated`.
-- On a marker, it runs the machine CLI's `drop-caches` (see
+- On a live marker, it runs the machine CLI's `drop-caches` (see
   `machine-cli-window.md`), at most once per `LOBES_WATCHER_MIN_INTERVAL_S`.
   With no grant it logs and does nothing else.
-- It never runs a `docker` command.
+- **Stale markers.** A marker whose `since` (its mtime, if the JSON is
+  malformed) is older than 2 × `LOBES_MEM_GATE_TIMEOUT_S`, or whose lane has no
+  running container, is stale. A wrapper killed by SIGKILL never removes its
+  marker. A stale marker is logged once (`action=ignored:stale`) and never
+  triggers a clear.
+
+### Not while another lane boots
+
+Dropping the page cache while a sibling vLLM lane is mid-boot can trip vLLM's
+memory profiling on unified memory, because free memory jumps between its two
+reads. So both the lifecycle clear and the watcher skip the clear while any
+OTHER lane is starting.
+
+- **Signal: docker health, read-only.** "Starting" is docker's
+  `health: starting`: the lane is inside its healthcheck `start_period` and not
+  yet healthy. Both callers read it with one fixed argv,
+  `docker ps --filter name=model-gear- --format '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}'`
+  (`_compose.LANE_HEALTH_ARGV`), and map each compose service to its
+  `MG_LOG_NAME`.
+- **Why not the lane-state markers.** A `.starts` entry is written before the
+  memory gate and long before vLLM's profiling step, which for a 27B lane runs
+  minutes after the start. A fixed "fresh start" window (for example 120 s)
+  would miss it. A lane that waited at the gate would be missed entirely, and
+  `LOBES_START_MAX=0` writes no entry at all. Docker's health status covers the
+  whole boot.
+- **Gated lanes do not count.** A lane held at the memory gate (or a boot or
+  start-counter hold) is also `health: starting`, because it has not exec'd
+  vLLM yet. Lanes with a `.gated` marker are excluded, so they never block
+  their own clear. A lane in the boot hold or a start-counter hold has no
+  marker and does count, so after a reboot the clear waits for the staggered
+  boot to settle. That is deliberately conservative.
+- **Docker unreadable** (absent, no permission, error): the state is unknown.
+  The clear proceeds as before, and the watcher ages markers only by time.
+- The lifecycle verb prints one stderr line naming the starting lanes. The
+  watcher logs `action=deferred:lane-starting` once per lane, and a deferral
+  does not spend the rate limit.
+- **The watcher never changes a container.** The `docker ps` above is its only
+  docker call. It never starts, stops, updates or execs into anything. Before
+  review-b the watcher ran no docker command at all. The read-only `ps` is the
+  one exception, and the test suite pins it to that exact argv.
 
 ## 6. Compile cache
 

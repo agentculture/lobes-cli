@@ -7,9 +7,16 @@ first, else a passwordless sudo rule — at most once per
 ``LOBES_WATCHER_MIN_INTERVAL_S`` (default 300). With no grant the adapter runs
 nothing and the watcher only logs.
 
-The watcher never issues a docker command: its only side effect besides its own
-state file is the adapter call. Every action is one log line on stderr (the
-unit's journal captures it).
+A marker older than twice ``LOBES_MEM_GATE_TIMEOUT_S``, or whose lane has no
+running container, is stale: logged once and not acted on. While any OTHER
+lane is mid-boot (docker ``health: starting``) the clear is deferred, because a
+drop during a sibling vLLM's memory profiling can trip it on unified memory.
+
+The watcher runs no docker command that changes anything: its one docker call
+is the fixed, read-only ``docker ps`` of :data:`lobes.runtime._compose.LANE_HEALTH_ARGV`
+(unreadable docker = unknown: age-only staleness, no deferral). Its only side
+effect besides its own state file is the adapter call. Every action is one log
+line on stderr (the unit's journal captures it).
 """
 
 from __future__ import annotations
@@ -56,6 +63,10 @@ def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
         lane = p.name[: -len(MARKER_SUFFIX)]
         entry: dict[str, Any] = {"lane": lane, "path": str(p), "malformed": False}
         try:
+            entry["mtime"] = p.stat().st_mtime
+        except OSError:
+            entry["mtime"] = None
+        try:
             data = json.loads(p.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("not an object")
@@ -70,6 +81,10 @@ def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
+#: Actions logged once per lane until the action changes (not every poll).
+_QUIET_ACTIONS = ("rate-limited", "deferred:lane-starting", "ignored:stale")
+
+
 @dataclass
 class Watcher:
     state_dir: Path
@@ -79,8 +94,11 @@ class Watcher:
     clear: Callable[[], MachineResult] | None = None
     clock: Callable[[], float] = time.time
     log: Callable[[str], None] = _stderr_log
+    #: ``MG_LOG_NAME`` -> ``"starting"`` | ``"running"`` for the running lanes, or
+    #: ``None`` when unknown (see :func:`lobes.runtime._compose.lane_health`).
+    health: Callable[[], dict[str, str] | None] | None = None
     _state: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
-    _quiet: set[str] = field(default_factory=set, init=False, repr=False)
+    _logged: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._state = self._load_state()
@@ -111,54 +129,91 @@ class Watcher:
             return f"lane={m['lane']} marker=malformed"
         return f"lane={m['lane']} need_kib={m.get('need_kib')} avail_kib={m.get('avail_kib')}"
 
-    def _is_stale(self, m: dict[str, Any], now: float) -> bool:
+    def _stale_reason(
+        self, m: dict[str, Any], now: float, health: dict[str, str] | None
+    ) -> str | None:
+        """Why a marker is stale (not acted on), or ``None`` when it is live.
+
+        A wrapper killed by SIGKILL (or a lane removed while gated) never
+        removes its marker; acting on it would clear the page cache every
+        ``min_interval_s`` forever (review-b #3b).
+        """
         since = m.get("since")
-        return isinstance(since, int) and now - since > self.stale_after_s
+        if not isinstance(since, int):
+            since = m.get("mtime")  # malformed marker: age it by its mtime
+        if isinstance(since, (int, float)) and now - since > self.stale_after_s:
+            return f"older than {self.stale_after_s}s (2x the gate timeout)"
+        if health is not None and m["lane"] not in health:
+            return "its lane has no running container"
+        return None
+
+    def _read_health(self) -> dict[str, str] | None:
+        if self.health is None:
+            return None
+        try:
+            return self.health()
+        except Exception:  # noqa: BLE001 - an unreadable health is "unknown"
+            return None
+
+    def _attempt(self, now: float) -> tuple[str, str | None]:
+        last = self._state.get("last_attempt")
+        if isinstance(last, (int, float)) and now - last < self.min_interval_s:
+            return "rate-limited", None
+        clear = self.clear if self.clear is not None else drop_caches
+        result = clear()
+        self._state["last_attempt"] = now
+        if result.ok:
+            action = "cleared"
+            self._state["last_clear"] = now
+        else:
+            action = f"skipped:{result.reason or 'failed'}"
+        self._state["last_result"] = action
+        self._save_state()
+        return action, result.source
 
     def tick(self) -> list[dict[str, Any]]:
         """Poll once; return one action record per marker (empty when none)."""
         markers = scan_markers(self.state_dir)
+        present = {m["lane"] for m in markers}
+        self._logged = {k: v for k, v in self._logged.items() if k in present}
         if not markers:
-            self._quiet.clear()
             return []
         now = self.clock()
-        last = self._state.get("last_attempt")
-        if isinstance(last, (int, float)) and now - last < self.min_interval_s:
-            action, reason = "rate-limited", None
+        health = self._read_health()
+        stale = {m["lane"]: self._stale_reason(m, now, health) for m in markers}
+        live = [m for m in markers if stale[m["lane"]] is None]
+        booting = _compose.lanes_starting(health, present)
+        via: str | None = None
+        if not live:
+            action = "ignored:stale"
+        elif booting:
+            # a drop mid-boot can trip a sibling vLLM's memory profiling (#3a)
+            action = "deferred:lane-starting"
         else:
-            clear = self.clear if self.clear is not None else drop_caches
-            result = clear()
-            self._state["last_attempt"] = now
-            if result.ok:
-                action = "cleared"
-                self._state["last_clear"] = now
-            else:
-                action = f"skipped:{result.reason or 'failed'}"
-            self._state["last_result"] = action
-            self._save_state()
-            reason = result.source
-            self._quiet.clear()
+            action, via = self._attempt(now)
         actions = []
         for m in markers:
-            stale = self._is_stale(m, now)
-            rec = {
-                "lane": m["lane"],
-                "need_kib": m.get("need_kib"),
-                "avail_kib": m.get("avail_kib"),
-                "stale": stale,
-                "action": action,
-            }
-            actions.append(rec)
-            # a rate-limited marker is logged once per window, not every poll
-            if action == "rate-limited":
-                if m["lane"] in self._quiet:
-                    continue
-                self._quiet.add(m["lane"])
-            line = f"lobes-watcher: {self._describe(m)} action={action}"
+            reason = stale[m["lane"]]
+            act = "ignored:stale" if reason else action
+            actions.append(
+                {
+                    "lane": m["lane"],
+                    "need_kib": m.get("need_kib"),
+                    "avail_kib": m.get("avail_kib"),
+                    "stale": reason is not None,
+                    "action": act,
+                }
+            )
+            if act in _QUIET_ACTIONS and self._logged.get(m["lane"]) == act:
+                continue
+            self._logged[m["lane"]] = act
+            line = f"lobes-watcher: {self._describe(m)} action={act}"
+            if via and not reason:
+                line += f" via={via}"
             if reason:
-                line += f" via={reason}"
-            if stale:
-                line += " (stale marker: older than the gate timeout; acting anyway)"
+                line += f" (stale marker: {reason}; not acted on)"
+            elif act == "deferred:lane-starting":
+                line += f" (lane(s) still starting: {', '.join(booting)})"
             self.log(line)
         return actions
 
@@ -185,6 +240,7 @@ def watcher_for(deploy_dir: Path, **kw: Any) -> Watcher:
     deploy_dir = Path(deploy_dir)
     env = _env.read_env_file(deploy_dir / _compose.ENV_FILE)
     gate_timeout = _int_knob(env, GATE_TIMEOUT_ENV, DEFAULT_GATE_TIMEOUT_S)
+    kw.setdefault("health", lambda: _compose.lane_health(deploy_dir))
     return Watcher(
         state_dir=lane_state_dir(deploy_dir),
         state_file=deploy_dir / STATE_FILE,

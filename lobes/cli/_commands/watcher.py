@@ -7,7 +7,9 @@
 
 The watcher polls the deployment's ``logs/lane-state/*.gated`` markers and runs
 the machine CLI's drop-caches at most once per ``LOBES_WATCHER_MIN_INTERVAL_S``
-(default 300); with no grant it only logs. It never runs docker. ``install``
+(default 300); with no grant it only logs. Its one docker call is a read-only
+``docker ps`` (to skip a clear while another lane boots); it never changes a
+container. ``install``
 and ``uninstall`` are write verbs: dry-run by default, ``--apply`` commits.
 """
 
@@ -123,7 +125,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "watcher",
         help="Host watcher: clear the page cache for memory-gated lanes "
-        "(run / install / uninstall / status). Never runs docker.",
+        "(run / install / uninstall / status). Never changes a container.",
     )
     wsub = p.add_subparsers(dest="watcher_command", required=True)
 

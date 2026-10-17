@@ -1545,10 +1545,15 @@ memory that a cache clear would hand back. The watcher closes that gap.
   300). The last attempt is persisted in `<deployment>/.lobes-watcher-state.json`
   so a restart cannot bypass the rate limit.
 - With no grant it logs `action=skipped:not_granted` and does nothing else.
-- It **never** runs a docker command.
+- A marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`, or whose lane has no
+  running container, is stale: logged once, never acted on.
+- While any other lane is still booting (docker `health: starting`) the clear
+  is deferred: a drop mid-boot can trip vLLM's memory profiling.
+- Its only docker call is a fixed, read-only `docker ps`; it **never** changes
+  a container.
 - Every action is one stderr line (the unit's journal): lane, need/avail,
-  `cleared` / `skipped:<reason>` / `rate-limited`, and a stale flag for a
-  marker older than twice `LOBES_MEM_GATE_TIMEOUT_S`.
+  `cleared` / `skipped:<reason>` / `rate-limited` / `deferred:lane-starting` /
+  `ignored:stale`.
 
 ## Verbs
 

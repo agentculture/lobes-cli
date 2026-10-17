@@ -4,7 +4,8 @@
 # `lobes watcher uninstall --apply` (the manifest in the deployment dir lists
 # exactly the files written). It polls the deployment's lane-state/*.gated
 # markers and runs the machine CLI's drop-caches at most once per
-# LOBES_WATCHER_MIN_INTERVAL_S. It never runs a docker command.
+# LOBES_WATCHER_MIN_INTERVAL_S. Its only docker call is a read-only `docker ps`
+# (it defers a clear while another lane boots); it never changes a container.
 #
 # PATH is captured at install time so the machine CLI (spark/thor/orin, often
 # under ~/.local/bin) resolves the same way it did for the installer.

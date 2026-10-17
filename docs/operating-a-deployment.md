@@ -179,7 +179,9 @@ grant, the verb prints one stderr line and carries on; it never prompts and
 never fails. For a lane stuck at the gate, `lobes watcher install --apply`
 (user unit; needs linger, or `--system`) polls the `.gated` markers and runs
 `drop-caches` at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (300). The watcher
-never runs a docker command. Check it with `lobes watcher status`; `lobes
+skips a marker older than twice `LOBES_MEM_GATE_TIMEOUT_S` or whose lane has
+no running container, and defers the clear while another lane is still
+starting; its only docker call is a read-only `docker ps`. Check it with `lobes watcher status`; `lobes
 doctor` reports `watcher_inactive`. The machine-CLI verbs (`window`,
 `drop-caches`, `grant-permissions`) ship in dgx-spark-cli 0.9.1, jetson-thor-cli
 0.6.1 and jetson-orin-cli 0.7.1 (install with `lobes-cli[spark|thor|orin]`).

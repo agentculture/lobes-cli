@@ -1145,6 +1145,85 @@ def clear_page_cache() -> bool:
     return False
 
 
+#: The ONE docker call the lane-health read makes (review-b #3): fixed argv,
+#: read-only (``docker ps`` lists, never changes), shared with the host watcher.
+LANE_HEALTH_ARGV = [
+    "docker",
+    "ps",
+    "--filter",
+    "name=model-gear-",
+    "--format",
+    '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+]
+
+
+def lane_health(deploy_dir: os.PathLike | str) -> dict[str, str] | None:
+    """Running ``model-gear-*`` lanes -> ``"starting"`` | ``"running"``, keyed by ``MG_LOG_NAME``.
+
+    ``"starting"`` is docker's ``health: starting`` (inside the healthcheck's
+    start period, not yet healthy) — the window where a page-cache drop can
+    trip vLLM's memory profiling on unified memory. Every other running state
+    (healthy, unhealthy, no healthcheck) is ``"running"``. A container with no
+    compose service label is keyed by its container name. ``None`` when docker
+    cannot be read (absent, no permission, error). Read-only: runs exactly
+    :data:`LANE_HEALTH_ARGV`.
+    """
+    result = _probe(list(LANE_HEALTH_ARGV))
+    if result is None or getattr(result, "returncode", 1) != 0:
+        return None
+    try:
+        mapping = _service_log_names(deploy_dir, _compose_files(deploy_dir))
+    except OSError:
+        mapping = {}
+    health: dict[str, str] = {}
+    for line in (result.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        service, name, status = parts[0].strip(), parts[1].strip(), parts[2]
+        key = mapping.get(service, service) if service else name
+        if not key:
+            continue
+        health[key] = "starting" if "health: starting" in status else "running"
+    return health
+
+
+def gated_lanes(deploy_dir: os.PathLike | str) -> set[str]:
+    """Lane names with a ``lane-state/<lane>.gated`` marker (held at the memory gate)."""
+    configured = _env.read_env(Path(deploy_dir) / ENV_FILE, LOG_DIR_ENV) or None
+    state = durable_log_dir(deploy_dir, configured) / LANE_STATE_DIRNAME
+    try:
+        return {p.name[: -len(".gated")] for p in state.glob("*.gated")}
+    except OSError:
+        return set()
+
+
+def lanes_starting(health: dict[str, str] | None, exclude: set[str]) -> list[str]:
+    """Lanes docker reports mid-boot, minus ``exclude`` (gated lanes: held, not booting)."""
+    if not health:
+        return []
+    return sorted(k for k, v in health.items() if v == "starting" and k not in exclude)
+
+
+def _guarded_clear(deploy_dir: os.PathLike | str) -> bool:
+    """The lifecycle clear, skipped while another lane is mid-boot (review-b #3).
+
+    A gated lane shows ``health: starting`` too (it is held before ``exec``), so
+    gated lanes never defer the clear. Docker unreadable: clear as before.
+    """
+    if _machine.detected_card() not in _machine.CARD_CLIS:
+        return False  # clear_page_cache would skip anyway; don't run docker ps
+    booting = lanes_starting(lane_health(deploy_dir), gated_lanes(deploy_dir))
+    if booting:
+        print(
+            "lobes: page-cache clear deferred - lane(s) still starting: "
+            f"{', '.join(booting)} (a drop mid-boot can trip vLLM's memory profiling)",
+            file=sys.stderr,
+        )
+        return False
+    return clear_page_cache()
+
+
 def _service_log_names(deploy_dir: os.PathLike | str, compose_files: list[str]) -> dict[str, str]:
     """compose service name -> ``MG_LOG_NAME`` (text scan of the compose files)."""
     names = [a for a in compose_files if a != "-f"] or [COMPOSE_FILE]
@@ -1233,7 +1312,7 @@ def _before_up(deploy_dir, services: list[str] | None, compose_files: list[str] 
     if _cleared_after_down:
         _cleared_after_down = False  # the preceding down already cleared
     else:
-        clear_page_cache()
+        _guarded_clear(deploy_dir)
     reset_start_counters(deploy_dir, services, compose_files)
 
 
@@ -1243,7 +1322,7 @@ def compose_down(deploy_dir: os.PathLike | str):
         ["docker", "compose"] + _compose_files(deploy_dir) + ["down"], cwd=str(deploy_dir)
     )
     if getattr(result, "returncode", 1) == 0:
-        _cleared_after_down = clear_page_cache()
+        _cleared_after_down = _guarded_clear(deploy_dir)
     return result
 
 
@@ -1347,7 +1426,7 @@ def run_compose(deploy_dir: os.PathLike | str, argv: list[str]):
         _before_up(deploy_dir, rest or None, files or None)
     result = _run(argv, cwd=str(deploy_dir))
     if sub == "down" and getattr(result, "returncode", 1) == 0:
-        _cleared_after_down = clear_page_cache()
+        _cleared_after_down = _guarded_clear(deploy_dir)
     return result
 
 

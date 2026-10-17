@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -129,13 +130,84 @@ def test_no_grant_logs_only(tmp_path):
     assert state["last_clear"] is None
 
 
-def test_stale_marker_still_acts_but_is_flagged(tmp_path):
+def test_stale_marker_is_ignored_and_logged_once(tmp_path):
+    """review-b #3b: a marker older than 2x the gate timeout is not acted on."""
     clear, logs = CountingClear(), []
     _marker(tmp_path / "logs" / "lane-state", "worker", since=1)
-    actions = _watcher(tmp_path, clear, Clock(), logs).tick()
-    assert actions[0]["stale"] is True
+    w = _watcher(tmp_path, clear, Clock(), logs, min_interval_s=0)
+    for _ in range(3):
+        actions = w.tick()
+    assert actions[0]["stale"] is True and actions[0]["action"] == "ignored:stale"
+    assert clear.calls == 0
+    assert sum("stale" in line for line in logs) == 1
+
+
+def test_stale_marker_beside_a_fresh_one_still_clears_once(tmp_path):
+    clear, logs = CountingClear(), []
+    sd = tmp_path / "logs" / "lane-state"
+    _marker(sd, "old", since=1)
+    _marker(sd, "worker")
+    acts = {a["lane"]: a["action"] for a in _watcher(tmp_path, clear, Clock(), logs).tick()}
+    assert acts == {"old": "ignored:stale", "worker": "cleared"}
     assert clear.calls == 1
-    assert any("stale" in line for line in logs)
+
+
+def test_malformed_marker_ages_by_mtime(tmp_path):
+    sd = tmp_path / "logs" / "lane-state"
+    sd.mkdir(parents=True)
+    bad = sd / "bad.gated"
+    bad.write_text("{not json")
+    import os as _os
+
+    _os.utime(bad, (1, 1))
+    clear, logs = CountingClear(), []
+    actions = _watcher(tmp_path, clear, Clock(), logs).tick()
+    assert actions[0]["action"] == "ignored:stale" and clear.calls == 0
+
+
+def test_marker_whose_lane_has_no_container_is_stale(tmp_path):
+    clear, logs = CountingClear(), []
+    _marker(tmp_path / "logs" / "lane-state", "worker")
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.health = lambda: {"primary": "running"}  # worker's container is gone
+    actions = w.tick()
+    assert actions[0]["action"] == "ignored:stale" and actions[0]["stale"] is True
+    assert clear.calls == 0
+    assert any("no running container" in line for line in logs)
+
+
+def test_clear_deferred_while_another_lane_is_starting(tmp_path):
+    """review-b #3a: dropping the cache mid-boot can trip vLLM's profiling."""
+    clock, clear, logs = Clock(), CountingClear(), []
+    _marker(tmp_path / "logs" / "lane-state", "worker")
+    w = _watcher(tmp_path, clear, clock, logs)
+    w.health = lambda: {"worker": "starting", "primary": "starting"}
+    for _ in range(3):
+        actions = w.tick()
+    assert actions[0]["action"] == "deferred:lane-starting"
+    assert clear.calls == 0
+    assert sum("primary" in line and "deferred" in line for line in logs) == 1
+    state = tmp_path / ".lobes-watcher-state.json"
+    assert not state.exists()  # a deferral is not an attempt: no rate-limit spent
+    w.health = lambda: {"worker": "starting", "primary": "running"}
+    assert w.tick()[0]["action"] == "cleared"
+    assert clear.calls == 1
+
+
+def test_gated_lane_own_starting_status_does_not_defer(tmp_path):
+    clear, logs = CountingClear(), []
+    _marker(tmp_path / "logs" / "lane-state", "worker")
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.health = lambda: {"worker": "starting", "embed": "running"}
+    assert w.tick()[0]["action"] == "cleared"
+
+
+def test_unreadable_docker_falls_back_to_marker_age_only(tmp_path):
+    clear, logs = CountingClear(), []
+    _marker(tmp_path / "logs" / "lane-state", "worker")
+    w = _watcher(tmp_path, clear, Clock(), logs)
+    w.health = lambda: None
+    assert w.tick()[0]["action"] == "cleared"
 
 
 def test_malformed_and_symlinked_markers_are_ignored(tmp_path):
@@ -150,8 +222,12 @@ def test_malformed_and_symlinked_markers_are_ignored(tmp_path):
     assert markers[0]["malformed"] is True
 
 
-def test_watcher_never_runs_docker(tmp_path, monkeypatch):
-    """Drive the REAL drop_caches adapter path with every subprocess recorded."""
+def test_watcher_runs_no_mutating_docker_command(tmp_path, monkeypatch):
+    """Drive the REAL drop_caches adapter + lane-health read with every subprocess
+    recorded. The only docker argv allowed is the fixed, read-only ``docker ps``
+    (review-b #3 narrowed the old "never runs docker" invariant to this)."""
+    from lobes.runtime import _compose
+
     seen: list[list[str]] = []
 
     def fake_machine_run(argv, *, stdin=None):
@@ -162,33 +238,42 @@ def test_watcher_never_runs_docker(tmp_path, monkeypatch):
         seen.append(list(argv))
         return subprocess.CompletedProcess(argv, 1, "", "")
 
+    def fake_probe(argv, **k):
+        seen.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "vllm-worker\tmodel-gear-vllm-worker\tUp\n", "")
+
     monkeypatch.setattr(_machine, "_run", fake_machine_run)
     monkeypatch.setattr(_machine, "_current_cli", lambda: None)
+    monkeypatch.setattr(_compose, "_probe", fake_probe)
     monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
     monkeypatch.setattr(subprocess, "Popen", lambda argv, *a, **k: seen.append(list(argv)))
 
-    logs: list[str] = []
-    _marker(tmp_path / "logs" / "lane-state", "worker")
-    w = _run.Watcher(
-        state_dir=tmp_path / "logs" / "lane-state",
-        state_file=tmp_path / ".lobes-watcher-state.json",
-        min_interval_s=0,
-        stale_after_s=1800,
-        log=logs.append,
-        clock=Clock(),
+    deploy = tmp_path
+    (deploy / "docker-compose.yml").write_text(
+        "services:\n  vllm-worker:\n    environment:\n      - MG_LOG_NAME=worker\n"
     )
+    _marker(deploy / "logs" / "lane-state", "worker", since=int(Clock()()))
+    w = _run.watcher_for(deploy, clock=Clock(), log=[].append)
+    w.min_interval_s = 0
     for _ in range(3):
         w.tick()
     assert seen, "the adapter should have probed the sudo grant"
-    assert not any(a and Path(a[0]).name == "docker" for a in seen)
-    assert not any("docker" in " ".join(a) for a in seen)
+    docker = [a for a in seen if a and Path(a[0]).name == "docker"]
+    assert docker, "the lane-health read should have run"
+    assert all(a == _compose.LANE_HEALTH_ARGV for a in docker)
+    assert _compose.LANE_HEALTH_ARGV[:2] == ["docker", "ps"]
+    assert not any(
+        verb in _compose.LANE_HEALTH_ARGV
+        for verb in ("stop", "start", "restart", "kill", "rm", "update", "pause", "up", "down")
+    )
+    assert not any("docker" in " ".join(a) for a in seen if a not in docker)
 
 
 def test_run_once_cli(tmp_path, monkeypatch, capsys):
     deploy = tmp_path / "dep"
     deploy.mkdir()
     (deploy / "docker-compose.yml").write_text("services: {}\n")
-    _marker(deploy / "logs" / "lane-state", "worker")
+    _marker(deploy / "logs" / "lane-state", "worker", since=int(time.time()))
     clear = CountingClear()
     monkeypatch.setattr(_run, "drop_caches", clear)
     rc = main(["watcher", "run", "--compose-dir", str(deploy), "--once", "--json"])
