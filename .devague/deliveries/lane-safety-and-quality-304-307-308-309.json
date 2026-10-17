@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T08:49:06Z",
+  "updated": "2026-10-17T10:28:30Z",
   "deviations": [
     {
       "id": "d1",
@@ -1150,6 +1150,25 @@
       "status": "proposed",
       "superseded": false,
       "seq": 62
+    },
+    {
+      "id": "e56",
+      "obligation_ref": "o21",
+      "test_ref": "PyPI JSON API + publish workflow runs on each repo's main, 2026-10-17",
+      "behavior_text": "dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and jetson-orin-cli 0.7.1 are the latest releases on PyPI (Publish to PyPI: success on main); lobes extras pin them as minimums",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "released before lobes pins it: observed on PyPI after squash-merging the three PRs",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T10:28:30Z",
+        "commit": "a45f3f8"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 63
     }
   ],
   "deltas": [

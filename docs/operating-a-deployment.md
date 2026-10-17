@@ -177,9 +177,9 @@ never fails. For a lane stuck at the gate, `lobes watcher install --apply`
 `drop-caches` at most once per `LOBES_WATCHER_MIN_INTERVAL_S` (300). The watcher
 never runs a docker command. Check it with `lobes watcher status`; `lobes
 doctor` reports `watcher_inactive`. The machine-CLI verbs (`window`,
-`drop-caches`, `grant-permissions`) are implemented in dgx-spark-cli 0.9.0,
-jetson-thor-cli 0.6.0 and jetson-orin-cli 0.7.0 but those releases are **not yet
-out**, so until they ship lobes uses its sudo fallback for the clear only.
+`drop-caches`, `grant-permissions`) ship in dgx-spark-cli 0.9.1, jetson-thor-cli
+0.6.1 and jetson-orin-cli 0.7.1 (install with `lobes-cli[spark|thor|orin]`).
+Without the machine CLI, lobes falls back to `sudo -n` for the clear only.
 
 **Thermal shedding (#304).** The gateway can shed full-tier requests with a 429
 when the card runs hot; see `gateway-fleet.md`. A deployment scaffolded before

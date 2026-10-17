@@ -1593,8 +1593,8 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
 - **Benchmark window** (`lobes benchmark`, `--no-lock`): locked clocks and
   `host.conditions` on single-model and `--all-lobes` results only (#312);
   the GB10 has no supported clock lock, so the Spark runs unlocked. The machine
-  CLI verbs (dgx-spark-cli 0.9.0, jetson-thor-cli 0.6.0, jetson-orin-cli 0.7.0)
-  are implemented, not yet released.
+  CLI verbs ship in dgx-spark-cli 0.9.1, jetson-thor-cli 0.6.1 and
+  jetson-orin-cli 0.7.1 (`lobes-cli[spark|thor|orin]`).
 
 The live Spark acceptance under sustained load has not run (issue #313).
 Docs: `docs/operating-a-deployment.md`, `docs/measuring-lane-performance.md`,

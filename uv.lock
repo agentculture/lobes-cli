@@ -271,11 +271,11 @@ nvtx = [
 
 [[package]]
 name = "dgx-spark-cli"
-version = "0.8.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5d/e4/10437169fae22571996d5b24082c6df37ede69b182517b122c735a6153e8/dgx_spark_cli-0.8.0.tar.gz", hash = "sha256:87d1373160be6d3f8f25b6a83cd8f35de8400f9e842c2d7d4405731eb1bf1ac8", size = 246093, upload-time = "2026-09-30T17:25:39.011Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b0/ff/6e3c25c2187e90b66c8fe2b3e82a11abd1b9381e3e52a3aea08def6e357a/dgx_spark_cli-0.9.1.tar.gz", hash = "sha256:f7f38efb009812ed7d2d08d1260156abf7e7b2d06a684fa21d42e546233a1c56", size = 254194, upload-time = "2026-10-17T10:25:42.796Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8d/8f/2ba2db04058eb7cf60ad61dea53b793b2ce6ee6d8648a25344ec093bbd85/dgx_spark_cli-0.8.0-py3-none-any.whl", hash = "sha256:54fafcecb115d362eb019f97ceb89e3686f27c39dc9902470fc4a898504a7787", size = 96455, upload-time = "2026-09-30T17:25:37.621Z" },
+    { url = "https://files.pythonhosted.org/packages/44/a3/a786c09c8a5b546a864a9c6e6cbeeca761fe7b73ead8f1f73f5ef27087a5/dgx_spark_cli-0.9.1-py3-none-any.whl", hash = "sha256:93a774712fea0fc931207b7dac0cac5fce19358718404d9e5ad79945cc8e03d6", size = 103839, upload-time = "2026-10-17T10:25:41.579Z" },
 ]
 
 [[package]]
@@ -490,20 +490,20 @@ wheels = [
 
 [[package]]
 name = "jetson-orin-cli"
-version = "0.6.0"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/87/4b/178cab8ae139e6399a681baae86692df0a66ebc10a5d0561135c96649974/jetson_orin_cli-0.6.0.tar.gz", hash = "sha256:b4a6fd2b189c7098d53134fb02454a92d291f0a88e88408b016bcd4ab78958cd", size = 254496, upload-time = "2026-09-30T17:25:57.622Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b9/a3/09e0c81f809910f14dbd700b347c06957b40c7d3cac634ec896598750adc/jetson_orin_cli-0.7.1.tar.gz", hash = "sha256:b64d571ccd6c512779533c2aa18999fa4bce0e63f10293a4fae4bd20a265ef49", size = 264755, upload-time = "2026-10-17T10:25:53.2Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/28/8ba2aca20f46ffc9e8ffb51fdeeb686a3aa2164e6203393dedf7862a59c3/jetson_orin_cli-0.6.0-py3-none-any.whl", hash = "sha256:1d2494353af68d0c160851aeeb1660228a78dfbccbaef364cb0fd374f72aa516", size = 105418, upload-time = "2026-09-30T17:25:56.44Z" },
+    { url = "https://files.pythonhosted.org/packages/46/cf/0e64c9beb4d90ad725957d9053775870a4a43eff3dbe5b63d301c177caca/jetson_orin_cli-0.7.1-py3-none-any.whl", hash = "sha256:046397e5330f0b3ffce0424d77b4c5e1c2bc449118ba4a4dc897e3931a1c8292", size = 114435, upload-time = "2026-10-17T10:25:51.849Z" },
 ]
 
 [[package]]
 name = "jetson-thor-cli"
-version = "0.5.1"
+version = "0.6.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8f/95/d1f9ea6c3ea88147c4b6363fe08b3d50c0f25d23f273f27f87712763a93f/jetson_thor_cli-0.5.1.tar.gz", hash = "sha256:ad0bd44681aaf9eac90185ec6cd350bd07dc9e6cb71f75094a0c38acf008d361", size = 265279, upload-time = "2026-09-30T17:25:52.055Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/93/53e175a1a5832b107290e29a071a1a528baeb54dab74a348a246a391cdd5/jetson_thor_cli-0.6.1.tar.gz", hash = "sha256:b668778fa78c8b2c7213c94cd602372e02d0d9b688c21f3ef09c51ab29e2456b", size = 278548, upload-time = "2026-10-17T10:25:45.958Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/9a/f39027de98231306c28a3ffd13b713e39f5b63973f6a4df79ededf238562/jetson_thor_cli-0.5.1-py3-none-any.whl", hash = "sha256:1d53618f2b4cfd51f9e30e2eac9696db092f05bfab1a37407db1f2fae02121ea", size = 108228, upload-time = "2026-09-30T17:25:50.713Z" },
+    { url = "https://files.pythonhosted.org/packages/96/fd/4b627ce392ef5a227a68ff47043627b6582d98c850b6576e87af899dd7fe/jetson_thor_cli-0.6.1-py3-none-any.whl", hash = "sha256:fa71323fac8b43c1953c149865c9332f8e4726d182a14acda04f4b42981985e6", size = 118407, upload-time = "2026-10-17T10:25:44.907Z" },
 ]
 
 [[package]]
@@ -579,7 +579,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dgx-spark-cli", marker = "extra == 'spark'" },
+    { name = "dgx-spark-cli", marker = "extra == 'spark'", specifier = ">=0.9.1" },
     { name = "fastapi", marker = "extra == 'bluetts'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'chatterbox-ml'", specifier = ">=0.115" },
@@ -587,8 +587,8 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'embed-sidecar'", specifier = ">=0.115" },
     { name = "fastapi", marker = "extra == 'realtime'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'realtime'", specifier = ">=0.28" },
-    { name = "jetson-orin-cli", marker = "extra == 'orin'" },
-    { name = "jetson-thor-cli", marker = "extra == 'thor'" },
+    { name = "jetson-orin-cli", marker = "extra == 'orin'", specifier = ">=0.7.1" },
+    { name = "jetson-thor-cli", marker = "extra == 'thor'", specifier = ">=0.6.1" },
     { name = "numpy", marker = "extra == 'realtime'", specifier = ">=2.0" },
     { name = "phonikud-onnx", marker = "extra == 'chatterbox-ml'", specifier = ">=1.0" },
     { name = "python-multipart", marker = "extra == 'realtime'", specifier = ">=0.0.9" },

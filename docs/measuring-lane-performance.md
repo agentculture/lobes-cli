@@ -131,10 +131,12 @@ comparison.
   as Rule 3 says.
 - **Per card.** The GB10 reports no supported clock lock, so on the DGX Spark
   the window runs **unlocked** (the conditions say so). The Orin and Thor
-  paths need the machine CLI releases (jetson-orin-cli 0.7.0, jetson-thor-cli
-  0.6.0, dgx-spark-cli 0.9.0), which are implemented but **not yet released**.
-  Thor fan-profile switching and the Orin `jetson_clocks --fan` behaviour are
-  **unverified**, and every Thor line is **DECLARED/UNVALIDATED (#108)**.
+  paths need the machine CLIs (jetson-orin-cli >= 0.7.1, jetson-thor-cli
+  >= 0.6.1, dgx-spark-cli >= 0.9.1; `lobes-cli[orin|thor|spark]`). The Thor
+  lock and restore, fan included (`jetson_clocks --fan`), are validated on
+  hardware (2026-10-17, `docs/evidence/2026-10-17-accept-lane-safety-hardware.txt`).
+  The Orin lock path has not run on hardware: its clocks were already pinned by
+  an operator `jetson_clocks` run, which `lobes doctor` now reports.
 - **Doctor.** `lobes doctor` warns `jetson_clocks_locked` when `window show`
   reports locked clocks and no benchmark holds the host lock, i.e. a crashed run
   left the box pinned at max clocks. With the CLI's `clocks_locked` field it
