@@ -84,11 +84,16 @@ services:
       - VLLM_ALLOW_LONG_MAX_MODEL_LEN=${PRIMARY_ALLOW_LONG_MAX_MODEL_LEN:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=primary   # → /logs/model-gear/primary-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm
       # Think-aware tool-parser plugin (t2, cortex/main lane only): `lobes init`
       # materialises this file from the packaged lobes.vllm_plugins module
       # (importlib.resources — single source of truth, not a templates copy);
@@ -455,11 +460,16 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=embed   # → /logs/model-gear/embed-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -541,10 +551,15 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=embed-deep   # → /logs/model-gear/embed-deep-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-deep:/cache/vllm
     expose:
       - "8000"
     entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
@@ -602,11 +617,16 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=rerank   # → /logs/model-gear/rerank-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/rerank:/cache/vllm
       # Reranker chat template (issue #227) — vendored verbatim from the
       # pinned vLLM image's own examples/pooling/score/qwen3_reranker_online.py
       # serving line (see _compose.RERANK_TEMPLATE's comment for provenance/
@@ -719,11 +739,16 @@ services:
       - TOKENIZERS_PARALLELISM=false
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=minor   # → /logs/model-gear/minor-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/minor:/cache/vllm
     # No host port — reachable only as http://vllm-minor:8000 on the compose net.
     expose:
       - "8000"
@@ -816,11 +841,16 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${HAND_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=hand   # → /logs/model-gear/hand-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/hand:/cache/vllm
       # LoRA adapters, read-only. The host path is where `unsloth-cli` writes a
       # trained adapter; HAND_LORA_MODULES names paths UNDER the in-container
       # mount point, not host paths. Mounted unconditionally (an absent host
@@ -933,11 +963,16 @@ services:
       - TOKENIZERS_PARALLELISM=false
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=middle   # → /logs/model-gear/middle-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/middle:/cache/vllm
     # No host port — reachable only as http://vllm-middle:8000 on the compose net.
     expose:
       - "8000"
@@ -1036,11 +1071,16 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal   # → /logs/model-gear/multimodal-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal:/cache/vllm
     # No host port — reachable only as http://vllm-multimodal:8000 on the compose net.
     expose:
       - "8000"
@@ -1192,10 +1232,15 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MULTIMODAL_CODER_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=multimodal-coder   # → /logs/model-gear/multimodal-coder-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/multimodal-coder:/cache/vllm
     # No host port — reachable only as http://vllm-multimodal-coder:8000 on the compose net.
     expose:
       - "8000"
@@ -1300,10 +1345,15 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${MUSE_CUDAGRAPH_ESTIMATE:-0}
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=muse   # → /logs/model-gear/muse-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/muse:/cache/vllm
     # No host port — reachable only as http://vllm-muse:8000 on the compose net.
     expose:
       - "8000"
@@ -1415,11 +1465,16 @@ services:
       # vLLM keeps auto-selecting exactly as it did before the knob existed.
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
     volumes:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       # Durable logs that survive restart/recreate (issue #50) — see mg-logwrap.sh.
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/worker:/cache/vllm
     # No host port — reachable only as http://vllm-worker:8000 on the compose net.
     expose:
       - "8000"
@@ -1699,6 +1754,10 @@ services:
       - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0
       - MG_LOG_DIR=/logs/model-gear
       - MG_LOG_NAME=associate   # → /logs/model-gear/associate-<boot>.log
+      # Lane-safety t8: durable per-lane compile cache (contract section 6).
+      # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
+      # target stays /cache/vllm, so the host bind goes unused.
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
       # Same PRIMARY_ALLOW_LONG_MAX_MODEL_LEN passthrough as vllm-primary
       # above (~line 84): OFF by default, so a plain associate boot is
       # byte-identical to before this knob existed. A shape serving a
@@ -1711,6 +1770,7 @@ services:
       - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
       - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
       - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/associate:/cache/vllm
     # No host port — reachable only as http://vllm-associate:8000 on the
     # compose net, i.e. only through the gateway, which carries the opt-in
     # GATEWAY_API_KEY bearer gate (lightning-on-orin plan t10).
