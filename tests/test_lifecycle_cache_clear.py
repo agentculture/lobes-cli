@@ -155,8 +155,10 @@ def test_card_detection_cached_per_process(monkeypatch):
     assert len(calls) == 1
 
 
-def test_card_detection_failure_is_none_and_cached(monkeypatch):
+def test_card_detection_failure_is_none_and_rate_limited(monkeypatch):
     calls: list[int] = []
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
 
     def boom():
         calls.append(1)
@@ -165,7 +167,38 @@ def test_card_detection_failure_is_none_and_cached(monkeypatch):
     monkeypatch.setattr(_machine, "detect_card", boom)
     assert _machine.detected_card() is None
     assert _machine.detected_card() is None
+    assert len(calls) == 1  # inside the retry interval: no re-probe
+
+
+def _flaky(results):
+    calls: list[int] = []
+
+    def detect():
+        calls.append(1)
+        r = results[min(len(calls), len(results)) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return types.SimpleNamespace(resolved=r)
+
+    return detect, calls
+
+
+@pytest.mark.parametrize("first", [RuntimeError("nvidia-smi not ready"), "unknown"])
+def test_failed_detection_is_retried_after_the_interval(monkeypatch, first):
+    """review2-b #6: a boot-time failure must not stick for the watcher's lifetime."""
+    now = {"t": 1000.0}
+    monkeypatch.setattr(_machine, "_clock", lambda: now["t"])
+    detect, calls = _flaky([first, "thor"])
+    monkeypatch.setattr(_machine, "detect_card", detect)
+    assert _machine.detected_card() in (None, "unknown")
+    now["t"] += _machine.DETECT_RETRY_S - 1
+    assert _machine.detected_card() in (None, "unknown")
     assert len(calls) == 1
+    now["t"] += 2
+    assert _machine.detected_card() == "thor"
+    now["t"] += 10 * _machine.DETECT_RETRY_S
+    assert _machine.detected_card() == "thor"
+    assert len(calls) == 2  # a success is cached for good
 
 
 # --- review-b #3: no lifecycle clear while another lane is mid-boot --------

@@ -13,16 +13,16 @@ reason instead of raising.
 
 from __future__ import annotations
 
-import functools
 import json
 import os
 import re
 import shutil
 import subprocess  # fixed argv lists only, never shell=True
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from lobes.runtime._detect import detect_card
+from lobes.runtime._detect import UNKNOWN, detect_card
 
 CARD_CLIS = {"spark": "spark", "thor": "thor", "orin": "orin"}
 WINDOW_ACTIONS = ("show", "store", "lock", "restore")
@@ -83,22 +83,41 @@ def machine_cli_for(card: str | None) -> str | None:
     return name
 
 
-@functools.lru_cache(maxsize=8)
+#: Seconds between two retries of a FAILED card detection (review2-b #6).
+DETECT_RETRY_S = 60.0
+#: Monotonic clock for the retry interval (a test seam).
+_clock = time.monotonic
+#: detector -> (card, probed_at). Only a failure's timestamp matters.
+_card_cache: dict[Any, tuple[str | None, float]] = {}
+
+
 def _resolve_card(detect) -> str | None:
     """``detect().resolved``, memoised per detector object (review-b #10).
 
     Keyed on the detector itself, so the real ``detect_card`` (nvidia-smi +
     hostname probes) runs once per process, while a test that swaps the
-    detector gets a fresh answer. A failed detection is ``None``, cached too.
+    detector gets a fresh answer. Only a SUCCESSFUL detection (a known card)
+    is cached for good (review2-b #6): a failure (``None``, detector raised)
+    or ``UNKNOWN`` is retried, at most once per :data:`DETECT_RETRY_S`, so a
+    long-running process (the watcher unit) recovers from an nvidia-smi that
+    was not ready at boot.
     """
+    now = _clock()
+    hit = _card_cache.get(detect)
+    if hit is not None:
+        card, at = hit
+        if card not in (None, UNKNOWN) or now - at < DETECT_RETRY_S:
+            return card
     try:
-        return detect().resolved
+        card = detect().resolved
     except Exception:  # detection must never break the adapter
-        return None
+        card = None
+    _card_cache[detect] = (card, now)
+    return card
 
 
 def detected_card(detect=None) -> str | None:
-    """The detected card name, probed at most once per process per detector."""
+    """The detected card name; a known card is probed once per process per detector."""
     return _resolve_card(detect if detect is not None else detect_card)
 
 

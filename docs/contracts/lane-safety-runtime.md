@@ -128,8 +128,10 @@ hold     = release − host uptime, if positive
 - `lobes up`, `serve`, `switch`, `stop` and `fleet` clear the page cache
   after a `down` and before an `up` (one clear per down→up pair).
 - The clear is attempted only on a detected Spark, Thor or Orin. On any other
-  card it is skipped silently: no `sudo -n -l` probe, no stderr line. Card
-  detection runs at most once per process.
+  card it is skipped silently: no `sudo -n -l` probe, no stderr line. A
+  successful card detection is cached for the life of the process; a failed or
+  `unknown` one is retried, at most once per 60 s, so the long-running watcher
+  recovers when `nvidia-smi` was not ready at boot.
 - On a supported card with no grant, the verb prints one stderr line and
   carries on. It never prompts and never fails.
 
