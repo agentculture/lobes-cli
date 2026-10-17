@@ -1208,8 +1208,19 @@ def _normalize_project_name(raw: str) -> str:
 
 
 _INTERP_RE = re.compile(
-    r"\$(?:(\$)|\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?+])([^}]*))?\}|([A-Za-z_][A-Za-z0-9_]*))"
+    r"\$(?:(\$)|\{([A-Za-z_]\w*)(?:(:?[-?+])([^}]*))?\}|([A-Za-z_]\w*))", re.ASCII
 )
+
+
+def _resolve_ref(op: str | None, value: str | None, default: str | None) -> str | None:
+    """One ``${VAR…}`` reference: its value, or ``None`` when it cannot be resolved."""
+    if op is None:
+        return value
+    if op == ":-":
+        return value or default
+    if op == "-":
+        return default if value is None else value
+    return None  # ``?`` / ``+`` forms: not worth guessing here
 
 
 def _interpolate(raw: str, lookup) -> str | None:
@@ -1219,29 +1230,20 @@ def _interpolate(raw: str, lookup) -> str | None:
     reference cannot be resolved (an unset bare ``${VAR}``, any ``?`` form, an
     unknown operator): the caller then ignores the value rather than guessing.
     """
-    unresolved = False
+    misses: list[str] = []
 
     def sub(m: re.Match) -> str:
-        nonlocal unresolved
         escaped, braced, op, default, bare = m.groups()
         if escaped:
             return "$"
-        name = braced or bare
-        value = lookup(name)
-        if op is None:
-            if value is None:
-                unresolved = True
-                return ""
-            return value
-        if op == ":-":
-            return value if value else default
-        if op == "-":
-            return value if value is not None else default
-        unresolved = True  # ``?`` / ``+`` forms: not worth guessing here
-        return ""
+        resolved = _resolve_ref(op, lookup(braced or bare), default)
+        if resolved is None:
+            misses.append(m.group(0))
+            return ""
+        return resolved
 
     out = _INTERP_RE.sub(sub, raw)
-    return None if unresolved else out
+    return None if misses else out
 
 
 def _env_lookup(deploy_dir: os.PathLike | str):
@@ -1275,7 +1277,7 @@ def _top_level_name(deploy_dir: os.PathLike | str) -> str | None:
             text = (Path(deploy_dir) / name).read_text(encoding="utf-8")
         except OSError:
             continue
-        m = re.search(r"^name:[ \t]*(.*)$", text, re.M)
+        m = re.search(r"^name:(.*)$", text, re.M)
         if m:
             found = m.group(1)
     if found is None:
@@ -1286,7 +1288,7 @@ def _top_level_name(deploy_dir: os.PathLike | str) -> str | None:
         end = value.find(quote, 1)
         value = value[1:end] if end > 0 else value[1:]
     else:
-        value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
+        value = re.split(r"\s#", value, maxsplit=1)[0].strip()
     resolved = _interpolate(value, _env_lookup(deploy_dir))
     return resolved.strip() if resolved and resolved.strip() else None
 
@@ -1350,7 +1352,7 @@ LANE_HEALTH_ARGV = [
 ]
 
 
-def lane_health_argv(deploy_dir: os.PathLike | str | None = None) -> list[str]:
+def lane_health_argv(_deploy_dir: os.PathLike | str | None = None) -> list[str]:
     """A copy of :data:`LANE_HEALTH_ARGV` (the argv no longer depends on the deployment)."""
     return list(LANE_HEALTH_ARGV)
 
