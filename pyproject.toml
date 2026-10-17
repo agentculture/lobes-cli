@@ -16,6 +16,14 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Per-machine CLIs (lane-safety t10): the benchmark window + page-cache clear
+# verbs live in these, not in lobes (docs/contracts/machine-cli-window.md).
+# Unpinned on purpose: the window/drop-caches verbs are not released yet; a
+# minimum version is pinned after t2-t4 publish. The base wheel and
+# Dockerfile.gateway install none of them.
+spark = ["dgx-spark-cli"]
+thor = ["jetson-thor-cli"]
+orin = ["jetson-orin-cli"]
 # The realtime audio container (model init --fleet --audio → the `realtime`
 # service) installs this; the base wheel + the stdlib gateway never do. Keeps
 # torch/fastapi out of every other install. Pulled by templates/fleet/Dockerfile.realtime.
