@@ -561,6 +561,16 @@ line (gateway key, peer config, reclaim values) is never rewritten. This is
 the safe path between `lobes init`'s refuses-or-clobbers extremes; a
 present-but-stale value is reported for the operator to change by hand.
 
+**`--refresh-plugin` — replace a stale tool-parser plugin copy.** Each box
+mounts its own `qwen3_thinking_tool_parser.py`, and `--fix` only writes it when
+absent, so `doctor` reports a differing copy as the `plugin_stale` finding.
+`doctor --refresh-plugin` prints the plan (the deployed and packaged sha256);
+`--refresh-plugin --apply` writes exactly two paths:
+`qwen3_thinking_tool_parser.py.bak`, then the packaged copy. An up-to-date copy
+is left alone. Its own flag, never part of `--fix`; refused with `--role`;
+combinable with `--refresh-logwrap` / `--repin-version`. Recreate the cortex
+lane afterwards.
+
 JSON contract: `{"healthy", "checks"}` (+ `fix_plan` / `fix_applied` with
 `--fix`). Supports `--json`.
 """

@@ -35,7 +35,7 @@ from pathlib import Path
 
 from lobes import __version__
 from lobes.cli import _runtime_ops
-from lobes.cli._commands import _doctor_lane_safety, _role_probe
+from lobes.cli._commands import _doctor_lane_safety, _doctor_plugin, _role_probe
 from lobes.cli._commands.capabilities import _fetch_gateway_capabilities
 from lobes.cli._commands.init import DEFAULT_SHAPE, SHAPE_KEY, _values_equal
 from lobes.cli._commands.whoami import _find_culture_yaml
@@ -1229,6 +1229,10 @@ def _deploy_dir_diagnostics(deploy_dir: Path) -> tuple[list[dict], int, dict[str
         checks.append(lock_check)
     # Lane safety (t16) — warn/info only, each skips when not applicable.
     checks.extend(_doctor_lane_safety.lane_safety_checks(deploy_dir))
+    # Stale per-box tool-parser plugin copy (vllm-0-31 t2) — skips when absent.
+    plugin_check = _doctor_plugin.plugin_stale_check(deploy_dir)
+    if plugin_check is not None:
+        checks.append(plugin_check)
     return checks, port, fix_plan
 
 
@@ -1362,6 +1366,24 @@ def _render_refresh_lines(report: dict) -> list[str]:
     return lines
 
 
+def _render_refresh_plugin_lines(report: dict) -> list[str]:
+    """The ``--refresh-plugin`` section (vllm-0-31 t2)."""
+    name = _compose.PLUGIN_DEST_NAME
+    applied = report.get("refresh_plugin_applied")
+    if applied is not None:
+        lines = ["", "plugin refresh applied:"]
+        lines.extend(f"  {action}" for action in applied)
+        if not applied:
+            lines.append(f"  {name} is up to date (or absent) — nothing written")
+        return lines
+    plan = report.get("refresh_plugin_plan") or []
+    lines = ["", "plugin refresh (DRY RUN — re-run with --apply to write):"]
+    lines.extend(f"  {action}" for action in plan)
+    if not plan:
+        lines.append(f"  {name} is up to date — nothing to refresh")
+    return lines
+
+
 def _render_text(report: dict) -> str:
     status = "healthy" if report["healthy"] else "unhealthy"
     lines = [f"lobes doctor: {status}", ""]
@@ -1374,6 +1396,8 @@ def _render_text(report: dict) -> str:
         lines.extend(_render_repin_lines(report))
     if report.get("refresh_logwrap_requested"):
         lines.extend(_render_refresh_lines(report))
+    if report.get("refresh_plugin_requested"):
+        lines.extend(_render_refresh_plugin_lines(report))
     return "\n".join(lines)
 
 
@@ -1450,8 +1474,28 @@ def _run_repin(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     return report
 
 
+# Report keys a write lane must carry across the post-apply re-diagnose, so
+# combined lanes (--repin-version --refresh-logwrap --refresh-plugin ...) all show.
+_CARRIED_KEYS = (
+    "fix_applied",
+    "fix_requested",
+    "repin_applied",
+    "repin_requested",
+    "refresh_logwrap_applied",
+    "refresh_logwrap_requested",
+    "refresh_plugin_applied",
+    "refresh_plugin_requested",
+)
+
+
 def _validate_doctor_flags(
-    role: str | None, *, fix: bool, apply: bool, repin: bool, refresh_logwrap: bool = False
+    role: str | None,
+    *,
+    fix: bool,
+    apply: bool,
+    repin: bool,
+    refresh_logwrap: bool = False,
+    refresh_plugin: bool = False,
 ) -> None:
     """Refuse incoherent flag combinations BEFORE any branch consumes them.
 
@@ -1461,10 +1505,11 @@ def _validate_doctor_flags(
     keep it under SonarCloud's cognitive-complexity ceiling — validation and
     dispatch are separate jobs and read better apart.
     """
-    if apply and not (fix or repin or refresh_logwrap):
+    if apply and not (fix or repin or refresh_logwrap or refresh_plugin):
         raise ModelGearError(
             code=EXIT_USER_ERROR,
-            message="--apply requires --fix or --repin-version (or --refresh-logwrap)",
+            message="--apply requires --fix or --repin-version (or --refresh-logwrap, "
+            "--refresh-plugin)",
             remediation="run 'lobes doctor --fix' for the heal plan, then add --apply",
         )
     if not role:
@@ -1477,6 +1522,13 @@ def _validate_doctor_flags(
             code=EXIT_USER_ERROR,
             message="--role cannot be combined with --refresh-logwrap",
             remediation="run 'lobes doctor --refresh-logwrap --apply' first, then "
+            f"'lobes doctor --role {role}'",
+        )
+    if refresh_plugin:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--role cannot be combined with --refresh-plugin",
+            remediation="run 'lobes doctor --refresh-plugin --apply' first, then "
             f"'lobes doctor --role {role}'",
         )
     if repin:
@@ -1520,6 +1572,22 @@ def _run_fix(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     return report
 
 
+def _run_refresh_plugin(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
+    """The ``--refresh-plugin`` lane (vllm-0-31 t2) — a sibling of
+    :func:`_run_refresh_logwrap`: backs the stale copy up to ``<name>.bak``, then
+    writes the packaged plugin, and nothing else."""
+    deploy_dir = _compose.resolve_deployment_dir(compose_dir)
+    if apply:
+        emit_diagnostic(f">> refreshing {_compose.PLUGIN_DEST_NAME} in {deploy_dir}")
+        applied = _doctor_plugin.apply_refresh_plugin(deploy_dir)
+        carried = {k: report[k] for k in _CARRIED_KEYS if k in report}
+        report = {**_diagnose(compose_dir), **carried, "refresh_plugin_applied": applied}
+    else:
+        report["refresh_plugin_plan"] = _doctor_plugin.refresh_plugin_plan(deploy_dir)
+    report["refresh_plugin_requested"] = True
+    return report
+
+
 def _run_refresh_logwrap(report: dict, compose_dir: str | None, *, apply: bool) -> dict:
     """The ``--refresh-logwrap`` lane (t16) — a sibling of :func:`_run_repin`.
 
@@ -1531,11 +1599,7 @@ def _run_refresh_logwrap(report: dict, compose_dir: str | None, *, apply: bool) 
     if apply:
         emit_diagnostic(f">> refreshing {_compose.LOG_WRAPPER} in {deploy_dir}")
         applied = _doctor_lane_safety.apply_refresh_logwrap(deploy_dir)
-        carried = {
-            k: report[k]
-            for k in ("fix_applied", "fix_requested", "repin_applied", "repin_requested")
-            if k in report
-        }
+        carried = {k: report[k] for k in _CARRIED_KEYS if k in report}
         report = {**_diagnose(compose_dir), **carried, "refresh_logwrap_applied": applied}
     else:
         report["refresh_logwrap_plan"] = _doctor_lane_safety.refresh_logwrap_plan(deploy_dir)
@@ -1549,7 +1613,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     apply = bool(getattr(args, "apply", False))
     repin = bool(getattr(args, "repin_version", False))
     refresh = bool(getattr(args, "refresh_logwrap", False))
-    _validate_doctor_flags(role, fix=fix, apply=apply, repin=repin, refresh_logwrap=refresh)
+    refresh_plugin = bool(getattr(args, "refresh_plugin", False))
+    _validate_doctor_flags(
+        role,
+        fix=fix,
+        apply=apply,
+        repin=repin,
+        refresh_logwrap=refresh,
+        refresh_plugin=refresh_plugin,
+    )
     if role:
         return _cmd_doctor_role(args, role)
     compose_dir = getattr(args, "compose_dir", None)
@@ -1561,6 +1633,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         report = _run_repin(report, compose_dir, apply=apply)
     if refresh:
         report = _run_refresh_logwrap(report, compose_dir, apply=apply)
+    if refresh_plugin:
+        report = _run_refresh_plugin(report, compose_dir, apply=apply)
     emit_result(report if json_mode else _render_text(report), json_mode=json_mode)
     return 0 if report["healthy"] else 1
 
@@ -1581,7 +1655,7 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--apply",
         action="store_true",
-        help="With --fix / --repin-version / --refresh-logwrap: actually write "
+        help="With --fix / --repin-version / --refresh-logwrap / --refresh-plugin: actually write "
         "the plan (--fix writes absent files/keys/dirs only).",
     )
     p.add_argument(
@@ -1597,6 +1671,14 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="Replace a stale mg-logwrap.sh with this CLI's packaged copy, "
         "backing the current one up to mg-logwrap.sh.bak first. Writes those two "
         "files only; never part of --fix. Dry-run; --apply commits.",
+    )
+    p.add_argument(
+        "--refresh-plugin",
+        action="store_true",
+        help="Replace a stale qwen3_thinking_tool_parser.py with this CLI's "
+        "packaged copy, backing the current one up to "
+        "qwen3_thinking_tool_parser.py.bak first. Writes those two files only; "
+        "never part of --fix. Dry-run; --apply commits.",
     )
     p.add_argument(
         "--role",
