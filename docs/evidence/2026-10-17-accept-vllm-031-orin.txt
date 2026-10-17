@@ -1,0 +1,52 @@
+ACCEPTANCE — Jetson AGX Orin 64GB on vLLM 0.31.0 (v0.31.0-ubuntu2404)
+Issue #310 · plan vllm-0-31-0-fleet task t10 · 2026-10-17 · operator: lobes (Claude)
+Status: ACCEPTED. embed, rerank, gemma2-embed and decider-general all on the fleet pin, sm_87.
+Baselines: docs/evidence/2026-10-17-baseline-and-scaffold-orin.txt (t9).
+
+IMAGE
+  docker pull vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+  21:19 -> 21:35:39Z; local id = the index digest, arm64, label vllm/vllm-openai:v0.31.0-ubuntu2404; 722 GB free after.
+
+SWITCH (backups <file>.bak-20261017T213603Z-t10)
+  .env: VLLM_NIGHTLY_IMAGE 7c5a10e9 (kept as a comment) -> the 3fb023cc digest.
+  override: decider-general gains build.args DECIDER_VLLM_BASE_IMAGE=<pin> plus VLLM_CACHE_ROOT /
+    FLASHINFER_WORKSPACE_BASE and compile-cache/decider-general{,-flashinfer} binds; embed-gemma2-embed gains
+    build.args ST_BASE_IMAGE=<pin> (build.args merge by key, so the hand-kept shape/embed files are untouched).
+  `docker compose config --quiet` on the gateway's own chain (yml, gpu, embed, shape, override): OK.
+  Every recreate used that chain explicitly with --no-deps (the CLI chain adds audio files the gateway never had).
+
+EMBEDDER (recreated 21:36:13Z): healthy 21:39:16Z, restarts 0, vllm 0.31.0 on sm_87; cold compile 50.89 s
+  (init 78.05 s). The official image's arch list omits 8.7; it serves anyway (as the 2026-10-14 decider did).
+  probe PASS: sim_paraphrase 0.8959 / sim_unrelated 0.2313 (nightly 0.8951 / 0.2320 — engine-level drift only).
+  measure x3: 71.9 / 72.1 / 73.9 docs/s, 55.6 / 55.5 / 54.1 ms   (nightly x3: 83.3 / 84.2 / 83.5 docs/s, ~48 ms)
+  => ~13 % LOWER throughput on 0.31.0 — the runs are tight on both engines, so this one is a measurement,
+     recorded as a NAMED COST (pooling lane; the c39 >=90 % decode bar is the cortex lane's).
+  soak 120 s: 1718/1718 HTTP 200, restarts 0.
+RERANKER (recreated 21:41:47Z): healthy 21:43:35Z, restarts 0, vllm 0.31.0; init 7.52 s.
+  probe PASS, identical ranking [0,2,1] (first call 18.1 s: warm-up).
+  measure x3: 37.0 / 2.2 / 36.2 docs/s   (nightly x3: 40.0 / 1.8 / 38.5) — the same 2nd-run outlier on both
+  engines (instrument artifact); ~7 % lower on the other two runs.
+GEMMA2-EMBED (rebuilt FROM the pin 21:44:16Z, healthy 21:46:20Z): torch 2.13.0+cu130, sentence-transformers 6.1.0,
+  CUDA available. previous image id sha256:dfc92400... kept for rollback.
+  text negative control PASS 0.91 / 0.6088 (identical to t9).
+  per-modality controls (scratch eg2_controls.py, same design as 2026-10-07 section 2; video NOT covered):
+    text->image "a solid red square": red 0.7167 > blue 0.6412 > green 0.6404   (2026-10-07: 0.7174 / 0.6428 / 0.6368)
+    text->audio "a pure musical tone": tone 0.8212 > noise 0.7774 > silence 0.7182 (2026-10-07: 0.8166 / 0.7754 / 0.7157)
+    text->code  "merge two sorted lists": merge 0.8178 > http 0.5485 > weather 0.5255
+    ALL_PASS. Synthetic inputs: they prove each path and the ordering, not retrieval quality (#296).
+DECIDER-GENERAL (rebuilt FROM the pin 21:47:29Z, recreated 21:47:42Z, healthy 21:56:10Z): vllm 0.31.0,
+  torch.compile 63.72 s (AOT cache now persisted under /cache/vllm), KV 56,661 tokens = 3.46x at 16,384
+  (identical to 2026-10-14), init 378.43 s. previous image id sha256:da9a14b3... kept for rollback.
+  RE-MEASURE (decision c53) — scripts/clef_eval/run_probe.py through the Orin gateway from the Spark,
+  probe set culture-dev/clef-probe-set @ cf9b911a (320 records / 418 questions), scored by compare.py
+  against the bf16 Spark reference:
+    run                          questions failed top-1 acc  agreement  KL mean  KL max   median/p90 ms
+    bf16 / Spark (ref)               418      0    0.9354       --        --       --     444 / 3014
+    W4A16 plain v0.31.0 (10-14)      418      0    0.9354     0.9904   0.00308  0.2579   506 / 3788
+    W4A16 v0.31.0-ubuntu2404         418      0    0.9378     0.9928   0.00295  0.2151   516 / 3833
+  promotable (agreement >= 0.97, no failed records): YES. The -ubuntu2404 base is MEASURED at 0.9928 (415/418),
+  so the decider's values are re-promoted with this transcript.
+
+END STATE (22:1xZ): all Orin lanes healthy on the pin; gateway 0.89.0; the 7c5a10e9 image stays on disk for rollback.
+NOT DONE HERE: the gemma2-embed and decider sidecars are not under the mg-logwrap wrapper (no boot hold / start
+  counter for them yet); drop_caches grant (needs the operator's sudo); jetson_clocks lock is the operator's.
