@@ -349,14 +349,14 @@ lobes status --pressure --json
 #  "pressure": {"swap_used_percent": 82.4, "iowait_percent": 0.8}}
 ```
 
-### Thermal shedding (lane safety, #304) — INERT in the container until #311
+### Thermal shedding (lane safety, #304)
 
-The pressure policy has a fourth shed signal, `thermal`. **Honesty first: the
-gateway container does NOT yet receive `LOBES_THERMAL_ZONES`,
-`LOBES_THERMAL_SHED_C` or `LOBES_THERMAL_RESUME_C`** (the gateway service has no
-`env_file` and no passthrough for them), so thermal shedding is **inert in a
-containerised gateway** today. That is issue #311 (deviation d1, not yet
-approved). Setting the keys in `.env` does not arm it until #311 lands.
+The pressure policy has a fourth shed signal, `thermal`. The gateway service has
+no `env_file`, so the fleet compose passes `LOBES_THERMAL_ZONES`,
+`LOBES_THERMAL_SHED_C` and `LOBES_THERMAL_RESUME_C` to it explicitly
+(issue #311). **A deployment whose compose predates #311 has no such passthrough**, so
+setting the keys in its `.env` does nothing until its compose gains the three
+lines.
 
 What it does once the keys reach the process (operators and agents):
 

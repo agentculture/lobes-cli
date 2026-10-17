@@ -177,9 +177,9 @@ jetson-thor-cli 0.6.0 and jetson-orin-cli 0.7.0 but those releases are **not yet
 out**, so until they ship lobes uses its sudo fallback for the clear only.
 
 **Thermal shedding (#304).** The gateway can shed full-tier requests with a 429
-when the card runs hot; see `gateway-fleet.md`. It is **inert inside the
-gateway container today** (issue #311) and its Spark bands are not a serving
-measurement.
+when the card runs hot; see `gateway-fleet.md`. A deployment scaffolded before
+issue #311 lacks the gateway passthrough and stays inert until its compose is
+updated, and the Spark bands are not a serving measurement.
 
 **Benchmark window (#304).** `lobes benchmark` locks clocks for its run and
 records the host conditions; see `measuring-lane-performance.md`.

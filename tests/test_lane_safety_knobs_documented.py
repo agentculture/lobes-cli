@@ -109,8 +109,11 @@ def test_operator_docs_name_every_knob() -> None:
         assert knob in corpus, f"{knob} is not named in the operator docs"
 
 
-def test_thermal_inert_in_container_is_stated_plainly() -> None:
-    """Issue #311: the honesty line must stay until the passthrough lands."""
-    for path in (FLEET_ENV, ROOT / "docs" / "gateway-fleet.md"):
-        text = path.read_text()
-        assert "#311" in text and "INERT" in text.upper(), path
+def test_gateway_receives_the_thermal_keys() -> None:
+    """Issue #311: the gateway has no env_file, so each thermal key needs an
+    explicit passthrough or the sampler reads nothing in the container."""
+    compose = (ROOT / "lobes" / "templates" / "fleet" / "docker-compose.yml").read_text()
+    # The gateway service block: from its key to the next 2-space service key.
+    gateway = re.split(r"\n  [a-z][a-z0-9_-]*:\n", compose.split("\n  gateway:\n", 1)[1], 1)[0]
+    for key in ("LOBES_THERMAL_ZONES", "LOBES_THERMAL_SHED_C", "LOBES_THERMAL_RESUME_C"):
+        assert f"- {key}=${{{key}:-}}" in gateway, key

@@ -468,10 +468,9 @@ this table is what each card declares.
   measured order is associate first, so that shape's operator types
   `LOBES_BOOT_ORDER` in `.env` (a shape has no env mechanism).
 - **Thermal.** An empty band means the shed signal is off, which is why Thor
-  and Orin shed nothing on temperature. Even where a band is set, the signal is
-  **inert in the gateway container until issue #311** lands; see
-  `gateway-fleet.md`. The live Spark acceptance under sustained load has not
-  run (issue #313).
+  and Orin shed nothing on temperature. The fleet compose passes the three
+  thermal keys to the gateway container (issue #311); see `gateway-fleet.md`.
+  The live Spark acceptance under sustained load has not run (issue #313).
 - **Compile cache.** Not a card fact: every card mounts the same
   per-lane cache (`docs/operating-a-deployment.md`).
 

@@ -261,7 +261,9 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # finding 4): `gateway` GAINED the one DECIDER_DOMAIN_CONTEXTS passthrough
     # line (each domain's max_model_len, read by /capabilities in place of the
     # catalog's native ceiling). `gateway` is the ONLY service moved.
-    "gateway": "6ae32706bd728fe85705045ac0cd63f6c92282f00128f5e5d6fb00fe819ec8dc",
+    # Recomputed for lane-safety #311 (deviation d1): the gateway gains the three
+    # LOBES_THERMAL_* passthroughs.
+    "gateway": "4e6b9931d7aa6d24e86a5ddd46290fc4165bccd9aee63ff6dd39610d88d96abd",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

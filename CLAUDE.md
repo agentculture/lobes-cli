@@ -1106,8 +1106,7 @@ signal, and an exclusive benchmark window. Every knob has an off value in the
 fleet `env.example`. Read `docs/contracts/lane-safety-runtime.md` and
 `docs/contracts/machine-cli-window.md` first, then `docs/operating-a-deployment.md`,
 `docs/measuring-lane-performance.md`, `docs/gateway-fleet.md` and `lobes explain
-lane-safety`. Open items: thermal shed is inert in the gateway container (#311),
-host conditions are on single-model/`--all-lobes` benchmarks only (#312), the
+lane-safety`. Open items: host conditions are on single-model/`--all-lobes` benchmarks only (#312), the
 live Spark acceptance has not run (#313), and every Thor line is
 DECLARED/UNVALIDATED (#108).
 

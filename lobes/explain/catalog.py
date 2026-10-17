@@ -1585,8 +1585,8 @@ during this delivery, so every Thor behaviour is DECLARED/UNVALIDATED (#108).
   `drop_caches_grant_missing`, `watcher_inactive` and `logwrap_stale`
   (`lobes doctor --refresh-logwrap --apply`).
 - **Thermal shedding** (`LOBES_THERMAL_ZONES`, `_SHED_C`, `_RESUME_C`; off:
-  empty): a 429 with `X-Lobes-Shed-Signal: thermal`. INERT in the gateway
-  container until issue #311; the latch advances on a request or `GET /status`;
+  empty): a 429 with `X-Lobes-Shed-Signal: thermal`. The compose passes the
+  keys to the gateway (#311); the latch advances on a request or `GET /status`;
   Spark bands come from #304's batch-job governor, not a serving measurement.
 - **Benchmark window** (`lobes benchmark`, `--no-lock`): locked clocks and
   `host.conditions` on single-model and `--all-lobes` results only (#312);
