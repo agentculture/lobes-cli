@@ -21,6 +21,12 @@ Because it calls the same :func:`decide` handle_post consults, the reported
 decision matches what a live request would receive — without issuing one.  This
 path is **strictly read-only**: it touches neither the deployment dir nor the
 Docker socket.
+
+Thermal (lane-safety t14): when the sample carries ``thermal_c`` the report
+adds a ``thermal`` block (the reading against ``LOBES_THERMAL_SHED_C`` /
+``LOBES_THERMAL_RESUME_C``) and ``shed_signal`` names the signal that sheds
+(``"thermal"`` above the shed band). The band comes from this process's
+environment, as the swap/iowait thresholds do.
 """
 
 from __future__ import annotations
@@ -38,6 +44,56 @@ from lobes.runtime import _pressure as _pressure_mod
 _UNSET = "(unset)"
 
 
+def _thermal_report(thermal_c: float | None) -> dict:
+    """The thermal reading against the card's shed band (lane-safety t14).
+
+    ``band`` is ``off`` (no shed band configured), ``unknown`` (no zone
+    reading), ``above_shed``, ``hysteresis`` (between resume and shed) or
+    ``below_resume``. ``shedding`` is ``None`` inside the hysteresis band: the
+    gateway sheds there only if it was already shedding, and that latch lives
+    in the gateway process (``GET /status`` → ``pressure.thermal_shedding``),
+    not in this one-shot read.
+    """
+    shed_c = _pressure_policy.THERMAL_SHED_C
+    resume_c = _pressure_policy.THERMAL_RESUME_C
+    shedding: bool | None = False
+    if shed_c is None:
+        band = "off"
+    elif thermal_c is None:
+        band = "unknown"
+    elif _pressure_policy.thermal_hot(thermal_c):
+        band, shedding = "above_shed", True
+    elif _pressure_policy.thermal_hot(thermal_c, latched=True):
+        band, shedding = "hysteresis", None
+    else:
+        band = "below_resume"
+    return {
+        "c": thermal_c,
+        "shed_c": shed_c,
+        "resume_c": resume_c,
+        "band": band,
+        "shedding": shedding,
+    }
+
+
+def _thermal_line(thermal: dict) -> str:
+    """One text line for ``status --pressure``: the reading and its band."""
+    if thermal["c"] is None:
+        return "thermal: n/a"
+    reading = f"thermal: {thermal['c']:.1f} C"
+    band = thermal["band"]
+    if band == "off":
+        return f"{reading} (no shed band)"
+    if band == "above_shed":
+        return f"{reading} (above shed {thermal['shed_c']:.1f} C — shedding)"
+    if band == "hysteresis":
+        return (
+            f"{reading} (between resume {thermal['resume_c']:.1f} C and shed "
+            f"{thermal['shed_c']:.1f} C — sheds only if already shedding)"
+        )
+    return f"{reading} (below resume {thermal['resume_c']:.1f} C)"
+
+
 def _cmd_status_pressure(json_mode: bool) -> int:
     """Handle ``lobes status --pressure`` — a read-only /proc snapshot.
 
@@ -50,11 +106,16 @@ def _cmd_status_pressure(json_mode: bool) -> int:
     deployment dir, no docker compose, no .env reads.
     """
     p = _pressure_mod.sample_pressure()
+    thermal_c = p.get("thermal_c")
+    # A one-shot CLI holds no latch history, so it asks decide() the
+    # unlatched question; the hysteresis band is reported as such below.
     d = _pressure_policy.decide(
         p["swap_used_percent"],
         p["iowait_percent"],
         requested_tier="main",
+        thermal_c=thermal_c,
     )
+    thermal = _thermal_report(thermal_c)
     # Under pressure a full-tier (main / senses) request is shed with 429; the
     # only tier that still serves is ``minor`` (the floor). ``servable_tier`` is
     # "minor" when busy, else "main" — the model resolves that tier (#85).
@@ -71,6 +132,8 @@ def _cmd_status_pressure(json_mode: bool) -> int:
         "reason": d["reason"],
         "retry_after": retry_after,
         "pressure": p,
+        "shed_signal": d["shed_signal"],
+        "thermal": thermal,
     }
 
     if json_mode:
@@ -92,6 +155,8 @@ def _cmd_status_pressure(json_mode: bool) -> int:
                     f"reason:  {result['reason']}",
                     f"swap:    {p['swap_used_percent']:.1f}%",
                     f"iowait:  {p['iowait_percent']:.1f}%",
+                    _thermal_line(thermal),
+                    f"signal:  {d['shed_signal'] or 'none'}",
                 ]
             ),
             json_mode=False,

@@ -168,3 +168,157 @@ def test_minor_request_served_even_under_pressure() -> None:
     headers = dict(resp.headers)
     assert headers["X-Lobes-Tier"] == "hand"
     assert headers["X-Lobes-Tier-Reason"] == "default"
+
+
+# --- thermal shed (lane-safety t14) -----------------------------------------
+
+import pytest  # noqa: E402
+
+from lobes.gateway import _pressure_policy as P  # noqa: E402
+
+
+@pytest.fixture
+def spark_band(monkeypatch):
+    """The spark card's declared band: shed above 91 C, resume below 86 C."""
+    monkeypatch.setattr(P, "THERMAL_SHED_C", 91.0)
+    monkeypatch.setattr(P, "THERMAL_RESUME_C", 86.0)
+
+
+def _thermal(t, latched=False):
+    return {
+        "swap_used_percent": 0.0,
+        "iowait_percent": 0.0,
+        "thermal_c": t,
+        "thermal_latched": latched,
+    }
+
+
+def _post(model, pressure, *, headers=(), behavior=None):
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener(behavior or {"hand": 200, "multimodal": 200, "primary": 200})
+    body = json.dumps({"model": model}).encode()
+    resp = S.handle_post(
+        table, cfg, "/v1/chat/completions", list(headers), body, opener, pressure=pressure
+    )
+    return resp, calls
+
+
+def test_hot_box_sheds_cortex_with_the_thermal_reason(spark_band) -> None:
+    resp, calls = _post("cortex", _thermal(93.0))
+    assert resp.status == 429
+    assert calls == []
+    headers = dict(resp.headers)
+    assert headers["Retry-After"] == str(S.BUSY_RETRY_AFTER_SECONDS)
+    assert headers["X-Lobes-Tier-Reason"] == "busy"  # busy semantics unchanged
+    assert headers[S.SHED_SIGNAL_HEADER] == "thermal"
+    err = json.loads(resp.body)["error"]
+    assert err["type"] == "server_busy"
+    assert err["code"] == "busy"
+    assert err["shed_signal"] == "thermal"
+
+
+def test_swap_shed_carries_no_shed_signal_header_byte_identity(spark_band) -> None:
+    resp, _ = _post("cortex", _HIGH_SWAP)
+    assert resp.status == 429
+    assert S.SHED_SIGNAL_HEADER not in dict(resp.headers)
+    assert "shed_signal" not in json.loads(resp.body)["error"]
+
+
+def test_hand_is_served_on_a_hot_box(spark_band) -> None:
+    resp, calls = _post("hand", _thermal(99.0, latched=True))
+    assert resp.status == 200
+    assert calls[0][0] == "hand"
+
+
+def test_override_bypasses_the_thermal_shed(spark_band) -> None:
+    # The handler turns `X-Lobes-Override` into handle_post's override flag.
+    assert S.is_override("1") is True
+    table, cfg = _fleet_cfg()
+    opener, calls = _opener({"hand": 200, "multimodal": 200, "primary": 200})
+    resp = S.handle_post(
+        table,
+        cfg,
+        "/v1/chat/completions",
+        [],
+        b'{"model":"cortex"}',
+        opener,
+        pressure=_thermal(99.0, latched=True),
+        override=True,
+    )
+    assert resp.status == 200
+    assert calls[0][0] == "primary"
+    assert dict(resp.headers)["X-Lobes-Tier-Reason"] == "manual_override"
+
+
+def test_unknown_temperature_never_sheds(spark_band) -> None:
+    resp, calls = _post("cortex", _thermal(None, latched=True))
+    assert resp.status == 200
+    assert calls[0][0] == "primary"
+
+
+def test_hysteresis_reaches_the_wire(spark_band) -> None:
+    assert _post("cortex", _thermal(88.0))[0].status == 200
+    assert _post("cortex", _thermal(88.0, latched=True))[0].status == 429
+    assert _post("cortex", _thermal(85.0, latched=True))[0].status == 200
+
+
+class _FixedCache:
+    def __init__(self, value):
+        self.value = value
+
+    def current(self):
+        return dict(self.value)
+
+
+def test_handler_latch_carries_hysteresis_across_requests(spark_band) -> None:
+    table, cfg = _fleet_cfg()
+    cache = _FixedCache({"swap_used_percent": 0.0, "iowait_percent": 0.0, "thermal_c": 92.0})
+    handler_cls = S._make_handler(table, cfg, pressure_cache=cache)
+    handler = handler_cls.__new__(handler_cls)  # no socket: only the pressure read
+    assert handler._current_pressure()["thermal_latched"] is True
+    cache.value["thermal_c"] = 88.0  # inside the hysteresis band → still hot
+    assert handler._current_pressure()["thermal_latched"] is True
+    cache.value["thermal_c"] = 85.0
+    assert handler._current_pressure()["thermal_latched"] is False
+    cache.value["thermal_c"] = 88.0  # climbing back, not past shed → cool
+    assert handler._current_pressure()["thermal_latched"] is False
+    # Two servers never share a latch.
+    other = S._make_handler(table, cfg, pressure_cache=cache)
+    assert other.thermal_latch is not handler_cls.thermal_latch
+
+
+def test_handler_without_a_pressure_cache_reads_none() -> None:
+    table, cfg = _fleet_cfg()
+    handler_cls = S._make_handler(table, cfg)
+    assert handler_cls.__new__(handler_cls)._current_pressure() is None
+
+
+def _fake_probe(_url, timeout):  # noqa: ARG001
+    return {"health": "ok", "metrics": {"running": 0, "waiting": 0}}
+
+
+def test_status_reports_thermal_reading_and_signal(spark_band) -> None:
+    from lobes.gateway._replicas import _busy_from_status
+
+    table, cfg = _fleet_cfg()
+    payload = S.fleet_status_payload(table, cfg, _thermal(88.0, latched=True), probe=_fake_probe)
+    pressure = payload["pressure"]
+    assert pressure["thermal_c"] == 88.0
+    assert pressure["thermal_shedding"] is True
+    assert pressure["shed_signal"] == "thermal"
+    assert pressure["shed"] is True
+    assert pressure["mode"] == "busy"
+    # A peer reading this /status counts the box as busy.
+    assert _busy_from_status(payload) is True
+
+    cool = S.fleet_status_payload(table, cfg, _thermal(None), probe=_fake_probe)["pressure"]
+    assert cool["thermal_c"] is None
+    assert cool["thermal_shedding"] is False
+    assert cool["shed_signal"] == ""
+    assert _busy_from_status({"pressure": cool}) is False
+
+
+def test_status_without_a_thermal_key_is_unchanged() -> None:
+    table, cfg = _fleet_cfg()
+    pressure = S.fleet_status_payload(table, cfg, _NO_PRESSURE, probe=_fake_probe)["pressure"]
+    assert set(pressure) == {"mode", "shed", "reason", "swap_used_percent", "iowait_percent"}

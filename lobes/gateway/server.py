@@ -119,7 +119,13 @@ from lobes.gateway._mesh_routing import (
     mesh_markers,
 )
 from lobes.gateway._mesh_wire import Announcement
-from lobes.gateway._pressure_policy import BUSY_RETRY_AFTER_SECONDS, decide
+from lobes.gateway._pressure_policy import (
+    BUSY_RETRY_AFTER_SECONDS,
+    SHED_SIGNAL_THERMAL,
+    ThermalLatch,
+    decide,
+    thermal_hot,
+)
 from lobes.gateway._readiness import PeerSpec, ReadinessCache
 from lobes.gateway._realtime import (
     HandshakeError,
@@ -501,6 +507,12 @@ def _log_strict_retry(tool_names: list[str], upstream_body: bytes) -> None:
 
 # The request header that forces the requested tier despite pressure (t6, #68).
 OVERRIDE_HEADER = "X-Lobes-Override"
+
+#: Names WHICH fact justified a 429 shed (lane-safety t14). Emitted only for a
+#: ``thermal`` shed, so a swap/iowait 429 stays byte-identical to the pre-t14
+#: wire (``X-Lobes-Tier-Reason: busy`` is unchanged on every shed). A mesh
+#: forward relays a peer's copy of it untouched, like every other peer header.
+SHED_SIGNAL_HEADER = "X-Lobes-Shed-Signal"
 _CONTENT_TYPE_JSON = "application/json"
 _OVERRIDE_TRUTHY = frozenset({"1", "true", "yes"})
 
@@ -1271,19 +1283,22 @@ def _mesh_lane_response(
     )
 
 
-def _busy_body(requested_tier: str) -> bytes:
-    """Return the JSON body for a 429 busy (shed) response."""
+def _busy_body(requested_tier: str, shed_signal: str = "") -> bytes:
+    """Return the JSON body for a 429 busy (shed) response.
+
+    ``shed_signal`` is added to the error object only for a ``thermal`` shed
+    (contract §7) — the swap/iowait body stays byte-identical to pre-t14.
+    """
     _LANE_LABELS = {"main": "cortex", "multimodal": "senses", "muse": "muse"}
     label = _LANE_LABELS.get(requested_tier, requested_tier)
-    return json.dumps(
-        {
-            "error": {
-                "message": f"{label} is under pressure; retry shortly",
-                "type": "server_busy",
-                "code": "busy",
-            }
-        }
-    ).encode("utf-8")
+    error = {
+        "message": f"{label} is under pressure; retry shortly",
+        "type": "server_busy",
+        "code": "busy",
+    }
+    if shed_signal == SHED_SIGNAL_THERMAL:
+        error["shed_signal"] = shed_signal
+    return json.dumps({"error": error}).encode("utf-8")
 
 
 # --- the proxy data plane: follow the referral (proxy-lobes t6, #115/#127) --
@@ -2317,18 +2332,26 @@ def _resolve_tier(
         pressure.get("iowait_percent", 0.0),
         requested,
         pooled=_role_is_pooled(table, requested, replica_snapshot, mesh_snapshot),
+        # Thermal (lane-safety t14): the handler's ThermalLatch already folded
+        # this reading into `thermal_latched`; absent keys → no thermal signal.
+        thermal_c=pressure.get("thermal_c"),
+        thermal_latched=bool(pressure.get("thermal_latched")),
     )
     # `X-Lobes-Override` outranks every load condition (never the feasibility
     # gate above); an overridden request is not shed, exactly as before.
     if verdict["shed"] and not override:
+        signal = verdict["shed_signal"]
+        headers = [
+            ("Retry-After", str(BUSY_RETRY_AFTER_SECONDS)),
+            ("X-Lobes-Tier-Reason", "busy"),
+        ]
+        if signal == SHED_SIGNAL_THERMAL:
+            headers.append((SHED_SIGNAL_HEADER, signal))
+        headers.append(("Content-Type", _CONTENT_TYPE_JSON))
         busy_response = GatewayResponse(
             status=429,
-            headers=[
-                ("Retry-After", str(BUSY_RETRY_AFTER_SECONDS)),
-                ("X-Lobes-Tier-Reason", "busy"),
-                ("Content-Type", _CONTENT_TYPE_JSON),
-            ],
-            body=_busy_body(verdict["requested_tier"]),
+            headers=headers,
+            body=_busy_body(verdict["requested_tier"], signal),
         )
         return busy_response, None, [], True
 
@@ -4422,10 +4445,14 @@ def fleet_status_payload(
     if pressure is not None:
         # Same decide() handle_post consults, probed with a full tier ("main"),
         # so the reported busy state matches what a live request would receive.
+        thermal_c = pressure.get("thermal_c")
+        latched = bool(pressure.get("thermal_latched"))
         d = decide(
             pressure.get("swap_used_percent", 0.0),
             pressure.get("iowait_percent", 0.0),
             requested_tier="main",
+            thermal_c=thermal_c,
+            thermal_latched=latched,
         )
         payload["pressure"] = {
             "mode": d["mode"],
@@ -4434,6 +4461,13 @@ def fleet_status_payload(
             "swap_used_percent": pressure.get("swap_used_percent", 0.0),
             "iowait_percent": pressure.get("iowait_percent", 0.0),
         }
+        if "thermal_c" in pressure:
+            # Lane-safety t14: the live PressureCache always carries the key
+            # (None = no reading). A sample without it — every pre-thermal
+            # caller — keeps the pre-t14 block byte for byte.
+            payload["pressure"]["thermal_c"] = thermal_c
+            payload["pressure"]["thermal_shedding"] = thermal_hot(thermal_c, latched)
+            payload["pressure"]["shed_signal"] = d["shed_signal"]
     return payload
 
 
@@ -5295,6 +5329,9 @@ class _Handler(BaseHTTPRequestHandler):
     # Non-blocking host-pressure provider (t6). None → the tier-downgrade layer
     # is skipped and tier aliases resolve via the static table (the t5 path).
     pressure_cache: PressureCache | None = None
+    # The thermal hysteresis state (lane-safety t14), one per server — never a
+    # global, so two gateways in one process cannot share a hot/cool latch.
+    thermal_latch: ThermalLatch | None = None
     # Non-blocking background readiness provider (issue #92). None → /v1/models
     # lists every wired backend and /capabilities readiness falls back to the
     # coarse `loaded` proxy (the offline/unit path). Read only via .current()
@@ -5517,7 +5554,7 @@ class _Handler(BaseHTTPRequestHandler):
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.
             # The cached pressure sample surfaces the busy-policy state (#85).
-            pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
+            pressure = self._current_pressure()
             self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
         elif route == "/v1/models":
             self._get_v1_models(mesh_snapshot=mesh_snapshot)
@@ -6163,7 +6200,7 @@ class _Handler(BaseHTTPRequestHandler):
         else:
             # Read pressure from the cache (O(1), never samples here) and the
             # override header so the tier-downgrade layer runs in front of routing.
-            pressure = self.pressure_cache.current() if self.pressure_cache is not None else None
+            pressure = self._current_pressure()
             override = is_override(self.headers.get(OVERRIDE_HEADER))
             resp = handle_post(
                 self.table,
@@ -6313,6 +6350,23 @@ class _Handler(BaseHTTPRequestHandler):
                 "render_payload_too_large",
             ),
         )
+
+    def _current_pressure(self) -> dict | None:
+        """The cached pressure sample, with the thermal latch advanced.
+
+        O(1), never samples. When the sample carries ``thermal_c`` (the live
+        PressureCache always does) this server's :class:`ThermalLatch` folds
+        the reading in and the result rides along as ``thermal_latched``, so
+        the pure :func:`decide` downstream sees the hysteresis state. Both the
+        request path and ``GET /status`` read through here, so the latch
+        advances on whichever arrives first and both report the same state.
+        """
+        if self.pressure_cache is None:
+            return None
+        pressure = self.pressure_cache.current()
+        if "thermal_c" in pressure and self.thermal_latch is not None:
+            pressure["thermal_latched"] = self.thermal_latch.update(pressure.get("thermal_c"))
+        return pressure
 
     def _relay_buffered(self, resp: GatewayResponse) -> None:
         data = resp.upstream.read_all()
@@ -6770,6 +6824,7 @@ def _make_handler(
             "table": table,
             "server_config": cfg,
             "pressure_cache": pressure_cache,
+            "thermal_latch": ThermalLatch(),
             "readiness_cache": readiness_cache,
             # One per server, shared across handler threads (#228).
             "rejection_log": RejectionLog(),
