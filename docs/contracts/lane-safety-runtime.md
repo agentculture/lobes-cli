@@ -128,6 +128,17 @@ hold     = release − host uptime, if positive
   by the invoking user, before any container mounts it.
 - Wipe a lane's cache by deleting its directory with no lane running. No sudo is
   needed.
+- `lobes doctor` reports `compile_cache_unmounted` (warn: a vLLM service lacks
+  the `/cache/vllm` bind or `VLLM_CACHE_ROOT`; the remediation is
+  `docker-compose.override.yml` lines, never `init --force`) and
+  `compile_cache_size` (info). Alongside them: `logwrap_stale` (warn; fixed by
+  `lobes doctor --refresh-logwrap --apply`, which writes `mg-logwrap.sh.bak`
+  then the packaged wrapper and nothing else), `jetson_clocks_locked` (warn:
+  `window show` reports `active` while no benchmark window holds the host
+  lock), `drop_caches_grant_missing` (warn, Spark/Thor/Orin only) and
+  `watcher_inactive` (warn when the manifest exists and the unit is not
+  active; not installed is an info pass). None is an error, and each is
+  omitted when it does not apply.
 - **Verified 2026-10-17** by read-only inspection (`docker run --rm
   --entrypoint bash`, no GPU, no server) of both the pinned nightly
   (`vllm/vllm-openai@sha256:8bd082c2...`, vllm `0.26.1rc1.dev942+g5a4c8d992`) and

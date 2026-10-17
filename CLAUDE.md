@@ -1082,7 +1082,7 @@ fleet down`. `lobes switch <model>` is a down+up with a model swap. `lobes statu
 `fleet down`, `tunnel`) default to **dry-run**; require `--apply` to commit. Agents
 call CLIs in loops, so safe-by-default is mandatory. The read-only verbs (`status`,
 `assess`, `benchmark`, `logs`, `overview`, `whoami`, `explain`, `doctor`) never
-change the world — with two opt-in exceptions, both on `doctor`:
+change the world — with three opt-in exceptions, all on `doctor`:
 
 - **`doctor --fix`** is the heal lane (#119) and follows the same convention
   (`--fix` alone prints the missing-only heal plan; `--fix --apply` writes
@@ -1094,6 +1094,10 @@ change the world — with two opt-in exceptions, both on `doctor`:
   was broken), so the re-pin gets its own named flag rather than relaxing
   that lane. Same dry-run convention — `--repin-version` alone prints the
   plan, `--apply` commits it.
+- **`doctor --refresh-logwrap`** (lane safety, t16) replaces a STALE
+  `mg-logwrap.sh` with the packaged copy, writing exactly two paths:
+  `mg-logwrap.sh.bak` (the current file) then `mg-logwrap.sh`. Its own flag
+  for the same reason as `--repin-version`; same dry-run convention.
 
 ## Build / test / publish
 
