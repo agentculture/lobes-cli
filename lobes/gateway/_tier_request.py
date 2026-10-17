@@ -36,9 +36,14 @@ from lobes.runtime._pressure import sample_pressure
 # its alias table by.
 _KNOWN_TIERS: frozenset[str] = frozenset(TIER_ROLE)
 
-_ZERO_PRESSURE: dict[str, float] = {"swap_used_percent": 0.0, "iowait_percent": 0.0}
+# thermal_c None = unknown (never 0): a missing reading must not look like "cool".
+_ZERO_PRESSURE: dict[str, float | None] = {
+    "swap_used_percent": 0.0,
+    "iowait_percent": 0.0,
+    "thermal_c": None,
+}
 
-Sampler = Callable[[], "dict[str, float]"]
+Sampler = Callable[[], "dict[str, float | None]"]
 
 
 def is_tier_alias(name: object) -> bool:
@@ -193,22 +198,24 @@ class PressureCache:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # Seed synchronously so the very first request never blocks on a sample.
-        self._value: dict[str, float] = self._read()
+        self._value: dict[str, float | None] = self._read()
         if start:
             self.start()
 
-    def _read(self) -> dict[str, float]:
+    def _read(self) -> dict[str, float | None]:
         """Sample once, degrading to the zero baseline if the sampler raises."""
         try:
             sampled = self._sampler()
+            thermal = sampled.get("thermal_c")
             return {
-                "swap_used_percent": float(sampled.get("swap_used_percent", 0.0)),
-                "iowait_percent": float(sampled.get("iowait_percent", 0.0)),
+                "swap_used_percent": float(sampled.get("swap_used_percent") or 0.0),
+                "iowait_percent": float(sampled.get("iowait_percent") or 0.0),
+                "thermal_c": None if thermal is None else float(thermal),
             }
         except Exception:  # nosec B110 — pressure is best-effort; never crash the gateway
             return dict(_ZERO_PRESSURE)
 
-    def current(self) -> dict[str, float]:
+    def current(self) -> dict[str, float | None]:
         """Return a copy of the cached pressure dict. Never samples, never blocks."""
         with self._lock:
             return dict(self._value)

@@ -164,6 +164,84 @@ def test_sample_pressure_returns_expected_keys(monkeypatch: pytest.MonkeyPatch) 
     result = _pressure.sample_pressure()
 
     assert isinstance(result, dict)
-    assert set(result.keys()) == {"swap_used_percent", "iowait_percent"}
+    assert set(result.keys()) == {"swap_used_percent", "iowait_percent", "thermal_c"}
     assert isinstance(result["swap_used_percent"], float)
     assert isinstance(result["iowait_percent"], float)
+
+
+# ---------------------------------------------------------------------------
+# Thermal sampler (fake sysfs trees mirroring the probed layouts)
+# ---------------------------------------------------------------------------
+
+
+def _tree(root, zones):
+    """zones: list of (type, temp-or-None).  None => temp read raises ENODATA."""
+    base = root / "class" / "thermal"
+    base.mkdir(parents=True)
+    for i, (ztype, temp) in enumerate(zones):
+        z = base / f"thermal_zone{i}"
+        z.mkdir()
+        (z / "type").write_text(ztype + "\n")
+        if temp is None:
+            # A directory cannot be read as a file -> OSError, like ENODATA.
+            (z / "temp").mkdir()
+        else:
+            (z / "temp").write_text(f"{temp}\n")
+    return root
+
+
+SPARK = [("acpitz", t) for t in (66200, 52700, 59400, 53100, 66200, 52800, 54800)]
+ORIN = [
+    ("cpu-thermal", 58250),
+    ("gpu-thermal", 51656),
+    ("cv0-thermal", None),
+    ("cv1-thermal", None),
+    ("cv2-thermal", None),
+    ("soc0-thermal", 53562),
+    ("soc1-thermal", 54875),
+    ("soc2-thermal", 53000),
+    ("tj-thermal", 58093),
+]
+
+
+def _env(root, zones):
+    return {"LOBES_SYS_ROOT": str(root), "LOBES_THERMAL_ZONES": zones}
+
+
+def test_thermal_spark_hottest_acpitz(tmp_path):
+    """Probed 2026-10-17, model-gear-gateway uid 10001 on spark: readable, no mount."""
+    _tree(tmp_path, SPARK)
+    assert _pressure.read_thermal_c(_env(tmp_path, "acpitz")) == 66.2
+
+
+def test_thermal_orin_tj_only_and_enodata_skipped(tmp_path):
+    """Probed 2026-10-17 on orin: cv0-2 fail ENODATA; tj-thermal selected."""
+    _tree(tmp_path, ORIN)
+    assert _pressure.read_thermal_c(_env(tmp_path, "tj-thermal")) == 58.093
+    # Selecting an ENODATA zone alone yields unknown, not an error.
+    assert _pressure.read_thermal_c(_env(tmp_path, "cv0-thermal")) is None
+    # Multiple selectors with whitespace: hottest wins.
+    assert _pressure.read_thermal_c(_env(tmp_path, " tj-thermal , gpu-thermal ")) == 58.093
+
+
+def test_thermal_no_match_unset_and_missing_root(tmp_path):
+    _tree(tmp_path, SPARK)
+    assert _pressure.read_thermal_c(_env(tmp_path, "tj-thermal")) is None
+    assert _pressure.read_thermal_c(_env(tmp_path, "")) is None
+    assert _pressure.read_thermal_c({"LOBES_SYS_ROOT": str(tmp_path)}) is None
+    assert _pressure.read_thermal_c(_env(tmp_path / "nope", "acpitz")) is None
+
+
+def test_thermal_implausible_skipped(tmp_path):
+    _tree(tmp_path, [("acpitz", 200000), ("acpitz", -50000), ("acpitz", "junk"), ("acpitz", 40000)])
+    assert _pressure.read_thermal_c(_env(tmp_path, "acpitz")) == 40.0
+
+
+def test_sample_pressure_carries_thermal(tmp_path, monkeypatch):
+    _tree(tmp_path, SPARK)
+    monkeypatch.setenv("LOBES_SYS_ROOT", str(tmp_path))
+    monkeypatch.setenv("LOBES_THERMAL_ZONES", "acpitz")
+    monkeypatch.setattr(_pressure, "_SAMPLE_INTERVAL_SECONDS", 0)
+    assert _pressure.sample_pressure()["thermal_c"] == 66.2
+    monkeypatch.delenv("LOBES_THERMAL_ZONES")
+    assert _pressure.sample_pressure()["thermal_c"] is None
