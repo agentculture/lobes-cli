@@ -363,6 +363,11 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
         "LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}",
         "LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}",
     ]
+    runs_vllm = spec["backend"] == "clef-vllm"
+    if runs_vllm:
+        # Lane-safety t8: clef-vllm runs vLLM in-process (LLM(...)), so it has a
+        # torch_compile_cache to keep. Off value /root/.cache/vllm = writable layer.
+        environment.append("VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}")
     lines = [
         f"  {service}:",
         "    build:",
@@ -385,6 +390,10 @@ def _decider_service_lines(domain: str, spec: Mapping[str, str], gpu_access: str
         "      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface",
         "      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear",
         "      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro",
+    ]
+    if runs_vllm:
+        lines.append(f"      - ${{LOBES_COMPILE_CACHE_DIR:-./compile-cache}}/{service}:/cache/vllm")
+    lines += [
         '    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]',
         # The image ENTRYPOINT (Dockerfile.decider / .decider-vllm), respelled.
         '    command: ["python3", "-m", "lobes.decider_sidecar.server"]',
