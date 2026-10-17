@@ -1,0 +1,115 @@
+VERIFY — changing the CPU cap on a RUNNING vLLM GPU container (DGX Spark GB10, vLLM 0.31.0)
+Issue #310 · plan vllm-0-31-0-fleet task t3 · 2026-10-17 · operator: lobes (Claude)
+
+QUESTION
+  ~/odm/telemetry/governor.log (2026-10-14) retired the graded thermal governor after
+  "docker update --cpus broke CUDA in the container" (two cudaErrorNotPermitted exits in a
+  quantization job), then noted the cause was never established. Before the graded governor is
+  packaged (t4) and attached to the Spark's cortex lane (t12): is `docker update --cpus` (and
+  pause/unpause) safe on a running vLLM container that is actively serving?
+
+SETUP
+  image   vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+          (v0.31.0-ubuntu2404, arm64, local id 894e3b47…) — vllm 0.31.0, the fleet pin under #310
+  model   LiquidAI/LFM2.5-1.2B-Instruct (offline, HF cache), --gpu-memory-utilization 0.08,
+          --max-model-len 4096
+  box     the Spark (GB10); no other vLLM lane up; the box's stt/realtime/bluetts/gateway kept running
+  container  throwaway `t3-cpucap-test`, --gpus all, --memory 16g, --cpus 16 at start, no host
+          port (requests via docker exec from inside), removed at the end
+  governor  the pause-only ~/odm/telemetry/governor.sh (HI 93 C / LO 84 C) attached to the test
+          container for both runs, per the task instruction
+  script  scratchpad cpucap_test.sh (run 1) / cpucap_test2.sh (run 2): boot -> one request ->
+          request loop(s) -> docker update --cpus 16,12,8,4,12,16 at 30 s intervals -> docker pause
+          10 s -> docker unpause -> one request -> grep the container log for
+          cudaError|CUDA error|NotPermitted|Traceback|EngineDeadError
+
+RUN 1 — IDLE CONTROL (the request loop never started: the script created its sentinel file after
+        starting the loop; kept as the idle case, not as the load test)
+  2026-10-17T18:34:48Z image vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+  2026-10-17T18:34:59Z vllm version: 0.31.0
+  2026-10-17T18:37:17Z healthy after ~140 s
+  2026-10-17T18:37:19Z before: 200 stop 119
+  2026-10-17T18:37:34Z docker update --cpus 16: ok (NanoCpus=16000000000)
+  2026-10-17T18:38:04Z docker update --cpus 12: ok (NanoCpus=12000000000)
+  2026-10-17T18:38:34Z docker update --cpus 8: ok (NanoCpus=8000000000)
+  2026-10-17T18:39:04Z docker update --cpus 4: ok (NanoCpus=4000000000)
+  2026-10-17T18:39:34Z docker update --cpus 12: ok (NanoCpus=12000000000)
+  2026-10-17T18:40:04Z docker update --cpus 16: ok (NanoCpus=16000000000)
+  2026-10-17T18:40:34Z paused
+  2026-10-17T18:41:06Z after: 200 stop 119
+  2026-10-17T18:41:06Z running=true restarts=0
+  2026-10-17T18:41:06Z loop requests: 0 total, 0 ok, 0 errors
+  2026-10-17T18:41:06Z cuda/err lines in container log: 0
+  2026-10-17T18:41:08Z removed t3-cpucap-test
+
+RUN 2 — UNDER LOAD (three parallel request loops; every cap change lands with requests in flight)
+  2026-10-17T18:41:23Z image vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+  2026-10-17T18:41:31Z vllm version: 0.31.0
+  2026-10-17T18:43:44Z healthy after ~135 s
+  2026-10-17T18:43:46Z before: 200 stop 119
+  2026-10-17T18:44:01Z in-flight before cap 16: 18:43:59 w1 200 stop 119 18:43:59 w2 200 stop 119 18:43:59 w3 200 stop 119 
+  2026-10-17T18:44:01Z docker update --cpus 16: ok (NanoCpus=16000000000)
+  2026-10-17T18:44:31Z in-flight before cap 12: 18:44:28 w1 200 stop 119 18:44:28 w2 200 stop 119 18:44:28 w3 200 stop 119 
+  2026-10-17T18:44:31Z docker update --cpus 12: ok (NanoCpus=12000000000)
+  2026-10-17T18:45:01Z in-flight before cap 8: 18:45:00 w1 200 stop 119 18:45:00 w2 200 stop 119 18:45:00 w3 200 stop 119 
+  2026-10-17T18:45:01Z docker update --cpus 8: ok (NanoCpus=8000000000)
+  2026-10-17T18:45:31Z in-flight before cap 4: 18:45:29 w1 200 stop 119 18:45:29 w2 200 stop 119 18:45:29 w3 200 stop 119 
+  2026-10-17T18:45:31Z docker update --cpus 4: ok (NanoCpus=4000000000)
+  2026-10-17T18:46:01Z in-flight before cap 12: 18:45:59 w1 200 stop 119 18:45:59 w2 200 stop 119 18:45:59 w3 200 stop 119 
+  2026-10-17T18:46:01Z docker update --cpus 12: ok (NanoCpus=12000000000)
+  2026-10-17T18:46:31Z in-flight before cap 16: 18:46:29 w1 200 stop 119 18:46:29 w2 200 stop 119 18:46:29 w3 200 stop 119 
+  2026-10-17T18:46:32Z docker update --cpus 16: ok (NanoCpus=16000000000)
+  2026-10-17T18:47:02Z paused
+  2026-10-17T18:47:35Z after: 200 stop 119
+  2026-10-17T18:47:35Z running=true restarts=0
+  2026-10-17T18:47:35Z loop requests: 432 total, 432 ok, 0 errors
+  2026-10-17T18:47:35Z cuda/err lines in container log: 0
+  2026-10-17T18:47:36Z removed t3-cpucap-test
+  request log during the pause window (18:47:01 -> 18:47:11):
+    18:47:01 w1 200 stop 119
+    18:47:01 w2 200 stop 119
+    18:47:01 w3 200 stop 119
+    18:47:04 w1 200 stop 119
+    18:47:04 w2 200 stop 119
+    18:47:04 w3 200 stop 119
+    18:47:05 w1 200 stop 119
+    18:47:05 w2 200 stop 119
+    18:47:05 w3 200 stop 119
+    18:47:07 w1 200 stop 119
+    18:47:07 w2 200 stop 119
+    18:47:07 w3 200 stop 119
+    18:47:08 w1 200 stop 119
+    18:47:08 w2 200 stop 119
+    18:47:08 w3 200 stop 119
+    18:47:10 w1 200 stop 119
+    18:47:10 w2 200 stop 119
+    18:47:10 w3 200 stop 119
+    18:47:11 w1 200 stop 119
+    18:47:11 w2 200 stop 119
+    18:47:11 w3 200 stop 119
+
+GOVERNOR LOG (~/odm/telemetry/governor.log, both runs)
+  18:40:35 resume tz=66000     <- run 1: the governor undid the script's deliberate pause within ~1 s
+  18:47:03 resume tz=77600     <- run 2: same
+  The script's own `docker unpause` then had nothing to do (no "unpaused" line in either run).
+
+VERDICT: SAFE
+  `docker update --cpus` stepped 16 -> 12 -> 8 -> 4 -> 12 -> 16 on a running vLLM 0.31.0 container,
+  idle (run 1) and under three concurrent request streams (run 2): every update applied
+  (NanoCpus confirmed), 432/432 load requests returned 200 (finish=stop, 119 tokens), 0 errors,
+  0 restarts, and 0 CUDA/NotPermitted/Traceback/EngineDead lines in the container log.
+  docker pause/unpause also left the container serving, but each pause lasted only ~1 s (below).
+  => t4 uses `docker update --cpus` as the CPU-cap mechanism.
+
+SCOPE — what this does NOT prove
+  * one small model (1.2B, util 0.08), not the 27B cortex lane at util 0.58; the cortex lane's
+    first live run under the graded governor is t12's acceptance;
+  * GB10 + vLLM 0.31.0 only — not the Thor, the Orin, or the nightly;
+  * the 2026-10-14 failures were in a torch quantization job, not vLLM; this neither reproduces
+    nor explains them — it only shows the same mechanism is safe for a serving vLLM container;
+  * pause durations of ~1 s only (see the finding below), not a long thermal pause.
+
+FINDING FOR t4 (the graded governor)
+  The pause-only governor resumes ANY paused container below its LO threshold, including a pause
+  something else made. Two pausers on one container fight. The graded governor must track and
+  resume only the pauses it issued itself.

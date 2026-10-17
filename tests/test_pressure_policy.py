@@ -787,8 +787,14 @@ _DOCKER_PAUSE_UPDATE = [
 ]
 
 
+# The one sanctioned exception (contract §9): the opt-in, operator-started
+# `lobes governor run --apply`. The serving path (gateway, lifecycle verbs,
+# watcher) still never throttles a container.
+_GOVERNOR_FILES = {"runtime/_governor.py", "cli/_commands/governor.py"}
+
+
 def test_no_docker_pause_or_update_anywhere_in_lobes() -> None:
-    """Thermal shedding answers 429s; it never throttles a container (§8)."""
+    """Thermal shedding answers 429s; the serving path never throttles a container (§8)."""
     import re
     from pathlib import Path
 
@@ -799,6 +805,8 @@ def test_no_docker_pause_or_update_anywhere_in_lobes() -> None:
     hits = []
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix in {".pyc", ".png", ".jpg", ".wav"}:
+            continue
+        if path.relative_to(root).as_posix() in _GOVERNOR_FILES:
             continue
         try:
             text = path.read_text(encoding="utf-8")

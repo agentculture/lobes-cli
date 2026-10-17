@@ -94,7 +94,7 @@ def effective_reasoning(clean_vllm_stubs):
     vllm stubs (the plugin is self-contained, so the helper lives inside it).
     """
 
-    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
         return reasoning
 
     _install_stub_vllm(fake_get_structural_tag)
@@ -199,7 +199,7 @@ def _install_stub_vllm(get_structural_tag, *, define_class: bool = True) -> _Fak
 
 
 def test_plugin_registers_under_pinned_name(clean_vllm_stubs) -> None:
-    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
         return {"reasoning": reasoning}
 
     manager = _install_stub_vllm(fake_get_structural_tag)
@@ -213,7 +213,7 @@ def test_plugin_registers_under_pinned_name(clean_vllm_stubs) -> None:
 def test_plugin_forwards_reasoning_false_when_thinking_disabled(clean_vllm_stubs) -> None:
     calls = []
 
-    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
         calls.append(reasoning)
         return {"reasoning": reasoning}
 
@@ -232,7 +232,7 @@ def test_plugin_forwards_reasoning_false_when_thinking_disabled(clean_vllm_stubs
 def test_plugin_forwards_reasoning_true_when_kwargs_absent(clean_vllm_stubs) -> None:
     calls = []
 
-    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
         calls.append(reasoning)
         return {"reasoning": reasoning}
 
@@ -289,3 +289,85 @@ def test_sanity_fake_parent_signature_has_keyword_only_reasoning() -> None:
 
     sig = inspect.signature(fake_get_structural_tag)
     assert sig.parameters["reasoning"].kind == inspect.Parameter.KEYWORD_ONLY
+
+
+# ---------------------------------------------------------------------------
+# vLLM 0.31.0 `strict_level` keyword vs the nightly's signature
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_forwards_strict_level_to_parent_on_0_31_signature(clean_vllm_stubs) -> None:
+    calls = []
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
+        calls.append((reasoning, strict_level))
+        return {"reasoning": reasoning, "strict_level": strict_level}
+
+    _install_stub_vllm(fake_get_structural_tag)
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+
+    parser = mod.Qwen3ThinkingToolParser()
+    request = _AttrRequest(chat_template_kwargs=None)
+
+    # Exactly how 0.31.0's abstract_parser calls it.
+    result = parser.get_structural_tag(request, reasoning=False, strict_level="strict")
+
+    assert calls == [(True, "strict")]  # reasoning re-derived, strict_level forwarded
+    assert result == {"reasoning": True, "strict_level": "strict"}
+
+
+def test_plugin_omits_strict_level_when_caller_did_not_pass_it(clean_vllm_stubs) -> None:
+    # 0.31.0 parent: the parent's own default applies when we are not given one.
+    calls = []
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
+        calls.append(strict_level)
+
+    _install_stub_vllm(fake_get_structural_tag)
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+
+    mod.Qwen3ThinkingToolParser().get_structural_tag(_AttrRequest(), reasoning=False)
+
+    assert calls == ["auto"]
+
+
+def test_plugin_works_on_nightly_signature_without_strict_level(clean_vllm_stubs) -> None:
+    calls = []
+
+    def nightly_get_structural_tag(self, request, *, reasoning: bool = False):
+        calls.append(reasoning)
+        return {"reasoning": reasoning}
+
+    _install_stub_vllm(nightly_get_structural_tag)
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+
+    parser = mod.Qwen3ThinkingToolParser()
+    request = _AttrRequest(chat_template_kwargs={"enable_thinking": False})
+
+    # No strict_level passed: must not reach a parent that cannot accept it.
+    assert parser.get_structural_tag(request, reasoning=False) == {"reasoning": False}
+    assert calls == [False]
+
+
+def test_import_surface_assert_raises_when_strict_level_not_keyword_only(
+    clean_vllm_stubs,
+) -> None:
+    def positional_strict_level(self, request, strict_level="auto", *, reasoning: bool = False):
+        return None
+
+    _install_stub_vllm(positional_strict_level)
+
+    with pytest.raises(RuntimeError, match="strict_level"):
+        importlib.import_module(PLUGIN_MODULE_NAME)
+
+
+def test_import_surface_assert_raises_on_unknown_required_keyword(clean_vllm_stubs) -> None:
+    # A future upstream signature adding a required kw-only param would fail
+    # at the first strict call; it must fail at boot instead.
+    def future_get_structural_tag(self, request, *, reasoning: bool = False, mode):
+        return None
+
+    _install_stub_vllm(future_get_structural_tag)
+
+    with pytest.raises(RuntimeError, match="mode"):
+        importlib.import_module(PLUGIN_MODULE_NAME)

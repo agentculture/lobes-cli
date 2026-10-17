@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.89.0] - 2026-10-17
+
+### Added
+
+- `lobes doctor --refresh-plugin` (dry-run by default, `--apply` writes a `.bak` then the packaged copy) and a `plugin_stale` doctor finding: each box mounts its own copy of the qwen3_coder_thinking tool-parser plugin, and `doctor --fix` only ever wrote it when missing (#310)
+- `lobes governor run --container NAME`: the graded thermal CPU-cap governor (hottest zone <84 C 16 cpus, <88 12, <91 8, <93.5 4, >=93.5 pause, resume below 86 C at 4), dry-run unless `--apply`, resumes only pauses it made itself, restores the cap on exit; `docker update --cpus` measured safe on a running vLLM 0.31.0 container (docs/evidence/2026-10-17-verify-cpucap-running-vllm-spark.txt) (#310)
+- Spec, plan and approved split for the fleet move to vLLM 0.31.0 (docs/specs|plans/2026-10-17-vllm-0-31-0-fleet*.md) and the spark2 nightly baseline (docs/evidence/2026-10-17-baseline-nightly-spark2.txt) (#310)
+
+### Changed
+
+- Lane-safety contract section 8: the serving path still never pauses or `docker update`s a container; the opt-in `lobes governor run --apply` is the one documented exception (section 9)
+
+### Fixed
+
+- The qwen3_coder_thinking plugin accepts vLLM 0.31.0's `strict_level` keyword on `get_structural_tag` (forwarded only when the caller passes it), so strict tool calls no longer raise TypeError on 0.31.0 while the nightly keeps working; the load-time guard now fails at boot on an unexpected required parameter (#310)
+
 ## [0.88.0] - 2026-10-17
 
 ### Added

@@ -1,0 +1,1387 @@
+{
+  "slug": "vllm-0-31-0-fleet",
+  "title": "vllm 0.31.0 fleet",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-10-17T16:54:43Z",
+  "updated": "2026-10-17T18:55:03Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "Every lobes vLLM lane in the mesh runs official vLLM v0.31.0: the packaged templates default to one pinned v0.31.0 digest, and Spark, spark2, Thor and Orin each serve their hosted lanes on it with re-measured, evidence-backed budgets",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "The announcement holds only when every box's in-scope vLLM lanes report vllm 0.31.0 AND the template default (not a per-box override) is what puts them there \u2014 a box still on an override counts as not done",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h24",
+          "text": "The announcement holds only when every box's in-scope vLLM lanes report vllm 0.31.0 AND each box's .env VLLM_NIGHTLY_IMAGE equals the template default with no vllm image: line in any compose override (replaces h1, whose 'template default, not a per-box override' cannot be met \u2014 c41)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "per box: docker inspect every running vLLM container -> image digest = the v0.31.0-ubuntu2404 index/arm64 digest and python3 -c 'import vllm;print(vllm.__version__)' = 0.31.0; repo: git grep the old digests in lobes/templates returns nothing",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "before_state",
+      "text": "Three vLLM engines are deployed today (live survey 2026-10-17): nightly 8bd082c2 (0.26.1rc1.dev942) on spark2's primary/embed/rerank/hand and Thor's embed/rerank; old nightly 7c5a10e9 (0.23.1rc1.dev672) on the Orin (.env VLLM_NIGHTLY_IMAGE still 7c5a10e9) and in Dockerfile.vllm-gemma4/embed-st/decider bases; v0.31.0-ubuntu2404 (digest 3fb023cc) already serving Thor's worker via a hand-typed override.yml image line. The Spark runs NO vLLM lane (COMPOSE_PROFILES=innereye).",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "The before-state is the live 2026-10-17 survey, re-checked on the day each box is switched (docker ps + image inspect), since the boxes drift",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "requirement",
+      "text": "The shared template pin moves: VLLM_NIGHTLY_IMAGE default changes from the 8bd082c2 digest to the v0.31.0-ubuntu2404 digest at all 12 image lines (fleet/env.example:48, fleet/docker-compose.yml:53,442,538,607,822,1464,1769, fleet/docker-compose.embed.yml:83,150,214,278) and the 3 comment mentions (env.example:99, docker-compose.yml:122,208), carried through HAND_IMAGE/WORKER_IMAGE/ASSOCIATE_IMAGE fallbacks; the provenance mentions in lobes/catalog.py, profiles/builtin/thor.toml and builtin_shapes/thor-worker.toml stay, since they record what was measured on the nightly",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "All 12 literal sites change together and no compose file keeps the 8bd082c2 default: 'git grep 8bd082c2 lobes/templates' returns nothing after the flip",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "The shared template pin moves: VLLM_NIGHTLY_IMAGE default changes from the 8bd082c2 digest to one pinned v0.31.0 digest at all 12 literal sites (fleet/env.example:48, fleet/docker-compose.yml:53,442,538,607,822,1464,1769, fleet/docker-compose.embed.yml:83,150,214,278), carried through HAND_IMAGE/WORKER_IMAGE/ASSOCIATE_IMAGE fallbacks",
+          "kind": "requirement",
+          "reason": "challenge pass re-count (lapse): comment mentions were missed"
+        }
+      ]
+    },
+    {
+      "id": "c4",
+      "kind": "requirement",
+      "text": "The qwen3_coder_thinking tool-parser plugin is made 0.31.0-compatible: lobes/vllm_plugins/qwen3_thinking_tool_parser.py:105 overrides get_structural_tag(self, request, *, reasoning=False) but v0.31.0 parser/abstract_parser.py calls it with strict_level=self.tool_strict_level -> TypeError on every strict tool call to cortex; the override must accept and forward strict_level (or **kwargs), and the plugin's tests (tests/test_vllm_plugin_thinking.py:97,202,216,235 stub the old signature) must exercise the new keyword",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "The plugin fix is proven on 0.31.0, not only in unit tests: a test calls the override with strict_level= and a live strict tool call to cortex on 0.31.0 returns a parsed tool call with no TypeError in the lane log; the fix also keeps working on the nightly until every box has moved",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "assumption",
+      "text": "Every other serve flag/env the fleet compose uses exists on v0.31.0 (static grep of the 0.31.0 source): reasoning parsers qwen3/gemma4/nemotron_v3, tool parsers qwen3_coder/gemma4/lfm2/hermes, --tool-parser-plugin, --default-chat-template-kwargs, --attention-config, --runner=pooling/--convert, --enable-lora/--lora-modules, speculative methods mtp/dspark/dflash, VLLM_GDN_DECODE_KERNEL, VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS, VLLM_ALLOW_LONG_MAX_MODEL_LEN, VLLM_CACHE_ROOT. Existence is not behaviour: each lane still needs a live boot + probe",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "requirement",
+      "text": "Baseline the incumbent BEFORE any cutover, per docs/model-switch-playbook.md \u00a71/\u00a77 (an uncontrolled cross-engine comparison is exactly the 2026-07-31 lesson): on each box, benchmark every hosted lane on its current engine (TTFT, decode tok/s via usage.completion_tokens, spec acceptance, KV pool) and file a transcript under docs/evidence/ \u2014 the nightly baseline is unrecoverable afterwards",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "Each box's incumbent baseline transcript is filed under docs/evidence/ BEFORE that box's switch, and addresses member lanes (cortex-spark, cortex-spark2) or the lane directly, never pooled plain cortex; tok/s counts usage.completion_tokens, not SSE chunks",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "requirement",
+      "text": "Every MEASURED budget value that was measured on the nightly is demoted to DECLARED/UNVALIDATED (#108) until re-measured on 0.31.0, then re-promoted with a new docs/evidence transcript: spark-lobe util 0.58 / KV 760,806 / DSpark (spark-lobe.toml:146-181), thor-worker util 0.45 / fp8 KV / DFlash k=12 / 196.6 tok/s (thor-worker.toml:20-121), Thor sm_110 divergences (#105 #109, rerank enforce_eager), embed/rerank/hand on every card",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "No MEASURED value measured on the nightly is still labelled MEASURED once its box runs 0.31.0 without a new 0.31.0 transcript: every such line is either re-measured (new evidence cited) or relabelled DECLARED/UNVALIDATED (#108)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "requirement",
+      "text": "Tests, goldens and catalog follow the pin: update the digest constants/asserts in tests/test_worker_compose.py:31, test_gemma4_compose.py:33, test_cli_fleet.py:580, test_nightly_migration_doc.py:34, test_gateway_fleet_doc.py:25, test_init.py:360-412 (asserts the digest appears exactly 7 times), test_embed_overlay.py:78; regenerate tests/goldens/template-defaults.env via 'uv run python tests/goldens/regen.py'; docs/vllm-nightly-migration.md and docs/gateway-fleet.md (asserted by tests) cite the new pin",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "The full suite passes with the new pin (uv run pytest -n auto) and 'uv run python tests/goldens/regen.py' leaves no diff; test_init's 'exactly 7' digest count is updated to the new digest, not deleted",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "boundary",
+      "text": "tests/fixtures/upgrade_compat stays frozen: it is a vendored copy of a previous main's scaffold (pins 7c5a10e9 and 26.04-py3) that proves new code still operates an OLD deployment; its README says never hand-edit, and the 2026-10-17 note records it was deliberately not refreshed",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "git diff main -- tests/fixtures/upgrade_compat is empty at merge",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "The deployments/ catalog stays truthful: jetson-agx-thor__thor-worker and jetson-agx-orin__orin-embed pin 8bd082c2 in their verbatim compose files; after the move each is either re-captured from its live box (lock digests + VARIATION.md citing a 0.31.0 transcript) or its Measured result demoted to verbatim 'No measured result.' with evidence emptied, so tests/test_variation_catalog.py passes",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "uv run pytest tests/test_variation_catalog.py passes, and each deployments/ entry either cites a 0.31.0 transcript or says verbatim 'No measured result.' with an empty evidence field",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "Thor's hand-typed override (~/.lobes/docker-compose.override.yml:23 image: vllm/vllm-openai:v0.31.0-ubuntu2404) is retired once the template default carries 0.31.0, so the box returns to template-driven pinning; until then the deployment diverges from the packaged template in exactly the way the 2026-08-25 lock incident (#214) warns about",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "After the Thor switch, grep image: ~/.lobes/docker-compose.override.yml on the Thor shows no vllm/vllm-openai line; the worker's image comes from VLLM_NIGHTLY_IMAGE/the template default",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "non_goal",
+      "text": "Root-causing the #309 device-side assert on the nightly is out of scope (issue #310 'Out of scope'); it is parked in the lane-safety frame and moot once lanes leave the nightly",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "boundary",
+      "text": "Non-vLLM lanes keep their images unchanged: llamacpp-primary (ghcr.io/nvidia-ai-iot/llama_cpp@f7c67c10), Parakeet/whisper STT (FROM scitrera/dgx-spark-vllm:0.16.0-t4, a torch base, not a served vLLM), Chatterbox/ComfyUI (nvidia/cuda:13.0.1), gateway/realtime/bluetts (python:3.12-slim)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "The non-vLLM images' lines are unchanged: git diff main on Dockerfile.{parakeet,whisper-stt,chatterbox,chatterbox-ml,comfyui,gateway,realtime,bluetts} and the llamacpp image line is empty",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c14",
+      "kind": "assumption",
+      "text": "Moving to 0.31.0 does NOT by itself cure the #309 compile crash: docs/plans/2026-10-17-lane-safety-HANDOFF.md:52-53 records the official v0.31.0 Thor worker crashing in inductor Triton autotune (cudaErrorIllegalInstruction, Xid 13 then 43) on warm-cache first boot in 2 of 3 restarts on 2026-10-17, recovered by the Docker restart (upstream vllm#62149); the lane-safety bundle's crash backoff + boot hold remain load-bearing on 0.31.0",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q1",
+          "text": "risk: If the Xid 13/43 autotune crash recurs on 0.31.0 on every box, is the issue's premise ('0.31.0 runs this model fine') still enough to justify the move, or is the win only the DFlash/FlashInfer speedup?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "assumption",
+      "text": "0.31.0 is a measured improvement for the Thor worker: mjolnir-agent docs/incidents/2026-10-16-thor-safe-boot.md:151-156 records official 0.31.0 Qwen3.6-35B-A3B NVFP4 (fp8 KV, DFlash K=12) decode 80.9/87.0/95.7/80.9 tok/s at depth 0/8K/32K/64K vs nightly production 75.2/82.9/83.7/66.9, KV 330,212-344,212 tokens; Qwen3.8-27B NVFP4 on 0.31.0 served with KV 746,503 (line 91). Those runs were mjolnir's harness, not a lobes render",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q2",
+          "text": "risk: The incident's production-replica run on official 0.31.0 sat at 41 GB flat and never went healthy for 40 min (line 94), attributed to flags S3/S5: performance-mode throughput + optimization-level 3, TORCH_SDPA ViT, 16K batched tokens, mamba 'align' (lines 114-116). Does any lobes lane render one of these (e.g. associate's --mamba-cache-mode align, any max-num-batched-tokens=16384)?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "assumption",
+      "text": "Arch coverage is uneven: the official v0.31.0 Dockerfile's torch_cuda_arch_list is '7.5 8.0 8.6 8.9 9.0 10.0 11.0 12.0' \u2014 sm_110 (Thor) listed, sm_121 (GB10) only via 12.0 same-major compat, sm_87 (Orin) NOT listed \u2014 yet docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt:10-18 MEASURED vllm 0.31.0 serving W4A16 via Marlin + FLASH_ATTN on the Orin's sm_87. Measured evidence wins, but it covers one pooling workload only; every other lane on each arch needs its own boot",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q3",
+          "text": "Do the Orin embed/rerank pooling lanes and the Spark/spark2 GB10 NVFP4 generate lanes (FlashInfer XQA, DSpark) actually boot and probe correctly on the v0.31.0 image, given the official arch list omits 8.7 and 12.1?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Answered in delivery (operator, 2026-10-17): each box's boot + probe run is the answer, enforced by h15 and success-signal item 3; a lane that fails is a recorded deviation"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "boundary",
+      "text": "Fleet-wide means every box's hosted lanes, rolled out one box at a time with an incumbent baseline + rollback recipe per box (docs/model-switch-playbook.md \u00a79 rollback restores the previous VLLM_NIGHTLY_IMAGE digest); Thor's live validation waits until its current experimental work is finished (issue #310 Thor checkbox) \u2014 the 2026-10-17 survey found no mjolnir/flash-next container running there, only the image",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "Boxes move one at a time: a box is switched only after the previous box's acceptance transcript has landed, and each switch has a written rollback (restore the prior VLLM_NIGHTLY_IMAGE value + .env backup); the Thor's switch happens only when no experiment container is running there",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "The fleet pin is vllm/vllm-openai:v0.31.0-ubuntu2404 (index sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460), the variant the Thor worker already serves",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "Rollout is per-box override first: baseline the incumbent, apply VLLM_NIGHTLY_IMAGE as a .env override on one box, validate, then the next box; the template default flips and a release ships only after the boxes validate",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "decision",
+      "text": "In scope beyond the shared pin: the torch-only bases Dockerfile.embed-st (ST_BASE_IMAGE, carries the Orin's live gemma2-embed sidecar) and Dockerfile.decider (DECIDER_BASE_IMAGE). Out: Dockerfile.vllm-gemma4, vllm-minor/middle + the legacy single compose (NGC 26.04-py3), and the Orin ASSOCIATE_IMAGE (stays v0.27.1)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "The Spark is re-pinned AND brings up nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 under vLLM 0.31.0",
+      "origin": "user",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "assumption",
+      "text": "NVIDIA does NOT name 0.31.0 for Super VL: the README Quick Start names vllm/vllm-openai:nightly-3f1bcfd82bb2e93fcd364fc7a5491718453a77e2 (Docker Hub, pushed 2026-10-15, amd64+arm64) or v0.32.0 (no v0.32 tag on Docker Hub as of 2026-10-17). 0.31.0 registers the arch and accepts every flag, so serving on 0.31.0 is plausible but unproven until a live boot",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q4",
+          "text": "If Super VL fails to boot or serves wrong on v0.31.0-ubuntu2404, does the Spark fall back to NVIDIA's named nightly-3f1bcfd (breaking the one-fleet-pin decision for that lane via a SUPERVL-style *_IMAGE override), or does Super VL wait for v0.32.0?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "No fallback needed on current evidence: the Spark's earlier run served Super VL on vLLM 0.31.0 build 7746 (= v0.31.0-ubuntu2404). Fall back to NVIDIA's named nightly only if the PUBLIC HF revision fails on 0.31.0 in the live boot, and record it as a deviation"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "Super VL is reached through an existing address, not a new role, unless the operator explicitly decides otherwise: docs/colleague-stack.md records that adding a role is effectively irreversible, and lobes has no catalog entry, compose lane, or role for Nemotron 3.5 Super VL today (git grep finds none)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q5",
+          "text": "Which address does Super VL serve on the Spark: cortex (reasoning/final authority; would join the cortex pool beside spark2's Qwen3.8, but disagreeing fingerprints expose it only as cortex-spark, never pooled), senses (vision intake, unhosted mesh-wide since 2026-10-06, but senses is FORBIDDEN final_decision/repo_action \u2014 a waste of a 120B decider), a specialist lane, or a new role?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "worker (as 'worker2' for now) \u2014 operator decision 2026-10-17"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "assumption",
+      "text": "The Spark's GPU budget is shared with what it hosts today (COMPOSE_PROFILES=innereye: ComfyUI, plus stt/realtime/bluetts): the recipe's util 0.75 on a 128 GB GB10 is ~96 GB, and the Spark hard-resets under sustained full-GPU load (thermal; heavy jobs run under ~/odm/telemetry/governor.sh, #304)",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q6",
+          "text": "Does Super VL at util 0.75 co-reside with innereye/ComfyUI and the Hebrew stt on the Spark, or does ComfyUI stop while Super VL serves? And which max_model_len (the recipe sets none; 1M native) is the target?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "ComfyUI drops while Super VL serves; context 400K first, higher lengths explored later"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "assumption",
+      "text": "PRECEDENT: Super VL already served on this Spark under the chosen engine build. A standalone early-access run (2026-10-08 -> 10-14, ~5 days, outside the lobes stack, ComfyUI stopped first) ran vLLM 0.31.0 build 7746 / commit db9527a4 \u2014 the same build as vllm/vllm-openai:v0.31.0-ubuntu2404 \u2014 with: gpu_memory_utilization 0.70 (vendor profile asked 0.78, lowered to fit beside the box's other services), max_model_len 393216, kv_cache_dtype fp8, DFlash with the LiLiCorr drafter k=3, mamba-backend flashinfer, mamba-ssm-cache-dtype float16, stochastic rounding philox 5, enable-mamba-shared-prefix-checkpoint, prefix-match-unit 16, max-num-batched-tokens 8192, max-num-seqs 1, async-scheduling, load-format fastsafetensors, prefix caching, tool parser qwen3_coder + reasoning parser nemotron_v3, trust-remote-code. MEASURED in its log: weights 69.92 GiB, KV pool 1,186,732 tokens = 3.02x at 393,216, init 196.7 s (compile 27.4 s), logged decode up to ~46 tok/s. Caveat: an early-access checkpoint revision and a vendor chat template (reasoning-effort), not the public HF revision",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "decision",
+      "text": "Super VL is the new worker; for now it is served on the Spark under the address 'worker2'",
+      "origin": "user",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "'worker2' is added as reversible data, not a new role: a named lane carrying worker's responsibility contract (execution, ground_work, drafting, repo_inspection, run_authorized_commands, tool_use, repo_action, image/video understanding; forbidden final_decision, security_decision), advertised in GET /capabilities and mesh-forwarded by name, like the gemma2-embed specialist-lane precedent (lobes/embed_lanes.py) \u2014 because docs/colleague-stack.md records that adding a role is effectively irreversible, and 'for now' implies it may later replace or pool with Thor's worker",
+      "origin": "llm",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q7",
+          "text": "Does 'worker2' become a generate-lane registry (the lane mechanism today is embed-only, lobes/embed_lanes.py) or a plain served-name alias on a new vllm-worker2 compose lane? And when Super VL becomes THE worker, does Thor's Qwen3.6-35B worker retire or keep worker as a pool member?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "decision",
+      "text": "ComfyUI (innereye) drops while Super VL is live on the Spark; it comes back when Super VL stops",
+      "origin": "user",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "decision",
+      "text": "Super VL serves at a 400K context window first; higher lengths (toward the 1M native) are explored afterwards as separate measured steps",
+      "origin": "user",
+      "status": "rejected",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q8",
+          "text": "Is 400K exactly 409,600 tokens (400x1024) or 400,000? The earlier run measured 393,216 (384K) at util 0.70; and does the budget stay at 0.70 now that ComfyUI is down (the vendor profile asked 0.78 on an idle Spark)?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "decision",
+      "text": "The Spark lane gets adaptive CPU cores per temperature, as jev-factory did, which stopped the Spark's thermal resets",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Applies to the Spark's cortex lane (vllm-primary) on 0.31.0 \u2014 the decision outlives the Super VL rejection",
+      "revisions": []
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "The temperature-adaptive governor is the graded-band design from ~/odm/telemetry/governor2.sh: CPU quota follows the hottest thermal zone (<84 C -> 16 cpus, <88 -> 12, <91 -> 8, <93.5 -> 4, >=93.5 -> pause, resume <86 C at 4), polling every 3 s, no root; packaged in lobes rather than as a side script, next to the lane-safety host watcher and gateway thermal shed (#304/#308)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "Before the graded governor runs on the cortex lane, a deliberate test shows that changing the CPU cap on a RUNNING vLLM container leaves it serving (a request before and after succeeds, no CUDA error in the log); if it fails, the cap is applied another way and that is recorded as a deviation",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q9",
+          "text": "risk: ~/odm/telemetry/governor.log (2026-10-14) records the graded governor RETIRED after 'docker update --cpus broke CUDA' (two cudaErrorNotPermitted exits), then a later note 'unproven (see lobes#304 correction); cause not established' \u2014 and the pause-only governor replaced it. Before shipping it on a vLLM lane, does docker update --cpus on a RUNNING vLLM GPU container survive (a deliberate test), or should the cpu cap be applied via cgroup cpu.max / at create time instead?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "non_goal",
+      "text": "Nemotron 3.5 Super VL is deferred to its own session: a new model is a new frame, not part of the 0.31.0 engine move. The scope entries already recorded on this frame about it (HF checkpoint, the 0.31.0 registry/flag check, the Spark's earlier standalone run) are the head start for that session",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "The Spark brings cortex back up on vLLM 0.31.0 for now, serving unsloth/Qwen3.8-27B-NVFP4 \u2014 the same checkpoint and lane as spark2 \u2014 so the mesh has two cortex members again",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "The Spark's cortex is the same lane as spark2's (same checkpoint, served id, quantization, max_model_len 262144), boots on 0.31.0 from the Spark's existing PRIMARY_* knobs, and ComfyUI is stopped first",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q10",
+          "text": "Does ComfyUI (innereye, declared peak 31.42 GiB) drop while the Spark's cortex is live (the 2026-10-06 cortex lane was funded by dropping Gemma, not ComfyUI), or do cortex at util 0.58 (~74 GB) and ComfyUI co-reside on the 128 GB GB10 beside stt/realtime/bluetts?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Either cortex or innereye on the Spark, never both at once (operator, 2026-10-17)"
+        }
+      ],
+      "links": [],
+      "instruction": "on the Spark: back up ~/.lobes/.env + docker-compose.shape.yml, stop model-gear-comfyui, set PRIMARY_FEASIBLE=true / INNEREYE_FEASIBLE=false and VLLM_NIGHTLY_IMAGE=<0.31.0-ubuntu2404 digest>, un-park vllm-primary, bring it up with lobes-deploy's lobes-compose.sh (--no-deps), then probe cortex-spark",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "assumption",
+      "text": "The mesh fingerprint does NOT include the engine version: Fingerprint is served_id, quantization, max_model_len, runtime (lobes/gateway/_mesh_wire.py:86-89, mirrored in _replicas.py:298). So during the per-box rollout a 0.31.0 Spark cortex and a nightly spark2 cortex agree and pool as one plain 'cortex' \u2014 invisible mixed engines; every baseline and re-measure must address the member lanes cortex-spark / cortex-spark2 (or the lane directly), never plain cortex",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q11",
+          "text": "risk: Should the engine version (e.g. vllm 0.31.0 vs 0.26.1rc1) join the fingerprint so a mixed-engine pool is exposed rather than silently pooled, or is mixed-engine pooling acceptable for the rollout window?",
+          "resolved": false,
+          "blocking": false,
+          "resolution": ""
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "decision",
+      "text": "On the Spark it is either cortex or innereye (ComfyUI), never both at once: bringing cortex up stops ComfyUI, and bringing ComfyUI back stops cortex",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "audience",
+      "text": "The lobes operator rolling the engine across the four boxes, and every Colleague caller of the Spark/spark2/Thor/Orin lanes (cortex, worker, hand, embedder, reranker, the Orin's gemma2-embed and decider sidecars) whose answers must not change or degrade across the move",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h15",
+          "text": "Each named caller's role still answers its correctness probe after the move (cortex known-answer + tool call, embedder ranking, reranker ordering, hand known-answer, worker image input, gemma2-embed per-modality negative controls, decider top-1 agreement)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "check the exported spec names the operator and the per-role callers",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "after_state",
+      "text": "After: every in-scope vLLM lane on Spark (cortex), spark2 (cortex, embed, rerank, hand), Thor (worker, embed, rerank) and Orin (embed, rerank; gemma2-embed and decider sidecars rebuilt on the new torch base) runs vllm/vllm-openai:v0.31.0-ubuntu2404 \u2014 each box's .env VLLM_NIGHTLY_IMAGE line equals the new template default and no compose override carries a vllm image: line \u2014 with each box's budgets re-MEASURED on 0.31.0 and backed by a docs/evidence transcript, the incumbent nightly baselines filed beside them, and the qwen3_coder_thinking plugin serving strict tool calls on 0.31.0",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "The after-state is checked per box from the live box (docker inspect digests + vllm.__version__), not inferred from the template",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q12",
+          "text": "contradiction with c41?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Resolved by amending c37 to the .env-line meaning of 'done' (c41) and replacing h1 with h24 (operator, 2026-10-17)"
+        }
+      ],
+      "links": [],
+      "instruction": "on each box: docker inspect every running vLLM container's image digest + vllm.__version__; grep ~/.lobes/docker-compose.override.yml for image: lines",
+      "revisions": [
+        {
+          "text": "After: every in-scope vLLM lane on Spark (cortex), spark2 (cortex, embed, rerank, hand), Thor (worker, embed, rerank) and Orin (embed, rerank; gemma2-embed and decider sidecars rebuilt on the new torch base) runs vllm/vllm-openai:v0.31.0-ubuntu2404 from the template default \u2014 no hand-typed image override left on any box \u2014 with each box's budgets re-MEASURED on 0.31.0 and backed by a docs/evidence transcript, the incumbent nightly baselines filed beside them, and the qwen3_coder_thinking plugin serving strict tool calls on 0.31.0",
+          "kind": "after_state",
+          "reason": "challenge c41: the template default never reaches an existing .env"
+        }
+      ]
+    },
+    {
+      "id": "c38",
+      "kind": "why_it_matters",
+      "text": "The nightly is a liability: #309 recorded a device-side assert + Xid 43 on 2 of 3 fresh torch.compile runs on the Thor worker under 0.26.1rc1.dev942, and the fleet today runs THREE engines (8bd082c2, 7c5a10e9, 0.31.0) with no engine version in the mesh fingerprint \u2014 one pinned official release makes the boxes comparable, debuggable and rebuildable",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "The #309 numbers cited are the ones in docs/plans/2026-10-17-lane-safety-HANDOFF.md and #309 itself; the spec does not claim 0.31.0 cures the autotune crash (c14)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "cite #309 and the 2026-10-17 live survey in the spec",
+      "revisions": []
+    },
+    {
+      "id": "c39",
+      "kind": "success_signal",
+      "text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "Each numbered signal is checked and recorded in the delivery summary with its measured value, including any cortex regression below 90% stated as a named cost",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "count per box via docker inspect + the probe suite; compare benchmark transcripts",
+      "revisions": []
+    },
+    {
+      "id": "c40",
+      "kind": "requirement",
+      "text": "The two torch-only bases move to the fleet pin: Dockerfile.embed-st ARG ST_BASE_IMAGE and Dockerfile.decider ARG DECIDER_BASE_IMAGE default to vllm/vllm-openai:v0.31.0-ubuntu2404 (from 7c5a10e9); and, to keep ONE fleet pin, Dockerfile.decider-vllm moves from plain v0.31.0 (index c1c9f6fd) to the -ubuntu2404 index digest",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "The Orin's gemma2-embed sidecar and the decider sidecars rebuild on the new base and pass their existing acceptance probes (EG2 per-modality negative controls; decider top-1 agreement vs bf16) on the Orin; tests/test_embed_overlay.py:78 and tests/test_decider_sidecar_vllm.py:362 assert the new digests",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q16",
+          "text": "Does the decider-vllm sidecar really move to -ubuntu2404 for the one-pin rule (re-measuring its 0.988 agreement on the Orin), or does it keep plain v0.31.0 \u2014 the same vLLM build 7746 on a different OS layer \u2014 as a documented exception?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Move to -ubuntu2404 (strict one pin); the decider's 0.31.0 values become DECLARED until re-measured on the Orin (operator)"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c41",
+      "kind": "requirement",
+      "text": "Switching a box means editing its existing .env line, not inheriting the template default: every scaffolded .env carries an explicit VLLM_NIGHTLY_IMAGE= line (env.example:48 is materialised by init; live on all four boxes at .env:48 / Orin :39), and .env is merge-only (init and doctor --fix never rewrite an existing line), so flipping the template default changes NOTHING on an already-deployed box. 'Done' for a box is: its .env VLLM_NIGHTLY_IMAGE equals the new template default AND no compose override carries a vllm image: line",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "On each box, grep ^VLLM_NIGHTLY_IMAGE= ~/.lobes/.env equals the template's env.example:48 value, and grep 'image: vllm/vllm-openai' ~/.lobes/docker-compose.override.yml returns nothing",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c42",
+      "kind": "requirement",
+      "text": "The fixed plugin reaches each box BEFORE that box's cortex runs 0.31.0: the plugin is a per-box scaffold copy (~/.lobes/qwen3_thinking_tool_parser.py, bind-mounted read-only by docker-compose.yml:107 and loaded at :250), doctor --fix writes it missing-only (doctor.py:1105, write_plugin_file force=False) and no refresh flag exists for it (only --refresh-logwrap), so switching a box's image while its old copy stays mounted breaks every strict tool call there. Either add a refresh path (a sibling of --refresh-logwrap) or make the refresh a named per-box step",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "On each cortex box, the ~/.lobes/qwen3_thinking_tool_parser.py sha256 equals the packaged lobes.vllm_plugins copy at the fixed version before the image switch, and a strict tool call through cortex-<box> returns a parsed tool call after it",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c43",
+      "kind": "assumption",
+      "text": "The lane-safety safety net that c14 leans on is NOT on any box: the 0.88.0 template mounts /cache/vllm in 36 places, while the deployed docker-compose.yml on spark, spark2, thor and orin has 0 (they run MODEL_GEAR_VERSION 0.86.0.dev6xx). A new engine changes vLLM's compile config_hash, so EVERY lane's first boot on 0.31.0 is a cold compile \u2014 the boot class where #309 crashed \u2014 with no crash backoff, boot hold or per-lane cache on the box",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q13",
+          "text": "Does each box get the lane-safety rollout (0.88.0 scaffold: crash backoff, boot hold, per-lane compile cache, refresh-logwrap) BEFORE its engine switch, as a precondition, or does the engine move go ahead on the 0.86 scaffold?",
+          "resolved": true,
+          "blocking": true,
+          "resolution": "Yes: each box moves to the 0.88 lane-safety scaffold (crash backoff, boot hold, per-lane compile cache, refreshed logwrap and plugin) BEFORE its engine switch (operator, 2026-10-17)"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c44",
+      "kind": "assumption",
+      "text": "The Spark is the mesh's only innereye (ComfyUI) host \u2014 INNEREYE_FEASIBLE appears only in the Spark's .env (:773), not on spark2, thor or orin \u2014 so 'either cortex or innereye' (decision c35) means innereye is unavailable mesh-wide whenever the Spark serves cortex, and its callers get role_infeasible for that window",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c45",
+      "kind": "requirement",
+      "text": "The Spark's cortex baseline is chosen explicitly, because the Spark runs no cortex today and c6's 'benchmark every hosted lane on its current engine' yields nothing there: the GB10 nightly baseline is spark2's cortex (same checkpoint and lane, same silicon, a different box), cross-referenced with the Spark's own 2026-10-06 measurement (KV 774,355 tokens = 2.95x), unless the operator chooses to boot the Spark's cortex on the nightly first",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "The Spark's 0.31.0 acceptance transcript cites spark2's nightly cortex baseline transcript (filed first, measured through cortex-spark2 under the governor) and the 2026-10-06 Spark measurement, and compares decode tok/s, TTFT and KV pool against both",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [
+        {
+          "id": "q14",
+          "text": "Is spark2's nightly cortex baseline acceptable as the Spark's comparator, or should the Spark boot cortex on the nightly once (stopping ComfyUI) to get a same-box baseline before switching?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "spark2's nightly cortex baseline is the Spark's comparator, cross-referenced with the Spark's 2026-10-06 measurement; the Spark does not boot cortex on the nightly first (operator)"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c46",
+      "kind": "assumption",
+      "text": "spark2 is the same DGX Spark GB10 hardware as the Spark, and the incumbent baselines plus 0.31.0 re-measures are sustained full-GPU benchmark runs \u2014 the load class that hard-resets a Spark thermally (memory record spark-thermal-resets-governor, #304) \u2014 yet the governor decision (c30) names only the Spark's lane",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [
+        {
+          "id": "q15",
+          "text": "Do spark2's benchmark and re-measure runs also run under a thermal governor (pause-only, or the graded one once proven), or is spark2 left ungoverned?",
+          "resolved": true,
+          "blocking": false,
+          "resolution": "Yes: spark2's baseline and re-measure runs also go under the thermal governor (operator)"
+        }
+      ],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c47",
+      "kind": "boundary",
+      "text": "Rollback stays possible until a box's acceptance lands: the previous engine image (8bd082c2 on spark/spark2/thor, 7c5a10e9 on the Orin) is NOT pruned from a box before its 0.31.0 acceptance transcript is filed \u2014 the Thor's 85 GB free disk (91% used) is the case where reclaiming space would tempt pruning the very image its embed/rerank lanes still run",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "docker images --digests on each box still lists its previous engine digest until that box's acceptance transcript is committed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c48",
+      "kind": "assumption",
+      "text": "The ubuntu2404 variant is proven on ONE architecture only: the Thor worker (sm_110) serves on v0.31.0-ubuntu2404; every Orin (sm_87) 0.31.0 measurement \u2014 the decider's 0.988 top-1 agreement and the orin-decider acceptance (docs/evidence/2026-10-14-*) \u2014 ran on PLAIN v0.31.0 (index c1c9f6fd, arm64 3f7dd5b7), and no GB10 0.31.0 lobes lane has run yet. Moving Dockerfile.decider-vllm to -ubuntu2404 (c40) turns the decider's MEASURED values into DECLARED until re-measured",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c49",
+      "kind": "assumption",
+      "text": "0.31.0 adds VLLM_ENFORCE_STRICT_TOOL_CALLING (envs.py:245, default True), which gates the structural-tag path that strict tool schemas use \u2014 so strict-tool behaviour can change on lanes beyond cortex (worker, hand, and the gateway's GATEWAY_FORCE_STRICT_TOOLS opt-in), not only through the plugin's signature",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "The per-lane probes include one strict:true tool call per generate lane (cortex, worker, hand) on 0.31.0, recording whether xgrammar engaged, and the GATEWAY_FORCE_STRICT_TOOLS docs still match what each lane does",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c50",
+      "kind": "decision",
+      "text": "Lane-safety is a precondition: each box moves to the 0.88 scaffold (crash backoff, boot hold, per-lane compile cache, refreshed logwrap and plugin copies) BEFORE its engine switches to 0.31.0",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c51",
+      "kind": "decision",
+      "text": "spark2's nightly cortex baseline is the Spark's comparator (same checkpoint and silicon), cross-referenced with the Spark's 2026-10-06 measurement; the Spark does not boot cortex on the nightly first",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c52",
+      "kind": "decision",
+      "text": "spark2's baseline and re-measure benchmark runs also run under the thermal governor",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c53",
+      "kind": "decision",
+      "text": "The decider-vllm sidecar moves to v0.31.0-ubuntu2404 for the strict one-pin rule; its 0.988 agreement and orin-decider acceptance values become DECLARED until re-measured on the Orin",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "The spark-lobe DSpark transcript (docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt:30-31,80-81) logs the running primary's digest as sha256:49d2eb65\u2026, not 8bd082c2, while reporting version 0.26.1rc1.dev942 \u2014 the digest\u2192version mapping of the incumbent baseline is unreconciled (possibly a per-arch child digest)",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "Thor has 85 GB free on / (91% used); pulling a second 0.31.0 variant (~20-35 GB) plus a re-measure run's compile caches may need reclaiming the 33.7 GB of unused images/15 GB build cache first \u2014 a box-ops decision, not a design one",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "The LiLiCorr DFlash drafter (nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4-LiLiCorr) size and its KV cost beside a 1M window are unknown; the 2026-08-25 d4 precedent is that a drafter's KV cost can force the window back down",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": true,
+      "resolution": "Super VL is deferred to its own session (operator, 2026-10-17: 'New model -> new session'); this drafter unknown moves there",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v4",
+      "text": "Whether the official arm64 ubuntu2404 image carries the same torch_cuda_arch_list as the plain image was not probed (needs a ~20 GB pull); the Orin and GB10 boots in delivery answer it",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "live boxes: docker ps + ~/.lobes/.env + override.yml on spark, spark2, thor, orin",
+      "finding": "Spark: no vLLM lane up, VLLM_NIGHTLY_IMAGE=8bd082c2, v0.31.0 present only as lobes-decider-vllm:odm-local base; spark2: primary/embed/rerank/hand on 8bd082c2, no v0.31.0 pulled; Thor: worker on vllm/vllm-openai:v0.31.0-ubuntu2404 via override.yml:23, embed/rerank on 8bd082c2, 85 GB free disk; Orin: embed/rerank on 7c5a10e9, ASSOCIATE_IMAGE=v0.27.1 (dormant), no v0.31.0 pulled; no box has deployment.lock.toml; all boxes run MODEL_GEAR_VERSION 0.86.0.dev6xx < main 0.88.0",
+      "seeds": [
+        "c2"
+      ]
+    },
+    {
+      "id": "s2",
+      "surface": "lobes/templates/fleet/{docker-compose.yml,docker-compose.embed.yml,env.example}",
+      "finding": "12 literal sites carry the 8bd082c2 default; HAND/WORKER/ASSOCIATE_IMAGE fall back to VLLM_NIGHTLY_IMAGE; image selection is pure compose/env, never rendered from profiles (no *_IMAGE key in profiles/render.py or any builtin TOML)",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/vllm_plugins/qwen3_thinking_tool_parser.py vs v0.31.0 vllm/parser/abstract_parser.py (read-only grep in lobes-decider-vllm:odm-local, vllm 0.31.0)",
+      "finding": "VERIFIED by grep: plugin line 105 signature lacks strict_level; 0.31.0 caller passes reasoning=False, strict_level=...; the upstream reasoning=False hardcode the plugin exists to fix is still present, so the plugin is still needed; load-time inspect guard still passes so the break is silent at boot; new VLLM_ENFORCE_STRICT_TOOL_CALLING (default True) gates the path",
+      "seeds": [
+        "c4"
+      ]
+    },
+    {
+      "id": "s4",
+      "surface": "lobes/templates/fleet/docker-compose.yml command: lines vs v0.31.0 installed source (arg_utils.py, envs.py, config/speculative.py, parser registries)",
+      "finding": "all compose flags present; nemotron_v3 is NOT a registered tool parser on 0.31.0 (compose only uses it as reasoning parser \u2014 fine, but a .env WORKER/ASSOCIATE_TOOL_CALL_PARSER=nemotron_v3 would break); --mamba-cache-mode arg unconfirmed; hf-overrides contents (YaRN, Matryoshka, reranker classifier_from_token) untested",
+      "seeds": [
+        "c5"
+      ]
+    },
+    {
+      "id": "s5",
+      "surface": "docs/model-switch-playbook.md",
+      "finding": "written for checkpoint swaps; \u00a71 ordering = benchmark incumbent first on today's engine; traps: count usage.completion_tokens not SSE chunks, thinking comes back as 'reasoning' (re-check field name on 0.31.0); nothing explicit on engine-only swaps",
+      "seeds": [
+        "c6"
+      ]
+    },
+    {
+      "id": "s6",
+      "surface": "lobes/profiles/builtin_shapes/{spark-lobe,thor-worker}.toml + builtin/{spark,thor,orin}.toml + docs/evidence headers",
+      "finding": "spark-lobe DSpark numbers from 2026-08-24-spike-dspark-cortex-spark.txt (version string 0.26.1rc1.dev942 but logged digest 49d2eb65, not 8bd082c2 \u2014 mapping unreconciled); thor-worker MEASURED 2026-09-10 'on the fleet-pinned nightly 8bd082'; Orin associate measured on v0.27.1, not the nightly; Orin decider already MEASURED on vllm 0.31.0 (2026-10-14-accept-orin-decider.txt)",
+      "seeds": [
+        "c7"
+      ]
+    },
+    {
+      "id": "s7",
+      "surface": "tests/** + tests/goldens/regen.py",
+      "finding": "7 test files hard-pin the digest; only tests/goldens/template-defaults.env (lines 5,83,233,239) carries image refs among 61 goldens; test_mesh_templates.py:343 enforces golden==regen; test_decider_sidecar_vllm.py:362 already asserts a v0.31.0 digest (precedent)",
+      "seeds": [
+        "c8"
+      ]
+    },
+    {
+      "id": "s8",
+      "surface": "tests/fixtures/upgrade_compat/README.md",
+      "finding": "frozen old-scaffold fixture; refreshing it would delete the back-compat proof, so a pin bump must not touch it; tests/fixtures/deployments use fixture/vllm:pinned and are unaffected",
+      "seeds": [
+        "c9"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "deployments/README.md + deployments/*/VARIATION.md",
+      "finding": "two entries; thor-worker VARIATION.md:76 names the nightly as an adopter requirement and cites 2026-09-10/11/12 nightly transcripts; no capture verb exists \u2014 re-capture means calling lobes.runtime._lock.capture_lock directly",
+      "seeds": [
+        "c10"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "thor ~/.lobes/docker-compose.override.yml",
+      "finding": "worker image overridden to v0.31.0-ubuntu2404 by hand; embed/rerank on the same box still on 8bd082c2 \u2014 two engines co-resident on one box",
+      "seeds": [
+        "c11"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "issue #310 body + #309",
+      "finding": "the issue explicitly excludes root-causing the nightly assert",
+      "seeds": [
+        "c12"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "lobes/templates/fleet/Dockerfile.{parakeet,whisper-stt,chatterbox,chatterbox-ml,comfyui,gateway,realtime,bluetts} + docker-compose.yml:300",
+      "finding": "none of these serve a vLLM engine; the scitrera base only supplies torch",
+      "seeds": [
+        "c13"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "issue #310 'Thor' checkbox + thor docker ps 2026-10-17",
+      "finding": "no experimental container running on Thor today (only a stopped experiment's image on disk); Thor disk 85 GB free, a v0.31.0 pull is ~20-35 GB",
+      "seeds": [
+        "c17"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "docs/plans/2026-10-17-lane-safety-HANDOFF.md:52-53 + mjolnir-agent docs/incidents/2026-10-16-thor-safe-boot.md:75",
+      "finding": "0.31.0 also crashes in autotune (Xid 13/43) 2 of 3 warm restarts on Thor; incident doc line 75 logs the Xid 43 after a prior illegal access left the GPU suspect",
+      "seeds": [
+        "c14",
+        "q1"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "mjolnir-agent docs/incidents/2026-10-16-thor-safe-boot.md",
+      "finding": "0.31.0 serves Qwen3.6 NVFP4 and Qwen3.8 on Thor with production flags, faster decode; hang only with the S3/S5 flag set; container logs lost so the hang cause is unconfirmed; +40 GB was mjolnir's draft vocab, not 0.31.0",
+      "seeds": [
+        "c15",
+        "q2"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "vllm v0.31.0 docker/Dockerfile + requirements/cuda.txt + docs/evidence/2026-10-14-*-orin*.txt",
+      "finding": "CUDA 13.0.3, torch 2.13.0, FlashInfer 0.7.0.post1, Transformers 5.17.0; arch list omits 8.7 and 12.1; Orin decider proven on sm_87 regardless",
+      "seeds": [
+        "c16",
+        "q3"
+      ]
+    },
+    {
+      "id": "s17",
+      "surface": "HF nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-NVFP4 (API + config.json + hf_quant_config.json + README Quick Start, lastModified 2026-10-16)",
+      "finding": "120B total / 12B active, interleaved Mamba-2 + MoE + attention + C-RADIO ViT; arch NemotronH_Omni_Reasoning_V3 (trust-remote-code files shipped); modelopt MIXED_PRECISION (FP8 in/out_proj, FP8 KV); 69.9 GiB weights; 1M context; licence OpenMDW 1.1; README recipe is 'DGX Spark (GB10) only': max-num-seqs 1, util 0.75, max-num-batched-tokens 8192, DFlash x7 via the -NVFP4-LiLiCorr drafter, mamba flashinfer/fp16 SSM cache/stochastic rounding/philox 5/shared-prefix-checkpoint, video-pruning 0.5, block-size 64, prefix-match-unit 64, tool parser qwen3_coder, reasoning parser nemotron_v3",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s18",
+      "surface": "v0.31.0 installed source (lobes-decider-vllm:odm-local): model_executor/models/registry.py:536 + engine/arg_utils.py + config/{cache,model}.py",
+      "finding": "NemotronH_Omni_Reasoning_V3 -> nano_nemotron_vl.NemotronH_Nano_VL_V2 is registered; every recipe flag (prefix-match-unit, video-pruning-rate, enable-mamba-shared-prefix-checkpoint, mamba-cache-philox-rounds) exists; nemotron_v3 reasoning parser present",
+      "seeds": [
+        "c21"
+      ]
+    },
+    {
+      "id": "s19",
+      "surface": "hub.docker.com vllm/vllm-openai tags ?name=v0.32 and ?name=nightly-3f1bcfd (2026-10-17)",
+      "finding": "no v0.32.x tag published; nightly-3f1bcfd and cu134-nightly-3f1bcfd exist, multi-arch, 2026-10-15",
+      "seeds": [
+        "c22",
+        "q4"
+      ]
+    },
+    {
+      "id": "s20",
+      "surface": "git grep Nemotron-3.5-Super / Super-VL over the repo + docs/colleague-stack.md roles",
+      "finding": "no catalog entry, lane, or doc; the closest precedent is the Nemotron 3.5 Lightning checkpoint (NemotronH, nemotron_v3 + qwen3_coder parsers) on worker/associate",
+      "seeds": [
+        "c23",
+        "q5"
+      ]
+    },
+    {
+      "id": "s21",
+      "surface": "spark docker ps 2026-10-17 + memory spark-thermal-resets-governor + spark-gemma-down-comfyui-up",
+      "finding": "Spark runs innereye/ComfyUI, stt, realtime, bluetts and non-lobes services; no vLLM lane; earlier Gemma<->ComfyUI swap was tried and reverted 2026-09-27",
+      "seeds": [
+        "c24",
+        "q6"
+      ]
+    },
+    {
+      "id": "s22",
+      "surface": "the Spark's earlier standalone Super VL run: its launch script + container config + engine log (2026-10-08..14)",
+      "finding": "launched vllm serve with the args recorded in the seeded claim on vLLM 0.31.0 build 7746; KV 1,186,732 tokens @393,216; the launch script required ComfyUI stopped and lowered util 0.78->0.70 and max_model_len 1M->384K to fit beside the box's other services; its comment claims 1M needs more KV than 0.70 leaves, yet the measured 1.19M-token pool exceeds 1M \u2014 unreconciled (the drafter's/mamba state cost may be what binds)",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s23",
+      "surface": "docs/colleague-stack.md#specialist-lanes-not-roles + lobes/embed_lanes.py + CLAUDE.md worker paragraph",
+      "finding": "lanes are reversible registry data advertised as top-level lane:true keys; today they are embed-only; worker's contract is multimodal coder with repo_action; member lanes (worker-<member>) exist only for agreeing/disagreeing verified members of an existing role",
+      "seeds": [
+        "c27",
+        "q7"
+      ]
+    },
+    {
+      "id": "s24",
+      "surface": "~/odm/telemetry/governor.sh + governor2.sh + governor.log",
+      "finding": "governor.sh = pause-only duty cycle (HI 93 C / LO 84 C); governor2.sh = graded cpu bands via docker update --cpus; log: governor2 retired 13:45 for 'broke CUDA', corrected 14:21 as unproven; memory spark-thermal-resets-governor records heavy jobs ran under the governor without resets",
+      "seeds": [
+        "c31",
+        "q9"
+      ]
+    },
+    {
+      "id": "s25",
+      "surface": "spark ~/.lobes/.env (PRIMARY_* knobs) + memory record of the 2026-10-06 Spark cortex lane",
+      "finding": "the Spark's .env still carries the cortex lane: PRIMARY_MODEL unsloth/Qwen3.8-27B-NVFP4, util 0.58, max_model_len 262144, fp8 KV, qwen3_coder_thinking tool parser, compressed-tensors, YaRN hf_overrides kept; it was turned off by a later PRIMARY_FEASIBLE=false (line 747) while innereye/ComfyUI runs (INNEREYE_DECLARED_PEAK_GIB 31.42); on 2026-10-06 this lane measured KV 774,355 tokens = 2.95x at 262144 with DSpark, boot ~7 min, beside the dropped Gemma senses; pre-change backups exist under ~/.lobes/*.bak-20261006-*",
+      "seeds": [
+        "c33"
+      ]
+    },
+    {
+      "id": "s26",
+      "surface": "spark ~/.lobes/.env INNEREYE_* + COMPOSE_PROFILES=innereye",
+      "finding": "ComfyUI is today's resident; the earlier 'ComfyUI drops' decision was made for Super VL and was rejected with it, so cortex's co-residence is undecided",
+      "seeds": [
+        "c33",
+        "q10"
+      ]
+    },
+    {
+      "id": "s27",
+      "surface": "lobes/gateway/_mesh_wire.py:79-99 + lobes/gateway/_replicas.py:298-308",
+      "finding": "four-field fingerprint, runtime is the string 'vllm'/'llamacpp' \u2014 no version; served_id/max_model_len live, the rest declared",
+      "seeds": [
+        "c34",
+        "q11"
+      ]
+    },
+    {
+      "id": "s28",
+      "surface": "challenge pass / counter-evidence lens: git grep -c 8bd082 over lobes/",
+      "finding": "12 image lines + 3 comment mentions in lobes/templates; catalog.py, thor.toml, thor-worker.toml cite the digest as measurement provenance",
+      "seeds": [
+        "c3"
+      ]
+    },
+    {
+      "id": "s29",
+      "surface": "challenge pass / adjacent-systems lens: lobes/templates/fleet/env.example:48 + lobes/cli/_commands/doctor.py:1117-1125 (missing-only writes) + live .env on spark, spark2, thor, orin",
+      "finding": "all four boxes carry an explicit VLLM_NIGHTLY_IMAGE line; nothing in lobes rewrites it except a hand edit; so c1/h1's 'template default, not a per-box override' cannot be met as worded \u2014 c1, h1 and c37 conflict with this",
+      "seeds": [
+        "c41"
+      ]
+    },
+    {
+      "id": "s30",
+      "surface": "challenge pass / adjacent-systems lens: lobes/runtime/_compose.py:271-295 + doctor.py:1105 + ~/.lobes on spark, spark2, thor, orin",
+      "finding": "every box has its own copy of the plugin file; nothing refreshes an existing copy; the per-box-override rollout (decision c19) therefore ships the new engine against the OLD plugin unless the copy is refreshed first",
+      "seeds": [
+        "c42"
+      ]
+    },
+    {
+      "id": "s31",
+      "surface": "challenge pass / failure-mode + containment lens: grep -c /cache/vllm in lobes/templates/fleet/docker-compose.yml (36) vs ~/.lobes/docker-compose.yml on all four boxes (0); docs/contracts/lane-safety-runtime.md (config_hash version factor)",
+      "finding": "no box carries the lane-safety compose; 0.31.0 invalidates every warm compile cache by design",
+      "seeds": [
+        "c43",
+        "q13"
+      ]
+    },
+    {
+      "id": "s32",
+      "surface": "challenge pass / overlooked-actors lens: INNEREYE_FEASIBLE across the four boxes' .env",
+      "finding": "only the Spark declares innereye",
+      "seeds": [
+        "c44"
+      ]
+    },
+    {
+      "id": "s33",
+      "surface": "challenge pass / counter-evidence lens: c6 vs the 2026-10-17 live survey (Spark: no vLLM lane)",
+      "finding": "the baseline rule has no incumbent to measure on the Spark",
+      "seeds": [
+        "c45",
+        "q14"
+      ]
+    },
+    {
+      "id": "s34",
+      "surface": "challenge pass / hardware + operations lens: decision c30 scope vs spark2 (GB10)",
+      "finding": "governor scoped to the Spark only; spark2 carries the same reset risk under benchmark load",
+      "seeds": [
+        "c46",
+        "q15"
+      ]
+    },
+    {
+      "id": "s35",
+      "surface": "challenge pass / reversibility lens: thor df + docker images; docs/model-switch-playbook.md \u00a79 rollback",
+      "finding": "the \u00a79 recipe restores the previous digest, which only works if the image is still on disk",
+      "seeds": [
+        "c47"
+      ]
+    },
+    {
+      "id": "s36",
+      "surface": "challenge pass / counter-evidence lens: Dockerfile.decider-vllm:8-22 + docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt + docs/evidence/2026-10-14-accept-orin-decider.txt",
+      "finding": "Orin 0.31.0 evidence is all on the plain variant; ubuntu2404 evidence is Thor-only",
+      "seeds": [
+        "c48",
+        "q16"
+      ]
+    },
+    {
+      "id": "s37",
+      "surface": "challenge pass / adjacent-systems lens: v0.31.0 vllm/envs.py:245,1806 (read-only grep in the local 0.31.0-based image)",
+      "finding": "new default-on strict gate; the nightly's behaviour for the same path was not checked",
+      "seeds": [
+        "c49"
+      ]
+    },
+    {
+      "id": "s38",
+      "surface": "challenge pass / security lens: image provenance + secrets",
+      "finding": "clean: the new pin is the official vllm/vllm-openai repo pinned by digest, the same trust posture as today; no new secret, port or credential; the deferred Super VL early-access image is out of this frame. Residual: an index digest resolves per-arch children the operator should record per box",
+      "seeds": []
+    },
+    {
+      "id": "s39",
+      "surface": "challenge pass / concurrency lens: mesh pooling during the rollout (lobes/gateway/_mesh_wire.py fingerprint)",
+      "finding": "covered by c34/q11 (mixed-engine pooling); no further concurrency hazard found \u2014 single-writer .env edits per box, one box at a time (c17)",
+      "seeds": []
+    },
+    {
+      "id": "s40",
+      "surface": "challenge pass / observability lens: GET /capabilities + lobes status",
+      "finding": "no surface reports a lane's engine version; the only check is docker inspect on the box (c1 instruction); folded into q11 rather than a new requirement",
+      "seeds": []
+    }
+  ],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "grader-unverified",
+      "what": "c3's '12 literal sites' count came from an explorer's report and was not re-counted before capture; a re-count finds 12 image lines PLUS 3 comment mentions in lobes/templates (env.example:99, docker-compose.yml:122,208) and 3 provenance mentions outside it (catalog.py, profiles/builtin/thor.toml, builtin_shapes/thor-worker.toml)",
+      "skipped_check": "git grep -c 8bd082 over lobes/ before capturing the count",
+      "refs": [
+        "c3",
+        "challenge pass / counter-evidence lens: lobes/templates"
+      ],
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "l2",
+      "code": "grader-unverified",
+      "what": "t1's agent verified the plugin only against signature-shaped stubs, not the real images, and did not check that Qwen3EngineToolParser inherits get_structural_tag; the main agent closed it post-merge by importing the merged plugin inside vllm 0.31.0 and the 0.26.1rc1.dev942 nightly (guard passes in both; the parent class inherits the method, signatures as expected)",
+      "skipped_check": "load the plugin inside the real vllm images",
+      "refs": [
+        "t1"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "assumption-for-measurement",
+      "what": "t2's refresh rewrites the plugin in place (write_plugin_file force=True) while the logwrap refresh uses temp+os.replace; the agent expected this to be harmless because vLLM reads the plugin only at startup, but did not verify it \u2014 the box procedure (t6) recreates the cortex lane after a refresh, which makes it moot in practice",
+      "skipped_check": "a refresh against a running cortex lane",
+      "refs": [
+        "t2"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l4",
+      "code": "control-absent",
+      "what": "t4's governor loop and SIGINT/SIGTERM path (run_forever) is pragma: no cover and untested; cleanup() is tested directly and a real --once dry run against model-gear-stt on the Spark read the live container + 67.0 C and changed nothing, but the signal-driven exit has not run for real \u2014 t12 exercises it on the cortex lane",
+      "skipped_check": "a real SIGTERM against an --apply loop",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l5",
+      "code": "assumption-for-measurement",
+      "what": "t4's agent treats any docker inspect failure (including a daemon error) as 'container gone' and ends the loop, broader than governor2.sh's exists-then-exited check; behaviour chosen, not measured against a daemon hiccup",
+      "skipped_check": "docker daemon error handling",
+      "refs": [
+        "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
+  "obligations": []
+}
