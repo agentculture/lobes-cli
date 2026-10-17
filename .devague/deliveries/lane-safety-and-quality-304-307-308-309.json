@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T08:23:23Z",
+  "updated": "2026-10-17T08:32:42Z",
   "deviations": [
     {
       "id": "d1",
@@ -751,6 +751,367 @@
       "status": "proposed",
       "superseded": false,
       "seq": 39
+    },
+    {
+      "id": "e35",
+      "obligation_ref": "o2",
+      "test_ref": "H3 wrapper in throwaway containers on spark, orin, thor",
+      "behavior_text": "the branch mg-logwrap read true host uptime inside the container and held exactly the remainder (3-6 s) before exec on all three kernels",
+      "contract_text": "mg-logwrap.sh holds before its final exec until host uptime (/proc/uptime, not namespaced) >= LOBES_BOOT_DELAY_S (default 120, 0 = off), logging the hold; read with bash builtins (no cut/awk dependency); exec \"$@\" stays last so signals and exit codes are unchanged",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:11:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 42
+    },
+    {
+      "id": "e36",
+      "obligation_ref": "o9",
+      "test_ref": "H3 wrapper: memory gate + start counter on spark, orin, thor",
+      "behavior_text": "gate passed at util 0.01 and timed out at 0.99 after 10 s with exit 75 and a gate marker carrying real need/avail (thor need 127502734 KiB avail 48594044); the 3rd start inside 600 s held with the contract message",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:11:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 43
+    },
+    {
+      "id": "e37",
+      "obligation_ref": "o9",
+      "test_ref": "H3 wrapper: SIGTERM to a held container (timeout 8 docker run) on spark, orin, thor",
+      "behavior_text": "a lane held by the start counter ignored SIGTERM (bash deferred traps during foreground sleep) and kept running until killed \u2014 held lanes were not stoppable",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:16:24Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 44
+    },
+    {
+      "id": "e38",
+      "obligation_ref": "o9",
+      "test_ref": "docker run ubuntu:24.04, bash as PID 1, wrapper held by the start counter, docker stop (on the Spark host)",
+      "behavior_text": "after the fix (sleep & wait + TERM/INT handler) docker stop returned in 0.15 s with exit 143; the old script hit the stop timeout and was killed (137)",
+      "contract_text": "Crash backoff (Option C): before exec, mg-logwrap (1) records the start in a per-lane file under the host-mounted log dir and, after N starts inside a window, holds with a logged reason and a documented clear path; (2) waits until host MemAvailable covers the lane's --gpu-memory-utilization share of MemTotal (parsed from its own argv), logging while it waits, with a bounded timeout",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:29:05Z",
+        "commit": "cd4b328"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 45
+    },
+    {
+      "id": "e39",
+      "obligation_ref": "o11",
+      "test_ref": "H4 branch gateway in a throwaway container (production gateway image, branch lobes mounted) on spark, orin, thor",
+      "behavior_text": "with the thermal keys passed as the fleet compose now passes them and SHED_C forced below the reading, model=cortex got 429 Retry-After 5 X-Lobes-Shed-Signal: thermal; model=hand was not shed (503: no backend)",
+      "contract_text": "The gateway pressure policy gains a fourth shed signal, thermal ('hot'): the hottest /sys/class/thermal zone above a per-card threshold sheds sheddable full tiers with 429 + Retry-After exactly like swap; hand (floor) and NEVER_SHED_ROLES (decider) are always served; X-Lobes-Override still bypasses",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:36Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 46
+    },
+    {
+      "id": "e40",
+      "obligation_ref": "o12",
+      "test_ref": "H4 GET /status in the container on spark (acpitz 62.1), orin (tj-thermal 57.937), thor (tj-thermal 47.937)",
+      "behavior_text": "thermal_c non-null in a real container from the card's zone selector; thermal_shedding true; shed_signal thermal",
+      "contract_text": "sample_pressure() and PressureCache carry a thermal field (hottest zone, m\u00b0C) read with stdlib from /sys/class/thermal; absent/unreadable zones degrade to 'no thermal signal', never to shedding; lobes status --pressure and GET /status pressure payload show it",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:23Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 47
+    },
+    {
+      "id": "e41",
+      "obligation_ref": "o15",
+      "test_ref": "H4 unprivileged gateway container (uid 10001) on spark, orin, thor",
+      "behavior_text": "the container read /sys/class/thermal with no mount on all three boxes",
+      "contract_text": "The gateway container can read host thermal zones: verify /sys/class/thermal is visible in the unprivileged gateway container on Spark/Orin (Thor deferred), else add an explicit read-only bind mount in the fleet compose gateway service",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:23Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 48
+    },
+    {
+      "id": "e42",
+      "obligation_ref": "o33",
+      "test_ref": "H4 429 response headers/body on spark, orin, thor",
+      "behavior_text": "X-Lobes-Shed-Signal: thermal header and error.shed_signal 'thermal' present on the live 429",
+      "contract_text": "A thermal shed is observable mesh-wide: the 429 carries a thermal reason (X-Lobes-Tier-Reason / shed_signal 'thermal'), GET /status pressure includes the thermal reading and signal, and a mesh forward that receives it relays the peer's reason (no silent conversion to a generic busy)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:36Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 49
+    },
+    {
+      "id": "e43",
+      "obligation_ref": "o23",
+      "test_ref": "H5 lobes watcher run --once on thor against a real gate marker",
+      "behavior_text": "action=cleared via=machine-cli (real thor drop-caches; MemAvailable 48619548 -> 49146948 kB), the second tick inside the window action=rate-limited; state persisted",
+      "contract_text": "lobes ships an opt-in host-side watcher (installed by an explicit lobes verb with --apply, removable, the first host unit lobes installs): it watches for a lane holding in the memory gate (a marker file the wrapper writes in the host-mounted log dir) and runs the granted page-cache clear, rate-limited and logged; without the sudoers grant it only logs; never touches containers (no docker pause/update/restart)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:22:52Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 50
+    },
+    {
+      "id": "e44",
+      "obligation_ref": "o7",
+      "test_ref": "H6 Orin vllm-embed recreate #1 (empty host cache) then #2 (warm host cache) with the per-lane mount",
+      "behavior_text": "recreate #1 compiled (torch.compile 31.78 s, init 44.15 s, 426 files/39M written to ~/.lobes/compile-cache/embed); recreate #2 loaded from the host cache (torch.compile 5.33 s, init 16.03 s); healthy both times, 0 restarts, embeddings dim 1024",
+      "contract_text": "Every vLLM lane persists its compile cache across a recreate: VLLM_CACHE_ROOT (or /root/.cache/vllm) bind-mounted to a per-lane host dir under the deployment (single + fleet templates, embed overlay vLLM lanes), so a compose recreate reuses the known-good torch.compile/inductor artifacts instead of recompiling",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:28:06Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 51
+    },
+    {
+      "id": "e45",
+      "obligation_ref": "o8",
+      "test_ref": "H6 Orin vllm-embed log: cache directory + hash key",
+      "behavior_text": "both recreates used /cache/vllm/torch_compile_cache/cca2e290ec/... (same content-hash key as the old writable-layer cache), proving the relocation keeps the key",
+      "contract_text": "The compile cache is keyed so it cannot be reused across a different image/model/knob set by accident (vLLM's own hash key or a per-lane, per-image subdir), and an operator can wipe it (documented path; a lobes verb is optional)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:28:06Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 52
+    },
+    {
+      "id": "e46",
+      "obligation_ref": "o27",
+      "test_ref": "H7 lobes doctor (read-only) against the real ~/.lobes on spark and orin",
+      "behavior_text": "logwrap_stale and compile_cache_unmounted fire on the hand-kept deployments with exact override lines; no file written",
+      "contract_text": "A safe rollout path for existing deployments: doctor reports a stale scaffold mg-logwrap.sh (digest differs from the packaged template) and a missing compile-cache mount, and a targeted refresh writes ONLY mg-logwrap.sh (with a backup) \u2014 because doctor --fix never rewrites existing files, init --force overwrites the whole compose with no backup, and the Spark's hand-edited compose must never be re-scaffolded",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:23:38Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 53
+    },
+    {
+      "id": "e47",
+      "obligation_ref": "o18",
+      "test_ref": "H7 lobes doctor on orin while GPU/EMC devfreq min==max (operator jetson_clocks)",
+      "behavior_text": "jetson_clocks_locked reported 'clocks are not locked by a window' although the Orin clocks were pinned \u2014 a lock outside a lobes window was invisible",
+      "contract_text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:23:38Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 54
+    },
+    {
+      "id": "e48",
+      "obligation_ref": "o18",
+      "test_ref": "re-test on orin after the clocks_locked fix (orin 0.7.1 + lobes 23ba6e3)",
+      "behavior_text": "window show reports clocks_locked true (gpu 1300/1300/1300, emc 3199); doctor warns 'clocks are locked outside any lobes window (operator jetson_clocks or a crashed run)'",
+      "contract_text": "lobes doctor gains a jetson_clocks_locked (warn) finding: clocks locked outside a benchmark window (e.g. a crashed run left them locked); skipped when the tool or sysfs is absent",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:31:39Z",
+        "commit": "23ba6e3"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 55
+    },
+    {
+      "id": "e49",
+      "obligation_ref": "o21",
+      "test_ref": "H1 spark/orin/thor window show + grant-permissions --check + drop-caches on real boxes",
+      "behavior_text": "spark: supported false, not_granted exit 2, no prompt; orin: MAXN, gpu 1300, not_granted exit 2; thor: grant detected (sysctl rule), drop-caches cleared",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:34Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 56
+    },
+    {
+      "id": "e50",
+      "obligation_ref": "o21",
+      "test_ref": "H2 thor window store/lock/restore on a real Thor (jetson-thor-cli e5dc979)",
+      "behavior_text": "store/lock/restore ran ok via sudo -n jetson_clocks but the fan lock failed ('nvfancontrol: invalid option -- p') and window show reported every clock null",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-17T08:10:09Z",
+        "commit": "e5dc979"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 57
+    },
+    {
+      "id": "e51",
+      "obligation_ref": "o20",
+      "test_ref": "H2 thor window round trip clock restore",
+      "behavior_text": "after restore EMC returned to DVFS (665.6 MHz idle) and the GPU devfreq floor to 314 MHz (min != max): stock clocks restored",
+      "contract_text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:10:09Z",
+        "commit": "e5dc979"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 58
+    },
+    {
+      "id": "e52",
+      "obligation_ref": "o32",
+      "test_ref": "H1 thor grant-permissions --check on the real Thor sudo listing",
+      "behavior_text": "the existing /usr/sbin/sysctl -w vm.drop_caches=3 NOPASSWD rule was detected and reused (granted true, rule sysctl); nothing installed",
+      "contract_text": "The grant step detects an existing equivalent NOPASSWD rule (sudo -n -l matching sysctl vm.drop_caches or tee /proc/sys/vm/drop_caches) and reuses it instead of installing a duplicate; Thor already carries /etc/sudoers.d/drop-caches",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:35Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 59
+    },
+    {
+      "id": "e53",
+      "obligation_ref": "o10",
+      "test_ref": "H1 spark/orin drop-caches without a grant",
+      "behavior_text": "both exited 2 not_granted immediately with no password prompt (sudo -n)",
+      "contract_text": "lobes never clears caches from inside a container and never uses full sudo: the clear runs host-side only, through a single NOPASSWD sudoers rule for '/usr/sbin/sysctl -w vm.drop_caches=3' (mjolnir cachectl pattern), and never prompts \u2014 no grant means skip and say so",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on real hardware (DGX Spark / Jetson AGX Orin / Jetson AGX Thor) on 2026-10-17; transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:09:34Z",
+        "commit": "aec2223"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 60
     }
   ],
   "deltas": [
