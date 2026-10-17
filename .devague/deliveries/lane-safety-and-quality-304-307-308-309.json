@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T07:32:36Z",
+  "updated": "2026-10-17T07:35:17Z",
   "deviations": [
     {
       "id": "d1",
@@ -62,6 +62,20 @@
       "status": "proposed",
       "classification": "needs-follow-up",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "t18 did not refresh tests/fixtures/upgrade_compat; it kept them and added a dated README note explaining why",
+      "task_ref": "t18",
+      "reason": "the fixtures are verbatim copies of a PREVIOUS lobes init scaffold and the test asserts an old deployment upgrades with zero byte changes; refreshing them to the new templates would defeat the test, and it already passes against the new templates",
+      "affects": [
+        "c8",
+        "h6"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "classification": "acceptable",
+      "seq": 5
     }
   ],
   "evidence": [],
