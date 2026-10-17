@@ -2,7 +2,7 @@
   "plan_slug": "lane-safety-and-quality-304-307-308-309",
   "schema_version": 2,
   "created": "2026-10-17T07:09:35Z",
-  "updated": "2026-10-17T08:45:15Z",
+  "updated": "2026-10-17T08:49:06Z",
   "deviations": [
     {
       "id": "d1",
@@ -1112,6 +1112,44 @@
       "status": "proposed",
       "superseded": false,
       "seq": 60
+    },
+    {
+      "id": "e54",
+      "obligation_ref": "o21",
+      "test_ref": "thor window show/store/lock/restore with jetson-thor-cli 0.6.1 on the real Thor",
+      "behavior_text": "lock: GPU devfreq min=max=1575 MHz, EMC FreqOverride=1 at 4266 MHz, fan Dynamic Speed Control disabled PWM 255; CLI reports clocks_locked true, fan_max true, clocks from devfreq (no root); restore: GPU floor 314 MHz, EMC back to 665.6 MHz FreqOverride=0, fan back under nvfancontrol PWM 68 within seconds",
+      "contract_text": "PRs on dgx-spark-cli, jetson-thor-cli and jetson-orin-cli add the clock/fan window verbs (store / lock / restore / show, JSON output) \u2014 on Jetson wrapping jetson_clocks --store/--restore and the nvfancontrol profile; on GB10 whatever lock is accepted (nvidia-smi -lgc is unverified, park v2) \u2014 before lobes depends on them",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on the real Jetson AGX Thor 2026-10-17 (window coordinated with the box's other user); transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:48:08Z",
+        "commit": "05a8f93"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 61
+    },
+    {
+      "id": "e55",
+      "obligation_ref": "o20",
+      "test_ref": "thor window round trip (0.6.1) with raw sysfs + jetson_clocks --show cross-checks",
+      "behavior_text": "clocks and fan locked to max for the window and returned to stock DVFS and nvfancontrol after restore; the serving worker stayed healthy",
+      "contract_text": "lobes benchmark (and measure, when it drives load) wraps its run in a benchmark window that delegates to the machine CLI for the detected card \u2014 spark / thor / orin \u2014 to store state, lock clocks and fan, and ALWAYS restore (try/finally + signal handling) on success, error or Ctrl-C; with no machine CLI or no privilege it runs unlocked and says so in the result (never silently)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "ran on the real Jetson AGX Thor 2026-10-17 (window coordinated with the box's other user); transcript docs/evidence/2026-10-17-accept-lane-safety-hardware.txt",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-17T08:48:08Z",
+        "commit": "05a8f93"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 62
     }
   ],
   "deltas": [
