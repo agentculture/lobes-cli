@@ -67,6 +67,12 @@ hold     = release − host uptime, if positive
   the window, the wrapper logs
   `lobes: <n> starts in <w>s — holding; clear with 'lobes up <role> --apply' or delete <file>`,
   and re-checks every 30 s until the oldest start ages out or the file is gone.
+  With the defaults, the 4th start inside 600 s holds. The start itself is
+  recorded when the lane gets past the hold. `<role>` is the role name for the
+  lane (`primary` → `cortex`, `multimodal` → `senses`, `embed` → `embedder`,
+  `rerank` → `reranker`, any other lane is its own name).
+- **Unwritable log dir:** the counter and the gate marker are skipped, with one
+  log line. The memory gate still runs.
 - **Reset:** a lifecycle verb that starts a lane on purpose deletes that lane's
   file first, so deliberate restarts never count.
 
@@ -89,6 +95,9 @@ hold     = release − host uptime, if positive
   `lobes: memory gate timed out (need <n> KiB, have <m> KiB) — run 'lobes watcher install' or the machine CLI's drop-caches`
   and exits `75`. Docker restarts the container, which counts as a start (§3),
   so a lane that never gets its memory ends up held.
+  The timeout counts poll time (5 s per poll), not wall-clock time.
+- **Skips:** a `--gpu-memory-utilization` value that is not a plain decimal, or
+  an unreadable `meminfo`, skips the gate with one log line.
 - **Known limit:** on Jetson, memory freed by a crash can stay out of
   `MemAvailable` until the page cache is dropped (mjolnir-agent incident Q7),
   and vLLM checks CUDA free memory rather than `MemAvailable`. The gate can
