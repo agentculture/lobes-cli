@@ -1,0 +1,44 @@
+ACCEPTANCE (PARTIAL) — Jetson AGX Thor on vLLM 0.31.0 (v0.31.0-ubuntu2404)
+Issue #310 · plan vllm-0-31-0-fleet task t8 · 2026-10-17 · operator: lobes (Claude)
+Status: embed + rerank ACCEPTED on 0.31.0; worker image intake FAILS (regression) — t8 NOT complete.
+
+PRE-STEP
+  operator chose "clear caches, then t8" after the two Xid incidents (docs/evidence/2026-10-17-baseline-and-scaffold-thor.txt).
+  sync + page-cache clear (granted sysctl rule): available 13 -> 14 GiB (worker holds the rest); dmesg Xid count 64, unchanged.
+
+SWITCH (backups <file>.bak-20261017T203806Z-t8)
+  .env: VLLM_NIGHTLY_IMAGE 8bd082c2 (kept as a comment) -> vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+  override: the hand-typed `image: vllm/vllm-openai:v0.31.0-ubuntu2404` line under vllm-worker retired (c11);
+    `docker compose config` resolves embed, rerank and worker to the 3fb023cc digest; no vllm image: line left.
+  worker NOT recreated on purpose: its container already runs image id sha256:3fb023cc… (the same index digest,
+    started 13:40:47Z after the morning's own Xid), and a recreate on a GPU with two Xids today is avoidable risk.
+
+EMBEDDER (recreated 20:38:16Z)
+  healthy 20:40:22Z, restarts 0; vllm 0.31.0; cold compile 30.35 s (init 46.07 s); no new Xid.
+  probe PASS, identical to the nightly: sim_paraphrase 0.895 / sim_unrelated 0.2316.
+  soak 240 s (sequential, 3 inputs/request): 5316/5316 HTTP 200, 0 errors, no Xid, no restart.
+RERANKER (recreated ~20:44:55Z)
+  healthy 20:46:14Z, restarts 0; vllm 0.31.0; init 6.31 s (enforce_eager: no compile); no new Xid.
+  probe PASS, identical ranking [0,2,1]. soak 120 s: 2074/2074 HTTP 200.
+THROUGHPUT vs the nightly baseline — INCONCLUSIVE
+  `lobes measure` is one tiny batch per run and swings widely:
+    embedder runs: 91.7 / 1.9 / 98.2 / 83.1 docs/s   (nightly baseline: one run, 123.4)
+    reranker runs: 45.2 / 3.6 / 65.5 docs/s          (nightly baseline: one run, 45.7)
+  The instrument's spread exceeds any difference; no regression or speedup is claimed.
+
+WORKER (unchanged container, on 0.31.0 since 13:40Z) — through the 0.89.0 gateway
+  assess --tools: 17*23 PASS, train-time PASS, reasoning field `reasoning`, tool_choice:auto PASS.
+  assess --strict-tools: baseline PASS, strict+thinking PASS, strict+no-think PASS.
+  IMAGE INTAKE — FAIL (negative controls: solid-colour PNGs, enable_thinking=false, temperature 0):
+    64 px:  red -> "White", blue -> "White", green -> "Blue"
+    224 px: red -> "Black", blue -> "Black"   (same through the gateway AND directly on the lane;
+            prompt_tokens 89, so image tokens reach the model — the vision path produces wrong features)
+  The same checkpoint named red/blue/green correctly on the nightly (docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt).
+  Worker log (vLLM 0.31.0, sm_110): "Using backend AttentionBackendEnum.FLASH_ATTN for vit attention" /
+    "Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention". A broken ViT attention path on sm_110 is a
+    HYPOTHESIS, not shown. 0.31.0 has `--mm-encoder-attn-backend` to test it (needs a worker recreate).
+  This regression predates t8: it is present on the worker that the morning's hand override moved to 0.31.0.
+
+END STATE (20:5xZ)
+  all four containers healthy; embed/rerank/worker on 0.31.0; gateway 0.89.0; dmesg Xid count 64 (no new fault
+  during t8). The previous engine image (8bd082c2) remains on disk for rollback.
