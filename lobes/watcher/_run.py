@@ -66,6 +66,28 @@ def _read_marker(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _int_field(data: dict[str, Any], key: str) -> int | None:
+    """``data[key]`` when it is a real int (a bool is not), else ``None``."""
+    val = data.get(key)
+    return val if isinstance(val, int) and not isinstance(val, bool) else None
+
+
+def _marker_entry(p: Path) -> dict[str, Any]:
+    """One marker's scan entry: lane, path, mtime and its int fields, or ``malformed``."""
+    entry: dict[str, Any] = {
+        "lane": p.name[: -len(MARKER_SUFFIX)],
+        "path": str(p),
+        "malformed": False,
+        "mtime": _marker_mtime(p),
+    }
+    data = _read_marker(p)
+    if data is None:
+        entry["malformed"] = True
+    else:
+        entry.update({key: _int_field(data, key) for key in ("since", "need_kib", "avail_kib")})
+    return entry
+
+
 def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
     """Every ``*.gated`` marker in ``state_dir``, sorted by lane name.
 
@@ -75,22 +97,11 @@ def scan_markers(state_dir: Path) -> list[dict[str, Any]]:
     """
     if not state_dir.is_dir():
         return []
-    out: list[dict[str, Any]] = []
-    for p in sorted(state_dir.glob(f"*{MARKER_SUFFIX}")):
-        if p.is_symlink() or not p.is_file():
-            continue
-        lane = p.name[: -len(MARKER_SUFFIX)]
-        entry: dict[str, Any] = {"lane": lane, "path": str(p), "malformed": False}
-        entry["mtime"] = _marker_mtime(p)
-        data = _read_marker(p)
-        if data is None:
-            entry["malformed"] = True
-        else:
-            for key in ("since", "need_kib", "avail_kib"):
-                val = data.get(key)
-                entry[key] = val if isinstance(val, int) and not isinstance(val, bool) else None
-        out.append(entry)
-    return out
+    return [
+        _marker_entry(p)
+        for p in sorted(state_dir.glob(f"*{MARKER_SUFFIX}"))
+        if not p.is_symlink() and p.is_file()
+    ]
 
 
 #: Actions logged once per lane until the action changes (not every poll).
