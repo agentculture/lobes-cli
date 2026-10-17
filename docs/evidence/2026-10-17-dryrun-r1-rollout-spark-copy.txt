@@ -1,0 +1,264 @@
+DRY RUN — R1 (lobes-cli 0.89.0) lane-safety scaffold onto a hand-kept ~/.lobes
+==============================================================================
+
+Date:      2026-10-17
+Procedure: docs/runbooks/lane-safety-r1-rollout.md (steps 2-8; step 9 not run)
+Plan:      #310 vllm-0-31-0-fleet, task t6
+Target:    a sanitised COPY of the DGX Spark's ~/.lobes, in session scratch
+           space. Secret values in the copy's .env were replaced before the
+           run. No live box was touched: no ssh, no `docker compose`, no
+           container created, recreated, stopped or updated.
+CLI:       lobes 0.89.0, run from source (`uv run lobes ... --compose-dir <copy>`)
+           on the Spark host, so card detection read the real GB10.
+
+This record quotes structure only: finding ids, compose lines (which hold
+${VAR} references, not values) and .env key NAMES. No .env value is quoted.
+
+--- The copy's compose chain (`lobes fleet files --json`) -----------------------
+
+  -f docker-compose.yml -f docker-compose.audio.yml
+  -f docker-compose.shape.yml -f docker-compose.override.yml
+
+  docker-compose.yml is a full copy of an older packaged template plus hand
+  edits; the shape file parks three services in an inert profile; the override
+  carries the Hebrew audio deltas, gateway passthroughs and a backfilled comfyui.
+
+--- Step 3: doctor BEFORE (finding ids) ------------------------------------------
+
+  [ok]   docker_available, compose_present, env_coherence
+  [warn] scaffold_files            (cf-tunnel.env.example missing)
+  [warn] profile_staleness         (20 required keys missing from .env)
+  [warn] gateway_passthrough       (3 keys; not lane safety, out of scope here)
+  [warn] logwrap_stale             (deployed wrapper differs from the package)
+  [warn] compile_cache_unmounted   (8 vLLM services: vllm-embed-deep, vllm-middle,
+                                    vllm-minor, vllm-multimodal-coder, vllm-muse,
+                                    vllm-primary, vllm-rerank, vllm-worker)
+  [warn] drop_caches_grant_missing (host finding: this Spark has no passwordless
+                                    page-cache clear)
+  [ok]   watcher_inactive          (not installed; optional)
+  [warn] plugin_stale              (deployed tool-parser plugin differs)
+  [ok]   health_reachable
+  [FAIL] gateway_version_match     (deployed gateway 0.86.0.dev642 vs CLI 0.89.0)
+
+  Note: health_reachable and gateway_version_match read the LIVE Spark
+  gateway's /health on localhost (the copy's port), read-only. They describe
+  the live box, not the copy.
+
+--- Step 3: per-service lane-safety state, BEFORE (parsed, not compose config) ---
+
+  Services the shape file parks (vllm-embed, vllm-hand, vllm-multimodal) are
+  omitted. "wrapped" = entrypoint is mg-logwrap; caches = /cache/vllm and
+  /cache/flashinfer binds.
+
+  service                 restart         wrapped  caches  start_period
+  vllm-primary            unless-stopped  yes      no      600s
+  vllm-rerank             unless-stopped  yes      no      600s
+  vllm-embed-deep (prof)  unless-stopped  yes      no      600s
+  vllm-minor (prof)       unless-stopped  yes      no      600s
+  vllm-middle (prof)      unless-stopped  yes      no      600s
+  vllm-multimodal-coder   unless-stopped  yes      no      600s
+  vllm-muse (prof)        unless-stopped  yes      no      600s
+  vllm-worker (prof)      unless-stopped  yes      no      600s
+  gateway                 unless-stopped  no       -       20s
+  stt                     unless-stopped  no       -       600s
+  chatterbox              unless-stopped  no       -       300s
+  realtime                unless-stopped  no       -       30s
+  comfyui (innereye)      unless-stopped  yes      -       90s
+  bluetts (override only) unless-stopped  no       -       120s
+
+  Restart policy: every service already has `restart: unless-stopped`; R1
+  adds none. bluetts is in no packaged compose file, so it stays unwrapped.
+
+--- Step 2: dated backups ---------------------------------------------------------
+
+  .env, docker-compose.yml, docker-compose.audio.yml, docker-compose.shape.yml,
+  docker-compose.override.yml, mg-logwrap.sh, qwen3_thinking_tool_parser.py
+  copied to <name>.bak-<stamp>.
+
+--- Step 4: docker-compose.override.yml diff (the only compose file changed) -----
+
+  Totals: 5 hunks, 139 lines added, 2 lines changed, 0 removed.
+  docker-compose.yml, docker-compose.audio.yml and docker-compose.shape.yml:
+  byte-identical to their backups (cmp).
+
+  Hunk 1, existing `stt:` block (merged into it, not a second key):
+  +      - MG_LOG_DIR=/logs/model-gear
+  +      - MG_LOG_NAME=stt
+  +    volumes:
+  +      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+  +      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+  +    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+  +    command: ["/opt/nvidia/nvidia_entrypoint.sh", "python3", "/app/listen_server_whisper.py"]
+  +    healthcheck:
+  +      start_period: 780s
+
+  Hunk 2, existing `chatterbox:` block: the same log env and binds, then
+  +    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+  +    command: ["python3.12", "-m", "lobes.realtime.chatterbox_multilingual_server"]
+       healthcheck:
+  -      start_period: 300s
+  +      start_period: 480s
+
+  Hunk 3, existing `realtime:` block (no env_file there, so the boot knobs are
+  passed explicitly):
+  +      - MG_LOG_DIR=/logs/model-gear
+  +      - MG_LOG_NAME=realtime
+  +      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+  +      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+  +      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
+  +    volumes: (the same two binds)
+  +    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+  +    command: ["python", "-m", "lobes.realtime"]
+  +    healthcheck:
+  +      start_period: 210s
+
+  Hunk 4, existing `gateway:` block:
+  +      - MG_LOG_DIR=/logs/model-gear
+  +      - MG_LOG_NAME=gateway
+  +      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+  +      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+  +      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
+  +      - LOBES_THERMAL_ZONES=${LOBES_THERMAL_ZONES:-}
+  +      - LOBES_THERMAL_SHED_C=${LOBES_THERMAL_SHED_C:-}
+  +      - LOBES_THERMAL_RESUME_C=${LOBES_THERMAL_RESUME_C:-}
+       volumes:
+         - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh
+  +      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+  +      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+  +    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+  +    command: ["python", "-m", "lobes.gateway"]
+  +    healthcheck:
+  +      start_period: 200s
+
+  Hunk 5, existing `comfyui:` block, then 8 new service blocks:
+  -      start_period: 90s
+  +      start_period: 270s
+  +  vllm-primary:
+  +    environment:
+  +      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+  +      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
+  +    volumes:
+  +      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary:/cache/vllm
+  +      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/primary-flashinfer:/cache/flashinfer
+  +    healthcheck:
+  +      start_period: 780s
+  (the same block for vllm-rerank, vllm-embed-deep, vllm-minor, vllm-middle,
+   vllm-multimodal-coder, vllm-muse, vllm-worker; lane names rerank,
+   embed-deep, minor, middle, multimodal-coder, muse, worker)
+
+  The image commands were respelled from the copy's own Dockerfiles:
+  Dockerfile.gateway and Dockerfile.realtime (ENTRYPOINT, inherited by
+  Dockerfile.realtime.local), Dockerfile.chatterbox-ml.local (ENTRYPOINT) and
+  Dockerfile.whisper-stt (CMD, identical to the packaged file). The stt
+  chain's /opt/nvidia/nvidia_entrypoint.sh is the packaged audio-he overlay's
+  spelling; the base image's ENTRYPOINT was NOT inspected (no docker call).
+
+--- Step 4: merge check (YAML parse with a duplicate-key check + a merge -------
+--- simulation of environment-by-key, volumes-by-target, healthcheck-by-key) ----
+
+  No duplicate keys. Effective state AFTER, same services as above:
+
+  service                 wrapped  logs  caches  VLLM_CACHE_ROOT  start_period
+  vllm-primary            yes      yes   yes     yes              780s
+  vllm-rerank             yes      yes   yes     yes              780s
+  vllm-embed-deep         yes      yes   yes     yes              780s
+  vllm-minor              yes      yes   yes     yes              780s
+  vllm-middle             yes      yes   yes     yes              780s
+  vllm-multimodal-coder   yes      yes   yes     yes              780s
+  vllm-muse               yes      yes   yes     yes              780s
+  vllm-worker             yes      yes   yes     yes              780s
+  gateway                 yes      yes   -       -                200s
+  stt                     yes      yes   -       -                780s
+  chatterbox              yes      yes   -       -                480s
+  realtime                yes      yes   -       -                210s
+  comfyui                 yes      yes   -       -                270s
+  bluetts                 no       no    -       -                120s
+
+--- Step 5: lobes doctor --refresh-logwrap [--apply] ------------------------------
+
+  plan:    would copy mg-logwrap.sh -> mg-logwrap.sh.bak
+           would write the packaged mg-logwrap.sh
+  applied: wrote packaged mg-logwrap.sh
+
+--- Step 6: lobes doctor --refresh-plugin [--apply] -------------------------------
+
+  plan:    deployed sha256 22a030552d03..., packaged sha256 36a95d103704...
+           would copy qwen3_thinking_tool_parser.py -> qwen3_thinking_tool_parser.py.bak
+           would write the packaged qwen3_thinking_tool_parser.py
+  applied: wrote packaged qwen3_thinking_tool_parser.py
+
+--- Step 7: lobes doctor --fix [--apply] (run AFTER the override) -----------------
+
+  Files written:  cf-tunnel.env.example
+  Dirs created:   compile-cache/ plus 16 lane dirs: embed-deep, middle, minor,
+                  multimodal-coder, muse, primary, rerank, worker, each with its
+                  -flashinfer sibling
+  .env keys appended (20, names only; no existing line changed):
+    lane safety (3):  LOBES_THERMAL_ZONES, LOBES_THERMAL_SHED_C,
+                      LOBES_THERMAL_RESUME_C
+    audio (17):       AUDIO_URL, BARGE_IN_MODEL, BARGE_IN_WINDOW_MS,
+                      CHATTERBOX_PORT, DEFAULT_AEC_MODE, DEFAULT_SYSTEM_PROMPT,
+                      DEFAULT_TURN_DETECTION, DEFAULT_VOICE, PARAKEET_MODEL,
+                      PARAKEET_PORT, REALTIME_PORT, TTS_CONCURRENCY, TTS_SPEED,
+                      TTS_VOICE_CONCURRENCY, VAD_MAX_TURN_MS,
+                      VAD_PREFIX_PADDING_MS, VAD_THRESHOLD
+  Each appended value was compared with the `${KEY:-default}` the copy's
+  compose files use for that key:
+    - 16 audio keys: equal to the compose default, so no effective change.
+    - AUDIO_URL: differs from the base file's empty default, but equals the
+      audio overlay's default, which wins later in the chain. No change.
+    - the 3 thermal keys: differ from the empty compose default. With the
+      hunk-4 passthrough, the recreated gateway would arm thermal shedding.
+      The runbook says so in step 7.
+  No LOBES_BOOT_*, LOBES_START_*, LOBES_MEM_GATE* or cache key was appended:
+  they are not required keys, and the wrapper and compose carry their defaults.
+
+  The --fix plan run BEFORE step 4 listed only compile-cache/ itself, because
+  the per-lane directories come from the binds the compose files declare. Order
+  matters: override first, then --fix --apply.
+
+--- doctor AFTER (finding ids) ----------------------------------------------------
+
+  [ok]   docker_available, compose_present, env_coherence
+  [ok]   scaffold_files            (all 15 present)
+  [ok]   profile_staleness         (every required key present)
+  [warn] gateway_passthrough       (unchanged, same 3 keys; out of scope)
+  [ok]   logwrap_stale             (matches the package)
+  [ok]   compile_cache_unmounted   (all 8 vLLM services mount both caches)
+  [ok]   compile_cache_size        (0 bytes)
+  [warn] drop_caches_grant_missing (host; step 8 needs the operator)
+  [ok]   watcher_inactive          (not installed; optional)
+  [ok]   plugin_stale              (matches the package)
+  [ok]   health_reachable
+  [FAIL] gateway_version_match     (the LIVE gateway; clears only after step 9)
+
+  lane_state_writable is absent: the copy has no logs/ directory.
+
+--- Step 9 (not run): what it would do ---------------------------------------------
+
+  `lobes up gateway --build` (dry run) on the copy:
+    would run: docker compose -f docker-compose.yml -f docker-compose.audio.yml
+    -f docker-compose.shape.yml -f docker-compose.override.yml
+    up -d --no-deps --build gateway; first: clear the page cache (when granted).
+  The audio overlay is in the gateway's chain.
+  `lobes doctor --repin-version` (dry run) planned to set MODEL_GEAR_VERSION=0.89.0.
+
+--- Rollback rehearsal --------------------------------------------------------------
+
+  On a second copy of the post-procedure tree: restored the 7 dated backups,
+  removed mg-logwrap.sh.bak, qwen3_thinking_tool_parser.py.bak,
+  cf-tunnel.env.example, compile-cache/ and the dated backups themselves.
+  `diff -r` against the pristine copy: identical.
+
+--- Not dry-run here ------------------------------------------------------------------
+
+  - `docker compose config` on the merged chain (forbidden for this task); the
+    merge was checked by parsing and simulation only.
+  - The respelled image commands (no `docker image inspect`).
+  - Any recreate, the boot hold, the start counter, the memory gate, the cache
+    write and the gateway's thermal shed on a live container.
+  - The machine-CLI grant and the watcher install (host changes).
+  - The claim that a self-restarted (not recreated) container picks up the new
+    wrapper through its file bind mount: reasoned, not tested.
+  - Thor, Orin and spark2 specifics (other overrides, docker-compose.gpu.yml,
+    no repo checkout on the box).

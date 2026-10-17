@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T18:55:03Z",
+  "updated": "2026-10-17T19:47:33Z",
   "claims": [
     {
       "id": "c1",
@@ -1378,6 +1378,28 @@
       "skipped_check": "docker daemon error handling",
       "refs": [
         "t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l6",
+      "code": "control-absent",
+      "what": "t6's dry run read the LIVE Spark: doctor's health_reachable and gateway_version_match did a GET /health on localhost:8001 because the copy's port pointed there; read-only, but those two findings describe the live box, not the copy",
+      "skipped_check": "point the copy's gateway port at a closed port before running doctor",
+      "refs": [
+        "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l7",
+      "code": "assumption-for-measurement",
+      "what": "t6's runbook claims a container that docker restarts on its own picks up the refreshed wrapper through its file bind mount ('prepare now, recreate later'); reasoned from docker behaviour, not tested; the merged compose chain was checked by YAML parse + simulation only, not docker compose config",
+      "skipped_check": "docker compose config on the merged chain; a real restart",
+      "refs": [
+        "t6"
       ],
       "origin": "llm",
       "status": "proposed"
