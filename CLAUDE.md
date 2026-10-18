@@ -52,6 +52,17 @@ re-render force-writes the key, so changing it means selecting a different
 shape or forking the shape file (issue #204). Measured KV pool at the adopted pair:
 760,806 tokens = **2.90× concurrency at 262144**.
 
+**Engine relabel (#310 t15).** The DSpark-vs-MTP figures and the 760,806-token
+KV pool above were measured on the nightly 0.26.1rc1.dev942 and are
+DECLARED/UNVALIDATED (#108) as vLLM 0.31.0 values; they stay on record. The
+same cortex + DSpark n=7 / 262144 / util 0.58 pairing has since been booted on
+0.31.0 on the Spark (KV 754,621 tokens, `lobes benchmark` 15.9 tok/s,
+`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`) and spark2 (KV
+751,086; same-box nightly -> 0.31.0 code 37.1 -> 41.5, reasoning 33.9 -> 31.5,
+prose 15.4 -> 14.5 tok/s, `lobes benchmark` 17.0/16.9 -> 19.2/19.3,
+`docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`) — a different harness
+from the spike, so the MTP-n2 comparison is not re-measured.
+
 That shape previously declared a YaRN-extended **1M window**
 (`max_model_len=1048576`), MEASURED live 2026-08-19
 (`docs/evidence/2026-08-19-accept-qwen38-1m-spark.txt`): same `gpu_mem_util=0.58`
@@ -87,7 +98,10 @@ for `worker` + `hand` + fine-tuning headroom. The Thor now serves
 OFF** (this checkpoint's GDN decode carries an MTP variant with no sm_110
 kernel image on the fleet's current nightly — plain non-MTP GDN decode
 works fine), measured **12.1 tok/s** single-stream decode, TTFT ~300 ms —
-see `docs/evidence/2026-08-20-accept-cortex-local-thor.txt`. See
+see `docs/evidence/2026-08-20-accept-cortex-local-thor.txt`. (#310 t15: the
+1M window, KV pool, 12.1 tok/s and the missing sm_110 MTP kernel are nightly
+0.26.1rc1 measurements, DECLARED/UNVALIDATED on 0.31.0 — no Thor cortex lane
+has been booted on 0.31.0.) See
 `docs/qwen3.8-27b-nvfp4.md` and the `worker`/`muse` paragraphs
 below for the rest of the d1 topology.
 lobes runs it; the `acp` `vllm-local` provider connects the lobes agent to it.
@@ -281,7 +295,11 @@ probability for every option of every question; the domain is chosen by the
 forwarded byte-identical, and the path is never shed. Served by per-domain
 decider sidecars (`lobes/decider_sidecar/`). The default checkpoint is our own
 `culture-dev/clef-27b-GPTQ-W4A16-g64` (Clef 27B, weight-only 4-bit for the Orin's
-Ampere), MEASURED 0.988 top-1 agreement with bf16 on 418 labelled questions; the
+Ampere), MEASURED 0.9928 agreement with bf16 (415/418, top-1 0.9378) on 418
+labelled questions on the vLLM 0.31.0 `-ubuntu2404` base
+(`docs/evidence/2026-10-17-accept-vllm-031-orin.txt`; the earlier 0.988 was
+measured 2026-10-14 on plain `v0.31.0`, not `-ubuntu2404`, and is kept on
+record in `docs/decider.md`); the
 `orin-decider` shape renders it beside `orin-embed` (render DECLARED/UNVALIDATED
 until its live acceptance, #108). Responsibilities include `final_decision`;
 forbidden `repo_action`, `security_decision`. See `docs/decider.md`.
@@ -371,7 +389,11 @@ proxy (2026-09-11).** The Thor serves the lane locally through the
 DFlash speculation, and `WORKER_MAX_NUM_SEQS=1`. One request at a time is
 **by design** and is still to be tested under a real multi-agent load. See
 `docs/nvidia-qwen3.6-35b-a3b-nvfp4.md` for the recipe and the 196.6 tok/s
-measurement. The Spark does not host it: `WORKER_FEASIBLE=false` plus
+measurement (nightly 0.26.1rc1; on vLLM 0.31.0 the lane boots at the same
+budget with KV 768,707 tokens = 2.93x, and image intake needs
+`--mm-encoder-attn-backend=TORCH_SDPA` on sm_110 — deviation d1,
+`docs/evidence/2026-10-17-accept-vllm-031-thor.txt`; 196.6 tok/s and the other
+nightly figures are DECLARED/UNVALIDATED there, #310 t15). The Spark does not host it: `WORKER_FEASIBLE=false` plus
 `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` forward `model=worker` (and the
 raw id) to the Thor, with `X-Lobes-Proxied-By` on every answer. This was
 validated live on 0.75.1 gateways

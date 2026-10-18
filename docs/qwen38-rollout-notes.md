@@ -13,6 +13,12 @@ served now at **1,048,576 tokens (1M) via YaRN**, engine
 spike that isolated checkpoint risk from YaRN risk:
 `docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt`.
 
+> **Engine relabel (#310 t15).** The 1M-window boot evidence above was taken on
+> the nightly `0.26.1rc1.dev942` and is DECLARED/UNVALIDATED (#108) on vLLM
+> 0.31.0; cortex on 0.31.0 is evidenced at 262144 with DSpark in
+> `docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt` and
+> `docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`.
+
 **Why this doc exists.** Per `docs/model-switch-playbook.md` §2, no consumer
 in this mesh addresses the fleet by role name — every one of them puts the
 **raw served id** on the wire, even the ones that discover via

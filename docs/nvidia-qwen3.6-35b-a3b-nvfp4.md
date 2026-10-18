@@ -1,15 +1,37 @@
 # `nvidia/Qwen3.6-35B-A3B-NVFP4` — the Thor `worker` lane
 
-**Status: VALIDATED live on the physical Jetson AGX Thor, 2026-09-10** — see
+**Status: VALIDATED live on the physical Jetson AGX Thor, 2026-09-10, on the
+nightly `0.26.1rc1.dev942`; re-accepted on vLLM 0.31.0 (2026-10-17) for the
+items listed in [Engine relabel](#engine-relabel-310-t15) only** — see
 issue [#244](https://github.com/agentculture/lobes-cli/issues/244). This is the
 deployed `worker` checkpoint. Every number below was
-measured on that box; nothing here is copied from a vendor page or a forum
+measured on that box (on the nightly unless the relabel section says otherwise); nothing here is copied from a vendor page or a forum
 post, and the external figures that ARE quoted are labelled as external.
 
 > **Read this first if you are re-running it.** The single most useful fact in
 > this document is not a throughput number — it is that **you must not force
 > `--moe-backend`** on this lane, and the reason is not the one the fleet
 > believed. See [MoE backend](#moe-backend-two-backends-run-at-once).
+
+## Engine relabel (#310 t15)
+
+The fleet moved from that nightly to official vLLM 0.31.0
+(`v0.31.0-ubuntu2404`). Every figure below is a **nightly-engine measurement**
+and is **DECLARED/UNVALIDATED (#108) as a 0.31.0 value** unless this section
+names a 0.31.0 transcript for it. The old numbers stay on record. What
+`docs/evidence/2026-10-17-accept-vllm-031-thor.txt` actually measured on 0.31.0
+(same Thor, util 0.45, 262144 window):
+
+| item | nightly (this doc) | 0.31.0 | status |
+|---|---|---|---|
+| boots at util 0.45 / 262144 | yes | yes | re-measured |
+| KV pool at 262144 | 1,199,883 tokens = 4.58x | 768,707 tokens = 2.93x | re-measured, **different** |
+| tool call, `17*23`, strict+thinking | PASS | PASS | re-measured |
+| image intake (solid PNG controls) | PASS | PASS **only** with `--mm-encoder-attn-backend=TORCH_SDPA` (deviation d1); the default `FLASH_ATTN` ViT path misnamed the colours | re-measured, **needs the flag** |
+| single-stream decode | 196.6 tok/s (and the 65536 sweep) | 84.3 / 83.8 tok/s via `lobes benchmark` (balanced 1000/1000) | **not comparable** (different workload, no same-harness nightly baseline); no speedup or regression claimed |
+| speculation sweep, 32.05x / 21.04x ceilings, weight load time, width sweeps, 115K proxy prompt | measured | not re-measured | DECLARED/UNVALIDATED on 0.31.0 |
+
+The 0.31.0 DFlash mean acceptance length in that run was 3.5-5.5.
 
 ## What it is
 
@@ -405,7 +427,9 @@ behind them rather than failing.
 
 ## Status and gating
 
-* **VALIDATED** on the Thor for: load, MoE/attention backend selection, budget
+* **VALIDATED on the nightly** (DECLARED/UNVALIDATED on 0.31.0 except where
+  [Engine relabel](#engine-relabel-310-t15) cites the 2026-10-17 transcript) on
+  the Thor for: load, MoE/attention backend selection, budget
   at both 65536 and 262144, single-stream throughput, speculation sweep,
   tool calls, image intake, and end-to-end agentic use.
 * **VALIDATED cross-box (2026-09-11):** the Spark reaching this lane by proxy.

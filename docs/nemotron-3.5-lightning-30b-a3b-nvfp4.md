@@ -118,6 +118,12 @@ Checkpoint facts (read from the published config files, fetched 2026-08-20):
 
 ## The Thor no-go (2026-08-20)
 
+> **Engine relabel (#310 t15).** The wedge below was reproduced on the `8bd082`
+> nightly and on `v0.27.1`; it has **not** been re-run on vLLM 0.31.0 (the
+> fleet pin), so it is DECLARED/UNVALIDATED (#108) whether 0.31.0 still wedges
+> on sm_110. The Orin figures further down were measured on `v0.27.1` /
+> `7c5a10e9`, not on 0.31.0, and are likewise not re-measured.
+
 The plan's original target was the Jetson AGX Thor (sm_110). Task t2's
 conservative spike (`--max-model-len 32768 --gpu-memory-utilization 0.25`,
 no MTP/DSpark, the fleet-wide `8bd082` nightly, vLLM 0.26.1rc1.dev942)

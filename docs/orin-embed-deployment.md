@@ -1,5 +1,13 @@
 # The Orin as the mesh's embedding specialist — the `orin-embed` deployment
 
+> **vLLM 0.31.0 (#310 t15):** the lanes below were re-accepted on the Orin on
+> the 0.31.0 fleet pin (`docs/evidence/2026-10-17-accept-vllm-031-orin.txt`:
+> embed and rerank probes PASS, gemma2-embed rebuilt from the pin with its
+> per-modality controls passing, decider-general agreement 0.9928). Budgets
+> and residency figures below (e.g. 4.69 GiB, ~15.3 GiB of 61.34 GiB) were
+> measured earlier and are DECLARED/UNVALIDATED (#108) on 0.31.0 except where
+> that transcript states them (decider KV 56,661 tokens = 3.46x).
+>
 > **Status, 2026-10-07:** the `orin-embed` shape is deployed live on the Jetson
 > AGX Orin 64GB and accepted mesh-wide
 > ([acceptance](evidence/2026-10-07-accept-orin-embed.txt)). Lane

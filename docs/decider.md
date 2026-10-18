@@ -45,8 +45,23 @@ quantized builds are our own (llm-compressor 0.14.0), published by the
 | Run | Top-1 accuracy | Agreement with bf16 | Median ms (<= 1,024 tokens) |
 |---|---|---|---|
 | bf16 / DGX Spark | 0.9354 | — | 441 |
-| W4A16 / Jetson AGX Orin | 0.9378 | 0.988 | 505 |
+| W4A16 / Jetson AGX Orin (plain `v0.31.0`, 2026-10-14) | 0.9378 | 0.988 | 505 |
 | NVFP4 / DGX Spark | 0.9330 | 0.9785 | 181 |
+
+The 0.988 row was measured on plain `v0.31.0`, before the sidecar moved to the
+`-ubuntu2404` fleet pin. It was re-measured on `-ubuntu2404` (decision c53), same probe set, same bf16 Spark reference, in
+`docs/evidence/2026-10-17-accept-vllm-031-orin.txt`:
+
+| Run (Jetson AGX Orin, W4A16) | Top-1 accuracy | Agreement with bf16 | KL mean | Median ms |
+|---|---|---|---|---|
+| plain `v0.31.0` (2026-10-14) | 0.9354 | 0.9904 | 0.00308 | 506 |
+| `v0.31.0-ubuntu2404` (the fleet pin) | 0.9378 | **0.9928** (415/418) | 0.00295 | 516 |
+
+The `-ubuntu2404` base is the one the sidecar now builds from, so 0.9928 is the
+current MEASURED value and 0.988 is its plain-`v0.31.0` predecessor (kept, not
+deleted). The `orin-decider` shape's render remains DECLARED/UNVALIDATED
+(#108): the re-measure above ran the lane on the Orin, not a boot from that
+render.
 
 On the Jetson AGX Thor (sm_110) the NVFP4 files give flattened probabilities
 (mean top-1 probability 0.31 vs 0.92; agreement 0.957–0.964); the cause is not

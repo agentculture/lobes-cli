@@ -126,6 +126,22 @@ hosts = ["cortex", "hand", "embedder", "reranker", "stt", "tts"]
 #   default, not an oversight -- a prose-heavy box wants the incumbent MTP
 #   head back, or no speculative decoding at all ("").
 #
+#   ENGINE RELABEL (#310 t15): every DSpark / KV figure in this d4 block
+#   (46.20 vs 24.69, 13.71 vs 16.65 tok/s, KV 760,806 = 2.90x) was measured on
+#   the nightly 0.26.1rc1.dev942, and the YaRN / 1M-window refusals above on
+#   the older engines -- they are history for those engines, not 0.31.0
+#   measurements. 0.31.0 evidence now on record for this same cortex + DSpark
+#   n=7 / 262144 / util 0.58 pairing:
+#   docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt (Spark: KV cache
+#   754,621 tokens; lobes benchmark 15.9 tok/s vs 17.0/16.9 on the spark2
+#   nightly baseline) and docs/evidence/2026-10-18-accept-vllm-031-spark2.txt
+#   (spark2, same-box nightly -> 0.31.0: code 37.1 -> 41.5, reasoning 33.9 ->
+#   31.5, prose 15.4 -> 14.5 tok/s; KV 751,086). Those are different harnesses
+#   from the 2026-08-24 spike, so the spike's MTP-n2 comparison column is NOT
+#   re-measured on 0.31.0: DECLARED/UNVALIDATED (#108) there, and the 2.90x
+#   concurrency figure is likewise nightly-era (0.31.0 KV pools are 754,621 /
+#   751,086 tokens, i.e. ~2.88x / ~2.87x at 262144 by arithmetic).
+#
 #   HOW to do that today, stated honestly: a CARD PROFILE CANNOT WIN HERE. A
 #   shape override composes ON TOP of the card, so this non-None value beats
 #   any speculative_config an operator writes in <deploy-dir>/profiles/
