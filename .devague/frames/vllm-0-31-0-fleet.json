@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T23:12:43Z",
+  "updated": "2026-10-18T04:20:39Z",
   "claims": [
     {
       "id": "c1",
@@ -1461,6 +1461,17 @@
       "refs": [
         "t12",
         "d3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "assumption-for-measurement",
+      "what": "t12 handoff stated the strict+thinking grammar was identical across nightly, 0.30.0 and 0.31.0; the saved dumps differ (the thinking block's any_text gained excludes [<think>, </think>]), and the offline matcher test only fed the full thinking text, never the post-</think> start the newer engines actually use \u2014 so it could not detect the real cause (the plugin's thinking prefix under engine-side reasoning gating)",
+      "skipped_check": "diff the grammar dumps field by field; probe the matcher from the engine's real start state",
+      "refs": [
+        "t12"
       ],
       "origin": "llm",
       "status": "proposed"

@@ -2,7 +2,7 @@
   "plan_slug": "vllm-0-31-0-fleet",
   "schema_version": 2,
   "created": "2026-10-17T20:53:11Z",
-  "updated": "2026-10-17T23:36:50Z",
+  "updated": "2026-10-18T04:52:16Z",
   "deviations": [
     {
       "id": "d1",
@@ -64,6 +64,34 @@
       "status": "approved",
       "classification": "risky",
       "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "qwen3_coder_thinking plugin: on engines that hold the structured-output grammar until reasoning ends (vLLM >= 0.30.0; seen on 0.30.0, 0.31.0 and eugr 0.32.0rc1) the plugin must pass reasoning=False, because its thinking-prefixed grammar otherwise waits for a second </think> and masks EOS, so strict+thinking repeats the tool call until max_tokens; the old nightly keeps the per-request derivation. Fixed engine-aware in R2 with tests for both engine kinds; until then the Spark runs a hand-patched, backed-up copy (reasoning=False)",
+      "task_ref": "t12",
+      "reason": "root cause of the strict+thinking regression found 2026-10-18: offline matcher started after </think> masks EOS on every grammar/xgrammar combination; live on eugr, reasoning=False gives 1 call / 45 tokens (65 with DSpark) with reasoning kept, and maxLength=3 still enforced (strict 'the' vs non-strict full string); DSpark ruled out (78 calls with it off)",
+      "affects": [
+        "t14",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "d3 (split pin) and d4 (eugr exception) withdrawn: with the d5 plugin fix, strict+thinking is clean on official v0.31.0-ubuntu2404, so the Sparks run the same official 0.31.0 pin as Thor and Orin; spark2 follows in t13 on 0.31.0; eugr stays a measured, unadopted candidate (17.2 tok/s vs 15.9 on 0.31.0, cortex with DSpark)",
+      "task_ref": "t12",
+      "reason": "operator decision 2026-10-18 after measuring both engines under the d5 fix: one official pin over a ~7-8% decode gain from a third-party rc build",
+      "affects": [
+        "t13",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
     }
   ],
   "evidence": [],
