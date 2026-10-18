@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.90.0] - 2026-10-18
+
+### Added
+
+- `WORKER_MM_ENCODER_ATTN_BACKEND` (worker knob `mm_encoder_attn_backend`): renders `--mm-encoder-attn-backend=<value>` on the worker lane when set, nothing when empty; the `thor-worker` shape sets `TORCH_SDPA`, which fixes the worker's image intake on vLLM 0.31.0 / sm_110 (#310 deviation d1).
+
+### Changed
+
+- The fleet's vLLM pin moves from the nightly `vllm/vllm-openai@sha256:8bd082c2...` (0.26.1rc1.dev942) to official vLLM 0.31.0 `v0.31.0-ubuntu2404` (index `sha256:3fb023cc...`): every vLLM image line in the fleet templates and `env.example`, plus the `Dockerfile.embed-st`, `Dockerfile.decider` and `Dockerfile.decider-vllm` bases (#310 R2, t14). `Dockerfile.vllm-gemma4` is unchanged. Existing deployments keep their own `.env` pin until it is changed there.
+- Values measured on the nightly are relabelled DECLARED/UNVALIDATED (#108) unless a 0.31.0 transcript re-measures them; the decider's agreement is re-promoted to 0.9928 (415/418) on `-ubuntu2404` (t15).
+- `deployments/` re-captured from the live Thor (thor-worker) and Orin (orin-embed) on 0.31.0 (t16).
+
+### Fixed
+
+- `scripts/scan_deployment_secrets.py`: a fully quoted list item such as `- "HF_TOKEN=${HF_TOKEN:-}"` is a pure variable reference, not a literal; a quoted literal or non-empty default is still flagged.
+
 ## [0.89.2] - 2026-10-18
 
 ### Fixed
