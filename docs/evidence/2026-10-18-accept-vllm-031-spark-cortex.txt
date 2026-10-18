@@ -1,0 +1,71 @@
+ACCEPTANCE — DGX Spark cortex on vLLM 0.31.0 (v0.31.0-ubuntu2404), with the d5 plugin fix
+Issue #310 · plan vllm-0-31-0-fleet task t12 · 2026-10-18 · operator: lobes (Claude)
+Continues docs/evidence/2026-10-17-accept-vllm-031-spark-cortex.txt (partial), whose three findings are closed:
+  (1) governor GPU loss -> explicit GPU devices (d2), governor re-attached and verified below;
+  (2) strict+thinking regression -> ROOT CAUSE is the lobes plugin, not the engine (d5), fixed and verified below;
+  (3) hot acpitz zones -> thermal shed raised to 98/94 C (c55), active on the re-imaged 0.89.1 gateway below.
+Status: ACCEPTED on the official pin. Deviations d3 (split pin) and d4 (eugr exception) are withdrawn (d6).
+
+STRICT + THINKING — ROOT CAUSE (d5)
+  Request: tools=[finish(summary: string), strict: true], tool_choice auto, temperature 0, max_tokens 2048,
+  thinking on (template default). Reproduced on three engines, 3/3 runs each, through cortex-spark:
+    v0.30.0-ubuntu2404 and v0.31.0-ubuntu2404 (2026-10-17/18, partial transcript): ~78 calls, finish=length.
+    eugr GB10 nightly (vLLM 0.32.0rc1.dev301, ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:cc47adc1...):
+      run 1: calls=78 finish=length completion_tokens=2048 first_args={"summary": "hello"}
+      run 2: calls=78 finish=length completion_tokens=2048
+      run 3: calls=77 finish=length completion_tokens=2048
+    Same image, DSpark speculative config removed (isolation): 78 / 78 / 78 calls, finish=length.
+      -> DSpark ruled out.
+  Offline (CPU, xgrammar matcher, Qwen3.8 tokenizer), the plugin's thinking-prefixed grammar
+  (tag "" ... "</think>", then "\n\n", then triggered_tags <tool_call>):
+    fed the full text (thinking + </think> + one call): EOS allowed after the call.
+    fed only the text AFTER </think> (one call):         EOS NOT allowed; another <tool_call> allowed.
+    Same on all four combinations of {nightly grammar, new grammar} x {nightly xgrammar, eugr xgrammar}.
+  Reading: vLLM >= 0.30 starts the structured-output grammar only after reasoning ends, so the matcher sits
+  inside the plugin's thinking tag, accepts each tool call as thinking text, and masks EOS until max_tokens.
+  (The 2026-10-18 handoff's "grammar identical across engines" was wrong: the new engines add
+  excludes [<think>, </think>] to the thinking block's any_text. It does not change the result; lapse l11.)
+  Live test of the fix: the deployed plugin copy hand-patched to pass reasoning=False (backup
+  qwen3_thinking_tool_parser.py.bak-*-reasonfalse), eugr image:
+    DSpark off: 1 / 1 / 1 calls, finish=tool_calls, 45 tokens each; reasoning kept (72 chars)
+    DSpark on:  1 / 1 / 1 calls, finish=tool_calls, 65 tokens each
+    enforcement control, summary maxLength=3, prompt demands a 43-char string:
+      strict=True  -> {"summary": "the"}                                          (grammar enforced)
+      strict=False -> {"summary": "the quick brown fox jumps over the lazy dog"}  (unconstrained)
+    (an enum control did not discriminate: the model obeyed the enum with and without strict)
+
+ENGINE COMPARISON (cortex, DSpark n=7, 262144 window, util 0.58; lobes benchmark 1000 in / 1000 out)
+  eugr 0.32.0rc1.dev301:  decode 17.2 / 17.2 tok/s, prefill 887 tok in 1.12 s   (1 run;  hottest zone 87.1 C)
+  official 0.31.0:        decode 15.9 / 15.9 tok/s, prefill 887 tok in 0.83 s   (2 runs, identical; 85.2 C)
+  spark2 nightly baseline (t11): 17.0 / 16.9 tok/s.
+  0.31.0 = ~92% of eugr, ~94% of the nightly baseline. The 2026-10-17 0.31.0 run measured 14.0 / 14.4; that does
+  not reproduce today and the difference is not isolated (that run's zones idled near 88 C; today's peaked 85 C).
+  Operator decision (d6): official 0.31.0 on the Sparks too; eugr stays a measured, unadopted candidate.
+
+ACCEPTANCE ON 0.31.0 (VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@sha256:3fb023cc..., plugin patched per d5)
+  boot: `lobes up cortex --apply` 04:2xZ, healthy 04:25:32Z, engine (v0.31.0), KV cache 754,621 tokens.
+  strict+thinking replay: 1 / 1 / 1 calls, finish=tool_calls, 65 tokens each.
+  strict, thinking off: 1 call, 26 tokens.  non-strict + thinking: 1 call, reasoning 204 chars.
+  maxLength=3 control: strict -> "the"; non-strict -> the full 43-char string.
+  lobes assess --tools: 17*23=391 PASS, train 145 min PASS, reasoning field present, tool_choice:auto PASS.
+  lobes assess --strict-tools: strict_thinking PASS, strict_nothink PASS, matrix PASS.
+  lobes assess --preserve-thinking: +47 prompt tokens -> preserve_thinking LIVE.
+  vision colour controls (solid PNGs, 64 and 224 px, red/blue/green), gateway cortex-spark and lane direct: 12/12.
+
+GOVERNOR (d2)
+  vllm-primary devices: /dev/nvidia0 /dev/nvidiactl /dev/nvidia-modeset /dev/nvidia-uvm /dev/nvidia-uvm-tools.
+  `lobes governor run --container model-gear-vllm-primary --apply --bands "92:12,95:8,98:4" --pause-c 101
+   --resume-c 95` (lobes 0.89.1): first tick 04:53:48Z cpus=16 tz=62.4C; container NanoCpus=16000000000 after the
+  docker update; a fresh `nvidia-smi` exec inside the lane still reports NVIDIA GB10; /health 200.
+  It runs as a session background process, not a durable unit (follow-up).
+
+GATEWAY
+  `lobes doctor --repin-version --apply`: MODEL_GEAR_VERSION 0.86.0.dev642 -> 0.89.1.
+  `lobes up gateway --build --apply`: chain kept docker-compose.audio.yml; healthy; lobes-cli 0.89.1 in-container;
+  LOBES_THERMAL_SHED_C=98, LOBES_THERMAL_RESUME_C=94; AUDIO_URL set; /capabilities cortex ready=true.
+  First mesh reannounce reported "Connection reset by peer"; afterwards cortex-spark, cortex-spark2 and plain
+  cortex all answered 200 through this gateway.
+
+END STATE (04:5xZ): Spark cortex on official v0.31.0-ubuntu2404 with DSpark, explicit GPU devices, governor
+  attached, hand-patched plugin (reasoning=False; the packaged engine-aware fix lands in R2, t14), gateway 0.89.1
+  with the 98/94 C shed. innereye down by design. spark2 untouched (nightly) until t13.

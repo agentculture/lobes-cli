@@ -237,7 +237,24 @@ heavier co-resident agents need the headroom.
    rebuild (the pin is unchanged) and no served-model change — this
    constrains *around* the template drift, it does not fix the drift itself
    (out of scope here; filing the `reasoning=False` hardcode upstream is a
-   tracked follow-up). A companion, independent gateway knob
+   tracked follow-up).
+
+   **The derivation is engine-dependent (#310 deviation d5, 2026-10-18).**
+   It is right only on an engine that applies the grammar from the first
+   generated token, which the nightlies did. vLLM 0.30.0 and later start the
+   grammar only **after** reasoning ends. A thinking-prefixed grammar then
+   sits inside its thinking tag: every tool call is accepted as thinking
+   text, EOS stays masked, and a strict request repeats the call until
+   `max_tokens` (about 78 calls in 2048 tokens, on 0.30.0, 0.31.0 and
+   0.32.0rc1, with and without DSpark). On those engines the plugin passes
+   vLLM's own `reasoning` flag through (`False` on every engine measured),
+   chosen from `vllm.__version__` at import and logged; an unreadable version
+   refuses to boot. A `0.29.x` dev build is classified as pre-0.30. Measured on the DGX Spark:
+   one call with reasoning kept, and a `maxLength=3` control still enforced
+   under strict (`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`).
+   The 0.30.0 boundary is the measured one, not a proven upstream change
+   point: 0.27-0.29 are unmeasured and keep the derivation, and the vLLM
+   change behind it is not isolated. A companion, independent gateway knob
    (`GATEWAY_FORCE_STRICT_TOOLS`) that injects `strict: true` for existing
    callers who don't set it themselves is documented in
    [`docs/openai-api.md`](openai-api.md) and

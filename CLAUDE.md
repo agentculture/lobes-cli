@@ -145,7 +145,13 @@ tool-parser plugin (`lobes/vllm_plugins/`, loaded via vLLM's own
 `--tool-parser-plugin` file-path surface, cortex/main lane only — mirrors
 the `preserve_thinking` #93 scoping) — it derives the grammar's `reasoning`
 flag from the request's own `enable_thinking` instead of the hardcoded
-`False`. A separate, default-off gateway knob (`GATEWAY_FORCE_STRICT_TOOLS`)
+`False`. **That derivation is engine-dependent (#310 deviation d5,
+2026-10-18):** vLLM 0.30.0 and later start the grammar only after reasoning
+ends, so a thinking-prefixed grammar masks EOS and a strict call repeats until
+`max_tokens`; on those engines the plugin passes vLLM's own `reasoning` flag
+through (`False` on every engine measured) (measured on 0.30.0, 0.31.0 and 0.32.0rc1;
+`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`). The boundary is
+the measured one, chosen by the plugin from `vllm.__version__`. A separate, default-off gateway knob (`GATEWAY_FORCE_STRICT_TOOLS`)
 opts existing callers into strict schemas without a client-side change, with
 a retry-without-strict fallback on a grammar-compile failure. See
 `docs/qwen3.6-27b-text-nvfp4-mtp.md`, `docs/openai-api.md`, and

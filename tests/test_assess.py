@@ -297,6 +297,36 @@ def test_strict_matrix_fails_on_mangled_strict_call(monkeypatch) -> None:
     assert r["legs"]["strict_thinking"]["clean"] is False
 
 
+def _repeated_calls_response(n: int = 78):
+    # The #310 d5 failure shape: a valid call repeated until max_tokens.
+    call = {"type": "function", "function": {"name": "finish", "arguments": '{"summary": "hello"}'}}
+    return {
+        "choices": [
+            {
+                "message": {"content": None, "tool_calls": [call] * n},
+                "finish_reason": "length",
+            }
+        ]
+    }
+
+
+def test_strict_matrix_fails_when_a_strict_leg_runs_to_max_tokens(monkeypatch) -> None:
+    # Every call is well-formed, so only finish_reason == "length" exposes it.
+    post, _ = _matrix_post(
+        {
+            (False, None): _clean_call_response(),
+            (True, None): _repeated_calls_response(),
+            (True, False): _clean_call_response(),
+        }
+    )
+    monkeypatch.setattr(A, "_post", post)
+    r = A.run_strict_tool_matrix("http://localhost:8001", "cortex")
+    assert r["passed"] is False
+    assert r["legs"]["strict_thinking"]["clean"] is False
+    assert r["legs"]["strict_thinking"]["finish"] == "length"
+    assert "max_tokens" in (r["legs"]["strict_thinking"]["error"] or "")
+
+
 def test_strict_matrix_cli_exit_codes(monkeypatch, capsys) -> None:
     post, _ = _matrix_post(
         {

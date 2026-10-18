@@ -21,13 +21,26 @@ Qwen3.6 thinking model that produces a grammar that cannot accept the
 ``reasoning=True`` fixes the grammar, but then REQUIRES a closing
 ``</think>`` in the output — so ``reasoning`` must track whether the request
 actually has thinking enabled, not just be flipped on unconditionally.
+
+That per-request derivation is right only on an engine that applies the
+grammar from the first generated token. vLLM 0.30.0 and later (measured on
+0.30.0, 0.31.0 and 0.32.0rc1, #310 deviation d5) start it only AFTER reasoning
+ends, so a thinking-prefixed grammar sits inside its thinking tag forever:
+every tool call is accepted as thinking text, EOS stays masked, and a strict
+request repeats the call until ``max_tokens``. There the plugin passes
+``reasoning=False`` for every request. The boundary is the measured one, not a
+proven upstream change point: 0.27-0.29 are unmeasured and keep the
+derivation, and the vLLM change behind it is not isolated.
 """
 
 from __future__ import annotations
 
 import inspect
+import logging
+import re
 from typing import Any
 
+import vllm
 from vllm.tool_parsers import ToolParserManager
 from vllm.tool_parsers import qwen3_engine_tool_parser as _qwen3_engine_tool_parser_module
 
@@ -61,6 +74,45 @@ def effective_reasoning(request: Any) -> bool:
         return _DEFAULT_REASONING
 
     return bool(chat_template_kwargs["enable_thinking"])
+
+
+#: First engine measured to start the structured-output grammar after reasoning.
+_POST_REASONING_GRAMMAR_FROM = (0, 30)
+
+
+def grammar_starts_after_reasoning(version: str) -> bool:
+    """Return whether vLLM ``version`` applies the grammar only after reasoning.
+
+    Parses the leading ``major.minor`` (``"0.31.0+cu130"``, ``"0.31+cu130"``,
+    ``"0.30rc1"``, ``"0.32.0rc1.dev301+g..."`` and ``"0.26.1rc1.dev942+g..."``
+    all parse) and raises ``RuntimeError`` on anything else, so an engine whose
+    version cannot be read fails at boot instead of silently getting the wrong
+    grammar. A dev build is classified by its base release: a ``0.29.x`` nightly
+    keeps the per-request derivation even if it already carries the (not
+    isolated) upstream change, which is why the chosen mode is logged at import.
+    """
+    match = re.match(r"(\d+)\.(\d+)(?!\d)", version or "")
+    if match is None:
+        raise RuntimeError(
+            "qwen3_thinking_tool_parser: cannot read the vLLM version "
+            f"({version!r}), so it cannot tell whether the engine applies the "
+            "strict-tool grammar before or after reasoning; refusing to load."
+        )
+    return (int(match.group(1)), int(match.group(2))) >= _POST_REASONING_GRAMMAR_FROM
+
+
+_VLLM_VERSION = getattr(vllm, "__version__", "")
+_GRAMMAR_AFTER_REASONING = grammar_starts_after_reasoning(_VLLM_VERSION)
+
+logging.getLogger("vllm.lobes.qwen3_coder_thinking").info(
+    "qwen3_coder_thinking: vLLM %s -> structural-tag reasoning flag %s",
+    _VLLM_VERSION,
+    (
+        "passed through from vLLM (grammar starts after reasoning)"
+        if _GRAMMAR_AFTER_REASONING
+        else "derived per request from enable_thinking"
+    ),
+)
 
 
 # --- Loud import-surface assert --------------------------------------------
@@ -128,16 +180,20 @@ _UNSET: Any = object()
 
 @ToolParserManager.register_module("qwen3_coder_thinking")
 class Qwen3ThinkingToolParser(Qwen3EngineToolParser):
-    """``Qwen3EngineToolParser`` with a request-aware ``reasoning`` flag.
+    """``Qwen3EngineToolParser`` with an engine- and request-aware ``reasoning`` flag.
 
     vLLM always calls ``get_structural_tag(request, reasoning=False)``
-    (abstract_parser._apply_structural_tag), which breaks strict tool calling
-    for a thinking model. Override so ``reasoning`` tracks the request's own
-    thinking state instead of the caller's hardcoded ``False``. 0.31.0 also
-    passes ``strict_level``; it is forwarded untouched when present and left
-    out when absent (nightly parent has no such parameter).
+    (abstract_parser._apply_structural_tag). On an engine that applies the
+    grammar from the first token that breaks strict tool calling for a
+    thinking model, so ``reasoning`` tracks the request's own thinking state.
+    On an engine that starts the grammar after reasoning (vLLM >= 0.30.0) the
+    grammar must not include the thinking block, so the caller's own
+    ``reasoning`` (``False`` from every engine measured) is passed through.
+    0.31.0 also passes ``strict_level``; it is forwarded untouched when present
+    and left out when absent (nightly parent has no such parameter).
     """
 
     def get_structural_tag(self, request, *, reasoning: bool = False, strict_level=_UNSET):
         extra = {} if strict_level is _UNSET else {"strict_level": strict_level}
-        return super().get_structural_tag(request, reasoning=effective_reasoning(request), **extra)
+        derived = reasoning if _GRAMMAR_AFTER_REASONING else effective_reasoning(request)
+        return super().get_structural_tag(request, reasoning=derived, **extra)

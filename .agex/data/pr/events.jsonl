@@ -239,3 +239,9 @@
 {"ts":"2026-10-07T00:01:53.296199+00:00","type":"pr_webhook_posted","pr":293,"event":"pr_opened"}
 {"ts":"2026-10-07T00:02:56.775080+00:00","type":"readiness_arrived","pr":293,"waited_secs":60}
 {"ts":"2026-10-07T00:03:01.419898+00:00","type":"pr_read","pr":293,"comment_count":3,"threads_unresolved":0,"ci_state":"ok"}
+{"ts":"2026-10-18T11:10:46.372078+00:00","type":"pr_opened","pr":323,"title":"fix: qwen3_coder_thinking passes reasoning=False on vLLM >= 0.30 (strict+thinking repeat) \u2014 #310 d5"}
+{"ts":"2026-10-18T11:10:47.900887+00:00","type":"pr_review_triggered","pr":323,"command":"/agentic_review"}
+{"ts":"2026-10-18T11:10:48.656513+00:00","type":"pr_webhook_posted","pr":323,"event":"pr_opened"}
+{"ts":"2026-10-18T11:10:48.671713+00:00","type":"pr_await_detach_spawned","pr":323,"max_wait":1800}
+{"ts":"2026-10-18T11:11:52.039761+00:00","type":"readiness_arrived","pr":323,"waited_secs":60}
+{"ts":"2026-10-18T11:11:56.546218+00:00","type":"pr_await_detach_done","pr":323,"outcome":"clean","exit_code":0}
