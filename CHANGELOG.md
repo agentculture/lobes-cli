@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.90.2] - 2026-10-18
+
+### Changed
+
+- #310: the operator approved the /validate-delivery records (obligations o1-o14, evidence e1-e15, deltas b1-b5) and lapses l2-l11; devague state only.
+
 ## [0.90.1] - 2026-10-18
 
 ### Added
