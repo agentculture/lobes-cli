@@ -162,12 +162,22 @@ class _FakeToolParserManager:
         return decorator
 
 
-def _install_stub_vllm(get_structural_tag, *, define_class: bool = True) -> _FakeToolParserManager:
+#: The served nightly's version string — an engine that applies the grammar from
+#: the first token, so the plugin must derive ``reasoning`` per request.
+NIGHTLY_VERSION = "0.26.1rc1.dev942+g4d2a1b0c3"
+
+
+def _install_stub_vllm(
+    get_structural_tag, *, define_class: bool = True, version: str | None = NIGHTLY_VERSION
+) -> _FakeToolParserManager:
     """Inject fake ``vllm``/``vllm.tool_parsers``/``...qwen3_engine_tool_parser``
     modules into ``sys.modules`` and return the fake ToolParserManager class
-    used, so callers can inspect ``.registered``.
+    used, so callers can inspect ``.registered``. ``version`` becomes
+    ``vllm.__version__`` (``None`` leaves it unset).
     """
     vllm_mod = types.ModuleType("vllm")
+    if version is not None:
+        vllm_mod.__version__ = version
     tool_parsers_mod = types.ModuleType("vllm.tool_parsers")
     qwen3_engine_mod = types.ModuleType("vllm.tool_parsers.qwen3_engine_tool_parser")
 
@@ -370,4 +380,66 @@ def test_import_surface_assert_raises_on_unknown_required_keyword(clean_vllm_stu
     _install_stub_vllm(future_get_structural_tag)
 
     with pytest.raises(RuntimeError, match="mode"):
+        importlib.import_module(PLUGIN_MODULE_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Engines that start the grammar only after reasoning ends (vLLM >= 0.30.0)
+# ---------------------------------------------------------------------------
+# Measured 2026-10-18 on the DGX Spark (#310 deviation d5,
+# docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt): on 0.30.0, 0.31.0
+# and 0.32.0rc1 a thinking-prefixed grammar makes strict tool calls repeat until
+# max_tokens; reasoning=False gives one call with reasoning kept.
+
+
+@pytest.mark.parametrize(
+    "version",
+    ["0.30.0", "0.31.0", "0.31.0+cu130", "0.32.0rc1.dev301+g1ac942555.d20261016", "1.0.0"],
+)
+@pytest.mark.parametrize("thinking", [None, {"enable_thinking": True}, {"enable_thinking": False}])
+def test_post_reasoning_engine_always_gets_reasoning_false(
+    clean_vllm_stubs, version, thinking
+) -> None:
+    calls = []
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
+        calls.append(reasoning)
+
+    _install_stub_vllm(fake_get_structural_tag, version=version)
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+
+    mod.Qwen3ThinkingToolParser().get_structural_tag(
+        _AttrRequest(chat_template_kwargs=thinking), reasoning=False
+    )
+
+    assert calls == [False]
+
+
+@pytest.mark.parametrize("version", [NIGHTLY_VERSION, "0.23.1rc1.dev672+g93d8f834d", "0.29.9"])
+def test_pre_030_engine_keeps_per_request_derivation(clean_vllm_stubs, version) -> None:
+    calls = []
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+        calls.append(reasoning)
+
+    _install_stub_vllm(fake_get_structural_tag, version=version)
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+    parser = mod.Qwen3ThinkingToolParser()
+
+    parser.get_structural_tag(_AttrRequest(chat_template_kwargs=None), reasoning=False)
+    parser.get_structural_tag(
+        _AttrRequest(chat_template_kwargs={"enable_thinking": False}), reasoning=False
+    )
+
+    assert calls == [True, False]
+
+
+@pytest.mark.parametrize("version", [None, "", "nightly", "v0.31.0"])
+def test_import_refuses_an_unreadable_engine_version(clean_vllm_stubs, version) -> None:
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+        return None
+
+    _install_stub_vllm(fake_get_structural_tag, version=version)
+
+    with pytest.raises(RuntimeError, match="version"):
         importlib.import_module(PLUGIN_MODULE_NAME)
