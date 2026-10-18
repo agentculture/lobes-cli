@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-18T04:20:39Z",
+  "updated": "2026-10-18T17:05:03Z",
   "claims": [
     {
       "id": "c1",
@@ -1477,5 +1477,132 @@
       "status": "proposed"
     }
   ],
-  "obligations": []
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c39",
+      "seam": "fleet: vllm version per in-scope lane",
+      "behavior": "(1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c39",
+      "seam": "fleet: baseline + acceptance transcripts per box",
+      "behavior": "(2) each box files >= 1 nightly baseline and >= 1 0.31.0 acceptance transcript under docs/evidence/",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c39",
+      "seam": "fleet: correctness probes on re-measured lanes",
+      "behavior": "(3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c39",
+      "seam": "cortex: strict tool call on 0.31.0",
+      "behavior": "(4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log)",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c39",
+      "seam": "cortex: decode vs nightly on the same box",
+      "behavior": "(5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c39",
+      "seam": "CI with the template default flipped",
+      "behavior": "(6) CI green with the template default flipped",
+      "source_text": "Measurable done: (1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0; (2) each box files >= 1 baseline transcript (nightly, before) and >= 1 acceptance transcript (0.31.0, after) under docs/evidence/; (3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%; (4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log); (5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost; (6) CI green with the template default flipped",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c4",
+      "seam": "qwen3_coder_thinking plugin on 0.31.0",
+      "behavior": "the plugin loads and serves strict tool calls on 0.31.0 (strict_level forwarded; grammar correct for engines that start it after reasoning, d5)",
+      "source_text": "The qwen3_coder_thinking tool-parser plugin is made 0.31.0-compatible: lobes/vllm_plugins/qwen3_thinking_tool_parser.py:105 overrides get_structural_tag(self, request, *, reasoning=False) but v0.31.0 parser/abstract_parser.py calls it with strict_level=self.tool_strict_level -> TypeError on every strict tool call to cortex; the override must accept and forward strict_level (or **kwargs), and the plugin's tests (tests/test_vllm_plugin_thinking.py:97,202,216,235 stub the old signature) must exercise the new keyword",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c3",
+      "seam": "template pin flip",
+      "behavior": "every vLLM image line and the shared default carry the v0.31.0-ubuntu2404 digest; no template names 8bd082c2",
+      "source_text": "The shared template pin moves: VLLM_NIGHTLY_IMAGE default changes from the 8bd082c2 digest to the v0.31.0-ubuntu2404 digest at all 12 image lines (fleet/env.example:48, fleet/docker-compose.yml:53,442,538,607,822,1464,1769, fleet/docker-compose.embed.yml:83,150,214,278) and the 3 comment mentions (env.example:99, docker-compose.yml:122,208), carried through HAND_IMAGE/WORKER_IMAGE/ASSOCIATE_IMAGE fallbacks; the provenance mentions in lobes/catalog.py, profiles/builtin/thor.toml and builtin_shapes/thor-worker.toml stay, since they record what was measured on the nightly",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c40",
+      "seam": "torch-only bases on the fleet pin",
+      "behavior": "Dockerfile.embed-st, Dockerfile.decider and Dockerfile.decider-vllm bases default to the -ubuntu2404 digest",
+      "source_text": "The two torch-only bases move to the fleet pin: Dockerfile.embed-st ARG ST_BASE_IMAGE and Dockerfile.decider ARG DECIDER_BASE_IMAGE default to vllm/vllm-openai:v0.31.0-ubuntu2404 (from 7c5a10e9); and, to keep ONE fleet pin, Dockerfile.decider-vllm moves from plain v0.31.0 (index c1c9f6fd) to the -ubuntu2404 index digest",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c9",
+      "seam": "upgrade_compat fixture frozen",
+      "behavior": "tests/fixtures/upgrade_compat is unchanged by #310",
+      "source_text": "tests/fixtures/upgrade_compat stays frozen: it is a vendored copy of a previous main's scaffold (pins 7c5a10e9 and 26.04-py3) that proves new code still operates an OLD deployment; its README says never hand-edit, and the 2026-10-17 note records it was deliberately not refreshed",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c13",
+      "seam": "non-vLLM images unchanged",
+      "behavior": "llamacpp, STT/whisper torch base, Chatterbox/ComfyUI CUDA and python-slim images are unchanged; Dockerfile.vllm-gemma4 unchanged",
+      "source_text": "Non-vLLM lanes keep their images unchanged: llamacpp-primary (ghcr.io/nvidia-ai-iot/llama_cpp@f7c67c10), Parakeet/whisper STT (FROM scitrera/dgx-spark-vllm:0.16.0-t4, a torch base, not a served vLLM), Chatterbox/ComfyUI (nvidia/cuda:13.0.1), gateway/realtime/bluetts (python:3.12-slim)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c10",
+      "seam": "deployments catalog truthful",
+      "behavior": "thor-worker and orin-embed catalog entries are re-captured from the live boxes and cite 0.31.0 transcripts",
+      "source_text": "The deployments/ catalog stays truthful: jetson-agx-thor__thor-worker and jetson-agx-orin__orin-embed pin 8bd082c2 in their verbatim compose files; after the move each is either re-captured from its live box (lock digests + VARIATION.md citing a 0.31.0 transcript) or its Measured result demoted to verbatim 'No measured result.' with evidence emptied, so tests/test_variation_catalog.py passes",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c31",
+      "seam": "graded governor",
+      "behavior": "lobes governor applies graded CPU caps by hottest zone, pauses above the pause band and resumes only its own pauses",
+      "source_text": "The temperature-adaptive governor is the graded-band design from ~/odm/telemetry/governor2.sh: CPU quota follows the hottest thermal zone (<84 C -> 16 cpus, <88 -> 12, <91 -> 8, <93.5 -> 4, >=93.5 -> pause, resume <86 C at 4), polling every 3 s, no root; packaged in lobes rather than as a side script, next to the lane-safety host watcher and gateway thermal shed (#304/#308)",
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c6",
+      "seam": "incumbent baseline before cutover, per hosted lane",
+      "behavior": "every hosted lane on each box is benchmarked on its current (nightly) engine before its cutover",
+      "source_text": "Baseline the incumbent BEFORE any cutover, per docs/model-switch-playbook.md \u00a71/\u00a77 (an uncontrolled cross-engine comparison is exactly the 2026-07-31 lesson): on each box, benchmark every hosted lane on its current engine (TTFT, decode tok/s via usage.completion_tokens, spec acceptance, KV pool) and file a transcript under docs/evidence/ \u2014 the nightly baseline is unrecoverable afterwards",
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ]
 }

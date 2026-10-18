@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.90.1] - 2026-10-18
+
+### Added
+
+- #310 close-out: the fleet sweep transcript (`docs/evidence/2026-10-18-sweep-vllm-031-fleet.txt`), the /validate-delivery records, and the delivery summary `docs/deliveries/2026-10-17-vllm-0-31-0-fleet.md`; probe scripts `fleet_sweep.sh` and `mesh_roles.sh` under `docs/plans/vllm-031-probes/`.
+
 ## [0.90.0] - 2026-10-18
 
 ### Added
