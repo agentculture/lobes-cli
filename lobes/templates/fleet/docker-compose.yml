@@ -44,13 +44,18 @@ services:
   # includes the Gemma 4 senses/muse lane. The pre-bump digest was
   # sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9.
   #
+  # MOVED AGAIN (#310, R2): the digest below is now the OFFICIAL release
+  # vllm/vllm-openai:v0.31.0-ubuntu2404 (index digest, resolved and confirmed
+  # on Docker Hub), replacing the 0.26.1rc1.dev942 nightly. See
+  # docs/vllm-nightly-migration.md §10.
+  #
   # §5 finding: nightly's memory-profiler asserts free GPU memory stays
   # CONSTANT while it profiles — bring these gears up when fleet memory is
   # stable, not mid-churn (concurrent teardown of another container on the
   # shared GB10 can trip "Error in memory profiling"); prefer one-at-a-time /
   # a settle gap over a simultaneous multi-gear `docker compose up`.
   vllm-primary:
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: model-gear-vllm-primary
     restart: unless-stopped
     deploy:
@@ -441,7 +446,7 @@ services:
     # Same nightly digest as vllm-primary — see the comment above vllm-primary
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up.
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: model-gear-vllm-embed
     restart: unless-stopped
     deploy:
@@ -537,7 +542,7 @@ services:
     # 0.44 and thor-lobe's 0.30 had to be. sm_110/Thor is UNVALIDATED and additionally
     # needs EMBED_DEEP_ATTENTION_BACKEND=TRITON_ATTN set by hand (no trait reaches a
     # gear — see docs/machine-profiles.md).
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: model-gear-vllm-embed-deep
     profiles: ["embed-deep"]
     restart: unless-stopped
@@ -606,7 +611,7 @@ services:
     # for the t4 rationale + the §5 stable-memory caveat before bringing this
     # gear up (§5's spike crash was this exact gear, tripped by concurrent
     # teardown of another gear on the shared GB10 — see docs/vllm-nightly-migration.md §5).
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: model-gear-vllm-rerank
     restart: unless-stopped
     deploy:
@@ -821,7 +826,7 @@ services:
   # this lane has no second half to pair with.
 
   vllm-hand:
-    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    image: ${HAND_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}}
     container_name: model-gear-vllm-hand
     # Lfm2ForCausalLM needs vLLM >= 0.23.0, so this lane pins the NIGHTLY image
     # (like primary/embed/rerank/worker), never the NGC 26.04 tag vllm-minor
@@ -1463,7 +1468,7 @@ services:
   # MEASURED on Thor at t7 (the live boot), exactly as thor-muse's 0.55 was
   # measured (not computed) — do NOT treat 0.30 as validated.
   vllm-worker:
-    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    image: ${WORKER_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}}
     container_name: model-gear-vllm-worker
     profiles:
       - worker
@@ -1643,6 +1648,7 @@ services:
       ${WORKER_ATTENTION_BACKEND:+'--attention-config={"backend": "${WORKER_ATTENTION_BACKEND}"}'}
       ${WORKER_MOE_BACKEND:+--moe-backend=${WORKER_MOE_BACKEND}}
       ${WORKER_LOAD_FORMAT:+--load-format=${WORKER_LOAD_FORMAT}}
+      ${WORKER_MM_ENCODER_ATTN_BACKEND:+--mm-encoder-attn-backend=${WORKER_MM_ENCODER_ATTN_BACKEND}}
       ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
       ${WORKER_MAX_NUM_BATCHED_TOKENS:+--max-num-batched-tokens=${WORKER_MAX_NUM_BATCHED_TOKENS}}
       ${WORKER_CHUNKED_PREFILL-}
@@ -1768,7 +1774,7 @@ services:
   # to the SAME fleet-wide Qwen/vLLM nightly digest pin every other
   # non-Gemma generate lane uses.
   vllm-associate:
-    image: ${ASSOCIATE_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}}
+    image: ${ASSOCIATE_IMAGE:-${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}}
     container_name: model-gear-vllm-associate
     profiles:
       - associate

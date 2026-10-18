@@ -5,11 +5,9 @@
 # loaded from the served repo's own joint_schema_model.py, scores the options in
 # bf16. Same POST /v1/systemone response as the `clef` backend; text-only.
 #
-# Base: vllm/vllm-openai:v0.31.0, pinned by its MULTI-ARCH manifest-list digest
-# (resolved 2026-10-14 with `docker buildx imagetools inspect
-# vllm/vllm-openai:v0.31.0`): the list carries linux/arm64
-# (sha256:3f7dd5b777d34d1724456ce71f87385dca288c3bb23029ab27dee358f5d2b971) and
-# linux/amd64. Whether the arm64 build carries sm_87 (Jetson AGX Orin) kernels is
+# Base: vllm/vllm-openai:v0.31.0-ubuntu2404, pinned by its MULTI-ARCH index
+# digest (#310 R2, confirmed against Docker Hub's tag record): the index carries
+# linux/arm64 and linux/amd64. It is the same image the fleet lanes now pin. Whether the arm64 build carries sm_87 (Jetson AGX Orin) kernels is
 # UNVALIDATED (#108) until t13 boots it. vLLM, torch, transformers, safetensors
 # and huggingface_hub all come from the base image and are deliberately NOT
 # reinstalled — a newer transformers here could break the vLLM it ships with.
@@ -18,7 +16,7 @@
 # (default 8000) inside its network only; the gateway is the sole way in and the
 # compose file decides exposure. MODEL_GEAR_VERSION pins the sidecar module to
 # the lobes-cli release that scaffolded the deployment. Required.
-ARG DECIDER_VLLM_BASE_IMAGE=vllm/vllm-openai@sha256:c1c9f6fd5c109ba7f0546a59f5b2f15fb87f64c77782e90a27b648b42a8e67c3
+ARG DECIDER_VLLM_BASE_IMAGE=vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
 FROM ${DECIDER_VLLM_BASE_IMAGE}
 ARG MODEL_GEAR_VERSION
 # Dev lane — same contract as Dockerfile.decider: the .devN wheel is fetched

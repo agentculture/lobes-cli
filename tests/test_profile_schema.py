@@ -67,6 +67,7 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "moe_backend",
         "max_num_batched_tokens",
         "load_format",
+        "mm_encoder_attn_backend",
         "chunked_prefill",
         "async_scheduling",
         "prefix_caching",

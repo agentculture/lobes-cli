@@ -364,6 +364,7 @@ def test_dockerfile_pins_vllm_031_by_digest():
         re.search(r"vllm/vllm-openai@sha256:[0-9a-f]{64}", ln) for ln in froms
     ), "base image must be pinned by digest"
     assert "v0.31.0" in text
+    assert "sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460" in text
     assert "arm64" in text
 
 
