@@ -141,6 +141,10 @@ feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+# quantization "none": the lane passes no --quantization, so the engine loads the
+# bf16 checkpoint as-is. Declared so the mesh fingerprint is a real value, not
+# "unknown", and identical members pool on a box that does not host them (#297).
+quantization = "none"
 # attention_backend: overlaid from the shared SM_110 trait — TRITON_ATTN
 # (the FlashInfer/FLASH_ATTN pooling path hangs on sm_110).
 
@@ -149,5 +153,7 @@ feasible = true
 model = "Qwen/Qwen3-Reranker-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+# quantization "none": as for the embedder above (#297).
+quantization = "none"
 # attention_backend + enforce_eager: overlaid from the shared SM_110 trait —
 # TRITON_ATTN + enforce_eager=true (CUDA-graph capture is unstable here).

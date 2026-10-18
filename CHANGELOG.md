@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.90.3] - 2026-10-18
+
+### Fixed
+
+- Mesh: plain `embedder` / `reranker` on a box that does not host them (the DGX Spark) answered 404 even though several members serve identical lanes, because their fingerprints advertised `quantization: unknown` and the strict pool rule never pools an unknown (#297). Every card profile now declares `quantization = "none"` for both pooling gears (the lanes pass no `--quantization`), rendered as `EMBED_QUANTIZATION=none` / `RERANK_QUANTIZATION=none` and added to `env.example`; `lobes doctor --fix` appends them to existing deployments. The strict rule itself is unchanged.
+
 ## [0.90.2] - 2026-10-18
 
 ### Changed

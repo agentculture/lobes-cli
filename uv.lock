@@ -520,7 +520,7 @@ wheels = [
 
 [[package]]
 name = "lobes-cli"
-version = "0.90.2"
+version = "0.90.3"
 source = { editable = "." }
 
 [package.optional-dependencies]
