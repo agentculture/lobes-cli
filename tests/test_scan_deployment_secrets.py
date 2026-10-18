@@ -550,3 +550,33 @@ def test_committed_fixture_tree_is_scan_clean() -> None:
     fixtures = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 
     assert scan_paths(fixtures, DEFAULT_SCAN_GLOBS) == []
+
+
+# A fully quoted YAML list item ("KEY=value") is one compose string: the
+# quote that opens before the key closes after the value. Seen live on the
+# Orin's orin-embed shape (#310 t16): `- "HF_TOKEN=${HF_TOKEN:-}"` was flagged
+# because the closing quote stayed on the value.
+@pytest.mark.parametrize(
+    "line",
+    [
+        '      - "HF_TOKEN=${HF_TOKEN:-}"',
+        "      - 'HF_TOKEN=${HF_TOKEN}'",
+        '      - "GATEWAY_API_KEY=${GATEWAY_API_KEY-}"',
+    ],
+)
+def test_quoted_list_item_pure_reference_is_clean(line: str) -> None:
+    text = "services:\n  decider-general:\n    environment:\n" + line + "\n"
+    assert scan_deployment_secrets.scan_text(Path("docker-compose.shape.yml"), text) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '      - "HF_TOKEN=' + _FAKE_TOKEN + '"',
+        '      - "HF_TOKEN=${HF_TOKEN:-' + _FAKE_TOKEN + '}"',
+    ],
+)
+def test_quoted_list_item_literal_is_still_flagged(line: str) -> None:
+    text = "services:\n  decider-general:\n    environment:\n" + line + "\n"
+    findings = scan_deployment_secrets.scan_text(Path("docker-compose.shape.yml"), text)
+    assert [f.key for f in findings] == ["HF_TOKEN"]
