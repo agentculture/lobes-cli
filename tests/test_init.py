@@ -357,7 +357,7 @@ def test_init_fleet_apply_writes_three_files(tmp_path) -> None:
 
 # --- t5: the shared-digest bump (six Qwen-lane services, ONLY six) ---------
 
-_NEW_DIGEST = "sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695"
+_NEW_DIGEST = "sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460"
 _OLD_DIGEST = "sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9"
 
 
@@ -611,3 +611,14 @@ def test_fleet_compose_default_on_generate_services_are_the_duo() -> None:
     # The legacy generate gears are profile-gated (excluded from a bare up -d).
     assert services["vllm-minor"].get("profiles")
     assert services["vllm-middle"].get("profiles")
+
+
+def test_no_template_carries_the_retired_nightly_digest() -> None:
+    # #310 R2: the 0.26.1rc1.dev942 nightly is gone from every template; only
+    # Dockerfile.vllm-gemma4 keeps its (older, deliberate) pin.
+    import pathlib
+
+    templates = pathlib.Path(__file__).resolve().parents[1] / "lobes" / "templates"
+    for path in templates.rglob("*"):
+        if path.is_file():
+            assert "8bd082c2" not in path.read_text(encoding="utf-8", errors="ignore"), path

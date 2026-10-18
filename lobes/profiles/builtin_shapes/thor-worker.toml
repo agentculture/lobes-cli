@@ -118,4 +118,7 @@ max_model_len = 262144
 quantization = "modelopt"
 kv_cache_dtype = "fp8"
 max_num_seqs = 1
+# #310 d1: on vLLM 0.31.0 / sm_110 the ViT misread images until the encoder
+# attention was pinned (docs/evidence/2026-10-17-accept-vllm-031-thor.txt).
+mm_encoder_attn_backend = "TORCH_SDPA"
 speculative_config = '''"'--speculative-config={\"method\": \"dflash\", \"num_speculative_tokens\": 12, \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\"}'"'''

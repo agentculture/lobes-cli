@@ -75,7 +75,7 @@ def test_engine_matches_the_service_shape() -> None:
 
 def test_sidecar_dockerfile_carries_the_spike_pins() -> None:
     text = _FLEET.joinpath("Dockerfile.embed-st").read_text(encoding="utf-8")
-    assert "sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9" in text
+    assert "sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460" in text
     assert '"transformers==5.19.0"' in text
     assert '"sentence-transformers==6.1.0"' in text
 

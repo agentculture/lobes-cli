@@ -140,6 +140,9 @@ KNOB_NAMES: tuple[str, ...] = (
     "moe_backend",
     "max_num_batched_tokens",
     "load_format",
+    # `mm_encoder_attn_backend` -> --mm-encoder-attn-backend (the multimodal ViT
+    # encoder's attention backend; #310 d1). Worker-only, plain str knob.
+    "mm_encoder_attn_backend",
     # `chunked_prefill` / `async_scheduling` / `prefix_caching` are BOOLEANS
     # rendered as the FULL flag text (`--enable-prefix-caching` /
     # `--no-enable-prefix-caching`), the same translation `enforce_eager`
@@ -222,6 +225,7 @@ KNOB_LANE_ROLES: dict[str, frozenset[str]] = {
     "moe_backend": _WORKER_ONLY,
     "max_num_batched_tokens": _WORKER_ONLY | frozenset({"associate"}),
     "load_format": _WORKER_ONLY,
+    "mm_encoder_attn_backend": _WORKER_ONLY,
     "chunked_prefill": _WORKER_ONLY,
     "async_scheduling": _WORKER_ONLY,
     "prefix_caching": _WORKER_ONLY | frozenset({"associate"}),
@@ -505,6 +509,7 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "moe_backend": (_is_optional_str, _STR_OR_NONE),
     "max_num_batched_tokens": (_is_optional_int, _INT_OR_NONE),
     "load_format": (_is_optional_str, _STR_OR_NONE),
+    "mm_encoder_attn_backend": (_is_optional_str, _STR_OR_NONE),
     "chunked_prefill": (_is_optional_bool, _BOOL_OR_NONE),
     "async_scheduling": (_is_optional_bool, _BOOL_OR_NONE),
     "prefix_caching": (_is_optional_bool, _BOOL_OR_NONE),
@@ -620,6 +625,10 @@ class RoleProfile:
     # `--load-format`: how weights are read (e.g. "runai_streamer"). A
     # deployment-shaped choice about startup time, not about the checkpoint.
     load_format: str | None = None
+    # `--mm-encoder-attn-backend`: the attention backend of the multimodal ViT
+    # encoder. Declared by a shape that MEASURED a misreading default (#310 d1:
+    # Thor sm_110 on vLLM 0.31.0 needs TORCH_SDPA); unset renders no flag.
+    mm_encoder_attn_backend: str | None = None
     # Three BOOLEAN toggles whose rendered `.env` value is the FULL flag text,
     # exactly like `enforce_eager` (see render._BOOL_KNOB_TOKENS). The compose
     # slot is the dash-only ${VAR-} form, so an unset/empty value leaves no

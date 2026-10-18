@@ -176,6 +176,11 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (vllm-multimodal, vllm-multimodal-coder, vllm-muse, vllm-middle,
     # vllm-minor) stay on their own image and are unaffected, byte-identical to
     # the prior recompute.
+    #
+    # Recomputed 2026-10-18 for #310 R2: the shared image default moved to the
+    # official vllm/vllm-openai v0.31.0-ubuntu2404 digest (moving every service
+    # that defaults off VLLM_NIGHTLY_IMAGE), and vllm-worker also gained the
+    # conditional WORKER_MM_ENCODER_ATTN_BACKEND slot (d1).
     # 2026-08-20: +HAND feasibility/peer env passthrough (qodo PR #190 #2)
     #
     # Recomputed 2026-08-23 for the qwen3-8-gguf-llamacpp plan (t4): the gateway's
@@ -304,10 +309,10 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # (default 0, mirroring vllm-primary) so a 1M-window lane can cap its
     # sequences. ONLY vllm-associate moved; every other hash here is
     # byte-identical. See tests/test_associate_compose.py.
-    "vllm-associate": "c611137f81182944a155f5bd9727205f3a6725d155db4d4a2d489ef2ec6ee398",
-    "vllm-embed": "ee7cb60f3d764f8871ed1423954f117b7f4609125e2e3a642a78add342d8888a",
-    "vllm-embed-deep": "9ac7fc0458ea88618e4b8382584b0e5445c15a4d266474f6e1733f3cac48e528",
-    "vllm-hand": "f170d7affc2b51eea1f7952754dd121e96ef7027182dc2dd391a4b6bbbd8112f",
+    "vllm-associate": "cdaff038a73219f1aa0fce9e318cbd06a3c10120107002ee131277b940218d91",
+    "vllm-embed": "6949a73055a5b9b702f14d72b86ea15c406b9aec5061c102fece22dad8dfbef7",
+    "vllm-embed-deep": "5693868acac23c814781242c63355656b5a1ba316e71b9d726cca9cc6a1a6b74",
+    "vllm-hand": "d7cd1bad8f2f09bafd6821889983bcd3f24504b6ee759bf0b48aca6391361bf6",
     "vllm-middle": "97ea5ec8da91f9ab84807a20d2fc3129c0c8f6e60a2c8441ba0b405d8a740717",
     "vllm-minor": "ae0017e69d4f4a5ce0e035e9f605692af9bea43ffe11d7f661dc5de44f75de7e",
     "vllm-multimodal": "77cbc0a1a5c223acbdabca5071557dd7448104c8d2732216f4970c2b610333de",
@@ -315,7 +320,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     "vllm-muse": "5c5a1f4cd68dc904ddc45975b9c66b3863542962df39a5b029b05f3302f21b1e",
     # vllm-rerank recomputed for issue #227 t3 (--chat-template flag + the
     # qwen3_reranker.jinja read-only bind mount) — a deliberate change.
-    "vllm-rerank": "dd177cd83b45a7e2bf2433a21f6f3dc704bf7e79bdc6534c15a4b0c1c0d44ce0",
+    "vllm-rerank": "5c968a7cf43750afefd33808d5878fd3d0aa5597a0413443a7ac0e9a5c207084",
     # Recomputed 2026-09-10 for the worker recipe knobs (worker-recipe-knobs
     # t3): ONLY `vllm-worker` moved, and only its `command` string +
     # environment comments — it grew the ${VAR:+…} / ${VAR-} slots for
@@ -327,7 +332,7 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # against real `docker compose config` in
     # tests/test_worker_recipe_knobs.py); this tripwire is hashing the
     # TEMPLATE text, which did change.
-    "vllm-worker": "32b5ecd7e025d89a734f2c65cbdef41d1bfbe9f6772c0f3d2f37a4e2b0624168",
+    "vllm-worker": "f653fab2281f6e33b497cf675fd82b60db004dac9de145bf74964cf9b1510fbc",
 }
 
 

@@ -80,7 +80,7 @@ services:
 
   embed-qwen3vl-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: embed-qwen3vl-embed
     profiles: ["qwen3vl-embed"]
     restart: unless-stopped
@@ -147,7 +147,7 @@ services:
     # qwen3vl-rerank: the Qwen3-VL-Reranker model card's vLLM recipe (hf_overrides
     # etc.) was not consulted — no network, pending plan t1 — so NO recipe flags
     # are invented here; add them once t1 measures what the engine needs.
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: embed-qwen3vl-rerank
     profiles: ["qwen3vl-rerank"]
     restart: unless-stopped
@@ -211,7 +211,7 @@ services:
 
   embed-nemotron-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: embed-nemotron-embed
     profiles: ["nemotron-embed"]
     restart: unless-stopped
@@ -275,7 +275,7 @@ services:
 
   embed-nomic-code-embed:
     # DECLARED — vLLM viability on sm_87 pending plan t1
-    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695}
+    image: ${VLLM_NIGHTLY_IMAGE:-vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460}
     container_name: embed-nomic-code-embed
     profiles: ["nomic-code-embed"]
     restart: unless-stopped

@@ -218,6 +218,7 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     "moe_backend": "MOE_BACKEND",
     "max_num_batched_tokens": "MAX_NUM_BATCHED_TOKENS",
     "load_format": "LOAD_FORMAT",
+    "mm_encoder_attn_backend": "MM_ENCODER_ATTN_BACKEND",
     # The three boolean toggles render the FULL flag text, not "true"/"false"
     # -- see _BOOL_KNOB_TOKENS below.
     "chunked_prefill": "CHUNKED_PREFILL",
