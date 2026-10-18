@@ -12,6 +12,17 @@
 > re-confirmed `/v1/embeddings` → 1024-dim, matryoshka `--hf-overrides`
 > accepted, `--runner pooling --convert embed` unchanged — no serving-flag
 > drift. The benchmark numbers below remain the historical 0.19.0 record.
+>
+> **vLLM 0.31.0 (#310 t15).** The fleet pin is now `v0.31.0-ubuntu2404`. The
+> embedder probe PASSES on it on all three boxes, and the paraphrase/unrelated
+> similarities are unchanged to within drift: Thor 0.895 / 0.2316
+> (`docs/evidence/2026-10-17-accept-vllm-031-thor.txt`, soak 5316/5316 HTTP
+> 200; throughput INCONCLUSIVE, the instrument's spread exceeds the
+> difference), Orin 0.8959 / 0.2313 (`...-accept-vllm-031-orin.txt`;
+> `lobes measure` x3 71.9 / 72.1 / 73.9 docs/s vs 83.3 / 84.2 / 83.5 on the
+> nightly, ~13 % lower, a named cost) and spark2 0.895 / 0.2305
+> (`...-accept-vllm-031-spark2.txt`). Earlier throughput figures here are
+> DECLARED/UNVALIDATED (#108) on 0.31.0.
 
 ## What it is
 

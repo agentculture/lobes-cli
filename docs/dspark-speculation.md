@@ -176,6 +176,21 @@ be exactly the mistake this doc exists to prevent.
 
 ## Measured here: DSpark on the fleet's own vLLM lane
 
+> **Engine relabel (#310 t15).** Everything in this section was measured on the
+> nightly `0.26.1rc1.dev942` and stays on record as that. On vLLM 0.31.0 the
+> adopted pairing (DSpark n=7, 262144 window, util 0.58) has since been booted
+> and benchmarked on two boxes: the Spark
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`: KV 754,621
+> tokens; `lobes benchmark` 15.9 tok/s vs 17.0 / 16.9 on the spark2 nightly
+> baseline) and spark2
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`, same box nightly ->
+> 0.31.0: code 37.1 -> 41.5, reasoning 33.9 -> 31.5, prose 15.4 -> 14.5 tok/s;
+> `lobes benchmark` 17.0 / 16.9 -> 19.2 / 19.3; KV 751,086). Those runs used a
+> different harness from the 2026-08-24 spike, so this section's figures
+> (46.20 / 24.69 / 13.71 / 16.65 tok/s, the MTP-n2 comparison arm, the 786K
+> window run) are **DECLARED/UNVALIDATED (#108)** as 0.31.0 values, not
+> replaced by the numbers above.
+
 **MEASURED-HERE (dated).** Box: **DGX Spark GB10** (`spark-f8a9`, compute cap
 12.1). Date: **2026-08-24**. Engine: `vllm/vllm-openai`, image digest
 `sha256:49d2eb65dc2a8dea24e43c27b226f650481ac97d4ba9c567b6e1ca08bc472303`,

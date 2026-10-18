@@ -52,6 +52,14 @@ feasible = true
 # sm_110-only caveat the schema deliberately cannot encode (it lives in the
 # compose lane, like the worker MoE-backend note).
 #
+# ENGINE RELABEL (#310 t15): everything below in this block -- the 12.1 /
+# 12.19-12.21 / 26.8 tok/s figures, the missing-SASS finding, the DSpark
+# illegal-memory-access, 630,029-token KV -- was measured on the 8bd082
+# nightly (0.26.1rc1.dev942) and is DECLARED/UNVALIDATED (#108) as 0.31.0
+# behaviour. No Thor cortex lane has been booted on 0.31.0 (t8 covered embed,
+# rerank and worker only), so whether VLLM_GDN_DECODE_KERNEL=triton is still
+# needed, or DSpark still dies, is open. Kept on record for the nightly.
+#
 # That caveat used to read "MTP MUST BE OFF". It is now MEASURED to be
 # narrower than that, 2026-08-25
 # (docs/evidence/2026-08-25-spike-thor-cortex-speculation.txt):
@@ -121,6 +129,8 @@ attention_backend = "TRITON_ATTN"
 # HAND_PEER_ORIGIN/_PROXY channels instead. Evidence:
 # docs/evidence/2026-08-20-hand-thor-blocked-reattributed.txt. Re-measure on
 # engine upgrades — this is a kernel-coverage fact, not silicon fate.
+# (#310 t15: measured on the 8bd082 nightly and 0.23.1; NOT re-measured on
+# 0.31.0 -- DECLARED/UNVALIDATED there. t8 did not host hand on the Thor.)
 #
 # The model/budget lines are DELIBERATELY ABSENT: an infeasible role renders
 # no lane on this card (the catalog names what the role WOULD serve).

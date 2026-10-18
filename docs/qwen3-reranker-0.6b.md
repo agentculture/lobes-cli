@@ -20,6 +20,15 @@
 > serving-flag drift (the spike's one hiccup was a memory-profiling race
 > during concurrent teardown, not a model/nightly incompatibility). The
 > benchmark numbers below remain the historical 0.19.0 record.
+>
+> **vLLM 0.31.0 (#310 t15).** The fleet pin is now `v0.31.0-ubuntu2404`. The
+> rerank probe PASSES with the identical ranking `[0, 2, 1]` on Thor
+> (`docs/evidence/2026-10-17-accept-vllm-031-thor.txt`, soak 2074/2074 HTTP
+> 200; throughput INCONCLUSIVE), Orin (`...-accept-vllm-031-orin.txt`; ~7 %
+> lower docs/s on the two stable runs, 37.0 / 36.2 vs 40.0 / 38.5, a named
+> cost) and spark2 (`...-accept-vllm-031-spark2.txt`). The calibration and
+> score-saturation behaviour recorded below (#227) was measured on the nightly
+> and was not re-measured on 0.31.0: DECLARED/UNVALIDATED (#108).
 
 ## What it is
 

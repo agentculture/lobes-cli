@@ -9,6 +9,21 @@ The fleet's default primary since 2026-08-19 (plan
 spike), `docs/evidence/2026-08-19-baseline-qwen3.6-cortex-spark.txt` (the
 incumbent baseline it was measured against).
 
+> **Engine relabel (#310 t15).** Every MEASURED figure in this doc (the 1M
+> window, KV pools, tok/s, the strict-tools plugin "behaves on vLLM 0.26.1"
+> line, the DSpark spike) was taken on the nightly 0.26.1rc1.dev942 (or older)
+> and is **DECLARED/UNVALIDATED (#108) as a vLLM 0.31.0 value**; the numbers
+> stay on record. 0.31.0 evidence for this checkpoint: the Spark cortex
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`: DSpark n=7 /
+> 262144 / util 0.58, KV 754,621 tokens, `lobes benchmark` 15.9 tok/s, vision
+> 12/12, strict-tools matrix PASS) and spark2
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`: KV 751,086, code
+> 41.5 / reasoning 31.5 / prose 14.5 tok/s). The 1M YaRN window and the
+> MTP-n2 baseline arm were not re-run on 0.31.0. The strict-tools plugin did
+> NOT carry over unchanged: on 0.30+/0.31.0 the nightly-era grammar looped
+> until max_tokens (root cause: the plugin, deviation d5), fixed in the
+> packaged plugin.
+
 ## Checkpoint facts (config-verified 2026-08-19, snapshot 7d6f8d4d)
 
 - `architectures: ["Qwen3_5ForConditionalGeneration"]`, `model_type: qwen3_5` —
@@ -35,6 +50,9 @@ incumbent baseline it was measured against).
   `strict: true` + `enable_thinking` call returning a schema-valid tool_call.
 
 ## Engine
+
+(Historical for the 2026-08-19 evidence; the fleet pin is now vLLM 0.31.0 —
+see the engine relabel above.)
 
 `vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695`
 — the **official** Docker Hub nightly (built 2026-08-19), resolved vLLM
