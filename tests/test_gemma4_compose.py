@@ -30,7 +30,7 @@ _AUDIO_COMPOSE = _TEMPLATES / "fleet" / "docker-compose.audio.yml"
 
 _STOCK_VLLM_IMAGE = "nvcr.io/nvidia/vllm:26.04-py3"
 _NIGHTLY_VLLM_IMAGE = (
-    "vllm/vllm-openai@sha256:" "8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695"
+    "vllm/vllm-openai@sha256:" "3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460"
 )
 _CUSTOM_DOCKERFILE = "Dockerfile.vllm-gemma4"
 _LOCAL_TAG = "lobes/vllm-gemma4:local"

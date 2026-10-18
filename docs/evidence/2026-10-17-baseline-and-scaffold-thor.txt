@@ -1,0 +1,126 @@
+BASELINE + R1 SCAFFOLD — Jetson AGX Thor, before its vLLM 0.31.0 switch
+Issue #310 · plan vllm-0-31-0-fleet task t7 · 2026-10-17 · operator: lobes (Claude)
+Procedure: docs/runbooks/lane-safety-r1-rollout.md (its first live run).
+
+BOX STATE AT START (20:23Z)
+  hosted: vllm-worker (already vllm/vllm-openai:v0.31.0-ubuntu2404 via a hand-typed override image line,
+          own hand-mounted warm caches), vllm-embed + vllm-rerank (nightly 8bd082c2, 0.26.1rc1.dev942),
+          gateway (lobes-gateway:worker, 0.86.0.dev641). No experiment container running.
+  disk 85 GB free; Thor booted 07:53 local. jetson-thor-cli 0.5.0 -> upgraded to 0.6.1 (uv tool).
+  lobes CLI: none -> `uv tool install lobes-cli==0.89.0` (0.89.1 was not yet on PyPI; it adds docs only).
+
+1. INCUMBENT BASELINE (nightly embed/rerank, measured on the box before any change)
+  ### lobes assess --probes --role embedder
+  | Role | Probe | Result | Evidence | Latency |
+  |---|---|---|---|---|
+  | embedder | embed_similarity | PASS | {"sim_paraphrase": 0.895, "sim_unrelated": 0.2316} | 345.3 ms |
+  **Overall: PASS**
+  exit=0
+  ### lobes assess --probes --role reranker
+  | Role | Probe | Result | Evidence | Latency |
+  |---|---|---|---|---|
+  | reranker | rerank_relevance | PASS | {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2, 1], "top_index": 0} | 1189.7 ms |
+  **Overall: PASS**
+  exit=0
+  lobes measure --role embedder:
+    {"embedder": {"role": "embedder", "family": "embed_rerank", "model": "Qwen/Qwen3-Embedding-0.6B", "runtime": "vllm", "endpoint": "http://localhost:8000", "loaded": true, "ready": true, "metrics": {"loaded": true, "docs_per_sec": 123.432, "batch_size": 4, "latency_ms": 32.4, "reqs_per_sec": 30.858}}}
+    
+  lobes measure --role reranker:
+    {"reranker": {"role": "reranker", "family": "embed_rerank", "model": "Qwen/Qwen3-Reranker-0.6B", "runtime": "vllm", "endpoint": "http://localhost:8000", "loaded": true, "ready": true, "metrics": {"loaded": true, "batch_size": 4, "docs_per_sec": 45.705, "latency_ms": 87.5, "reqs_per_sec": 11.426}}}
+    
+  containers before:
+    model-gear-vllm-embed 2026-10-17T04:53:30.886099167Z sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695 restarts=0
+    model-gear-vllm-rerank 2026-10-17T04:53:30.885702167Z sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695 restarts=0
+    model-gear-vllm-worker 2026-10-17T13:40:47.453856854Z sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460 restarts=1
+    model-gear-gateway 2026-10-17T04:53:30.876803176Z sha256:ca8680874e01030b2fe84c56569f180f4ca5e14061a1f9232c9c1a77ca2fd340 restarts=0
+    model-gear-vllm-embed 0.26.1rc1.dev942+g5a4c8d992
+    model-gear-vllm-rerank 0.26.1rc1.dev942+g5a4c8d992
+  worker: its nightly baseline is NOT recoverable here — it already runs 0.31.0; comparator = 2026-09-10 transcript.
+
+2. R1 SCAFFOLD (runbook steps 2-9)
+  backups: <file>.bak-20261017T202539Z-r1 for .env, docker-compose{,.shape,.override}.yml, mg-logwrap.sh, plugin
+  doctor BEFORE:
+    [ok] docker_available: docker + docker compose are available
+    [ok] compose_present: deployment scaffolded at /home/thor/.lobes
+    [ok] env_coherence: VLLM_SERVED_NAME = unsloth/Qwen3.8-27B-NVFP4
+    [warn] scaffold_files: missing scaffold file(s): Dockerfile.comfyui — the lanes built from them cannot start
+    [warn] profile_staleness: 2 required key(s) missing from .env: LOBES_BOOT_ORDER, LOBES_THERMAL_ZONES
+    [ok] gateway_passthrough: every set gateway-relevant .env key has a compose passthrough
+    [warn] logwrap_stale: mg-logwrap.sh differs from this CLI's packaged copy (sha256 fd9dfb7d30ce vs 421c1268e537) — the lane boot hold, start counter and memory gate may be missing
+    [warn] compile_cache_unmounted: vLLM service(s) without a persistent compile cache: vllm-embed (no mount), vllm-embed-deep (no mount), vllm-hand (no mount), vllm-middle (no mount), vllm-minor (no mount), vllm-multimodal-coder (no mount), vllm-muse (no mount), vllm-primary (no mount), vllm-rerank (no mount), vllm-worker (no mount) — every restart recompiles from scratch
+    [ok] jetson_clocks_locked: clocks are not locked
+    [ok] drop_caches_grant_missing: page-cache clear is granted (rule: sysctl)
+    [ok] watcher_inactive: host watcher not installed (optional; 'lobes watcher install' clears the page cache for memory-gated lanes)
+    [warn] plugin_stale: qwen3_thinking_tool_parser.py differs from this CLI's packaged copy (sha256 22a030552d03 vs 36a95d103704) — the lane may be running an outdated tool-parser plugin
+    [ok] health_reachable: /health responding on :8000
+    [FAIL] gateway_version_match: deployed gateway reports lobes-cli 0.86.0.dev641, this CLI is 0.89.0 — deployed-artifact version skew (issue #99)
+  override (docker-compose.override.yml), merged into the existing gateway block + 2 new blocks:
+    gateway: MG_LOG_DIR/NAME, LOBES_BOOT_{DELAY_S,ORDER,STAGGER_S}, LOBES_THERMAL_{ZONES,SHED_C,RESUME_C}
+             passthroughs; ./logs + ./mg-logwrap.sh binds; entrypoint mg-logwrap + command
+             ["python","-m","lobes.gateway"] (image ENTRYPOINT respelled; CMD was null); start_period 200s
+    vllm-embed, vllm-rerank: VLLM_CACHE_ROOT=/cache/vllm, FLASHINFER_WORKSPACE_BASE=/cache/flashinfer,
+             ./compile-cache/<lane>{,-flashinfer} binds, start_period 780s
+    vllm-worker: UNCHANGED on purpose — it keeps its hand-mounted warm caches at /root/.cache/{vllm,flashinfer}
+             (cold caches crash 3 of 4 Thor boots, #309); moving them to /cache/* could silently go cold.
+    Profile-gated lanes the Thor does not host: no block (doctor keeps listing them + the worker).
+  `docker compose config --quiet` on the full chain: OK (the dry run could not run this).
+  doctor --refresh-logwrap --apply, --refresh-plugin --apply: both applied (.bak written).
+  doctor --fix plan reviewed, then applied: wrote Dockerfile.comfyui (unused here); appended
+    LOBES_BOOT_ORDER=embed,rerank and LOBES_THERMAL_ZONES=tj-thermal (Thor profile: NO shed/resume
+    values, so the gateway never thermal-sheds); created compile-cache/{embed,embed-flashinfer,rerank,rerank-flashinfer}.
+  .env line 686: an active GATEWAY_PIP_EXTRA_INDEX_URL=TestPyPI (dev pin from 2026-10-06) commented out
+    for the release build; doctor --repin-version --apply: MODEL_GEAR_VERSION 0.86.0.dev641 -> 0.89.0.
+  recreate, one at a time (env -u GATEWAY_API_KEY lobes up <role> --apply):
+    embedder 20:27:36Z -> healthy 20:29:17Z; reranker 20:29:4xZ -> healthy 20:30:59Z;
+    gateway --build 20:31:29Z -> healthy 20:31:59Z, /health version 0.89.0.
+    previous gateway image id kept for rollback: sha256:ca8680874e01... (untagged after the rebuild).
+  verified: wrapper entrypoint, /cache/vllm + /cache/flashinfer mounts and env on embed/rerank; probes PASS
+    with identical values (embed sim 0.895 / 0.2316; rerank ranking [0,2,1]); worker answers through the
+    new gateway ("thor-ok"); spark2 lists embedder-thor / reranker-thor / worker-thor; the Spark sees worker
+    hosted_by thor, ready=true.
+  doctor AFTER: logwrap_stale ok, plugin_stale ok, scaffold_files ok, profile_staleness ok,
+    gateway_version_match ok; compile_cache_unmounted still warns (worker by design + unhosted lanes).
+
+3. INCIDENT — embed lane GPU fault after the scaffold (20:33:40Z)
+  ~2 min after the gateway recreate, requests to the embed lane answered 503 (connection refused).
+  Kernel (dmesg):
+    [Sat Oct 17 16:40:42 2026] NVRM: Xid (PCI:0000:01:00): 13, Graphics SM Warp Exception on (GPC 0, TPC 0, SM 0): Illegal Instruction Encoding
+    [Sat Oct 17 16:40:42 2026] NVRM: Xid (PCI:0000:01:00): 13, Graphics Exception: ESR 0x5287b0=0x10009 0x5287b4=0x24 0x5287a8=0x1f81fb60 0x5287ac=0x1174
+    [Sat Oct 17 16:40:42 2026] NVRM: Xid (PCI:0000:01:00): 43, pid=1124050, name=VLLM::EngineCor, channel 0x0000000d
+    [Sat Oct 17 23:33:40 2026] NVRM: Xid (PCI:0000:01:00): 13, Graphics Exception: SKEDCHECK36_DEPENDENCE_COUNTER_UNDERFLOW failed
+    [Sat Oct 17 23:33:40 2026] NVRM: Xid (PCI:0000:01:00): 13, pid=1739267, name=kworker/u28:2, Graphics Exception: ESR 0x407020=0x100 0x407028=0x3f 0x40702c=0x1419daec 0x407030=0x7
+    [Sat Oct 17 23:33:40 2026] NVRM: Xid (PCI:0000:01:00): 13, pid=1823446, name=VLLM::EngineCor, Graphics Exception: channel 0x00000005, Class 0000cdc0, Offset 00000000, Data 00000000
+  The first Xid 13 x60 + Xid 43 at 16:40:42 local (13:40Z) was the WORKER, before this session
+  (worker restarts=1, started 13:40:47Z). The 23:33:40 local (20:33:40Z) Xid 13
+  (SKEDCHECK36_DEPENDENCE_COUNTER_UNDERFLOW) hit the EMBED engine process: it shut down, and docker's
+  restart: unless-stopped brought it back (first-boot log tail):
+    (APIServer pid=1) INFO 10-17 20:33:40 [utils.py:615] [shutdown] Process manager: send sigterm to process EngineCore
+    (APIServer pid=1) WARNING 10-17 20:33:40 [utils.py:635] [shutdown] Process manager: force killing remaining processes count=1
+    (APIServer pid=1) WARNING 10-17 20:33:40 [utils.py:640] [shutdown] Process manager: force killing remaining process EngineCore pid 162
+    (APIServer pid=1) INFO 10-17 20:33:40 [core_client.py:693] [shutdown] MPClient: engine manager stopped
+    (APIServer pid=1) INFO 10-17 20:33:40 [core_client.py:694] [shutdown] MPClient: cleaning up background resources
+    (APIServer pid=1) INFO 10-17 20:33:40 [core_client.py:696] [shutdown] MPClient: complete
+  second boot (warm compile cache): 
+    (EngineCore pid=100) INFO 10-17 20:34:01 [core.py:122] Initializing a V1 LLM engine (v0.26.1rc1.dev942+g5a4c8d992) with config: model='Qwen/Qwen3-Embedding-0.6B', speculative_config=None, tokenizer='Q
+    (EngineCore pid=100) INFO 10-17 20:34:08 [decorators.py:311] Directly load AOT compilation from path /cache/vllm/torch_compile_cache/torch_aot_compile/4f53ec81e22699017809a335ce37130e6aabd1fef693b43f7
+    (EngineCore pid=100) INFO 10-17 20:34:13 [jit_monitor.py:85] Kernel JIT monitor activated; monitored JIT compilations during inference will use mode=warn.
+    (EngineCore pid=100) INFO 10-17 20:34:13 [core.py:347] init engine (profile, create kv cache, warmup model) took 6.79 s (compilation: 0.84 s)
+    (EngineCore pid=100) WARNING 10-17 20:34:40 [jit_monitor.py:141] Triton kernel JIT compilation during inference: kernel_unified_attention. This causes a latency spike; consider extending warmup to cov
+  start counters (lane-state/*.starts, epoch seconds):
+    embed.starts: 1792268860 1792269222 
+    rerank.starts: 1792268983 
+  After recovery: all four containers healthy, embedder 200, worker "thor-ok".
+
+  WHAT THIS DOES AND DOES NOT SHOW
+  * the fault was on the NIGHTLY embed engine (0.26.1rc1.dev942), ~4 min into its first boot with a
+    fresh per-lane compile cache — the #309 class (fresh torch.compile -> device fault on sm_110).
+    The previous embed container had run 16 h on the same image without a compile cache and without
+    a fault. One event: it neither proves nor rules out the cache as the trigger.
+  * lane safety did its job: restart + warm-cache second boot (compilation 0.84 s), served again.
+  * Two Xid incidents on this GPU today. Per the mjolnir incident's P11, treat the GPU as suspect
+    before the next heavy step (t8 recreates the worker).
+
+KNOWN LIMITATION (by design, template comment)
+  The gateway runs as uid 10001; ./logs is owned by the login user (775), so the wrapper cannot write
+  gateway-<boot>.log or lane-state/gateway.starts: "lane-state not writable; start counter and gate
+  marker skipped". The boot hold still runs; the gateway logs go to `docker logs` as before.

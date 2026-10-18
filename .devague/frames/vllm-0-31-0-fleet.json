@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-10-17T16:54:43Z",
-  "updated": "2026-10-17T19:47:33Z",
+  "updated": "2026-10-18T04:20:39Z",
   "claims": [
     {
       "id": "c1",
@@ -955,6 +955,30 @@
       "links": [],
       "instruction": "",
       "revisions": []
+    },
+    {
+      "id": "c54",
+      "kind": "decision",
+      "text": "GB10 gateways keep thermal shedding ON through the rollout: LOBES_THERMAL_SHED_C=91 / RESUME_C=86 from the spark profile (operator, 2026-10-17); the graded governor throttles the cortex container below that",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c55",
+      "kind": "decision",
+      "text": "Spark gateway thermal shed raised to 98 C (resume 94 C) after measuring its acpitz zones at ~88 C idle and 92 C under one benchmark stream; spark2 keeps the profile's 91/86 (it peaked at 67.7 C). Supersedes c54 for the Spark (operator, 2026-10-18)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
     }
   ],
   "open_vagueness": [
@@ -963,8 +987,8 @@
       "text": "The spark-lobe DSpark transcript (docs/evidence/2026-08-24-spike-dspark-cortex-spark.txt:30-31,80-81) logs the running primary's digest as sha256:49d2eb65\u2026, not 8bd082c2, while reporting version 0.26.1rc1.dev942 \u2014 the digest\u2192version mapping of the incumbent baseline is unreconciled (possibly a per-arch child digest)",
       "kind": "unknown_nonblocking",
       "claim_id": null,
-      "resolved": false,
-      "resolution": "",
+      "resolved": true,
+      "resolution": "49d2eb65 is the local image id of vllm/vllm-openai@sha256:8bd082c2 (arm64), confirmed on spark2 2026-10-17 (docs/evidence/2026-10-17-baseline-nightly-spark2.txt); the 2026-08-24 DSpark baseline ran on the nightly (operator approved closing, 2026-10-17)",
       "resolution_claim_id": null
     },
     {
@@ -1400,6 +1424,54 @@
       "skipped_check": "docker compose config on the merged chain; a real restart",
       "refs": [
         "t6"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l8",
+      "code": "n-below-claim",
+      "what": "t8 throughput comparison: lobes measure is one tiny batch per run (embedder 1.9-98 docs/s, reranker 3.6-65.5 docs/s across runs) against a ONE-run nightly baseline per role; the instrument's spread exceeds any difference, so no regression/speedup is claimed \u2014 a proper same-harness throughput run is still missing",
+      "skipped_check": "a multi-run, warmed throughput harness for pooling lanes",
+      "refs": [
+        "t7",
+        "t8"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l9",
+      "code": "control-absent",
+      "what": "t3 declared 'docker update --cpus is SAFE on a running vLLM container' from a test that only exercised an already-initialised server; it never re-initialised the GPU after an update. On this host (systemd cgroup driver, cgroup v2) docker update revokes NEW GPU access in the container: nvidia-smi 'Failed to initialize NVML: Unknown Error', torch.cuda.is_available() False (reproduced 2026-10-17 22:17Z with a throwaway container). In t12 the governor's first docker update (22:11:37Z) killed the Spark cortex lane's first boot with NVMLError_Unknown (22:11:38Z); the restart policy recovered it",
+      "skipped_check": "re-initialise the GPU (nvidia-smi / a new CUDA context / a booting engine) after docker update",
+      "refs": [
+        "t3",
+        "t4",
+        "t12"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l10",
+      "code": "assumption-for-measurement",
+      "what": "Told the operator the strict+thinking regression 'narrows to an xgrammar runtime regression (0.2.3 -> 0.2.7)' from version correlation alone; an offline matcher test then showed nightly, 0.30.0 and 0.31.0 enforce the identical grammar identically (after one call both EOS and another <tool_call> are allowed), falsifying it. The cause is elsewhere in 0.31.0's generation under the grammar (DSpark interplay untested)",
+      "skipped_check": "test the grammar matcher per xgrammar version before naming a cause",
+      "refs": [
+        "t12",
+        "d3"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l11",
+      "code": "assumption-for-measurement",
+      "what": "t12 handoff stated the strict+thinking grammar was identical across nightly, 0.30.0 and 0.31.0; the saved dumps differ (the thinking block's any_text gained excludes [<think>, </think>]), and the offline matcher test only fed the full thinking text, never the post-</think> start the newer engines actually use \u2014 so it could not detect the real cause (the plugin's thinking prefix under engine-side reasoning gating)",
+      "skipped_check": "diff the grammar dumps field by field; probe the matcher from the engine's real start state",
+      "refs": [
+        "t12"
       ],
       "origin": "llm",
       "status": "proposed"

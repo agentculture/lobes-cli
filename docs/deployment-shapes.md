@@ -387,7 +387,10 @@ YaRN-extended 1,048,576 window (2026-08-19), and then — deviation d4,
 2026-08-25 — back to the checkpoint's native **262144** at the same 0.58,
 adopting the **DSpark** block drafter, whose KV cost cannot co-exist with the
 1M window at that budget. Measured KV pool at the adopted pair: **760,806
-tokens**, **2.90×** concurrency at 262144. The reclaim *argument* this section
+tokens**, **2.90×** concurrency at 262144 (nightly 0.26.1rc1; on vLLM 0.31.0
+the same pairing measured KV 754,621 on the Spark and 751,086 on spark2,
+`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt` /
+`...-spark2.txt` — #310 t15). The reclaim *argument* this section
 makes is unchanged — dropping `senses` is still what funds the budget — only
 the numbers moved. See `docs/dspark-speculation.md#adopted-in-tree-2026-08-25`
 and the shape TOML's own d4 comment block.

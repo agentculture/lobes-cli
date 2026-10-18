@@ -1,0 +1,98 @@
+ACCEPTANCE — spark2 (DGX Spark GB10) on vLLM 0.31.0 (v0.31.0-ubuntu2404), R1 lane-safety scaffold
+Issue #310 · plan vllm-0-31-0-fleet task t13 · 2026-10-18 · operator: lobes (Claude)
+Status: ACCEPTED. cortex, embed, rerank and hand on the fleet pin; gateway 0.89.2; packaged plugin (0.89.2, the
+d5 fix) with no hand edit. The decider sidecar is out of scope (operator: jev-factory work) and was not touched.
+
+PRECONDITION (t13 criterion 1): the Spark's cortex was serving on 0.31.0 and verified (t12,
+  docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt) before any spark2 lane was recreated; plain cortex
+  answered 200 throughout.
+
+SCAFFOLD (runbook docs/runbooks/lane-safety-r1-rollout.md; backups <file>.bak-20261018T143726Z-r1)
+  tools: uv 0.9.28 (binary copied from the Spark; spark2's uv binary was missing), lobes-cli 0.81.3 -> 0.89.2,
+  dgx-spark-cli 0.9.1 (new).
+  override: compile-cache blocks for all 11 vLLM services doctor named (verbatim) plus start_period 780s; explicit
+  GPU devices on vllm-primary (d2); gateway MG_LOG_*, LOBES_BOOT_* and LOBES_THERMAL_* passthroughs, the ./logs and
+  mg-logwrap binds, the wrapper entrypoint and command, start_period 200s. Compose config --quiet on the chain: OK.
+  doctor --refresh-logwrap, --refresh-plugin and --fix, each with --apply (3 thermal keys appended: acpitz,
+  SHED 91, RESUME 86 per c54).
+  .env: VLLM_NIGHTLY_IMAGE 8bd082c2 -> 3fb023cc (nightly line kept as a comment); TestPyPI
+  GATEWAY_PIP_EXTRA_INDEX_URL commented out; MODEL_GEAR_VERSION 0.86.0.dev647 -> 0.89.2.
+  Note: the gateway had been created from docker-compose.yml + override only (no shape.yml); shape.yml only parks
+  vllm-multimodal, so the CLI chain was used.
+
+BASELINE BEFORE THE SWITCH (nightly 0.26.1rc1.dev942, through cortex-spark2, 800 tokens, thinking off, temp 0)
+  cortex-spark2 code      run 1: 800 tok, decode 37.1 tok/s (TTFT 0.28s)
+  cortex-spark2 code      run 2: 800 tok, decode 37.2 tok/s (TTFT 0.27s)
+  cortex-spark2 reasoning run 1: 800 tok, decode 33.9 tok/s (TTFT 0.25s)
+  cortex-spark2 reasoning run 2: 800 tok, decode 33.9 tok/s (TTFT 0.25s)
+  cortex-spark2 prose     run 1: 800 tok, decode 15.4 tok/s (TTFT 0.26s)
+  cortex-spark2 prose     run 2: 800 tok, decode 15.4 tok/s (TTFT 0.26s)
+  hottest zone 72.6 C. (t11's prose-only lobes benchmark baseline: 17.0 / 16.9 tok/s.)
+
+RECREATE WINDOW (one lane at a time, each healthy before the next)
+  cortex   healthy 15:06:29Z  engine (v0.31.0)  KV cache 751,086 tokens  init 154.95 s (compilation 41.51 s)
+           plugin boot line: "qwen3_coder_thinking: vLLM 0.31.0 -> structural-tag reasoning flag passed through
+           from vLLM (grammar starts after reasoning)"
+  embed    healthy 15:11:31Z  engine (v0.31.0)  restarts 0
+  rerank   healthy 15:13:41Z  engine (v0.31.0)  restarts 0
+  hand     healthy 15:16:34Z  engine (v0.31.0)  restarts 0
+  gateway  0.89.2, healthy; LOBES_THERMAL_SHED_C=91, RESUME_C=86. First reannounce: connection reset; then
+           cortex, cortex-spark, cortex-spark2 and hand all answered 200 from BOTH gateways.
+  One transient: for about a minute after the cortex recreate, the Spark's gateway answered 404 for cortex-spark2
+  (the member was being re-probed); it then answered 200.
+
+PROBES
+  strict + thinking (finish tool, strict, tool_choice auto, max_tokens 2048), through cortex-spark2:
+    run 1: calls=1 finish=tool_calls completion_tokens=44 wall=3.4s first_args={"summary": "hello"}
+    run 2: calls=1 finish=tool_calls completion_tokens=44 wall=1.8s first_args={"summary": "hello"}
+    run 3: calls=1 finish=tool_calls completion_tokens=44 wall=1.8s first_args={"summary": "hello"}
+    strict, thinking off: calls=1 finish=tool_calls tokens=26 reasoning_chars=0 args={"summary": "hello"}
+    non-strict+thinking: calls=1 finish=tool_calls tokens=60 reasoning_chars=134 args={"summary": "hello"}
+    maxLength control strict=True: calls=1 finish=tool_calls tokens=606 reasoning_chars=2494 args={"summary": "the"}
+    maxLength control strict=False: calls=1 finish=tool_calls tokens=1579 reasoning_chars=6805 args={"summary": "the quick brown fox jumps over the lazy dog"}
+  lobes assess --tools / --strict-tools / --preserve-thinking --model cortex-spark2:
+    == --tools
+    | `17 * 23 = 391` | PASS (finish=stop, 41 tok) |
+    | train 14:45→17:10 = 145 min | PASS (finish=stop, 219 tok) |
+    | reasoning trace field | `reasoning` (len 331) |
+    | tool calling (`tool_choice:auto`) | PASS — called finish |
+    == --strict-tools
+    | strict_thinking | PASS | True | ['finish'] | — |
+    | strict_nothink | PASS | True | ['finish'] | — |
+    
+    **matrix: PASS**
+    == --preserve-thinking
+    | reasoning re-sent (`preserve_thinking`) | 346 |
+    | content-only | 255 |
+    
+    delta +91 tokens → preserve_thinking is LIVE (the reasoning trace survives into turn 2)
+  lobes assess --probes (run on spark2), plus a hand known-answer:
+    | cortex | known_answer | PASS | {"content": "paris", "expected": "paris"} | 582.4 ms |
+    | embedder | embed_similarity | PASS | {"sim_paraphrase": 0.895, "sim_unrelated": 0.2305} | 43.3 ms |
+    | reranker | rerank_relevance | PASS | {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2, 1], "top_index": 0} | 21.9 ms |
+    **Overall: PASS**
+    hand: 391 vllm-0.31.0-48eff171
+  vision colour controls (solid PNGs, 64 and 224 px, red/blue/green): gateway cortex-spark2 6/6, lane direct 6/6.
+
+GOVERNED THROUGHPUT (c52). lobes governor run --container model-gear-vllm-primary --apply (default bands
+  84:12,88:8,91:4, pause 93.5 C), first tick 15:17:44Z cpus=16 tz=49.5C; after its docker update the lane still sees
+  the GB10 (fresh nvidia-smi exec) and /health 200. It never moved off cpus=16: hottest zone 75.8 C.
+  cortex-spark2 code      run 1: 800 tok, decode 41.5 tok/s (TTFT 0.51s)
+  cortex-spark2 code      run 2: 800 tok, decode 41.6 tok/s (TTFT 0.28s)
+  cortex-spark2 reasoning run 1: 800 tok, decode 31.5 tok/s (TTFT 0.27s)
+  cortex-spark2 reasoning run 2: 800 tok, decode 31.6 tok/s (TTFT 0.24s)
+  cortex-spark2 prose     run 1: 800 tok, decode 14.5 tok/s (TTFT 0.29s)
+  cortex-spark2 prose     run 2: 800 tok, decode 14.6 tok/s (TTFT 0.25s)
+  lobes benchmark --model cortex-spark2 (1000 in / 1000 out, t11's shape): [19.2, 19.3] tok/s,
+  prefill 887 tokens in 0.68 s.
+
+SAME-BOX COMPARISON, nightly -> 0.31.0 (tok/s): code 37.1 -> 41.5 (+12%), reasoning 33.9 -> 31.5 (-7%),
+  prose 15.4 -> 14.5 (-6%), lobes benchmark 17.0/16.9 -> 19.2/19.3 (+13%). A mixed result, not a regression; the
+  two prose instruments disagree in sign, so neither alone describes the lane.
+  Cross-box note: the Spark on the same 0.31.0 measured 34.3 / 26.4 / 12.2 earlier on 2026-10-18; spark2 is about
+  15-20% faster on identical engine, model and config. The cause is not isolated.
+
+ROLLBACK (written, not run): restore .env, docker-compose.override.yml, mg-logwrap.sh and
+  qwen3_thinking_tool_parser.py from their .bak-20261018T143726Z-r1 copies, then recreate each lane with lobes up
+  and the gateway with lobes up gateway --build. Image vllm/vllm-openai@sha256:8bd082c2... stays on spark2 until
+  this transcript is committed (t13 criterion 3); the decider's base 7c5a10e9 is untouched.

@@ -1,0 +1,74 @@
+ACCEPTANCE (PARTIAL) — DGX Spark cortex on vLLM 0.31.0 (v0.31.0-ubuntu2404)
+Issue #310 · plan vllm-0-31-0-fleet task t12 · 2026-10-17/18 · operator: lobes (Claude)
+Status: cortex SERVES on 0.31.0 and passes vision + tool checks, but three findings block a clean acceptance:
+  (1) the graded governor's docker update killed the first boot (GPU access revoked) — governor stopped;
+  (2) strict tool calls WITH thinking regress on 0.31.0 (78 repeated calls, never stops);
+  (3) the Spark's ACPI zones idle near 88 C, so the approved 91 C thermal shed and the governor bands
+      would trigger under ordinary load. Gateway re-image to 0.89.1 HELD pending the operator.
+
+SCAFFOLD (runbook, third live run; backups <file>.bak-20261017T221038Z-r1)
+  tools: lobes-cli 0.83.0 -> 0.89.1, dgx-spark-cli 0.7.0 -> 0.9.1 (uv tool).
+  the live compose files were byte-identical to the t6 dry-run copy, so t6's validated override was installed
+  verbatim (+139 lines, 2 start_period raises); `docker compose config` on the live chain: OK.
+  doctor --refresh-logwrap/--refresh-plugin/--fix --apply (20 keys, incl. LOBES_THERMAL_ZONES=acpitz,
+  SHED_C=91, RESUME_C=86 — the operator's decision c54); every lane-safety finding ok.
+  .env: VLLM_NIGHTLY_IMAGE 8bd082c2 -> 3fb023cc; stale TestPyPI GATEWAY_PIP_EXTRA_INDEX_URL (line 731) commented out.
+SWAP: `lobes up cortex --replace --apply` 22:11:24Z (INNEREYE_FEASIBLE=false, PRIMARY_FEASIBLE=true,
+  COMPOSE_PROFILES= ; ComfyUI had already exited 8 days earlier; page-cache clear skipped: no grant on the Spark).
+
+FINDING 1 — the governor's `docker update` killed the first boot
+  `lobes governor run --container model-gear-vllm-primary --apply` attached at 22:11:37Z and set cpus=16
+  (docker update). The boot died at 22:11:38Z: pynvml NVMLError_Unknown "Unknown Error" during engine init;
+  restart: unless-stopped brought it back (restarts=1). Governor stopped at ~22:16Z.
+  Reproduced with a throwaway GPU container (`sleep`, no model): before `docker update --cpus 8` nvidia-smi sees the
+  GB10 and torch.cuda.is_available() is True; after it, "Failed to initialize NVML: Unknown Error" and False.
+  Host: Docker cgroup driver systemd, cgroup v2. Handles opened BEFORE the update keep working (why t3's running
+  server passed 432 requests); any NEW GPU initialisation after it fails.
+  Workaround verified: the same container started with explicit --device /dev/nvidia0, /dev/nvidiactl,
+  /dev/nvidia-modeset, /dev/nvidia-uvm, /dev/nvidia-uvm-tools keeps nvidia-smi + torch.cuda working through
+  docker update --cpus 8/4/12/16. t3's SAFE verdict is withdrawn for this scope (lapse l9).
+
+CORTEX ON 0.31.0 (second boot)
+  vllm 0.31.0, DSpark (RadixArk/Qwen3.8-27B-DSpark); compilation 45.17 s, init 180.68 s.
+  KV pool 825,017 tokens = 3.15x at 262,144   (the Spark's own 2026-10-06 nightly figure: 774,355 = 2.95x).
+  ViT backend FLASH_ATTN (as on the Thor), but vision is CORRECT on sm_121:
+    colour controls 12/12 PASS — red/blue/green at 64 + 224 px, through cortex-spark AND directly on the lane.
+  assess --tools (cortex-spark): 17*23 PASS, train-time PASS, reasoning field `reasoning`, tool_choice:auto PASS.
+  assess --preserve-thinking: +76 prompt tokens -> LIVE.
+  assess --strict-tools: matrix PASS and 0 TypeError lines in the lane log -> R1's plugin fix works on 0.31.0.
+FINDING 2 — strict + thinking regression (the matrix counts it PASS; it is not)
+  The strict_thinking leg (assess's own payload, "Call the finish tool with summary hello.", max_tokens 2048):
+    Spark 0.31.0 : 78 tool calls, finish tool_calls, completion_tokens 2048 (the cap), args include `{}`  — 3/3 runs
+    spark2 nightly (same payload, cortex-spark2): 1 call {"summary": "hello"}, completion_tokens 51
+    with parallel_tool_calls=false on 0.31.0: 1 correct call, but completion_tokens still 2048 (no stop).
+  The thinking block closes normally; the structural-tag grammar 0.31.0 builds for the reasoning path lets the
+  call repeat until max_tokens. Strict WITHOUT thinking is clean (1 call). GATEWAY_FORCE_STRICT_TOOLS is unset on
+  all four boxes, so only callers sending strict:true themselves are affected.
+THROUGHPUT (lobes benchmark --model cortex-spark, balanced 1000/1000, governor stopped)
+  decode 14.0 / 14.4 tok/s vs the spark2 nightly baseline 17.0 / 16.9 -> ~83 % (BELOW the c39 90 % bar:
+  recorded as a NAMED COST); prefill 887 tok / 0.92 s (nightly 1.04 s); DSpark mean acceptance 1.86-2.35
+  (nightly 1.81-2.29). KV is not comparable to spark2 (spark2 also hosts embed/rerank/hand).
+FINDING 3 — this Spark's thermal zones (acpitz, 7 zones)
+  10 s samples during the benchmark (tz_max = hottest zone, then GPU temp/util/SM clock/power):
+    22:30:49 tz_max=88600 61, 3 %, 2418 MHz, 15.09 W
+    22:30:59 tz_max=89500 65, 95 %, 2450 MHz, 33.82 W
+    22:31:09 tz_max=87900 67, 95 %, 2450 MHz, 34.10 W
+    22:31:19 tz_max=88500 68, 95 %, 2450 MHz, 34.20 W
+    22:31:29 tz_max=91200 68, 95 %, 2450 MHz, 34.25 W
+    22:31:39 tz_max=91000 68, 95 %, 2450 MHz, 34.16 W
+    22:31:49 tz_max=90700 69, 95 %, 2450 MHz, 34.45 W
+    22:31:59 tz_max=87000 69, 95 %, 2450 MHz, 34.55 W
+    22:32:10 tz_max=83900 68, 95 %, 2450 MHz, 34.19 W
+    22:32:20 tz_max=79700 68, 96 %, 2450 MHz, 34.31 W
+    22:32:30 tz_max=91800 68, 95 %, 2450 MHz, 34.75 W
+    22:32:40 tz_max=91200 69, 96 %, 2450 MHz, 34.91 W
+    22:32:50 tz_max=86400 70, 95 %, 2450 MHz, 35.03 W
+    22:33:00 tz_max=87000 69, 95 %, 2450 MHz, 34.92 W
+    22:33:10 tz_max=81400 66, 49 %, 2450 MHz, 42.85 W
+  -> hottest zone 88.6 C at 3 % GPU util; >=86 C in 12/15 samples, >=91 C in 4/15, max 91.8 C; zones 0 and 4
+     read 92 C right after. spark2 peaked at 67.7 C under the same benchmark. With the 0.89.1 gateway the approved
+     LOBES_THERMAL_SHED_C=91 would shed cortex often, and the governor's 84/88/91 C bands would throttle at idle.
+     The running gateway is still 0.86.0.dev642, which ignores the shed knobs — nothing has been shed yet.
+
+END STATE (22:3xZ): cortex healthy on 0.31.0 (restarts 1, from finding 1), no governor attached, gateway 0.86
+  (re-image to 0.89.1 held), innereye down. spark2 still serves cortex on the nightly; plain `cortex` pools both.

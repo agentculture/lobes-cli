@@ -92,11 +92,14 @@ Since the fleet-wide nightly-unification migration
 (`docs/vllm-nightly-migration.md` §4–§8), the four default-on gears —
 `vllm-primary`, `vllm-embed`, and `vllm-rerank` pin the **same** vLLM nightly
 digest
-(`vllm/vllm-openai@sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695`,
-vLLM `0.26.1rc1.dev942+g5a4c8d992`) — bumped from the earlier
+(`vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460`,
+the official `v0.31.0-ubuntu2404` release index, #310) — moved from the
+`0.26.1rc1.dev942+g5a4c8d992` nightly
+(`sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695`),
+which the qwen3.8-cortex-upgrade plan (t5) had bumped from the earlier
 `sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9`
-(`0.23.1rc1.dev672`) pin by the qwen3.8-cortex-upgrade plan (t5), the same
-digest bump that flipped `PRIMARY_MODEL` to `unsloth/Qwen3.8-27B-NVFP4`. See
+(`0.23.1rc1.dev672`) pin, the same bump that flipped `PRIMARY_MODEL` to
+`unsloth/Qwen3.8-27B-NVFP4`. See
 `docs/vllm-nightly-migration.md` §9 and
 `docs/evidence/2026-08-19-spike-qwen3.8-official-nightly-spark.txt`.
 **Deliberate exception:** the Gemma lanes (`vllm-multimodal`, the opt-in

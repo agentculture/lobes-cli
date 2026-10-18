@@ -21,6 +21,19 @@
 # 2026-09-10, on the fleet-pinned nightly 8bd082 (vLLM 0.26.1rc1.dev942) — see
 # the [overrides.worker] block and docs/evidence/2026-09-10-*.
 #
+# ENGINE RELABEL (#310 t15): those 2026-09-10 numbers belong to the nightly
+# and are DECLARED/UNVALIDATED (#108) as 0.31.0 values -- retained, not
+# erased. What 0.31.0 has measured on this lane is in
+# docs/evidence/2026-10-17-accept-vllm-031-thor.txt: it boots at the same
+# util 0.45 / 262144 with KV 768,707 tokens = 2.93x (the nightly's was
+# 1,199,883 = 4.58x), 17*23 / tool-call / strict-tools PASS, image intake
+# PASS only with --mm-encoder-attn-backend=TORCH_SDPA (deviation d1; without it
+# red/blue/green were misnamed), and `lobes benchmark` decode 84.3 / 83.8 tok/s
+# (balanced 1000/1000 -- NOT comparable to the nightly's 196.6 tok/s, a
+# different workload with no same-harness baseline). The speculation sweep, the
+# 32.05x / 21.04x ceilings, the 196.6 tok/s and the 20.37 GiB weight figure
+# have no 0.31.0 re-measure.
+#
 # --- SUPERSEDED, kept for the record (the unsloth occupant, 2026-07-31) ------
 # The previous checkpoint measured at util 0.45 / max_model_len 262144 on vLLM
 # 0.23.1rc1.dev672: weights 24.81 GiB in ~31 s, KV pool 41.78 GiB = a 14.07x
@@ -81,8 +94,9 @@ hosts = ["worker", "hand", "embedder", "reranker", "stt", "tts"]
 # self-hosted MTP head. Served multimodal — the compose lane omits
 # --language-model-only.
 model = "nvidia/Qwen3.6-35B-A3B-NVFP4"
-# MEASURED on the physical Thor (sm_110), 2026-09-10 — see
-# docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt and
+# MEASURED on the physical Thor (sm_110), 2026-09-10, ON THE NIGHTLY
+# 0.26.1rc1 (DECLARED/UNVALIDATED on 0.31.0 -- see the ENGINE RELABEL above) —
+# see docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt and
 # docs/evidence/2026-09-10-sweep-mtp-depth-nvidia-35b-a3b-thor.txt.
 #
 #   util 0.45 @ max_model_len 65536 booted first try:
@@ -118,4 +132,7 @@ max_model_len = 262144
 quantization = "modelopt"
 kv_cache_dtype = "fp8"
 max_num_seqs = 1
+# #310 d1: on vLLM 0.31.0 / sm_110 the ViT misread images until the encoder
+# attention was pinned (docs/evidence/2026-10-17-accept-vllm-031-thor.txt).
+mm_encoder_attn_backend = "TORCH_SDPA"
 speculative_config = '''"'--speculative-config={\"method\": \"dflash\", \"num_speculative_tokens\": 12, \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\"}'"'''

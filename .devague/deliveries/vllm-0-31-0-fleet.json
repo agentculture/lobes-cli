@@ -1,0 +1,100 @@
+{
+  "plan_slug": "vllm-0-31-0-fleet",
+  "schema_version": 2,
+  "created": "2026-10-17T20:53:11Z",
+  "updated": "2026-10-18T04:52:16Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Thor worker: recreate once with --mm-encoder-attn-backend=TORCH_SDPA (a serve flag the plan never named) to test whether the vision regression on vLLM 0.31.0 / sm_110 is the FLASH_ATTN ViT path; if it fixes the colour controls, the flag becomes a Thor worker knob carried into the template (R2); if not, fall back to rolling back to the nightly or withdrawing the image advert",
+      "task_ref": "t8",
+      "reason": "t8 acceptance found the worker on 0.31.0 misreading solid-colour images (red/blue -> Black/White) through the gateway and on the lane, while the same checkpoint was correct on the nightly 2026-09-10; worker log shows FLASH_ATTN chosen for the ViT on sm_110 (docs/evidence/2026-10-17-accept-vllm-031-thor.txt)",
+      "affects": [
+        "t8",
+        "t14",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Graded governor on the Spark cortex: the target container gains explicit GPU device nodes (devices: /dev/nvidia0, /dev/nvidiactl, /dev/nvidia-modeset, /dev/nvidia-uvm, /dev/nvidia-uvm-tools) in docker-compose.override.yml so docker update no longer revokes GPU access, and the governor runs with bands raised for this Spark's acpitz zones (cap 12 cpus at >=92 C, 8 at >=95 C, 4 at >=98 C, pause at >=101 C) instead of the 84/88/91/93.5 defaults",
+      "task_ref": "t12",
+      "reason": "The governor's first docker update killed the cortex lane's first boot with NVMLError_Unknown (systemd cgroup driver revokes NEW GPU access on docker update; reproduced on a throwaway container; explicit --device entries verified to survive docker update --cpus 8/4/12/16), and this Spark's acpitz zones idle ~88 C and reach 92 C under one benchmark stream, so the default bands would throttle at idle (docs/evidence/2026-10-17-accept-vllm-031-spark-cortex.txt)",
+      "affects": [
+        "t12",
+        "t4",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 2
+    },
+    {
+      "id": "d3",
+      "what": "Split engine pin: Thor and Orin stay on vllm/vllm-openai:v0.31.0-ubuntu2404; the Spark's cortex is tested on v0.30.0-ubuntu2404 (index sha256:439c19d48db36401abc914b9842d060fe610a54bc3ac29bb02505f0b69af1baf) and spark2 does not move to 0.31.0 until strict+thinking is clean there",
+      "task_ref": "t12",
+      "reason": "On 0.31.0 (xgrammar 0.2.7, both the plain and -ubuntu2404 variants) a strict tool call WITH thinking on the cortex lane emits 78 repeated calls until max_tokens; the nightly (xgrammar 0.2.3) emits one call. The structural-tag grammar is identical across engines, so the runtime enforcement regressed. Only the cortex plugin's reasoning-aware grammar path is affected: the Thor worker (plain qwen3_coder) returned one call, and the Orin has no tool-calling lane",
+      "affects": [
+        "t12",
+        "t13",
+        "t14",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 3
+    },
+    {
+      "id": "d4",
+      "what": "The Spark's cortex is tested on the GB10-native third-party build ghcr.io/spark-arena/dgx-vllm-eugr-nightly@sha256:cc47adc1b210066dca421bdcd7ca6f16680b6579533f348c0d8c072da194cf98 (vLLM 0.32.0rc1.dev301+g1ac942555, TORCH_CUDA_ARCH_LIST=12.1a, built 2026-10-16), the engine sparkrun's official Qwen3.8-27B recipe uses; if strict+thinking is clean there, the Spark runs it as a recorded exception to the one-pin rule",
+      "task_ref": "t12",
+      "reason": "strict tool calls WITH thinking repeat 78 times until max_tokens on BOTH official v0.30.0-ubuntu2404 and v0.31.0-ubuntu2404 (3/3 runs each), while the nightly 0.26.1rc1.dev942 makes one call; the grammar and its xgrammar enforcement are identical across all three (offline matcher test), so the regression is elsewhere in vLLM between 0.26.1rc1 and 0.30.0",
+      "affects": [
+        "t12",
+        "t13",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "risky",
+      "seq": 4
+    },
+    {
+      "id": "d5",
+      "what": "qwen3_coder_thinking plugin: on engines that hold the structured-output grammar until reasoning ends (vLLM >= 0.30.0; seen on 0.30.0, 0.31.0 and eugr 0.32.0rc1) the plugin must pass reasoning=False, because its thinking-prefixed grammar otherwise waits for a second </think> and masks EOS, so strict+thinking repeats the tool call until max_tokens; the old nightly keeps the per-request derivation. Fixed engine-aware in R2 with tests for both engine kinds; until then the Spark runs a hand-patched, backed-up copy (reasoning=False)",
+      "task_ref": "t12",
+      "reason": "root cause of the strict+thinking regression found 2026-10-18: offline matcher started after </think> masks EOS on every grammar/xgrammar combination; live on eugr, reasoning=False gives 1 call / 45 tokens (65 with DSpark) with reasoning kept, and maxLength=3 still enforced (strict 'the' vs non-strict full string); DSpark ruled out (78 calls with it off)",
+      "affects": [
+        "t14",
+        "t17"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "needs-follow-up",
+      "seq": 5
+    },
+    {
+      "id": "d6",
+      "what": "d3 (split pin) and d4 (eugr exception) withdrawn: with the d5 plugin fix, strict+thinking is clean on official v0.31.0-ubuntu2404, so the Sparks run the same official 0.31.0 pin as Thor and Orin; spark2 follows in t13 on 0.31.0; eugr stays a measured, unadopted candidate (17.2 tok/s vs 15.9 on 0.31.0, cortex with DSpark)",
+      "task_ref": "t12",
+      "reason": "operator decision 2026-10-18 after measuring both engines under the d5 fix: one official pin over a ~7-8% decode gain from a third-party rc build",
+      "affects": [
+        "t13",
+        "t14"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 6
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}

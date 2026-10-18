@@ -861,6 +861,14 @@ long-running hand-tuned deployment serves with.
 
 ### 5. Non-dense decode paths are broken/wedged on sm_110, on the current nightly + v0.27.1 upstream
 
+> **Engine relabel (#310 t15).** Every failure below was measured on the
+> `8bd082` nightly (0.26.1rc1.dev942) or older and is **DECLARED/UNVALIDATED
+> (#108) as 0.31.0 behaviour**; they stay on record for those engines. 0.31.0
+> on sm_110 has measured only embed, rerank and the Qwen3.6-35B-A3B worker
+> (DFlash, not MTP) — `docs/evidence/2026-10-17-accept-vllm-031-thor.txt` — and
+> that worker serves. The GDN-MTP kernel gap, the LFM2 `hand` corruption and
+> the Lightning Mamba-2 wedge have not been re-run on 0.31.0.
+
 **The problem (measured 2026-08-20, three checkpoints, same day, same
 `8bd082` fleet nightly, vLLM 0.26.1rc1.dev942):** dense-transformer decode
 serves fine on Thor (sm_110), but every **non-standard decode path** tried

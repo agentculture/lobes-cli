@@ -99,7 +99,7 @@ _ASSIGNMENT_RE = re.compile(
     r"""
     ^\s*
     (?:-\s+)?                  # optional YAML list-item dash (environment: lists)
-    ["']?([A-Za-z_][A-Za-z0-9_]*)["']?   # key name, optionally quoted
+    (["']?)([A-Za-z_][A-Za-z0-9_]*)(["']?)   # key name, optionally quoted
     \s*[:=]\s*
     (.*)$
     """,
@@ -247,9 +247,14 @@ def _scan_assignments(path: Path, text: str) -> list[Finding]:
         match = _ASSIGNMENT_RE.match(line)
         if not match:
             continue
-        key, raw_value = match.group(1), match.group(2)
+        open_quote, key, close_quote, raw_value = match.groups()
         if not _is_secret_key(key):
             continue
+        raw_value = raw_value.rstrip()
+        # A fully quoted list item ("KEY=value") is ONE compose string: the quote
+        # that opened before the key closes after the value, so drop it here.
+        if open_quote and not close_quote and raw_value.endswith(open_quote):
+            raw_value = raw_value[:-1]
         value = _clean_value(raw_value)
         if not value:
             continue

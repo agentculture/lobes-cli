@@ -434,6 +434,30 @@ nightly image on the GB10
 `docs/specs/2026-08-19-qwen3-8-cortex-upgrade.md` /
 `docs/plans/2026-08-19-qwen3-8-cortex-upgrade.md` for the upgrade's spec/plan.
 
+## 10. Move to official vLLM 0.31.0 (2026-10-18, #310 R2)
+
+The shared `VLLM_NIGHTLY_IMAGE` default, the torch bases of
+`Dockerfile.decider` / `Dockerfile.embed-st`, and `Dockerfile.decider-vllm`'s
+`DECIDER_VLLM_BASE_IMAGE` now pin one official release instead of a nightly:
+
+| | Before (§9) | Now (current pin) |
+|---|---|---|
+| Digest | `sha256:8bd082c274fae025b7079498fe1da65182ba1d4c2188c0f5a68c1042c38c3695` | `sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460` |
+| Image | `vllm/vllm-openai` nightly (`0.26.1rc1.dev942+g5a4c8d992`) | `vllm/vllm-openai:v0.31.0-ubuntu2404` (multi-arch index) |
+
+The digest is the tag's index digest as reported by Docker Hub on
+2026-10-18. `Dockerfile.vllm-gemma4` is deliberately unchanged (still the
+`7c5a10e9` pin). Per-box acceptance is in
+`docs/evidence/2026-10-17-accept-vllm-031-*.txt` and
+`docs/evidence/2026-10-18-accept-vllm-031-*.txt`.
+
+Deviation d1 added a template knob for the Thor: on vLLM 0.31.0 / sm_110 the
+`worker` lane's ViT misread images until `--mm-encoder-attn-backend=TORCH_SDPA`
+was set. `WORKER_MM_ENCODER_ATTN_BACKEND` renders that flag (unset or empty
+renders nothing, so every other box is unchanged) and the `thor-worker` shape
+sets it to `TORCH_SDPA`
+(`docs/evidence/2026-10-17-accept-vllm-031-thor.txt`).
+
 ## Scope note
 
 Sections §1–§3 are **before-state only** (t1). §4 = **t2** (27B on nightly, GO),

@@ -309,6 +309,11 @@ disagree), fixed at boot — there is no runtime hot-load.
 
 **Per-card status, updated 2026-08-20.** `hand` (LFM2.5-1.2B) is
 default-hosted everywhere, but its inference health is not uniform:
+**(#310 t15: the validations below ran on the nightly. On vLLM 0.31.0, `hand`
+is re-accepted on spark2 only — `docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`,
+healthy, restarts 0; the Orin and Thor `hand` and the Thor block are
+DECLARED/UNVALIDATED until re-measured.)**
+
 **Orin and Spark are VALIDATED** (known-answer + structured tool-calls PASS
 on both — `docs/evidence/2026-08-20-accept-hand-spark.txt` for the Spark
 half); **Thor stays BLOCKED**, now **re-attributed** away from its original

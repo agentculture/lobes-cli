@@ -324,6 +324,13 @@ to quietly substitute a different checkpoint.
 
 **Container image (engine pin) — this is the load-bearing gotcha:**
 
+(#310 t15: the `8bd082` row below is a nightly-era finding. On vLLM 0.31.0 the
+`nvidia/Qwen3.6-35B-A3B-NVFP4` worker serves on the Thor with DFlash
+speculation — `docs/evidence/2026-10-17-accept-vllm-031-thor.txt` — but the
+unsloth checkpoint's MTP-on path on 0.31.0 has not been tried:
+DECLARED/UNVALIDATED (#108). The `7c5a10e9` MEASURED figures stay on record for
+that engine.)
+
 | Pin | Digest | vLLM | Status for THIS checkpoint |
 |---|---|---|---|
 | Production pin (2026-07-31/2026-08-20 evidence) | `vllm/vllm-openai@sha256:7c5a10e9a8b3c8642f4d0463a41215176c0dd834b4f0967287c7e3e517cf1be9` | `0.23.1rc1.dev672` | **VALIDATED** — both cited transcripts ran on this pin; MTP self-draft ON measured 89.1% acceptance, 50.8-61.2 tok/s single-stream. |

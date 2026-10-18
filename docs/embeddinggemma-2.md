@@ -33,6 +33,17 @@ contract is untouched (see
   `gemma2-embed` and the raw id both route to it.
 - `role_hint="candidate"`: it can never hijack the 0.6B `embedder` role.
 
+> **vLLM 0.31.0 (#310 t15).** The sidecar image was rebuilt FROM the 0.31.0
+> fleet pin on the Orin (torch 2.13.0+cu130, sentence-transformers 6.1.0) and
+> the per-modality controls re-passed
+> (`docs/evidence/2026-10-17-accept-vllm-031-orin.txt`): text 0.91 / 0.6088,
+> text->image red 0.7167 > blue 0.6412 > green 0.6404, text->audio tone 0.8212
+> > noise 0.7774 > silence 0.7182, text->code merge 0.8178 > http 0.5485 >
+> weather 0.5255 (synthetic inputs, ordering only; video not covered). The
+> 4.69 GiB residency figure, the memory spike and the "vLLM refuses the
+> checkpoint" finding below were measured on the older base
+> (`0.23.1rc1.dev672`) and are DECLARED/UNVALIDATED (#108) on 0.31.0.
+
 ## Why a sidecar, not vLLM
 
 MEASURED 2026-10-07: the Orin's pinned engine image

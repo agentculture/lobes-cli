@@ -58,6 +58,22 @@ against.** This ledger describes the digest the fleet runs.
 **One digest, seven services, three boxes.** Changing it is a fleet event, not a
 lane change. It reaches any box that re-renders from this template.
 
+> **Superseded on the live boxes by the 0.31.0 move (#310 t15 relabel).** Every
+> validation claim on this row, and in the rows below that cite this digest, was
+> measured on the nightly and is **DECLARED/UNVALIDATED (#108) as a 0.31.0
+> value** until a 0.31.0 transcript says otherwise. The boxes now run
+> `vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460`
+> (`v0.31.0-ubuntu2404`), with this row's image kept on disk for rollback.
+> 0.31.0 evidence on record: Thor embed/rerank/worker
+> (`docs/evidence/2026-10-17-accept-vllm-031-thor.txt`), Orin embed/rerank/
+> gemma2-embed/decider-general
+> (`docs/evidence/2026-10-17-accept-vllm-031-orin.txt`), Spark cortex
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`) and spark2
+> cortex/embed/rerank/hand
+> (`docs/evidence/2026-10-18-accept-vllm-031-spark2.txt`). Not yet measured on
+> 0.31.0: the Thor cortex lane, `vllm-associate`,
+> `vllm-embed-deep`, and the Lightning `worker` checkpoint this row lists.
+
 ### `ghcr.io/nvidia-ai-iot/llama_cpp@sha256:f7c67c10…` — the llama.cpp lane
 
 | | |

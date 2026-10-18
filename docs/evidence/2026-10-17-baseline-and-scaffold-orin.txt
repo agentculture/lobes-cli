@@ -1,0 +1,68 @@
+BASELINE + R1 SCAFFOLD — Jetson AGX Orin 64GB, before its vLLM 0.31.0 switch
+Issue #310 · plan vllm-0-31-0-fleet task t9 · 2026-10-17 · operator: lobes (Claude)
+Procedure: docs/runbooks/lane-safety-r1-rollout.md (second live run; first on the Orin).
+
+BOX STATE AT START (21:15Z)
+  hosted: vllm-embed + vllm-rerank on the OLD nightly 7c5a10e9 (0.23.1rc1.dev672; .env never moved to 8bd082c2),
+  decider-general (lobes-decider-general, Dockerfile.decider-vllm FROM plain vllm/vllm-openai:v0.31.0),
+  embed-gemma2-embed (ST sidecar, Dockerfile.embed-st FROM 7c5a10e9), gateway 0.86.0.dev647.
+  61 GiB unified, zero swap, ~15 GiB available; 754 GB disk free.
+  tools: uv present; installed `lobes-cli==0.89.0` and `jetson-orin-cli` 0.7.1 (uv tool).
+  sudo needs a password: no passwordless page-cache grant here (runbook step 8 needs the operator).
+
+1. INCUMBENT BASELINE (before any change)
+  2026-10-17T21:15:58Z
+  | embedder | embed_similarity | PASS | {"sim_paraphrase": 0.8951, "sim_unrelated": 0.232} | 589.3 ms |
+  **Overall: PASS**
+  | reranker | rerank_relevance | PASS | {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2, 1], "top_index": 0} | 140.7 ms |
+  **Overall: PASS**
+  embedder run1 83.348 docs/s 48.0 ms
+  embedder run2 84.206 docs/s 47.5 ms
+  embedder run3 83.519 docs/s 47.9 ms
+  reranker run1 39.995 docs/s 100.0 ms
+  reranker run2 1.758 docs/s 2274.8 ms
+  reranker run3 38.545 docs/s 103.8 ms
+  | gemma2-embed | embed_similarity | PASS | {"sim_paraphrase": 0.91, "sim_unrelated": 0.6088} | 176.1 ms |
+  **Overall: PASS**
+  decider baseline: the existing plain-v0.31.0 transcripts (docs/evidence/2026-10-14-accept-orin-decider.txt:
+  agreement with bf16 0.9904 via the gateway, 414/418) — the decider was already on 0.31.0, a different OS layer.
+
+2. R1 SCAFFOLD (backups <file>.bak-20261017T211614Z-r1)
+  doctor BEFORE:
+    [ok] docker_available: docker + docker compose are available
+    [ok] compose_present: deployment scaffolded at /home/orin/.lobes
+    [ok] env_coherence: VLLM_SERVED_NAME = unsloth/Qwen3.6-27B-NVFP4
+    [ok] scaffold_files: all 17 expected scaffold files present
+    [warn] profile_staleness: 13 required key(s) missing from .env: BARGE_IN_MODEL, BARGE_IN_WINDOW_MS, DEFAULT_AEC_MODE, DEFAULT_SYSTEM_PROMPT, DEFAULT_TURN_DETECTION, LOBES_BOOT_ORDER (+7 more)
+    [ok] gateway_passthrough: every set gateway-relevant .env key has a compose passthrough
+    [warn] logwrap_stale: mg-logwrap.sh differs from this CLI's packaged copy (sha256 fd9dfb7d30ce vs 421c1268e537) — the lane boot hold, start counter and memory gate may be missing
+    [warn] compile_cache_unmounted: vLLM service(s) without a persistent compile cache: decider-general (no mount), embed-nemotron-embed (no mount), embed-nomic-code-embed (no mount), embed-qwen3vl-embed (no mount), embed-qwen3vl-rerank (no mount), vllm-associate (no mount), vllm-embed (no FlashInfer mount), vllm-embed-deep (no mount), vllm-middle (no mount), vllm-minor (no mount), vllm-multimodal-coder (no mount), vllm-muse (no mount), vllm-rerank (no mount), vllm-worker (no mount) — every restart recompiles from scratch
+    [ok] compile_cache_size: compile cache /home/orin/.lobes/compile-cache: 38549583 bytes (0.04 GiB); wipe a lane by deleting its directory with no lane running
+    [warn] jetson_clocks_locked: clocks are locked outside any lobes window (operator jetson_clocks or a crashed run) — a warning, not an error: the operator may have locked them on purpose
+    [warn] drop_caches_grant_missing: no passwordless page-cache clear on this orin: lifecycle verbs and the watcher skip the clear, so a crashed lane's memory can stay unreclaimed
+    [ok] watcher_inactive: host watcher not installed (optional; 'lobes watcher install' clears the page cache for memory-gated lanes)
+    [warn] plugin_stale: qwen3_thinking_tool_parser.py differs from this CLI's packaged copy (sha256 22a030552d03 vs 36a95d103704) — the lane may be running an outdated tool-parser plugin
+    [ok] health_reachable: /health responding on :8000
+    [FAIL] gateway_version_match: deployed gateway reports lobes-cli 0.86.0.dev647, this CLI is 0.89.0 — deployed-artifact version skew (issue #99)
+  CHAIN MISMATCH found in step 3: `lobes fleet files` includes docker-compose.audio.yml + gpu-audio.yml, but
+    the running gateway was created WITHOUT them (label: yml, gpu, embed, shape, override). `lobes up` would pull
+    the audio overlay into the gateway on a box that hosts no audio, so every compose action here used the
+    gateway's own chain explicitly: docker compose -f yml -f gpu -f embed -f shape -f override ... --no-deps.
+  override: gateway block gains log env, LOBES_BOOT_* + LOBES_THERMAL_* passthroughs, ./logs + wrapper binds,
+    entrypoint mg-logwrap + command python -m lobes.gateway, start_period 200s; the existing vllm-embed
+    compile-cache block (H6) gains the FlashInfer env + bind and start_period 780s; new vllm-rerank block
+    (both caches, 780s). `docker compose config --quiet` on the gateway chain: OK.
+  doctor --refresh-logwrap --apply, --refresh-plugin --apply: applied.
+  doctor --fix (plan reviewed): appended 11 audio keys (inert: the running chain has no audio overlay),
+    LOBES_BOOT_ORDER=multimodal,embed,rerank and LOBES_THERMAL_ZONES=tj-thermal (no shed values -> no shedding);
+    created compile-cache/{embed-flashinfer,rerank,rerank-flashinfer}.
+  embed/rerank NOT recreated here: they recreate once, directly onto 0.31.0, in t10 ("prepare now, recreate
+    later" — fewer cold boots on a zero-swap box). decider + gemma2-embed pieces land in t10 with their rebuilds.
+  gateway: .env line 618 (active GATEWAY_PIP_EXTRA_INDEX_URL=TestPyPI from 2026-10-06) commented out;
+    MODEL_GEAR_VERSION 0.86.0.dev647 -> 0.89.0; previous image id sha256:62ef34771f59... kept for rollback;
+    built + recreated with the gateway chain 21:17:42Z -> healthy 21:18:10Z, /health version 0.89.0.
+  verified after: gateway label chain unchanged (5 files, no audio); embedder PASS (0.8951/0.232), reranker PASS
+    ([0,2,1]), gemma2-embed PASS (0.91/0.6088) through the new gateway; /v1/systemone (decider:general, a real
+    probe-set record) HTTP 200; doctor: logwrap_stale ok, plugin_stale ok, profile_staleness ok,
+    gateway_version_match ok. Still warn: compile_cache_unmounted (decider-general -> t10, plus unhosted lanes),
+    jetson_clocks_locked (operator's), drop_caches_grant_missing (needs sudo).

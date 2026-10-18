@@ -13,7 +13,11 @@
 # docs/evidence/2026-10-14-ab-clef-vllm-vs-sidecar-orin.txt):
 #   gpu_mem_util 0.40, max_model_len 16384 -> weights 14.84 GiB, KV 6.68 GiB
 #   (94,890 tokens), container 21.65 GiB under a 32g cap; top-1 agreement with
-#   bf16 0.988 on 418 labelled questions. Booting it FROM THIS RENDER is t11.
+#   bf16 0.988 on 418 labelled questions -- that 0.988 was measured on plain
+#   v0.31.0 (kept on record). Re-measured on the -ubuntu2404 fleet pin: agreement 0.9928 (415/418), top-1 0.9378, KV 56,661 tokens
+#   = 3.46x at 16,384 (docs/evidence/2026-10-17-accept-vllm-031-orin.txt).
+#   The render itself remains DECLARED/UNVALIDATED (#108). Booting it FROM THIS
+#   RENDER is t11.
 #
 # The decider joins the card's one-heavy-lobe group (builtin/orin.toml
 # [[exclusive_roles]]): it never co-resides with cortex, senses or associate.
