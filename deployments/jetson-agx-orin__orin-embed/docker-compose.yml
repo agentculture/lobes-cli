@@ -1995,6 +1995,17 @@ services:
       # `model=associate` 404s role_infeasible, never a silent fallback.
       - ASSOCIATE_BASE_URL=${ASSOCIATE_BASE_URL:-}
       - ASSOCIATE_SERVED_NAME=${ASSOCIATE_SERVED_NAME:-}
+      # The opt-in decider role (schema-scored decisions): wired only when a
+      # decider-hosting shape renders DECIDER_BASE_URL; unwired it is
+      # infeasible. Gateway passthrough only; the lane service lands later.
+      - DECIDER_BASE_URL=${DECIDER_BASE_URL:-}
+      - DECIDER_SERVED_NAME=${DECIDER_SERVED_NAME:-}
+      - DECIDER_DOMAINS=${DECIDER_DOMAINS:-}
+      # Each domain's checkpoint (`name=model[@revision]`), rendered by the
+      # shape beside DECIDER_DOMAINS: the /capabilities `decider.domains`
+      # advert and the per-domain mesh fingerprint read it (odm t7).
+      - DECIDER_DOMAIN_MODELS=${DECIDER_DOMAIN_MODELS:-}
+      - DECIDER_DOMAIN_CONTEXTS=${DECIDER_DOMAIN_CONTEXTS:-}
       # The opt-in `innereye` RENDER tenant (the eleventh Colleague role —
       # ComfyUI behind the gateway's /v1/render facade, issue #82). Same
       # opt-in mechanics as muse/worker/associate above: an innereye-hosting
@@ -2090,6 +2101,7 @@ services:
       - MUSE_FEASIBLE=${MUSE_FEASIBLE:-}
       - WORKER_FEASIBLE=${WORKER_FEASIBLE:-}
       - ASSOCIATE_FEASIBLE=${ASSOCIATE_FEASIBLE:-}
+      - DECIDER_FEASIBLE=${DECIDER_FEASIBLE:-}
       # hand rides the same feasibility channel as every other role since
       # 2026-08-20 (d1 reversal — see lobes/gateway/_config.py's
       # NEVER_PROXIED_BACKENDS): a box whose card cannot serve LFM2.5
@@ -2138,6 +2150,7 @@ services:
       - MUSE_MAX_ACTIVE=${MUSE_MAX_ACTIVE:-}
       - WORKER_MAX_ACTIVE=${WORKER_MAX_ACTIVE:-}
       - ASSOCIATE_MAX_ACTIVE=${ASSOCIATE_MAX_ACTIVE:-}
+      - DECIDER_MAX_ACTIVE=${DECIDER_MAX_ACTIVE:-}
       - HAND_MAX_ACTIVE=${HAND_MAX_ACTIVE:-}
       - EMBED_MAX_ACTIVE=${EMBED_MAX_ACTIVE:-}
       - RERANK_MAX_ACTIVE=${RERANK_MAX_ACTIVE:-}
@@ -2229,6 +2242,11 @@ services:
       - ASSOCIATE_REASONING_PARSER=${ASSOCIATE_REASONING_PARSER:-}
       - ASSOCIATE_TOOL_CALL_PARSER=${ASSOCIATE_TOOL_CALL_PARSER:-}
       - ASSOCIATE_SPECULATIVE_CONFIG=${ASSOCIATE_SPECULATIVE_CONFIG-}
+      - DECIDER_QUANTIZATION=${DECIDER_QUANTIZATION:-}
+      - DECIDER_KV_CACHE_DTYPE=${DECIDER_KV_CACHE_DTYPE:-}
+      - DECIDER_REASONING_PARSER=${DECIDER_REASONING_PARSER:-}
+      - DECIDER_TOOL_CALL_PARSER=${DECIDER_TOOL_CALL_PARSER:-}
+      - DECIDER_SPECULATIVE_CONFIG=${DECIDER_SPECULATIVE_CONFIG-}
       # HAND_QUANTIZATION / HAND_KV_CACHE_DTYPE / HAND_REASONING_PARSER /
       # HAND_SPECULATIVE_CONFIG: no such lane knobs exist — vllm-hand is
       # bf16 (deliberately NO --quantization flag), has no thinking mode

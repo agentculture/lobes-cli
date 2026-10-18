@@ -8,5 +8,56 @@ services:
       - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
       - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
       - GATEWAY_SELF_ORIGIN=${GATEWAY_SELF_ORIGIN:-}
+      # -- lane safety (#304/#307/#308, R1 0.89.0) - #310 t9, 2026-10-17 --
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=gateway
+      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
+      - LOBES_THERMAL_ZONES=${LOBES_THERMAL_ZONES:-}
+      - LOBES_THERMAL_SHED_C=${LOBES_THERMAL_SHED_C:-}
+      - LOBES_THERMAL_RESUME_C=${LOBES_THERMAL_RESUME_C:-}
     volumes:
       - ${LOBES_MESH_DIR:-./mesh}:/home/gateway/mesh
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    # gateway under the wrapper (boot hold); image ENTRYPOINT is python -m lobes.gateway, no CMD
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    command: ["python", "-m", "lobes.gateway"]
+    healthcheck:
+      start_period: 200s
+  # lane-safety H6 (2026-10-17): per-lane vLLM compile cache (lobes PR #315, #309)
+  vllm-embed:
+    environment:
+      - VLLM_CACHE_ROOT=/cache/vllm
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
+    volumes:
+      - ./compile-cache/embed:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/embed-flashinfer:/cache/flashinfer
+    healthcheck:
+      start_period: 780s
+  # -- lane safety (#304/#307/#308, R1 0.89.0) - #310 t9, 2026-10-17 --
+  vllm-rerank:
+    environment:
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
+    volumes:
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/rerank:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/rerank-flashinfer:/cache/flashinfer
+    healthcheck:
+      start_period: 780s
+  # -- #310 t10, 2026-10-17: sidecars rebuilt on the fleet pin (v0.31.0-ubuntu2404) --
+  decider-general:
+    build:
+      args:
+        DECIDER_VLLM_BASE_IMAGE: vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460
+    environment:
+      - VLLM_CACHE_ROOT=${LOBES_VLLM_CACHE_ROOT:-/cache/vllm}
+      - FLASHINFER_WORKSPACE_BASE=${LOBES_FLASHINFER_WORKSPACE_BASE:-/cache/flashinfer}
+    volumes:
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/decider-general:/cache/vllm
+      - ${LOBES_COMPILE_CACHE_DIR:-./compile-cache}/decider-general-flashinfer:/cache/flashinfer
+  embed-gemma2-embed:
+    build:
+      args:
+        ST_BASE_IMAGE: vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460

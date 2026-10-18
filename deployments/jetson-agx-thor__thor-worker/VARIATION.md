@@ -81,8 +81,35 @@ an allowlist of keys `lobes/profiles/render.py` renders, so operator-typed
 wiring (`*_PEER_ORIGIN`, `*_PEER_API_KEY`, `*_BASE_URL`) and every credential
 are absent by construction. Declare them yourself after restoring.
 
+**Re-captured from the LIVE box on 2026-10-18 at 0.89.0** (#310 t16, after the
+fleet moved to vLLM 0.31.0 `v0.31.0-ubuntu2404`). Every file and the `[env]`
+table are what the Thor holds now (fetched read-only over ssh; `.env` was read
+for the allowlist only and is not committed). `docker-compose.yml` and
+`docker-compose.shape.yml` are byte-identical to the previous capture;
+`docker-compose.override.yml` now carries the worker `command:` respelling with
+`--mm-encoder-attn-backend=TORCH_SDPA` (deviation d1), `mg-logwrap.sh` and
+`qwen3_thinking_tool_parser.py` are the lane-safety-era copies, and the `[env]`
+table gained `DECIDER_FEASIBLE`, `GATEWAY_READ_TIMEOUT`, `LOBES_BOOT_ORDER` and
+`LOBES_THERMAL_ZONES`. The box's engine pin is a `.env` key (`VLLM_NIGHTLY_IMAGE`)
+that the lock's allowlist does not record, so it is not in this directory.
+
 ## Measured result
 
+> Measured live on 2026-10-17:
+> `docs/evidence/2026-10-17-accept-vllm-031-thor.txt` covers the state captured
+> here. The embedder and reranker were switched to vLLM 0.31.0 (probes pass,
+> soaks clean; their throughput comparison against the nightly is stated there
+> as inconclusive). The worker, already on 0.31.0, failed image intake with the
+> default ViT attention backend; under deviation d1 the respelled `command:`
+> adds `--mm-encoder-attn-backend=TORCH_SDPA` and the transcript records 12/12
+> solid-colour controls passing, tool calls and the strict-tool matrix passing,
+> and a single-stream benchmark of 84.3 / 83.8 tok/s decode that it says is not
+> comparable to the 2026-09-10 figure. The transcript's cause for the
+> regression is a hypothesis it did not isolate.
+>
+> The older acceptance transcripts below predate the 0.31.0 move: the 2026-09-10
+> acceptance names the nightly 0.26.1rc1 (`8bd082c2`); the others name no engine.
+>
 > Measured live on 2026-09-12:
 > `docs/evidence/2026-09-12-accept-mesh-boot-window-fleet.txt` covers the
 > state captured here as a mesh peer — see the re-capture paragraph above.
@@ -145,11 +172,8 @@ beside a live deployment, never to a catalog entry.
 library (`lobes/runtime/_lock.py`'s `capture_lock`). Re-run it after a
 `lobes switch` or a hand edit, or the drift check will fire.
 
-**Predates the lane-safety change (2026-10-17).** The captured
-`mg-logwrap.sh` and compose files predate the lane-safety work (boot hold,
-start counter, memory gate, compile-cache mounts, wrapped services; plan
-`docs/plans/2026-10-17-lane-safety-and-quality-304-307-308-309.md`, claim c7).
-A box restored from, or compared against, this lock will therefore show
-`lock_drift` for `mg-logwrap.sh` and `docker-compose*.yml` until the lock is
-re-captured. That drift is expected; no captured file was rewritten from a
-live box for this note.
+**`docker-compose.yml` and `docker-compose.shape.yml` still predate the
+lane-safety compose changes.** The live Thor's copies are dated 2026-09-11 and
+2026-08-25 and are byte-identical to the previous capture, so they carry none
+of the lane-safety compose wiring. `mg-logwrap.sh` and the tool-parser plugin
+here are the current ones.
