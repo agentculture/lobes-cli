@@ -8,7 +8,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- `qwen3_coder_thinking` plugin: on vLLM >= 0.30.0, which starts the structured-output grammar only after reasoning ends, the plugin now passes `reasoning=False` for every request. The thinking-prefixed grammar it built before masked EOS there, so a strict tool call with thinking repeated until `max_tokens` (measured on 0.30.0, 0.31.0 and 0.32.0rc1). Older engines keep the per-request derivation; an unreadable `vllm.__version__` refuses to boot (#310 deviation d5).
+- `qwen3_coder_thinking` plugin: on vLLM >= 0.30.0, which starts the structured-output grammar only after reasoning ends, the plugin now passes vLLM's own `reasoning` flag through (`False` on every engine measured) instead of deriving it per request, and logs which mode it chose at import. The thinking-prefixed grammar it built before masked EOS there, so a strict tool call with thinking repeated until `max_tokens` (measured on 0.30.0, 0.31.0 and 0.32.0rc1). Older engines keep the per-request derivation; an unreadable `vllm.__version__` refuses to boot (#310 deviation d5).
+- `lobes assess --strict-tools`: a strict leg that hits `max_tokens` (`finish_reason=length`) is no longer counted as a clean call, so the matrix now catches the repeat-until-`max_tokens` failure.
 
 ## [0.89.1] - 2026-10-17
 

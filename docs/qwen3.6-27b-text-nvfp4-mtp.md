@@ -247,8 +247,9 @@ heavier co-resident agents need the headroom.
    text, EOS stays masked, and a strict request repeats the call until
    `max_tokens` (about 78 calls in 2048 tokens, on 0.30.0, 0.31.0 and
    0.32.0rc1, with and without DSpark). On those engines the plugin passes
-   `reasoning=False` for every request, read from `vllm.__version__` at
-   import; an unreadable version refuses to boot. Measured on the DGX Spark:
+   vLLM's own `reasoning` flag through (`False` on every engine measured),
+   chosen from `vllm.__version__` at import and logged; an unreadable version
+   refuses to boot. A `0.29.x` dev build is classified as pre-0.30. Measured on the DGX Spark:
    one call with reasoning kept, and a `maxLength=3` control still enforced
    under strict (`docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`).
    The 0.30.0 boundary is the measured one, not a proven upstream change

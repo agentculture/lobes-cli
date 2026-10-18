@@ -148,8 +148,8 @@ flag from the request's own `enable_thinking` instead of the hardcoded
 `False`. **That derivation is engine-dependent (#310 deviation d5,
 2026-10-18):** vLLM 0.30.0 and later start the grammar only after reasoning
 ends, so a thinking-prefixed grammar masks EOS and a strict call repeats until
-`max_tokens`; on those engines the plugin passes `reasoning=False` for every
-request (measured on 0.30.0, 0.31.0 and 0.32.0rc1;
+`max_tokens`; on those engines the plugin passes vLLM's own `reasoning` flag
+through (`False` on every engine measured) (measured on 0.30.0, 0.31.0 and 0.32.0rc1;
 `docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt`). The boundary is
 the measured one, chosen by the plugin from `vllm.__version__`. A separate, default-off gateway knob (`GATEWAY_FORCE_STRICT_TOOLS`)
 opts existing callers into strict schemas without a client-side change, with

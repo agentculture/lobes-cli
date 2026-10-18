@@ -25,9 +25,11 @@ Public modules:
 
 - :mod:`lobes.vllm_plugins.qwen3_thinking_tool_parser` — registers the
   ``qwen3_coder_thinking`` tool-call parser (a reasoning-aware variant of the
-  upstream ``qwen3_coder`` parser) for the cortex/main generate lane, deriving
-  the structural-tag grammar's ``reasoning`` flag from the request's own
-  effective ``enable_thinking`` state.
+  upstream ``qwen3_coder`` parser) for the cortex/main generate lane. On an
+  engine that applies the grammar from the first token it derives the
+  structural-tag grammar's ``reasoning`` flag from the request's own effective
+  ``enable_thinking`` state; on vLLM >= 0.30.0, which starts the grammar only
+  after reasoning ends, it passes vLLM's own flag through (#310 d5).
 
 See ``docs/`` for the full story on why the served vLLM build's hardcoded
 ``reasoning=False`` breaks strict tool calling for a thinking model.

@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "state": "done",
+  "pr": 323,
+  "exit_code": 0,
+  "outcome": "clean",
+  "started_at": "2026-10-18T11:10:48.671094+00:00",
+  "finished_at": "2026-10-18T11:11:56.545796+00:00",
+  "briefing": "# `agex pr read` \u2014 PR #323\n\n- State: **OPEN** (fix: qwen3_coder_thinking passes reasoning=False on vLLM >= 0.30 (strict+thinking repeat) \u2014 #310 d5)\n- Branch: `fix/plugin-reasoning-gate` \u2192 `main`\n- URL: https://github.com/agentculture/lobes-cli/pull/323\n\n## CI checks\n\n| Check | Status | Conclusion |\n|---|---|---|\n| test | in_progress | \u2014 |\n| test | in_progress | \u2014 |\n| lint | completed | success |\n| secrets-scan | completed | success |\n| site-build | completed | success |\n| version-check | completed | success |\n| GitGuardian Security Checks | completed | success |\n\n\n## SonarCloud\n\n_Project not on SonarCloud (skipped)._\n\n## Comments\n\n- **[top-level]** `OriNachum`: /agentic_review\n- **[top-level]** `qodo-code-review[bot]`: <!-- qodo:billing-blocked -->\n\n**\u24d8 Qodo reviews are paused because the subscription is no longer active.** Ask your workspace admin to reactivate the subscription to resume reviews. [Manage...\n- **[top-level]** `qodo-code-review[bot]`: <!-- qodo:billing-blocked -->\n\n**\u24d8 Qodo reviews are paused because the subscription is no longer active.** Ask your workspace admin to reactivate the subscription to resume reviews. [Manage...\n\n\n## Qodo review\n\n_No Qodo review found._\n\n## Readiness\n\nAll required reviewers have posted feedback.\n\n---\n**Next step:** PR #323 is ready \u2014 wait for human merge.\n",
+  "gate_status": null,
+  "threads_unresolved": 0,
+  "ci_state": "ok"
+}

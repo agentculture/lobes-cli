@@ -394,7 +394,16 @@ def test_import_surface_assert_raises_on_unknown_required_keyword(clean_vllm_stu
 
 @pytest.mark.parametrize(
     "version",
-    ["0.30.0", "0.31.0", "0.31.0+cu130", "0.32.0rc1.dev301+g1ac942555.d20261016", "1.0.0"],
+    [
+        "0.30.0",
+        "0.31.0",
+        "0.31.0+cu130",
+        "0.32.0rc1.dev301+g1ac942555.d20261016",
+        "1.0.0",
+        "0.30rc1",
+        "0.31+cu130",
+        "0.30.dev1",
+    ],
 )
 @pytest.mark.parametrize("thinking", [None, {"enable_thinking": True}, {"enable_thinking": False}])
 def test_post_reasoning_engine_always_gets_reasoning_false(
@@ -415,7 +424,9 @@ def test_post_reasoning_engine_always_gets_reasoning_false(
     assert calls == [False]
 
 
-@pytest.mark.parametrize("version", [NIGHTLY_VERSION, "0.23.1rc1.dev672+g93d8f834d", "0.29.9"])
+@pytest.mark.parametrize(
+    "version", [NIGHTLY_VERSION, "0.23.1rc1.dev672+g93d8f834d", "0.29.9", "0.29.1rc1.dev500+gabc"]
+)
 def test_pre_030_engine_keeps_per_request_derivation(clean_vllm_stubs, version) -> None:
     calls = []
 
@@ -443,3 +454,35 @@ def test_import_refuses_an_unreadable_engine_version(clean_vllm_stubs, version) 
 
     with pytest.raises(RuntimeError, match="version"):
         importlib.import_module(PLUGIN_MODULE_NAME)
+
+
+def test_post_reasoning_engine_passes_the_callers_reasoning_through(clean_vllm_stubs) -> None:
+    # vLLM passes reasoning=False today; if a later engine passes True on
+    # purpose, the plugin must not hardcode it back to False.
+    calls = []
+
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False, strict_level="auto"):
+        calls.append(reasoning)
+
+    _install_stub_vllm(fake_get_structural_tag, version="0.31.0")
+    mod = importlib.import_module(PLUGIN_MODULE_NAME)
+    parser = mod.Qwen3ThinkingToolParser()
+
+    parser.get_structural_tag(_AttrRequest(chat_template_kwargs=None), reasoning=True)
+    parser.get_structural_tag(_AttrRequest(chat_template_kwargs=None))
+
+    assert calls == [True, False]
+
+
+def test_plugin_logs_which_grammar_mode_it_chose(clean_vllm_stubs, caplog) -> None:
+    def fake_get_structural_tag(self, request, *, reasoning: bool = False):
+        return None
+
+    _install_stub_vllm(fake_get_structural_tag, version=NIGHTLY_VERSION)
+    with caplog.at_level("INFO"):
+        importlib.import_module(PLUGIN_MODULE_NAME)
+
+    assert any(
+        NIGHTLY_VERSION in r.getMessage() and "per request" in r.getMessage()
+        for r in caplog.records
+    )

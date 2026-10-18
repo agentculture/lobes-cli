@@ -433,7 +433,9 @@ def _strict_matrix_leg(url: str, model: str, *, strict: bool, enable_thinking: b
 
     A CLEAN call means: at least one ``tool_calls`` entry, every name one of
     the offered tools (a parser-salvage mangle shows up as e.g.
-    ``'finish"'``), and every ``arguments`` string parsing as a JSON object.
+    ``'finish"'``), every ``arguments`` string parsing as a JSON object, and a
+    ``finish_reason`` other than ``length`` (a call repeated until
+    ``max_tokens`` is well-formed call by call, #310 d5).
     The baseline (non-strict) leg only requires an answer — unconstrained
     decoding is allowed to drift; that is exactly why the strict legs exist.
     """
@@ -449,14 +451,23 @@ def _strict_matrix_leg(url: str, model: str, *, strict: bool, enable_thinking: b
         choice = (d.get("choices") or [{}])[0]
         msg = choice.get("message") or {}
         names, args_ok = _parse_leg_tool_calls(msg)
-        clean = bool(names) and args_ok and all(n in offered for n in names)
+        finish = choice.get("finish_reason")
+        # A strict leg that ran out of tokens is not clean even when every call
+        # is well-formed: that is the #310 d5 repeat-until-max_tokens failure.
+        ran_out = finish == "length"
+        clean = bool(names) and args_ok and all(n in offered for n in names) and not ran_out
         answered = bool(names) or bool(msg.get("content"))
+        error = (
+            f"hit max_tokens with {len(names)} tool call(s) (finish_reason=length)"
+            if strict and ran_out
+            else None
+        )
         return {
             "ok": clean if strict else answered,
             "clean": clean,
             "tool_calls": names,
-            "finish": choice.get("finish_reason"),
-            "error": None,
+            "finish": finish,
+            "error": error,
         }
     except (KeyError, IndexError, TypeError, AttributeError) as exc:
         return _leg_error(f"unexpected response shape ({exc.__class__.__name__}: {exc})")

@@ -189,6 +189,8 @@ services:
     #     registers this name from the mounted file. Falls back to plain
     #     upstream qwen3_coder if an operator overrides PRIMARY_TOOL_CALL_PARSER
     #     in .env (e.g. to run a non-thinking primary here).
+    #     On vLLM >= 0.30.0 the grammar starts only after reasoning ends, so the
+    #     plugin passes vLLM's own reasoning flag through instead (#310 d5).
     #
     #   --enable-prefix-caching  Mamba prefix caching is experimental for this
     #     hybrid 27B; functional, watch for drift.
