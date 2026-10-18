@@ -1,0 +1,90 @@
+FLEET SWEEP — vLLM 0.31.0 (v0.31.0-ubuntu2404) after the R2 release (lobes-cli 0.90.0)
+Issue #310 · plan vllm-0-31-0-fleet task t17 · 2026-10-18 ~17:00Z · operator: lobes (Claude) · READ-ONLY
+Template default (lobes/templates/fleet/env.example on main @ 8cca93e, released as 0.90.0):
+  VLLM_NIGHTLY_IMAGE=vllm/vllm-openai@sha256:3fb023cc987cc7c2bca7ca14c1e0aff5ae06bd9431bf07773731ce7e8a682460   (written <pin> below)
+Instrument: docs/plans/vllm-031-probes/fleet_sweep.sh (per box: the .env pin against the default, vLLM image:
+  lines in docker-compose.override.yml, every model-gear-*/embed-* container that imports vllm with its image,
+  image id, vllm.__version__, health and restarts, then `lobes assess --probes`), and
+  docs/plans/vllm-031-probes/mesh_roles.sh (one request per role through the box's own gateway). Nothing was changed on any box.
+
+=== spark (DGX Spark GB10) ===
+  box: spark-f8a9  lobes: lobes 0.89.1  2026-10-18T17:00:49Z
+  .env VLLM_NIGHTLY_IMAGE: equals the template default
+  override vllm image: lines: none
+  containers (the fleet's own, vLLM-based):
+    model-gear-stt  image=lobes-stt  image_id=sha256:2c7f21d8369c  vllm=0.16.1.dev0+g2d5be1dd5.d20260213  healthy restarts=0
+    model-gear-vllm-primary  image=<pin>  image_id=sha256:894e3b474016  vllm=0.31.0  healthy restarts=0
+  probes:
+    probe cortex    known_answer      PASS  {"content": "paris", "expected": "paris"}
+    probe embedder  embed_similarity  FAIL  role not loaded / no endpoint
+    probe reranker  rerank_relevance  FAIL  transport failed (timeout or connection error): HTTP Error 503: Service Unavailable
+  **Overall: FAIL**
+
+=== spark2 (DGX Spark GB10) ===
+  box: spark-e2f0  lobes: lobes 0.89.2  2026-10-18T17:00:55Z
+  .env VLLM_NIGHTLY_IMAGE: equals the template default
+  override vllm image: lines: none
+  containers (the fleet's own, vLLM-based):
+    model-gear-decider-strands-general  image=lobes-decider-strands-general  image_id=sha256:da16b5818991  vllm=0.23.1rc1.dev672+g93d8f834d  healthy restarts=0
+    model-gear-vllm-embed  image=<pin>  image_id=sha256:894e3b474016  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-hand  image=<pin>  image_id=sha256:894e3b474016  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-primary  image=<pin>  image_id=sha256:894e3b474016  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-rerank  image=<pin>  image_id=sha256:894e3b474016  vllm=0.31.0  healthy restarts=0
+  probes:
+    probe cortex    known_answer      PASS  {"content": "paris", "expected": "paris"}
+    probe embedder  embed_similarity  PASS  {"sim_paraphrase": 0.8947, "sim_unrelated": 0.2337}
+    probe reranker  rerank_relevance  PASS  {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2,
+  **Overall: PASS**
+
+=== thor (Jetson AGX Thor, sm_110) ===
+  box: thor  lobes: lobes 0.89.0  2026-10-18T17:01:06Z
+  .env VLLM_NIGHTLY_IMAGE: equals the template default
+  override vllm image: lines: none
+  containers (the fleet's own, vLLM-based):
+    model-gear-vllm-embed  image=<pin>  image_id=sha256:3fb023cc987c  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-rerank  image=<pin>  image_id=sha256:3fb023cc987c  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-worker  image=<pin>  image_id=sha256:3fb023cc987c  vllm=0.31.0  healthy restarts=0
+  probes:
+    probe cortex    known_answer      FAIL  role not loaded / no endpoint
+    probe embedder  embed_similarity  PASS  {"sim_paraphrase": 0.895, "sim_unrelated": 0.2316}
+    probe reranker  rerank_relevance  PASS  {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2,
+  **Overall: FAIL**
+
+=== orin (Jetson AGX Orin, sm_87) ===
+  box: orin  lobes: lobes 0.89.0  2026-10-18T17:01:21Z
+  .env VLLM_NIGHTLY_IMAGE: equals the template default
+  override vllm image: lines: none
+  containers (the fleet's own, vLLM-based):
+    embed-gemma2-embed  image=lobes-embed-gemma2-embed  image_id=sha256:b987eb6a3768  vllm=0.31.0  healthy restarts=0
+    model-gear-decider-general  image=lobes-decider-general  image_id=sha256:4ee9dc07d615  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-embed  image=<pin>  image_id=sha256:3fb023cc987c  vllm=0.31.0  healthy restarts=0
+    model-gear-vllm-rerank  image=<pin>  image_id=sha256:3fb023cc987c  vllm=0.31.0  healthy restarts=0
+  probes:
+    probe cortex    known_answer      FAIL  role not loaded / no endpoint
+    probe embedder  embed_similarity  PASS  {"sim_paraphrase": 0.8959, "sim_unrelated": 0.2313}
+    probe reranker  rerank_relevance  PASS  {"expected_index": 0, "prompt_tokens": {"per_pair": 88.0, "total": 264}, "ranking": [0, 2,
+  **Overall: FAIL**
+
+PER-ROLE REACHABILITY THROUGH EACH BOX'S GATEWAY (HTTP status)
+spark-e2f0: cortex=200 worker=200 hand=200 embedder=200 reranker=200
+thor: cortex=200 worker=200 hand=200 embedder=200 reranker=200
+orin: cortex=200 worker=200 hand=200 embedder=200 reranker=200
+
+READING
+  * Every box's .env VLLM_NIGHTLY_IMAGE equals the released template default; no override carries a vllm image: line.
+  * Every in-scope vLLM container reports vllm 0.31.0, healthy, restarts 0: spark cortex; spark2 cortex, embed,
+    rerank, hand; thor embed, rerank, worker; orin embed, rerank, gemma2-embed sidecar, decider-general sidecar.
+    The two image ids (894e3b474016 on the Sparks, 3fb023cc987c on the Jetsons) are the same index digest resolved
+    to its per-platform manifest on each box.
+  * Out of scope and unchanged: the Spark's stt audio sidecar (vllm 0.16.1, hardcoded audio overlay) and spark2's
+    strands decider sidecar (vllm 0.23.1rc1; operator: jev-factory work).
+  * Probe FAILs are roles the box does not host locally: thor and orin host no cortex ("role not loaded / no
+    endpoint"); the Spark hosts no embedder or reranker. Through the mesh every role answers 200 on spark2, thor
+    and orin.
+  * PRE-EXISTING, not caused by #310: the Spark's gateway answers embedder 404 (EMBED_FEASIBLE=false, not forwarded)
+    and reranker 503 (RERANK_URL points at a local vllm-rerank that has never run there; no RERANK_FEASIBLE key, so the
+    mesh is not consulted). The pre-R1 .env backup (.bak-20261017T221038Z-r1) has the same keys, and
+    docs/evidence/2026-10-06-accept-mesh-member-lanes.txt already records "no reranker container runs on" the Spark.
+  * Gateway versions: spark 0.89.1, spark2 0.89.2, thor 0.89.0, orin 0.89.0 (the CLI and gateway re-pin to 0.90.0 is
+    a separate step; 0.90.0's changes are template defaults, the d1 knob and the scanner, none of which a running
+    gateway reads).

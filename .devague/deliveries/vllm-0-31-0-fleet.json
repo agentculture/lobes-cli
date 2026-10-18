@@ -2,7 +2,7 @@
   "plan_slug": "vllm-0-31-0-fleet",
   "schema_version": 2,
   "created": "2026-10-17T20:53:11Z",
-  "updated": "2026-10-18T04:52:16Z",
+  "updated": "2026-10-18T17:05:03Z",
   "deviations": [
     {
       "id": "d1",
@@ -94,7 +94,364 @@
       "seq": 6
     }
   ],
-  "evidence": [],
-  "deltas": [],
+  "evidence": [
+    {
+      "id": "e1",
+      "obligation_ref": "o1",
+      "test_ref": "docs/evidence/2026-10-18-sweep-vllm-031-fleet.txt (fleet_sweep.sh, vllm.__version__ per container)",
+      "behavior_text": "every in-scope container on spark, spark2, thor and orin reports vllm 0.31.0, healthy, restarts 0; the two other-version containers (spark stt, spark2 strands decider) are out of scope",
+      "contract_text": "(1) 0 in-scope vLLM lanes on any of the 4 boxes report a vllm version other than 0.31.0",
+      "evidence_type": "observation",
+      "strength": "execution",
+      "strength_basis": "read-only sweep run live on all four boxes at the released template default",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 7
+    },
+    {
+      "id": "e2",
+      "obligation_ref": "o2",
+      "test_ref": "docs/evidence/2026-10-17-baseline-and-scaffold-{thor,orin}.txt, 2026-10-17-baseline-nightly-spark2.txt (also the Spark's comparator per c45); 2026-10-17-accept-vllm-031-{thor,orin}.txt, 2026-10-18-accept-vllm-031-{spark-cortex,spark2}.txt",
+      "behavior_text": "every box has a nightly baseline (the Spark's is spark2's per approved c45) and a 0.31.0 acceptance transcript on main",
+      "contract_text": "(2) each box files >= 1 nightly baseline and >= 1 0.31.0 acceptance transcript under docs/evidence/",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "transcripts exist on main at the named commit; the Spark's baseline is cross-box by design (c45)",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 8
+    },
+    {
+      "id": "e3",
+      "obligation_ref": "o3",
+      "test_ref": "lobes assess --probes / --tools / --strict-tools per box (t8, t10, t12, t13 transcripts) and the t17 sweep",
+      "behavior_text": "every hosted lane's probe passes on its box; the sweep's probe FAILs are roles a box does not host (thor/orin cortex; spark embedder/reranker), and those roles answer 200 through the mesh on spark2, thor and orin",
+      "contract_text": "(3) every re-measured lane passes its correctness probes (known-answer, embed ranking, rerank ordering, tool call) 100%",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "probes ran live against each box's lanes on 0.31.0",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 9
+    },
+    {
+      "id": "e4",
+      "obligation_ref": "o4",
+      "test_ref": "strict_replay.py + strict_controls.py through cortex-spark and cortex-spark2; docker logs model-gear-vllm-primary | grep -c TypeError on both Sparks",
+      "behavior_text": "strict+thinking returns 200 with exactly 1 parsed tool call (65 tokens Spark, 44 tokens spark2), finish tool_calls; maxLength=3 control enforced; 0 TypeErrors in both lane logs",
+      "contract_text": "(4) a strict tool call to cortex on 0.31.0 returns HTTP 200 with a parsed tool_calls entry (0 TypeErrors in the lane log)",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "live requests and log grep on the deployed lanes at release 0.90.0",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 10
+    },
+    {
+      "id": "e5",
+      "obligation_ref": "o5",
+      "test_ref": "docs/evidence/2026-10-18-accept-vllm-031-spark2.txt (same-box nightly -> 0.31.0, governed)",
+      "behavior_text": "spark2: code 41.5 vs 37.1 (112%), reasoning 31.5 vs 33.9 (93%), prose 14.5 vs 15.4 (94%), lobes benchmark 19.2 vs 17.0 (113%): every shape >= 90%",
+      "contract_text": "(5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "same box, same checkpoint and config, measured before and after the switch",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 11
+    },
+    {
+      "id": "e6",
+      "obligation_ref": "o5",
+      "test_ref": "docs/evidence/2026-10-18-accept-vllm-031-spark-cortex.txt vs the spark2 nightly baseline (c45 cross-box comparator)",
+      "behavior_text": "the Spark on 0.31.0: lobes benchmark 15.9 vs 17.0 (94%) passes, but shapes code 34.3 vs 37.1 (92%), reasoning 26.4 vs 33.9 (78%), prose 12.2 vs 15.4 (79%) fall below 90% against the cross-box baseline; spark2 on 0.31.0 is 15-20% faster than the Spark on identical engine, so the gap is mostly box, not engine (not isolated). Named cost, not a pass on the 90% bar",
+      "contract_text": "(5) cortex decode tok/s on 0.31.0 is >= 90% of its nightly baseline on the same box, or the regression is recorded as a named cost",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "measured live; below the 90% threshold on two shapes against a different box's baseline",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 12
+    },
+    {
+      "id": "e7",
+      "obligation_ref": "o6",
+      "test_ref": "GitHub Actions Tests + Publish on main @ 8cca93e (PR #324)",
+      "behavior_text": "Tests and Publish to PyPI both succeeded on the merge commit; lobes-cli 0.90.0 is on PyPI",
+      "contract_text": "(6) CI green with the template default flipped",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "CI ran on the merge commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 13
+    },
+    {
+      "id": "e8",
+      "obligation_ref": "o7",
+      "test_ref": "tests/test_vllm_plugin_thinking.py (56 tests)",
+      "behavior_text": "asserts the strict_level forwarding, the engine-version switch (>= 0.30 passes the caller's reasoning; older derives per request), refusal on unreadable versions, and the boot log line",
+      "contract_text": "the plugin loads and serves strict tool calls on 0.31.0 (strict_level forwarded; grammar correct for engines that start it after reasoning, d5)",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "56 passed at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 14
+    },
+    {
+      "id": "e9",
+      "obligation_ref": "o8",
+      "test_ref": "tests/test_init.py, test_worker_compose.py, test_gemma4_compose.py, test_cli_fleet.py, test_nightly_migration_doc.py, test_gateway_fleet_doc.py, test_embed_overlay.py, test_decider_sidecar_vllm.py, test_associate_compose.py, test_worker_recipe_knobs.py; git grep 8bd082c2 lobes/templates",
+      "behavior_text": "239 tests pass and git grep returns nothing under lobes/templates",
+      "contract_text": "every vLLM image line and the shared default carry the v0.31.0-ubuntu2404 digest; no template names 8bd082c2",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "239 passed at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 15
+    },
+    {
+      "id": "e10",
+      "obligation_ref": "o9",
+      "test_ref": "tests/test_decider_sidecar_vllm.py, test_embed_overlay.py (in the 239 above); docs/evidence/2026-10-17-accept-vllm-031-orin.txt",
+      "behavior_text": "the bases carry the pin in the templates, and the Orin's gemma2-embed and decider-general sidecars, rebuilt from it, report vllm 0.31.0 (decider 0.9928 agreement)",
+      "contract_text": "Dockerfile.embed-st, Dockerfile.decider and Dockerfile.decider-vllm bases default to the -ubuntu2404 digest",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "template tests pass; live sidecars rebuilt from the pin serve",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 16
+    },
+    {
+      "id": "e11",
+      "obligation_ref": "o10",
+      "test_ref": "git diff 98902b1 8cca93e -- tests/fixtures/upgrade_compat",
+      "behavior_text": "0 diff lines between pre-#310 main and the R2 merge",
+      "contract_text": "tests/fixtures/upgrade_compat is unchanged by #310",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "diff run at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 17
+    },
+    {
+      "id": "e12",
+      "obligation_ref": "o11",
+      "test_ref": "git diff 98902b1 8cca93e -- lobes/templates (grep for llama_cpp, scitrera, nvidia/cuda, python:3.12-slim)",
+      "behavior_text": "0 changed lines touching those images; Dockerfile.vllm-gemma4 not in the diff",
+      "contract_text": "llamacpp, STT/whisper torch base, Chatterbox/ComfyUI CUDA and python-slim images are unchanged; Dockerfile.vllm-gemma4 unchanged",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "diff run at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 18
+    },
+    {
+      "id": "e13",
+      "obligation_ref": "o12",
+      "test_ref": "tests/test_variation_catalog.py, test_deployment_lock.py, test_scan_deployment_secrets.py (169 tests); scripts/scan_deployment_secrets.py",
+      "behavior_text": "169 pass and the secrets scan is clean over the re-captured entries (after the quoted-list-item scanner fix)",
+      "contract_text": "thor-worker and orin-embed catalog entries are re-captured from the live boxes and cite 0.31.0 transcripts",
+      "evidence_type": "automated",
+      "strength": "execution",
+      "strength_basis": "169 passed at the named commit",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 19
+    },
+    {
+      "id": "e14",
+      "obligation_ref": "o13",
+      "test_ref": "tests/test_governor.py (25 tests); live: Spark and spark2 governors attached with explicit GPU devices",
+      "behavior_text": "25 pass; on both Sparks the governor's docker update capped the lane at 16 cpus and a fresh nvidia-smi exec still saw the GB10 (d2)",
+      "contract_text": "lobes governor applies graded CPU caps by hottest zone, pauses above the pause band and resumes only its own pauses",
+      "evidence_type": "integration",
+      "strength": "execution",
+      "strength_basis": "unit tests pass; live attach verified on two boxes",
+      "outcome": "pass",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 20
+    },
+    {
+      "id": "e15",
+      "obligation_ref": "o14",
+      "test_ref": "docs/evidence/2026-10-17-baseline-and-scaffold-thor.txt line 38",
+      "behavior_text": "the Thor worker was already on 0.31.0 (a hand-typed override that morning) when t7 ran, so no nightly baseline exists for it; its comparator is the 2026-09-10 transcript, explicitly not comparable. All other hosted lanes (Thor embed/rerank, Orin lanes, spark2 lanes, the Spark via c45) have a nightly baseline",
+      "contract_text": "every hosted lane is benchmarked on its current engine before cutover",
+      "evidence_type": "manual",
+      "strength": "coverage",
+      "strength_basis": "transcript states the worker baseline is not recoverable",
+      "outcome": "fail",
+      "run": {
+        "timestamp": "2026-10-18T17:10:00Z",
+        "commit": "8cca93e"
+      },
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false,
+      "seq": 21
+    }
+  ],
+  "deltas": [
+    {
+      "id": "b1",
+      "kind": "added",
+      "behavior_text": "the worker lane gains WORKER_MM_ENCODER_ATTN_BACKEND (thor-worker renders TORCH_SDPA) to fix 0.31.0 / sm_110 image intake",
+      "caused_by": [
+        "d1"
+      ],
+      "evidence_refs": [
+        "e9"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b2",
+      "kind": "amended",
+      "behavior_text": "the qwen3_coder_thinking plugin passes vLLM's own reasoning flag on engines >= 0.30 instead of deriving it per request (fixes the strict+thinking repeat-until-max_tokens loop)",
+      "caused_by": [
+        "d5"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b3",
+      "kind": "amended",
+      "behavior_text": "lobes assess --strict-tools fails a strict leg that ends finish_reason=length (detects the d5 loop)",
+      "caused_by": [
+        "d5"
+      ],
+      "evidence_refs": [
+        "e8"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b4",
+      "kind": "amended",
+      "behavior_text": "the deployment secrets scanner treats a fully quoted list item KEY=${VAR:-} as a pure reference",
+      "caused_by": [
+        "c10"
+      ],
+      "evidence_refs": [
+        "e13"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    },
+    {
+      "id": "b5",
+      "kind": "amended",
+      "behavior_text": "the Sparks' cortex lanes carry explicit GPU device nodes so the governor's docker update keeps GPU access",
+      "caused_by": [
+        "d2"
+      ],
+      "evidence_refs": [
+        "e14"
+      ],
+      "origin": "llm",
+      "status": "proposed",
+      "superseded": false
+    }
+  ],
   "supersessions": []
 }
