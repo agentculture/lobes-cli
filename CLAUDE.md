@@ -977,7 +977,9 @@ rollback, restore the backup —, `...-accept-orin-embed.txt`). **UNVALIDATED:**
 everything beyond code retrieval — prose/docs/math, real image/video/audio
 retrieval (the probes were synthetic), MRL quality, cross-model agreement —
 is issue **#296**; the plain-`embedder`-on-the-Spark pooling finding is issue
-**#297** (a pre-existing strict-fingerprint rule, not caused by this shape). No
+**#297** (a pre-existing strict-fingerprint rule, not caused by this shape;
+fixed 2026-10-18 by declaring `quantization = "none"` for the embedder and
+reranker in every card profile, so their fingerprints carry a real value). No
 consumer is switched implicitly: `EIDETIC_EMBED_MODEL` / `COHERENCE_EMBED_MODEL`
 opt in by lane id and switching means re-embedding. See
 `docs/orin-embed-deployment.md`, `docs/embeddinggemma-2.md` and `lobes explain

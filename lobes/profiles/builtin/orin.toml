@@ -494,6 +494,10 @@ feasible = true
 model = "Qwen/Qwen3-Embedding-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+# quantization "none": the lane passes no --quantization, so the engine loads the
+# bf16 checkpoint as-is. Declared so the mesh fingerprint is a real value, not
+# "unknown", and identical members pool on a box that does not host them (#297).
+quantization = "none"
 # attention_backend: overlaid from lobes.machines.get("orin") — TRITON_ATTN, a
 # conservative first-boot carry-over of Thor's sm_110 pooling divergence that
 # was NOT independently re-tested on sm_87. This gear booted healthy that way
@@ -504,6 +508,8 @@ feasible = true
 model = "Qwen/Qwen3-Reranker-0.6B"
 gpu_mem_util = 0.06
 max_model_len = 8192
+# quantization "none": as for the embedder above (#297).
+quantization = "none"
 # attention_backend + enforce_eager: overlaid from lobes.machines.get("orin") —
 # TRITON_ATTN + enforce_eager=true, the same carried-over Jetson safe-boot
 # choice. This gear booted healthy that way and its ordering probe passed
