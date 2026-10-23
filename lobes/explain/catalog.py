@@ -78,6 +78,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain score` (POST /v1/score — cross-encoder raw scoring)
 - `lobes explain realtime` (the /v1/audio/* overlay — Parakeet STT + Chatterbox TTS)
 - `lobes explain transcribe` / `lobes explain speak` (the STT / TTS endpoints)
+- `lobes explain stt-lanes` (the `stt-he` / `stt-en` transcription lanes — not roles)
 - `lobes explain api` (the full OpenAI-compatible endpoint surface)
 """
 
@@ -1221,8 +1222,9 @@ is loaded AND a trivial CUDA op succeeds; otherwise `503 {"status": "not_ready",
 `lobes/realtime/_readiness.py`.
 
 Fixed backend — not in the switchable catalog; override the checkpoint with
-`PARAKEET_MODEL`. See `lobes explain realtime`, `lobes explain speak`, and
-`docs/parakeet-stt.md`.
+`PARAKEET_MODEL`. To pick a language-specific engine instead, name a LANE
+(`model=stt-he` / `model=stt-en`; `lobes explain stt-lanes`). See `lobes explain
+realtime`, `lobes explain speak`, and `docs/parakeet-stt.md`.
 """
 
 _TTS = """\
@@ -1539,6 +1541,52 @@ Orin's `orin-embed` shape (`lobes init --shape orin-embed --profile orin`).
   `docs/colleague-stack.md` ("Specialist lanes (not roles)")
 - `lobes explain embeddings` — the 0.6B `embedder` role
 - `lobes explain roles` — the Colleague role contract
+"""
+
+_STT_LANES = """\
+# lobes explain stt-lanes — the stt-he / stt-en speech-to-text lanes (not roles)
+
+Two LANES on `POST /v1/audio/transcriptions`, beside the `stt` role (registry
+`lobes/stt_lanes.py`; `lobes.roles.ROLES` is unchanged). DECLARED/UNVALIDATED
+(#108) until a live acceptance transcript lands.
+
+- `stt-he` — `ivrit-ai/zipformer2-66m-streaming-he` (pinned revision), int8 on
+  sherpa-onnx, CPU-only; weights CC-BY-4.0 (attribution required).
+- `stt-en` — this box's own `stt` container asked for English (its model and
+  runtime follow `STT_MODEL` / `STT_RUNTIME`).
+
+## Selecting one
+
+```bash
+curl -s http://localhost:8000/v1/audio/transcriptions \\
+  -F file=@clip.m4a -F model=stt-he
+```
+
+Or send the header `X-Lobes-Model: stt-he`. When both name lanes, the form field
+wins. Any other request (no `model`, `stt`, a Whisper id) keeps the `stt` role
+path unchanged. When the form has no `language`, the serving box appends
+`language=<lane language>`; a caller's own value is kept.
+
+## Hosting
+
+- `<LANE>_BASE_URL` wires a lane here (`STT_HE_BASE_URL=http://stt-he:9002`,
+  `STT_EN_BASE_URL=http://stt:9002`); `<LANE>_FEASIBLE=false` declares it off.
+- Not hosted here: one mesh hop to the verified member announcing it (body
+  verbatim, `X-Lobes-Mesh-Member`); 503 `role_unverified` in the boot window;
+  else 404 `role_infeasible`. A hosted lane that is down is 503, never another
+  engine.
+- `lobes init --stt-he` scaffolds the CPU sidecar overlay
+  (`docker-compose.stt-he.yml`, profile `stt-he`, container `model-gear-stt-he`).
+
+`GET /capabilities` carries each wired or mesh-reached lane as a top-level key
+with `lane: true`, `task: "transcribe"`, `model`, `runtime`, `language`,
+`ready`; `GET /v1/models` lists the lane id while it is servable.
+
+## See also
+
+- `docs/stt-lanes.md` — the full contract, licence, and the experiment numbers
+- `lobes explain transcribe` — the `stt` role
+- `lobes explain lanes` — the specialist embed lanes
 """
 
 _WATCHER = """\
@@ -1935,6 +1983,9 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("mesh",): _MESH,
     ("mesh-brain",): _MESH,
     ("mesh-join",): _MESH,
+    ("stt-lanes",): _STT_LANES,
+    ("stt-he",): _STT_LANES,
+    ("stt-en",): _STT_LANES,
     ("watcher",): _WATCHER,
     ("lane-safety",): _WATCHER,
 }
