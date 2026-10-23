@@ -160,11 +160,12 @@ class TestEnglishOverlayUntouched:
 # Issue #329: the decode-quality knobs listen_server_whisper.py reads.
 _DECODE_KNOBS = {
     "STT_MIN_AVG_LOGPROB": "-0.35",
-    "STT_LOGPROB_STAT": "mean",
+    "STT_LOGPROB_STAT": "median",
     "STT_NO_REPEAT_NGRAM_SIZE": "6",
     "STT_REPETITION_PENALTY": "1.0",
     "STT_COMPRESSION_RATIO_MAX": "2.4",
     "STT_TEMPERATURE_FALLBACK": "0.2,0.4",
+    "STT_MAX_WORD_RUN": "4",
     "STT_VAD": "auto",
     "STT_VAD_THRESHOLD": "0.5",
     "STT_VAD_MIN_SPEECH_MS": "250",
@@ -209,6 +210,7 @@ class TestDecodeKnobsWired:
             _DECODE_KNOBS["STT_TEMPERATURE_FALLBACK"]
         )
         assert lsw.parse_logprob_stat(None) == _DECODE_KNOBS["STT_LOGPROB_STAT"]
+        assert lsw.parse_max_word_run(None) == int(_DECODE_KNOBS["STT_MAX_WORD_RUN"])
         assert lsw.parse_vad_mode(None) == _DECODE_KNOBS["STT_VAD"]
         assert lsw.DEFAULT_VAD_THRESHOLD == float(_DECODE_KNOBS["STT_VAD_THRESHOLD"])
         assert lsw.DEFAULT_VAD_MIN_SPEECH_MS == float(_DECODE_KNOBS["STT_VAD_MIN_SPEECH_MS"])

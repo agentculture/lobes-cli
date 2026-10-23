@@ -8,16 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Hebrew Whisper STT (audio-he overlay): decode-quality knobs for long recordings (issue #329) - STT_NO_REPEAT_NGRAM_SIZE (default 6), STT_REPETITION_PENALTY (default 1.0 = off), STT_COMPRESSION_RATIO_MAX (default 2.4), STT_TEMPERATURE_FALLBACK (default 0.2,0.4), STT_LOGPROB_STAT (default mean), STT_VAD (default auto) with STT_VAD_THRESHOLD / STT_VAD_MIN_SPEECH_MS; each has an off value that restores the previous decode exactly.
+- Hebrew Whisper STT (audio-he overlay): decode-quality knobs for long recordings (issue #329) - STT_NO_REPEAT_NGRAM_SIZE (default 6), STT_REPETITION_PENALTY (default 1.0 = off), STT_COMPRESSION_RATIO_MAX (default 2.4), STT_TEMPERATURE_FALLBACK (default 0.2,0.4), STT_LOGPROB_STAT (default median; mean = legacy), STT_MAX_WORD_RUN (default 4; 0/off disables), STT_VAD (default auto) with STT_VAD_THRESHOLD / STT_VAD_MIN_SPEECH_MS; each has an off value that restores the previous decode exactly.
+- STT_MAX_WORD_RUN word-run gate (#329 follow-up): a chunk whose text repeats one word, or one two-word phrase, 4 or more times in a row (Unicode word tokens, punctuation ignored) fails like a compression-ratio failure - retried through the temperature ladder, then dropped with reason=word_run; stt_chunk lines carry word_run= and max_word_run=.
 - Structured stt_chunk (retry / dropped / skipped) and per-request stt_request log lines in the stt container, so dropped and retried chunks are observable server-side; the client-facing dropped[] field waits for verbose_json (#328).
 
 ### Changed
 
+- STT_LOGPROB_STAT now defaults to median (threshold STT_MIN_AVG_LOGPROB=-0.35 unchanged): on a live A/B on the DGX Spark the mean gate dropped 118 of 215 decoded chunks and the median gate 39 of 215.
 - Dockerfile.whisper-stt installs silero-vad==6.2.1 with --no-deps (its torchaudio dependency would replace the base image torch); the server loads the bundled TorchScript model by path and falls back to decoding every chunk if it cannot.
 
 ### Fixed
 
-- Hebrew batch STT no longer passes a phrase looped to the token cap (n-gram block plus a per-character zlib compression-ratio check), and re-decodes a chunk failing either gate at sampling temperatures before dropping it (#329). Defaults are unmeasured on this checkpoint until the operator re-runs the recording.
+- Hebrew batch STT no longer passes a phrase looped to the token cap (n-gram block plus a per-character zlib compression-ratio check), and re-decodes a chunk failing either gate at sampling temperatures before dropping it (#329). The live A/B measured the median gate before the word-run gate existed; the combination has not run live.
 
 ## [0.90.3] - 2026-10-18
 

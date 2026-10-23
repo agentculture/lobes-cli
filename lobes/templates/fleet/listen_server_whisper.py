@@ -173,18 +173,21 @@ MIN_AVG_LOGPROB = parse_min_avg_logprob(os.environ.get("STT_MIN_AVG_LOGPROB"))
 # 56-minute Hebrew recording: a two-word phrase looped to the token cap (a
 # loop is HIGH-confidence, so the log-probability gate above passed it), and
 # 61 of 125 chunks were dropped whole by that gate with no second try, some
-# of them real speech. Four mechanisms, each with an env knob whose OFF value
+# of them real speech. Five mechanisms, each with an env knob whose OFF value
 # restores the previous behaviour exactly:
 #
 #   1. STT_NO_REPEAT_NGRAM_SIZE — transformers' n-gram block at decode time.
 #   2. STT_COMPRESSION_RATIO_MAX — OpenAI Whisper's zlib-ratio loop check.
-#   3. STT_TEMPERATURE_FALLBACK — a chunk failing either gate is re-decoded
-#      at these sampling temperatures before it is dropped.
-#   4. STT_VAD — Silero skips non-speech chunks before Whisper sees them.
+#   3. STT_MAX_WORD_RUN — a short word (or two-word phrase) repeated back to
+#      back, punctuation between, which neither 1 nor 2 catches.
+#   4. STT_TEMPERATURE_FALLBACK — a chunk failing any gate is re-decoded at
+#      these sampling temperatures before it is dropped.
+#   5. STT_VAD — Silero skips non-speech chunks before Whisper sees them.
 #
-# None of the defaults below were measured on this checkpoint: they are the
-# issue's and OpenAI Whisper's starting points, to be checked against the
-# recording on the live lane (see docs/hebrew-realtime.md).
+# STT_LOGPROB_STAT picks the confidence statistic: the median since a live A/B
+# on the DGX Spark (2026-10-23; docs/hebrew-realtime.md), `mean` the legacy
+# value. The other defaults are the issue's and OpenAI Whisper's starting
+# points; the live run checked the set as a whole, not each value alone.
 # --------------------------------------------------------------------------
 
 _OFF_TOKENS = ("", "off", "none", "disabled", "false", "no")
@@ -206,7 +209,14 @@ DEFAULT_MAX_COMPRESSION_RATIO = 2.4
 # retries bound the cost at three decodes per failing chunk on a shared GPU.
 DEFAULT_FALLBACK_TEMPERATURES: tuple[float, ...] = (0.2, 0.4)
 LOGPROB_STATS = ("mean", "median")
-DEFAULT_LOGPROB_STAT = "mean"
+# The median since the 2026-10-23 live A/B: the mean gate dropped 118 of 215
+# decoded chunks, the median 39. `mean` is the legacy value (pre-follow-up).
+DEFAULT_LOGPROB_STAT = "median"
+# A chunk whose text repeats one word (or one two-word phrase) this many times
+# in a row fails like a loop. 4 = three repeats pass ("כן, כן, כן"), four
+# fail. The live A/B found a word run of 11 the other gates let through.
+DEFAULT_MAX_WORD_RUN = 4
+WORD_RUN_MAX_PHRASE = 2
 VAD_MODES = ("auto", "off")
 DEFAULT_VAD_MODE = "auto"
 DEFAULT_VAD_THRESHOLD = 0.5
@@ -286,10 +296,27 @@ def parse_fallback_temperatures(raw: str | None) -> tuple[float, ...]:
 
 
 def parse_logprob_stat(raw: str | None) -> str:
-    """``STT_LOGPROB_STAT``: ``mean`` (default — the statistic
-    ``STT_MIN_AVG_LOGPROB``'s -0.35 was measured on) or ``median``."""
+    """``STT_LOGPROB_STAT``: ``median`` (default since the 2026-10-23 live
+    A/B) or ``mean`` (the legacy statistic ``STT_MIN_AVG_LOGPROB``'s -0.35 was
+    first measured on). Anything else is the default."""
     value = (raw or "").strip().lower()
     return value if value in LOGPROB_STATS else DEFAULT_LOGPROB_STAT
+
+
+def parse_max_word_run(raw: str | None) -> int:
+    """``STT_MAX_WORD_RUN``: an int >= 2; ``0``/``off``/empty disables; a
+    typo, a negative value or 1 (which would fail every chunk) falls back to
+    the default."""
+    if raw is None:
+        return DEFAULT_MAX_WORD_RUN
+    value = raw.strip().lower()
+    if value in _OFF_TOKENS or value == "0":
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_MAX_WORD_RUN
+    return parsed if parsed >= 2 else DEFAULT_MAX_WORD_RUN
 
 
 def parse_vad_mode(raw: str | None) -> str:
@@ -337,10 +364,47 @@ def compression_ratio(text: str) -> float:
     return len(data) / len(zlib.compress(data))
 
 
+def _run_length(tokens: Sequence[str], start: int, period: int) -> int:
+    """How many times ``tokens[start:start+period]`` occurs back to back."""
+    unit = tokens[start : start + period]
+    run, j = 1, start + period
+    while tokens[j : j + period] == unit:
+        run += 1
+        j += period
+    return run
+
+
+def longest_word_run(text: str, max_phrase: int = WORD_RUN_MAX_PHRASE) -> int:
+    """The longest back-to-back repetition of one word, or of one phrase of up
+    to *max_phrase* words, in *text* (``0`` without words).
+
+    Words are Unicode ``\\w+`` tokens, compared case-folded with combining
+    marks (Hebrew niqqud) removed, so punctuation between repeats ("זה, זה,
+    זה") does not break a run. This catches the confident short-word
+    hallucination the token n-gram block and the compression ratio miss."""
+    import re
+    import unicodedata
+
+    bare = "".join(
+        ch for ch in unicodedata.normalize("NFD", text) if unicodedata.category(ch) != "Mn"
+    )
+    tokens = [t.casefold() for t in re.findall(r"\w+", bare)]
+    if not tokens:
+        return 0
+    best = 1
+    for period in range(1, max_phrase + 1):
+        i = 0
+        while i + 2 * period <= len(tokens):
+            run = _run_length(tokens, i, period)
+            best = max(best, run)
+            i += 1 if run == 1 else (run - 1) * period
+    return best
+
+
 def confidence(token_logprobs: Sequence[float], stat: str = DEFAULT_LOGPROB_STAT) -> float | None:
     """The per-chunk confidence the gate compares against
-    ``STT_MIN_AVG_LOGPROB``: the mean (default, today's statistic) or the
-    median of the text tokens' log-probabilities. ``None`` without tokens."""
+    ``STT_MIN_AVG_LOGPROB``: the median (default) or the mean (legacy) of the
+    text tokens' log-probabilities. ``None`` without tokens."""
     if not token_logprobs:
         return None
     if stat == "median":
@@ -371,11 +435,13 @@ class DecodePolicy:
         logprob_stat: str = DEFAULT_LOGPROB_STAT,
         max_compression_ratio: float | None = DEFAULT_MAX_COMPRESSION_RATIO,
         fallback_temperatures: Sequence[float] = DEFAULT_FALLBACK_TEMPERATURES,
+        max_word_run: int = DEFAULT_MAX_WORD_RUN,
     ) -> None:
         self.min_logprob = min_logprob
         self.logprob_stat = logprob_stat
         self.max_compression_ratio = max_compression_ratio
         self.fallback_temperatures = tuple(fallback_temperatures)
+        self.max_word_run = max_word_run
 
     @property
     def temperatures(self) -> tuple[float, ...]:
@@ -414,6 +480,7 @@ DECODE_POLICY = DecodePolicy(
     logprob_stat=parse_logprob_stat(os.environ.get("STT_LOGPROB_STAT")),
     max_compression_ratio=parse_max_compression_ratio(os.environ.get("STT_COMPRESSION_RATIO_MAX")),
     fallback_temperatures=parse_fallback_temperatures(os.environ.get("STT_TEMPERATURE_FALLBACK")),
+    max_word_run=parse_max_word_run(os.environ.get("STT_MAX_WORD_RUN")),
 )
 VAD_MODE = parse_vad_mode(os.environ.get("STT_VAD"))
 VAD_THRESHOLD = _parse_float(os.environ.get("STT_VAD_THRESHOLD"), DEFAULT_VAD_THRESHOLD, 0.0, 1.0)
@@ -767,6 +834,7 @@ class ChunkOutcome:
         avg_logprob: float | None = None,
         median_logprob: float | None = None,
         compression_ratio: float = 0.0,
+        word_run: int = 0,
     ) -> None:
         self.text = text
         self.attempts = attempts
@@ -775,6 +843,7 @@ class ChunkOutcome:
         self.avg_logprob = avg_logprob
         self.median_logprob = median_logprob
         self.compression_ratio = compression_ratio
+        self.word_run = word_run
 
     @property
     def retried(self) -> bool:
@@ -791,12 +860,16 @@ def _fmt(value: float | None) -> str:
     return "none" if value is None else f"{value:.2f}"
 
 
-def _failure_reasons(policy: DecodePolicy, conf: float | None, ratio: float) -> list[str]:
+def _failure_reasons(
+    policy: DecodePolicy, conf: float | None, ratio: float, word_run: int
+) -> list[str]:
     reasons = []
     if is_low_confidence(conf, policy.min_logprob):
         reasons.append("low_logprob")
     if policy.max_compression_ratio is not None and ratio > policy.max_compression_ratio:
         reasons.append("compression_ratio")
+    if policy.max_word_run > 0 and word_run >= policy.max_word_run:
+        reasons.append("word_run")
     return reasons
 
 
@@ -805,10 +878,11 @@ def decode_chunk(samples, decode, policy: DecodePolicy, label: str = "1/1") -> C
 
     *decode(samples, temperature)* returns ``(raw_text, text_token_logprobs)``.
     Attempt 0 is greedy; while an attempt fails the confidence gate
-    (``STT_MIN_AVG_LOGPROB`` on ``STT_LOGPROB_STAT``) or the compression-ratio
-    check (``STT_COMPRESSION_RATIO_MAX``), the next temperature in
-    ``STT_TEMPERATURE_FALLBACK`` is tried; the first attempt passing both is
-    kept. If none does, the chunk is dropped — the policy the gate always had.
+    (``STT_MIN_AVG_LOGPROB`` on ``STT_LOGPROB_STAT``), the compression-ratio
+    check (``STT_COMPRESSION_RATIO_MAX``) or the word-run check
+    (``STT_MAX_WORD_RUN``), the next temperature in
+    ``STT_TEMPERATURE_FALLBACK`` is tried; the first attempt passing all three
+    is kept. If none does, the chunk is dropped — the policy the gate always had.
     An empty (or tags-only) transcript is silence: kept as ``""``, never
     retried. Logs one ``stt_chunk event=retry`` line per failed attempt that
     is followed by another, and one ``stt_chunk event=dropped`` per drop."""
@@ -822,18 +896,22 @@ def decode_chunk(samples, decode, policy: DecodePolicy, label: str = "1/1") -> C
         mean = average_logprob(list(token_logprobs))
         median = confidence(token_logprobs, "median")
         ratio = compression_ratio(text)
+        run = longest_word_run(text)
         conf = median if policy.logprob_stat == "median" else mean
-        reasons = _failure_reasons(policy, conf, ratio)
-        outcome = ChunkOutcome(text, attempt + 1, False, ",".join(reasons), mean, median, ratio)
+        reasons = _failure_reasons(policy, conf, ratio, run)
+        outcome = ChunkOutcome(
+            text, attempt + 1, False, ",".join(reasons), mean, median, ratio, run
+        )
         if not reasons:
             return outcome
         fields = (
             f"chunk={label} attempt={attempt} temperature={temperature:.1f} "
             f"reason={outcome.reason} avg_logprob={_fmt(mean)} "
             f"median_logprob={_fmt(median)} compression_ratio={ratio:.2f} "
-            f"tokens={len(token_logprobs)} stat={policy.logprob_stat} "
+            f"word_run={run} tokens={len(token_logprobs)} stat={policy.logprob_stat} "
             f"min_logprob={_fmt(policy.min_logprob)} "
-            f"max_compression_ratio={_fmt(policy.max_compression_ratio)}"
+            f"max_compression_ratio={_fmt(policy.max_compression_ratio)} "
+            f"max_word_run={policy.max_word_run}"
         )
         if attempt + 1 < len(temperatures):
             logger.info("stt_chunk event=retry %s", fields)

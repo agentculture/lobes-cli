@@ -68,7 +68,8 @@ On a real 56-minute recording, the decode above failed in two ways. A two-word
 phrase looped until the token cap, and a loop is high-confidence, so it passed
 the gate. The gate also dropped 61 of 125 chunks whole with no second try, and
 some of them were real speech. Each chunk now goes through four steps. Each
-step has a knob whose off value gives back the old decode exactly.
+step has a knob whose off value gives back the old decode exactly (for
+`STT_LOGPROB_STAT`, the legacy value `mean`).
 
 1. **Silence skipping (`STT_VAD`).** On an upload longer than one window,
    Silero VAD reads each chunk first. A single-window request, which covers
@@ -87,27 +88,38 @@ step has a knob whose off value gives back the old decode exactly.
    Beam search was considered and left out. It would cost about 4× the GPU
    time on a shared box, and the per-token log-probabilities the gate reads
    would need different bookkeeping.
-3. **Two gates per attempt.** The first is the confidence gate,
-   `STT_MIN_AVG_LOGPROB` on `STT_LOGPROB_STAT` (`mean` by default, the
-   statistic −0.35 was measured on). The second is OpenAI Whisper's zlib
-   compression ratio, `STT_COMPRESSION_RATIO_MAX`, default 2.4. The ratio is
-   taken one byte per character, not over UTF-8. Every Hebrew letter shares
+3. **Three gates per attempt.** The first is the confidence gate,
+   `STT_MIN_AVG_LOGPROB` (−0.35) on `STT_LOGPROB_STAT`, which is now the
+   **median** by default (see the live A/B below; `mean`, the statistic −0.35
+   was first measured on, is the legacy value). The second is OpenAI Whisper's
+   zlib compression ratio, `STT_COMPRESSION_RATIO_MAX`, default 2.4. The ratio
+   is taken one byte per character, not over UTF-8. Every Hebrew letter shares
    one UTF-8 lead byte, which alone pushes ordinary Hebrew prose to about 2.3.
    Counted per character, the same prose scores about 1.7, like English. Those
-   figures come from synthetic text, not from a recording.
+   figures come from synthetic text, not from a recording. The third is the
+   **word-run check**, `STT_MAX_WORD_RUN`, default 4: a chunk whose text
+   repeats one word, or one two-word phrase, 4 or more times in a row fails.
+   Words are Unicode `\w+` tokens compared case-folded and without niqqud, so
+   punctuation between the repeats does not break the run. It catches a
+   confident short-word hallucination that neither the n-gram block (the
+   punctuation tokens make every n-gram different) nor the compression ratio
+   (one short run inside a full chunk of speech) catches.
 4. **Retry before dropping (`STT_TEMPERATURE_FALLBACK`).** A chunk that fails
-   either gate is decoded again at each sampling temperature in turn. Sampling
+   any gate is decoded again at each sampling temperature in turn. Sampling
    uses the full distribution, and the gate undoes the temperature, so it
-   reads the same quantity every time. The first result that passes both
-   gates is kept. If none passes, the chunk is dropped, as before. An empty or
-   tags-only transcript counts as silence and is never retried.
+   reads the same quantity every time. The first result that passes every
+   gate is kept. If none passes, the chunk is dropped, as before, with the
+   failing gates as its `reason` (`low_logprob`, `compression_ratio`,
+   `word_run`). An empty or tags-only transcript counts as silence and is
+   never retried.
 
 | knob | default | off | what it does |
 |---|---|---|---|
-| `STT_LOGPROB_STAT` | `mean` | `mean` | Which statistic the confidence gate reads. `median` ignores a few rare tokens, such as a name, in an otherwise confident chunk. UNMEASURED: compare the two on a real run before switching. The log lines carry both. |
+| `STT_LOGPROB_STAT` | `median` | `mean` | Which statistic the confidence gate reads. `median` ignores a few rare tokens, such as a name, in an otherwise confident chunk. `mean` is the legacy statistic. The log lines carry both. |
 | `STT_NO_REPEAT_NGRAM_SIZE` | `6` | `0` | Blocks any repeated token n-gram within a chunk. |
 | `STT_REPETITION_PENALTY` | `1.0` | `1.0` | transformers' repetition penalty. `1.1` is the issue's suggestion. |
 | `STT_COMPRESSION_RATIO_MAX` | `2.4` | `off` | Treats a chunk whose text compresses better than this as a loop. |
+| `STT_MAX_WORD_RUN` | `4` | `0` / `off` | Fails a chunk that repeats one word or two-word phrase this many times in a row. Values below 2 fall back to the default. |
 | `STT_TEMPERATURE_FALLBACK` | `0.2,0.4` | `off` | Re-decode temperatures for a failing chunk. Each one is another Whisper decode. |
 | `STT_VAD` | `auto` | `off` | Skips non-speech chunks of a multi-window upload with Silero before decoding. |
 | `STT_VAD_THRESHOLD` | `0.5` | — | Silero speech probability per 32 ms window. |
@@ -117,7 +129,7 @@ step has a knob whose off value gives back the old decode exactly.
 or skipped chunk:
 
 ```text
-stt_chunk event=retry chunk=3/18 attempt=0 temperature=0.0 reason=compression_ratio avg_logprob=-0.04 median_logprob=-0.01 compression_ratio=9.80 tokens=440 ...
+stt_chunk event=retry chunk=3/18 attempt=0 temperature=0.0 reason=compression_ratio avg_logprob=-0.04 median_logprob=-0.01 compression_ratio=9.80 word_run=30 tokens=440 ...
 stt_chunk event=dropped chunk=7/18 attempt=2 temperature=0.4 reason=low_logprob ... text='...'
 stt_chunk event=skipped chunk=9/18 reason=no_speech
 ```
@@ -128,13 +140,31 @@ Clients cannot see any of this yet. A `dropped[]` field and per-segment
 `avg_logprob` / `compression_ratio` wait for `response_format=verbose_json`
 (#328).
 
-**Status (#108).** Unit-tested with a fake decoder only. No live decode has
-run, and none of the defaults were measured on this checkpoint. They are the
-issue's and OpenAI Whisper's starting points. To validate, re-run the issue's
-recording on the live lane and read the `stt_request` and `stt_chunk` lines.
-Acceptance means no phrase repeated more than 3 times in a row, fewer than
-10 % of non-silent chunks dropped, and still no text from silence. Also check
-that `stt_vad silero loaded` appears at startup.
+**Live A/B, DGX Spark, 2026-10-23 — why the default is now the median.** The
+first build of this section ran on the live Hebrew `stt` lane against two
+private recordings, cut into 16 requests of 480 s (269 chunks). Counts only:
+
+- **Loops are fixed.** The longest run of one phrase fell from 220 (pre-#329)
+  to 3 at the defaults of the time.
+- **The mean gate was the binding constraint.** It still dropped 118 of 215
+  decoded chunks (55 %); retries recovered 7. Every drop was `low_logprob`.
+- **The median gate dropped 39 of 215 (18 %)**, and every window then carried
+  at least as much text as a reference transcript of the same span (a rough
+  speech reference, not ground truth). That is why `median` became the
+  default.
+- **It let through a confident hallucination.** In two windows a short word
+  was repeated 11 and 5 times in a row, with punctuation between, and a
+  two-word run of 5 sat in the same span. The word was absent from the
+  reference transcript. That is what `STT_MAX_WORD_RUN` was added for.
+- Silero loaded in the built image and skipped 54 of the 269 chunks.
+
+**Status (#108).** The median default and the word-run check are unit-tested
+with a fake decoder only; the live A/B above measured the median gate before
+the word-run check existed, so the combination has not run live yet. 18 % still
+misses the issue's 10 % drop target. To validate, re-run the recordings on the
+live lane and read the `stt_request` and `stt_chunk` lines. Acceptance means no
+phrase repeated more than 3 times in a row, fewer than 10 % of non-silent
+chunks dropped, and still no text from silence.
 
 ## Latency: what was built, and what it bought
 
