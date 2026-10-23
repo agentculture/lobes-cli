@@ -2248,6 +2248,16 @@ services:
       # dropped core role (absent = feasible — the sleeping-lobe default).
       - STT_FEASIBLE=${STT_FEASIBLE:-}
       - TTS_FEASIBLE=${TTS_FEASIBLE:-}
+      # Speech-to-text LANES (stt-lanes, docs/stt-lanes.md): selected on
+      # POST /v1/audio/transcriptions by the form `model` field or the
+      # X-Lobes-Model header. Empty = not hosted here (the mesh may still
+      # forward it). stt-he: the CPU Zipformer sidecar
+      # (docker-compose.stt-he.yml, http://stt-he:9002); stt-en: this box's
+      # own `stt` container asked for English (http://stt:9002).
+      - STT_HE_BASE_URL=${STT_HE_BASE_URL:-}
+      - STT_HE_FEASIBLE=${STT_HE_FEASIBLE:-}
+      - STT_EN_BASE_URL=${STT_EN_BASE_URL:-}
+      - STT_EN_FEASIBLE=${STT_EN_FEASIBLE:-}
       # The innereye render tenant (issue #82) — opt-in-hosted like
       # muse/worker/associate, so an ABSENT INNEREYE_FEASIBLE means
       # INFEASIBLE (lobes/gateway/_config.py's OPT_IN_BACKENDS), not the

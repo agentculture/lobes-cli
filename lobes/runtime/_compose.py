@@ -250,6 +250,20 @@ EMBED_TEMPLATES = {
     "fleet/docker-compose.embed.yml": EMBED_OVERLAY,
     "fleet/Dockerfile.embed-st": "Dockerfile.embed-st",
 }
+# The stt-he speech-to-text LANE overlay (stt-lanes). One profile-gated,
+# port-less, CPU-only service (`stt-he`, ivrit.ai Zipformer2 on sherpa-onnx);
+# `lobes init --stt-he` scaffolds it with the files its image COPYs, and
+# ``compose_file_args`` chains the overlay whenever it is present. Independent
+# of the audio overlay: the lane is reached through the gateway, not the
+# realtime bridge, so a box can host it with no audio overlay at all.
+STT_HE_OVERLAY = "docker-compose.stt-he.yml"
+STT_HE_TEMPLATES = {
+    "fleet/docker-compose.stt-he.yml": STT_HE_OVERLAY,
+    "fleet/Dockerfile.stt-zipformer": "Dockerfile.stt-zipformer",
+    "fleet/listen_server_zipformer.py": "listen_server_zipformer.py",
+    # COPY'd into the image, exactly as the Parakeet/Whisper images do.
+    "fleet/_readiness.py": "_readiness.py",
+}
 # Decider sidecar image (orin-decision-models plan, t8). The decider-<domain>
 # services are GENERATED into docker-compose.shape.yml (their list is shape
 # data), so only the Dockerfile they build from is a template; `lobes init
@@ -835,6 +849,11 @@ def embed_overlay_present(deploy_dir: os.PathLike | str) -> bool:
     return (Path(deploy_dir) / EMBED_OVERLAY).is_file()
 
 
+def stt_he_overlay_present(deploy_dir: os.PathLike | str) -> bool:
+    """True when the stt-he lane overlay (``docker-compose.stt-he.yml``) is scaffolded."""
+    return (Path(deploy_dir) / STT_HE_OVERLAY).is_file()
+
+
 def local_override_present(deploy_dir: os.PathLike | str) -> bool:
     """True when an operator-authored ``docker-compose.override.yml`` sits in the deploy dir.
 
@@ -988,6 +1007,7 @@ def compose_file_args(
     gpu: bool = False,
     audio_he: bool = False,
     embed: bool = False,
+    stt_he: bool = False,
 ) -> list[str]:
     """The ``-f`` chain for a deployment made of the given overlays — THE single
     composition authority (issue #137). Every ``-f`` list lobes hands to
@@ -1029,6 +1049,11 @@ def compose_file_args(
     declare no ``depends_on``, so chaining it never starts a lane by itself. It
     sits after the audio layers and before the shape override.
 
+    The stt-he lane overlay (:data:`STT_HE_OVERLAY`, stt-lanes) is the same kind
+    of deployment fact — one profile-gated, port-less service with no
+    ``depends_on`` — and follows the embed overlay. It does NOT ride with the
+    audio overlay: the lane is reached through the gateway alone.
+
     :data:`LOCAL_OVERRIDE` comes after even the shape override, because that is what
     an override file MEANS to compose: last wins. Compose only auto-discovers it when
     it resolves the project itself, so passing ANY explicit ``-f`` used to drop it —
@@ -1037,7 +1062,7 @@ def compose_file_args(
     that re-introduces a dropped service's ``depends_on`` edge is the operator's own
     doing, and compose fails loudly rather than lobes ignoring their file.
     """
-    if not audio and not shape and not gpu and not embed:
+    if not audio and not shape and not gpu and not embed and not stt_he:
         # No lobes overlay: compose's own resolution already layers base + override.
         # Passing -f here would change nothing except to break that convention.
         return []
@@ -1052,6 +1077,8 @@ def compose_file_args(
             files += ["-f", AUDIO_HE_OVERLAY]
     if embed:
         files += ["-f", EMBED_OVERLAY]
+    if stt_he:
+        files += ["-f", STT_HE_OVERLAY]
     if shape:
         files += ["-f", SHAPE_OVERLAY]
     if local:
@@ -1081,6 +1108,7 @@ def _compose_files(deploy_dir: os.PathLike | str, *, audio: bool | None = None) 
         local=local_override_present(deploy_dir),
         gpu=gpu_overlay_present(deploy_dir),
         embed=embed_overlay_present(deploy_dir),
+        stt_he=stt_he_overlay_present(deploy_dir),
     )
 
 

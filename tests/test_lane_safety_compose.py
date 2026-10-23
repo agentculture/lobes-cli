@@ -36,6 +36,7 @@ TEMPLATES = (
     "fleet/docker-compose.audio.yml",
     "fleet/docker-compose.audio-he.yml",
     "fleet/docker-compose.embed.yml",
+    "fleet/docker-compose.stt-he.yml",
 )
 
 # Pre-hold healthcheck start_period (seconds) per service. The held lane must
@@ -55,6 +56,7 @@ BASE_START_PERIOD = {
     "embed-nemotron-embed": 900,
     "embed-nomic-code-embed": 900,
     "decider": 900,
+    "stt-he": 120,
 }
 
 
