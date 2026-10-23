@@ -123,7 +123,7 @@ that serves it. The gateway probes a hosted lane on its sidecar's
 | file | contents |
 |---|---|
 | `docker-compose.stt-he.yml` | service `stt-he`, container `model-gear-stt-he`, profile `stt-he`, no GPU, no host port, `mem_limit` 1.5g, `cpus` 2 |
-| `Dockerfile.stt-zipformer` | `python:3.12-slim` + ffmpeg, `uv pip install --system`, sherpa-onnx 1.13.8 |
+| `Dockerfile.stt-zipformer` | `python:3.12-slim` + ffmpeg, `uv pip install --system`, sherpa-onnx 2.0.0 (the version measured live) |
 | `listen_server_zipformer.py` | the server (see below) |
 | `_readiness.py` | the shared readiness decision |
 

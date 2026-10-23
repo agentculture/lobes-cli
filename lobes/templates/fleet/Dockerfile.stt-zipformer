@@ -23,8 +23,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /usr/local/bin/uv
 # sherpa-onnx is pinned to the last 1.x release (2.0.0 landed the day this was
 # written and is untried); huggingface_hub pinned for the revision download.
 RUN uv pip install --system --no-cache \
-        "sherpa-onnx==1.13.8" \
-        "huggingface_hub==2.2.0" \
+        "sherpa-onnx==2.0.0" \
+        "huggingface_hub==2.3.0" \
         "numpy>=1.26" \
         "fastapi>=0.115" \
         "uvicorn[standard]>=0.30" \

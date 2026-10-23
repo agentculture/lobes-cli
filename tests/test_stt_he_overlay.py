@@ -116,7 +116,7 @@ def test_image_installs_with_uv_never_plain_pip():
     text = _instructions()
     assert "uv pip install --system" in text
     assert not re.search(r"(^|&&\s*|RUN\s+)pip install", text, re.MULTILINE)
-    assert '"sherpa-onnx==1.13.8"' in text
+    assert '"sherpa-onnx==2.0.0"' in text
 
 
 def test_image_copies_the_server_and_its_readiness_twin():
