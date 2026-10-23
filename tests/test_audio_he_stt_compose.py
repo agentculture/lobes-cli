@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -155,3 +156,65 @@ class TestEnglishOverlayUntouched:
                 check=False,
             )
             assert result.returncode == 0, f"{rel} differs from git HEAD — must stay untouched"
+
+
+# Issue #329: the decode-quality knobs listen_server_whisper.py reads.
+_DECODE_KNOBS = {
+    "STT_MIN_AVG_LOGPROB": "-0.35",
+    "STT_LOGPROB_STAT": "median",
+    "STT_NO_REPEAT_NGRAM_SIZE": "6",
+    "STT_REPETITION_PENALTY": "1.0",
+    "STT_COMPRESSION_RATIO_MAX": "2.4",
+    "STT_TEMPERATURE_FALLBACK": "0.2,0.4",
+    "STT_MAX_WORD_RUN": "4",
+    "STT_WORD_RUN_FAIL": "8",
+    "STT_VAD": "auto",
+    "STT_VAD_THRESHOLD": "0.5",
+    "STT_VAD_MIN_SPEECH_MS": "250",
+}
+
+
+class TestDecodeKnobsWired:
+    def test_every_knob_reaches_the_stt_service_with_its_default(self) -> None:
+        stt_env = _env_map(_load(_AUDIO_HE_COMPOSE)["services"]["stt"])
+        for key, default in _DECODE_KNOBS.items():
+            assert key in stt_env, f"{key} missing from the stt service environment"
+            assert stt_env[key] == f"${{{key}:-{default}}}", stt_env[key]
+
+    def test_every_knob_is_documented_with_the_same_default(self) -> None:
+        example = _env_example_defaults()
+        for key, default in _DECODE_KNOBS.items():
+            assert example.get(key) == default, f"{key}: env.audio-he.example drifted"
+
+    def test_every_knob_is_read_by_the_server(self) -> None:
+        source = (_TEMPLATES / "listen_server_whisper.py").read_text(encoding="utf-8")
+        for key in _DECODE_KNOBS:
+            assert f'os.environ.get("{key}")' in source, f"{key} is wired but never read"
+
+    def test_documented_defaults_match_the_servers_own_defaults(self) -> None:
+        """Compose's `${KEY:-default}` and the server's in-code default agree,
+        so an unset key and the shipped default mean the same thing."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "lsw", _TEMPLATES / "listen_server_whisper.py"
+        )
+        lsw = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = lsw  # @dataclass looks the module up here
+        spec.loader.exec_module(lsw)
+        assert lsw.parse_no_repeat_ngram_size(None) == int(
+            _DECODE_KNOBS["STT_NO_REPEAT_NGRAM_SIZE"]
+        )
+        assert lsw.parse_repetition_penalty(None) == float(_DECODE_KNOBS["STT_REPETITION_PENALTY"])
+        assert lsw.parse_max_compression_ratio(None) == float(
+            _DECODE_KNOBS["STT_COMPRESSION_RATIO_MAX"]
+        )
+        assert lsw.parse_fallback_temperatures(None) == lsw.parse_fallback_temperatures(
+            _DECODE_KNOBS["STT_TEMPERATURE_FALLBACK"]
+        )
+        assert lsw.parse_logprob_stat(None) == _DECODE_KNOBS["STT_LOGPROB_STAT"]
+        assert lsw.parse_max_word_run(None) == int(_DECODE_KNOBS["STT_MAX_WORD_RUN"])
+        assert lsw.parse_word_run_fail(None) == int(_DECODE_KNOBS["STT_WORD_RUN_FAIL"])
+        assert lsw.parse_vad_mode(None) == _DECODE_KNOBS["STT_VAD"]
+        assert lsw.DEFAULT_VAD_THRESHOLD == float(_DECODE_KNOBS["STT_VAD_THRESHOLD"])
+        assert lsw.DEFAULT_VAD_MIN_SPEECH_MS == float(_DECODE_KNOBS["STT_VAD_MIN_SPEECH_MS"])

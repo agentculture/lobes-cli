@@ -39,6 +39,15 @@ RUN pip install --no-cache-dir uv \
         fastapi \
         "uvicorn[standard]"
 
+# Silero VAD (issue #329, STT_VAD) — skips non-speech chunks before Whisper
+# decodes them. The same package and version the realtime bridge pins in
+# uv.lock, but installed --no-deps: its declared torchaudio dependency would
+# pull a torchaudio wheel pinned to a DIFFERENT torch and replace the base
+# image's validated one. listen_server_whisper.py loads the wheel's bundled
+# TorchScript model by path (never `import silero_vad`, whose __init__
+# imports torchaudio), and falls back to decoding every chunk if it cannot.
+RUN uv pip install --system --no-cache-dir --no-deps "silero-vad==6.2.1"
+
 # Do NOT bake STT_MODEL into the image — it is served from the mounted HF
 # cache volume (docker-compose.audio.yml's `stt` service already mounts
 # ${HF_CACHE}), exactly like every other fleet lane. HF_HUB_DISABLE_XET=1

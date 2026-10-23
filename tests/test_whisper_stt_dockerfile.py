@@ -144,3 +144,26 @@ def test_build_stage_verification_has_no_unterminated_python_c_body() -> None:
                 j += 1
             body = "\n".join(lines[i : j + 1])
             assert body.count('"') % 2 == 0, f"unterminated python3 -c body at line {i + 1}"
+
+
+def test_silero_vad_is_installed_pinned_and_without_deps() -> None:
+    """Issue #329: STT_VAD needs the silero-vad wheel (its bundled TorchScript
+    model). --no-deps, because its declared torchaudio dependency would drag in
+    a torchaudio pinned to a different torch and replace the base image's."""
+    lines = [ln for ln in _instructions().splitlines() if "silero-vad" in ln]
+    assert len(lines) == 1, lines
+    assert "uv pip install --system" in lines[0]
+    assert "--no-deps" in lines[0]
+    assert '"silero-vad==6.2.1"' in lines[0]
+
+
+def test_silero_vad_pin_matches_the_realtime_lock() -> None:
+    """One Silero version across the audio overlay: the bridge's uv.lock pin."""
+    lock = (Path(__file__).resolve().parents[1] / "uv.lock").read_text(encoding="utf-8")
+    assert 'name = "silero-vad"\nversion = "6.2.1"' in lock
+
+
+def test_torch_and_torchaudio_are_never_installed_here() -> None:
+    for line in _instructions().splitlines():
+        if "pip install" in line:
+            assert "torch" not in line.replace("torch_dtype", ""), line
