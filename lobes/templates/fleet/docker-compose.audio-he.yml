@@ -91,7 +91,9 @@ services:
       # an OFF value that restores the pre-#329 decode exactly.
       # STT_LOGPROB_STAT: `median` (default since the 2026-10-23 live A/B;
       # ignores a few rare tokens in an otherwise confident chunk) or `mean`
-      # (the legacy statistic -0.35 was first measured on).
+      # (the legacy statistic -0.35 was first measured on). Applies to
+      # multi-window uploads only: a single-window request (every realtime
+      # turn) always uses the mean and one greedy decode, as before #329.
       - STT_LOGPROB_STAT=${STT_LOGPROB_STAT:-median}
       # STT_NO_REPEAT_NGRAM_SIZE: block any repeated token n-gram at decode
       # time (stops a phrase looping to the token cap). 0 = off.
@@ -102,11 +104,15 @@ services:
       # STT_COMPRESSION_RATIO_MAX: a chunk whose text compresses better than
       # this (zlib, one byte per character) is a loop. `off` disables.
       - STT_COMPRESSION_RATIO_MAX=${STT_COMPRESSION_RATIO_MAX:-2.4}
-      # STT_MAX_WORD_RUN: a chunk repeating one word (or two-word phrase) this
-      # many times in a row fails like a loop. 0/`off` disables.
+      # STT_MAX_WORD_RUN: a run of one word (or two-word phrase) this many
+      # times in a row is TRIMMED to one fewer repeats. 0/`off` disables.
       - STT_MAX_WORD_RUN=${STT_MAX_WORD_RUN:-4}
-      # STT_TEMPERATURE_FALLBACK: sampling temperatures a chunk failing any
-      # gate is re-decoded at before it is dropped. `off` = drop at once.
+      # STT_WORD_RUN_FAIL: a run this long fails a multi-window chunk like a
+      # loop (retry, then drop); a single window only trims. 0/`off` disables.
+      - STT_WORD_RUN_FAIL=${STT_WORD_RUN_FAIL:-8}
+      # STT_TEMPERATURE_FALLBACK: sampling temperatures a multi-window chunk
+      # failing any gate is re-decoded at before it is dropped (a single
+      # window is never retried). `off` = drop at once.
       - STT_TEMPERATURE_FALLBACK=${STT_TEMPERATURE_FALLBACK:-0.2,0.4}
       # STT_VAD: `auto` skips non-speech chunks of a multi-window upload with
       # Silero before decoding (never a single-window/realtime turn; falls

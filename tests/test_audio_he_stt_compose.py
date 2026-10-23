@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -166,6 +167,7 @@ _DECODE_KNOBS = {
     "STT_COMPRESSION_RATIO_MAX": "2.4",
     "STT_TEMPERATURE_FALLBACK": "0.2,0.4",
     "STT_MAX_WORD_RUN": "4",
+    "STT_WORD_RUN_FAIL": "8",
     "STT_VAD": "auto",
     "STT_VAD_THRESHOLD": "0.5",
     "STT_VAD_MIN_SPEECH_MS": "250",
@@ -198,6 +200,7 @@ class TestDecodeKnobsWired:
             "lsw", _TEMPLATES / "listen_server_whisper.py"
         )
         lsw = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = lsw  # @dataclass looks the module up here
         spec.loader.exec_module(lsw)
         assert lsw.parse_no_repeat_ngram_size(None) == int(
             _DECODE_KNOBS["STT_NO_REPEAT_NGRAM_SIZE"]
@@ -211,6 +214,7 @@ class TestDecodeKnobsWired:
         )
         assert lsw.parse_logprob_stat(None) == _DECODE_KNOBS["STT_LOGPROB_STAT"]
         assert lsw.parse_max_word_run(None) == int(_DECODE_KNOBS["STT_MAX_WORD_RUN"])
+        assert lsw.parse_word_run_fail(None) == int(_DECODE_KNOBS["STT_WORD_RUN_FAIL"])
         assert lsw.parse_vad_mode(None) == _DECODE_KNOBS["STT_VAD"]
         assert lsw.DEFAULT_VAD_THRESHOLD == float(_DECODE_KNOBS["STT_VAD_THRESHOLD"])
         assert lsw.DEFAULT_VAD_MIN_SPEECH_MS == float(_DECODE_KNOBS["STT_VAD_MIN_SPEECH_MS"])
