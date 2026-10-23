@@ -119,6 +119,7 @@ from lobes.gateway._mesh_routing import (
     mesh_markers,
 )
 from lobes.gateway._mesh_wire import Announcement
+from lobes.gateway._multipart import append_form_field, read_form_fields
 from lobes.gateway._pressure_policy import (
     BUSY_RETRY_AFTER_SECONDS,
     SHED_SIGNAL_THERMAL,
@@ -151,6 +152,7 @@ from lobes.gateway._routing import (
     RENDER_PATH,
     RENDER_TASK,
     SYSTEMONE_PATH,
+    TRANSCRIBE_TASK,
     Backend,
     DeciderRoute,
     RenderRoute,
@@ -1183,6 +1185,8 @@ def _forward_member_lane(
     open_upstream: OpenUpstream,
     lane: "MemberLane",
     mesh_snapshot: "RoutingSnapshot",
+    *,
+    rewrite: bool = True,
 ) -> GatewayResponse:
     """Forward a PEER's member lane exactly once (the t8 / #237 path).
 
@@ -1190,6 +1194,10 @@ def _forward_member_lane(
     508 loop body rather than forwarded again (c12). The destination receives
     the hop marker and its plain backend name — never this box's alias — so
     it serves the request locally instead of re-placing it (c1/c19).
+
+    ``rewrite=False`` (the stt lanes) forwards a multipart body verbatim: the
+    selector rides in the body or the ``X-Lobes-Model`` header, both of which
+    reach the destination unchanged.
     """
     arriving = _arriving_hop_marker(req_headers)
     if arriving is not None:
@@ -1222,7 +1230,7 @@ def _forward_member_lane(
         req_headers,
         body,
         open_upstream,
-        rewrite=True,
+        rewrite=rewrite,
         extra_response_headers=(
             [(PROXIED_BY_HEADER, lane.origin)]
             + mesh_markers(mesh_snapshot, lane.role, chosen_origin=lane.origin)
@@ -4029,7 +4037,18 @@ def handle_audio_request(
       (:func:`handle_audio_post`), byte-identical to pre-#129 behaviour;
       ``audio_ready_probe`` is called only on this branch (a proxied or
       refused lane never pays for a local readiness probe).
+
+    Ahead of all three (stt-lanes): a transcription whose multipart ``model``
+    field or ``X-Lobes-Model`` header names a speech-to-text LANE is routed to
+    that lane by :func:`handle_stt_lane`. Any other request — no ``model``,
+    ``stt``, a Whisper id — never takes that branch and is unchanged.
     """
+    req_headers = list(req_headers)
+    lane = select_stt_lane(path, req_headers, body)
+    if lane is not None:
+        return handle_stt_lane(
+            table, cfg, path, req_headers, body, open_upstream, lane, mesh_snapshot=mesh_snapshot
+        )
     role = audio_role_for_path(path)
     spec = (peer_specs or {}).get(role) if role else None
     if role is not None and role in table.peer_proxied and spec is not None:
@@ -4051,6 +4070,202 @@ def handle_audio_request(
         )
     audio_ready = audio_ready_probe() if audio_ready_probe is not None else None
     return handle_audio_post(cfg, path, req_headers, body, open_upstream, audio_ready=audio_ready)
+
+
+# --- speech-to-text lanes (stt-lanes) -----------------------------------------
+#
+# `stt-he` / `stt-en` are LANES on POST /v1/audio/transcriptions, not roles
+# (lobes.stt_lanes). Selection: the multipart `model` form field when it names
+# a lane, else the `X-Lobes-Model` header when THAT names one (the decider's
+# header convention, for clients that cannot choose the form value). When both
+# name lanes and disagree, the form field wins: it is the OpenAI-native
+# selector and travels inside the body every hop forwards verbatim. Anything
+# else — no selector, `stt`, a Whisper id, an unknown `stt-xx` — is not a lane
+# request and keeps the pre-lane path byte for byte.
+
+#: Response header naming the lane that answered (local or mesh-forwarded).
+LANE_HEADER = "X-Lobes-Lane"
+
+_TRANSCRIPTIONS_ROUTE = "/v1/audio/transcriptions"
+
+
+def _stt_registry() -> tuple:
+    # lobes.stt_lanes imports lobes.gateway (the roles<->gateway cycle): lazy.
+    from lobes.stt_lanes import STT_LANES
+
+    return STT_LANES
+
+
+def _stt_lane_named(name: str | None):
+    return next((lane for lane in _stt_registry() if lane.name == name), None) if name else None
+
+
+def select_stt_lane(path: str, req_headers: Iterable[tuple[str, str]], body: bytes):
+    """The stt lane a transcription request selects, else ``None``. Pure."""
+    if path.split("?", 1)[0] != _TRANSCRIPTIONS_ROUTE:
+        return None
+    req_headers = list(req_headers)
+    form = read_form_fields(body, _request_header(req_headers, "Content-Type"), ("model",))
+    lane = _stt_lane_named(form.get("model"))
+    if lane is None:
+        lane = _stt_lane_named((_request_header(req_headers, DECIDER_MODEL_HEADER) or "").strip())
+    return lane
+
+
+def _with_lane_language(body: bytes, content_type: str | None, lane) -> bytes:
+    """*body* with ``language=<lane language>`` appended when the caller sent none.
+
+    A caller's own ``language`` is kept exactly as sent, and a body that is not
+    well-formed multipart is forwarded untouched (the engine then answers it
+    with its own default and its own error, never a gateway rewrite).
+    """
+    if "language" in read_form_fields(body, content_type, ("language",)):
+        return body
+    injected = append_form_field(body, content_type, "language", lane.language)
+    return body if injected is None else injected
+
+
+def _serve_stt_lane_locally(
+    cfg: ServerConfig,
+    backend: Backend,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    lane,
+) -> GatewayResponse:
+    """Forward to this box's own lane sidecar; a refused dial is a 503, never
+    another engine (no cross-lane fallback, the embed-lane rule)."""
+    fwd_body = _with_lane_language(body, _request_header(req_headers, "Content-Type"), lane)
+    try:
+        up = open_upstream(
+            backend,
+            path,
+            fwd_body,
+            filter_headers(req_headers),
+            connect_timeout=cfg.connect_timeout,
+            read_timeout=cfg.read_timeout,
+        )
+    except UpstreamError as exc:
+        return GatewayResponse(
+            status=503,
+            headers=[
+                ("Retry-After", str(BACKEND_UNAVAILABLE_RETRY_AFTER_SECONDS)),
+                ("Content-Type", _CONTENT_TYPE_JSON),
+                (LANE_HEADER, lane.name),
+            ],
+            body=_error_body(
+                f"the `{lane.name}` lane is unavailable — retry shortly",
+                [str(exc)],
+                error_type="backend_unavailable",
+            ),
+            attempts=[str(exc)],
+        )
+    return GatewayResponse(
+        status=up.status,
+        headers=[(LANE_HEADER, lane.name)] + up.headers,
+        upstream=up,
+        streaming=True,
+    )
+
+
+def handle_stt_lane(
+    table: RoutingTable,
+    cfg: ServerConfig,
+    path: str,
+    req_headers: list[tuple[str, str]],
+    body: bytes,
+    open_upstream: OpenUpstream,
+    lane,
+    *,
+    mesh_snapshot: "RoutingSnapshot | None" = None,
+) -> GatewayResponse:
+    """Route one transcription to the stt *lane* it selected.
+
+    * **hosted here** (``<LANE>_BASE_URL`` wired and not declared infeasible) —
+      forwarded to ``<base>/v1/audio/transcriptions`` with the lane's
+      ``language`` appended when the caller set none; a hop-marked arrival is
+      served here too (nothing is forwarded again);
+    * **reached through the mesh** — the first verified member announcing the
+      lane (its pinned checkpoint, when it has one) gets the body VERBATIM in
+      ONE hop through the member-lane forwarder (join key, ``X-Lobes-Proxied``,
+      ``X-Lobes-Mesh-Member``; a second hop is refused 508). Language is
+      injected only where the lane is served, so every hop forwards the same
+      bytes. A member still in the boot window answers 503 ``role_unverified``;
+    * **otherwise** — 404 ``role_infeasible`` naming the lane (the embed lanes'
+      body), never the ``stt`` role's ``AUDIO_URL`` or another lane.
+    """
+    backend = next((b for b in table.backends if b.name == lane.name), None)
+    if backend is not None and lane.name not in table.infeasible:
+        return _serve_stt_lane_locally(cfg, backend, path, req_headers, body, open_upstream, lane)
+    if mesh_snapshot is not None:
+        placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id or None)
+        if placement.plain_origins:
+            origin = placement.plain_origins[0]
+            target = MemberLane(
+                name=lane.name,
+                role=lane.name,
+                member=member_name_for_origin(mesh_snapshot, origin),
+                origin=origin,
+            )
+            forwarded = _forward_member_lane(
+                cfg, path, req_headers, body, open_upstream, target, mesh_snapshot, rewrite=False
+            )
+            forwarded.headers = [(LANE_HEADER, lane.name)] + list(forwarded.headers)
+            return forwarded
+        unverified = _role_unverified_response(
+            mesh_snapshot, lane.name, placement, lane.name, lane.name
+        )
+        if unverified is not None:
+            return unverified
+    return GatewayResponse(
+        status=404,
+        headers=[("Content-Type", _CONTENT_TYPE_JSON)],
+        body=_role_infeasible_body(lane.name, lane.name),
+    )
+
+
+def stt_lane_model_ids(
+    table: RoutingTable,
+    ready: "Mapping[str, bool | None] | None",
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> tuple[str, ...]:
+    """The stt lane names ``GET /v1/models`` lists: every lane servable now.
+
+    A lane id is the value a caller puts in the multipart ``model`` field, so
+    it is listed only when a request for it would be answered (#92): hosted
+    here, feasible and — given a readiness snapshot — ready; or reached
+    through a verified mesh member whose last probe read the lane ready.
+    """
+    hosted = {b.name for b in table.backends if b.task == TRANSCRIBE_TASK}
+    out: list[str] = []
+    for lane in _stt_registry():
+        if lane.name in hosted and lane.name not in table.infeasible:
+            if ready is None or ready.get(lane.name) is True:
+                out.append(lane.name)
+            continue
+        if mesh_snapshot is None:
+            continue
+        placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id or None)
+        ready_members = {m.origin for m in mesh_snapshot.members if lane.name in m.ready_roles}
+        if any(origin in ready_members for origin in placement.plain_origins):
+            out.append(lane.name)
+    return tuple(out)
+
+
+def readiness_paths(table: RoutingTable) -> dict[str, str]:
+    """Per-backend readiness-path overrides for the :class:`ReadinessCache`.
+
+    The render tenant (ComfyUI has no ``/health``) and every stt lane, whose
+    sidecars expose the stt servers' ``/v1/health/ready`` (200 only once the
+    model is loaded and a warm-up decode succeeded). Every other backend keeps
+    the shared ``/health`` default.
+    """
+    from lobes.stt_lanes import READY_PATH
+
+    paths = {b.name: _COMFY_READY_PATH for b in table.backends if b.name == _RENDER_BACKEND}
+    paths.update({b.name: READY_PATH for b in table.backends if b.task == TRANSCRIBE_TASK})
+    return paths
 
 
 def _decider_conflict_body(requested: str, members: tuple[str, ...]) -> bytes:
@@ -4364,7 +4579,10 @@ def _endpoints_for(table: RoutingTable, audio: bool) -> list[str]:
     # answerable HERE — served by the local overlay (and not declared off) or
     # forwarded to a declared peer. A declared-off, unproxied lane 404s
     # role_infeasible and must not be advertised.
-    if (audio and "stt" not in table.infeasible) or "stt" in table.peer_proxied:
+    stt_lane_here = any(
+        b.task == TRANSCRIBE_TASK and b.name not in table.infeasible for b in table.backends
+    )
+    if (audio and "stt" not in table.infeasible) or "stt" in table.peer_proxied or stt_lane_here:
         eps.append("POST /v1/audio/transcriptions")
     if (audio and "tts" not in table.infeasible) or "tts" in table.peer_proxied:
         eps.append("POST /v1/audio/speech")
@@ -4825,20 +5043,132 @@ def annotate_mesh_lanes(
     """
     if mesh_snapshot is None:
         return payload
+    for lane in _lane_registry():
+        _annotate_mesh_lane(
+            payload,
+            lane.name,
+            lane.catalog_id,
+            lambda lane=lane: _lane_identity(lane, lane.catalog_id, env, gateway),
+            mesh_snapshot,
+        )
+    return payload
+
+
+def _annotate_mesh_lane(
+    payload: dict[str, dict],
+    name: str,
+    served_id: str | None,
+    identity: "Callable[[], dict]",
+    mesh_snapshot: "RoutingSnapshot",
+) -> None:
+    """The mesh overlay for ONE lane this box does not host, in place.
+
+    Shared by the embed lanes and the stt lanes: a hosted (feasible) lane, or
+    one no verified member offers under *served_id* (``None``: any checkpoint),
+    is left as it was; otherwise the entry — built from *identity* when absent
+    — gains the plain-member ``proxied``/``hosted_by``/``ready`` overlay.
+    """
     from lobes.roles import _annotate_plain_member
 
-    for lane in _lane_registry():
-        entry = payload.get(lane.name)
-        if entry is not None and entry.get("feasible"):
+    entry = payload.get(name)
+    if entry is not None and entry.get("feasible"):
+        return
+    placement = lane_placement(mesh_snapshot, name, served_id)
+    if not placement.plain_origins:
+        return
+    if entry is None:
+        entry = identity()
+        entry.update({"feasible": False, "loaded": False, "ready": False})
+    _annotate_plain_member(entry, placement, None, mesh_snapshot)
+    payload[name] = entry
+
+
+def _stt_lane_identity(lane, model: str, runtime: str, gateway: str) -> dict:
+    """An stt lane's declared identity: what it transcribes, in which language.
+
+    ``revision``/``licence`` appear only when the lane pins them (``stt-he``);
+    ``context`` is 0 (an audio lane has no token window to advertise).
+    """
+    entry = {
+        "lane": True,
+        "model": model,
+        "runtime": runtime,
+        "endpoint": gateway,
+        "path": _TRANSCRIPTIONS_ROUTE,
+        "task": lane.task,
+        "language": lane.language,
+        "context": 0,
+        "quant": "",
+        "responsibilities": [],
+        "forbidden_responsibilities": [],
+    }
+    if lane.revision:
+        entry["revision"] = lane.revision
+    if lane.licence:
+        entry["licence"] = lane.licence
+    return entry
+
+
+def stt_lane_capabilities(
+    table: RoutingTable,
+    env: Mapping[str, str],
+    gateway: str,
+    backend_ready: Mapping[str, bool | None] | None = None,
+) -> dict[str, dict]:
+    """``{lane_name: entry}`` for every WIRED stt lane; an unwired one has no key.
+
+    Same honesty clamp and offline fingerprint as the embed lanes
+    (:func:`_lane_entry`), so the hosting box announces exactly what a peer
+    reads back when it verifies.
+    """
+    from lobes.roles import _offline_fingerprint
+    from lobes.stt_lanes import served_identity
+
+    backends = {b.name: b for b in table.backends if b.task == TRANSCRIBE_TASK}
+    out: dict[str, dict] = {}
+    for lane in _stt_registry():
+        backend = backends.get(lane.name)
+        if backend is None:
             continue
-        placement = lane_placement(mesh_snapshot, lane.name, lane.catalog_id)
-        if not placement.plain_origins:
-            continue
-        if entry is None:
-            entry = _lane_identity(lane, lane.catalog_id, env, gateway)
-            entry.update({"feasible": False, "loaded": False, "ready": False})
-        _annotate_plain_member(entry, placement, None, mesh_snapshot)
-        payload[lane.name] = entry
+        _model, runtime = served_identity(lane, env)
+        entry = _stt_lane_identity(lane, backend.served_name, runtime, gateway)
+        feasible = _lane_feasible(lane.name, table, env)
+        entry.update(
+            {
+                "feasible": feasible,
+                "loaded": feasible,
+                "ready": _lane_ready(feasible, gateway, lane.name, backend_ready),
+            }
+        )
+        entry["fingerprint"] = _offline_fingerprint(
+            table.lane_fingerprints.get(lane.name, {}), entry
+        )
+        out[lane.name] = entry
+    return out
+
+
+def annotate_mesh_stt_lanes(
+    payload: dict[str, dict],
+    gateway: str,
+    mesh_snapshot: "RoutingSnapshot | None",
+) -> dict[str, dict]:
+    """List every stt lane this box reaches only through the mesh, in place.
+
+    ``stt-he`` is matched on its pinned checkpoint; ``stt-en`` (unpinned) on
+    its name. The entry's ``model``/``context`` come from the serving member's
+    announcement (:func:`lobes.roles._annotate_plain_member`), so a box never
+    guesses what a peer's ``stt-en`` runs.
+    """
+    if mesh_snapshot is None:
+        return payload
+    for lane in _stt_registry():
+        _annotate_mesh_lane(
+            payload,
+            lane.name,
+            lane.catalog_id or None,
+            lambda lane=lane: _stt_lane_identity(lane, lane.catalog_id, lane.runtime, gateway),
+            mesh_snapshot,
+        )
     return payload
 
 
@@ -5057,6 +5387,10 @@ def capabilities_payload(
     payload = annotate_mesh_lanes(
         payload, resolved_env, gateway, as_routing_snapshot(mesh_snapshot)
     )
+    # ... and the speech-to-text lanes (stt-lanes), hosted here or reached
+    # through the mesh — added last, so no role pass ever sees their keys.
+    payload.update(stt_lane_capabilities(table, resolved_env, gateway, backend_ready))
+    payload = annotate_mesh_stt_lanes(payload, gateway, as_routing_snapshot(mesh_snapshot))
     # ... and the decider domains it reaches only through the mesh (odm t7).
     annotate_mesh_decider_domains(payload, as_routing_snapshot(mesh_snapshot))
     return payload
@@ -6025,8 +6359,11 @@ class _Handler(BaseHTTPRequestHandler):
         )
         if pooled_names:
             resolved = dict(peer_served or {})
+            # The stt LANES are path-routed too (stt-lanes): they are listed
+            # below by lane name, never by a pooled served id.
+            stt_lane_names = {lane.name for lane in _stt_registry()}
             for name in pooled_names:
-                if name in ("stt", "tts") or resolved.get(name):
+                if name in ("stt", "tts") or name in stt_lane_names or resolved.get(name):
                     continue
                 served = _peer_served_name(self.table, name, os.environ)
                 if served:
@@ -6060,7 +6397,10 @@ class _Handler(BaseHTTPRequestHandler):
                 # so the listing stays byte-identical there.
                 member_lane_ids=member_lane_ids(
                     self.table, as_routing_snapshot(mesh_snapshot), ready=ready
-                ),
+                )
+                # The stt lanes (stt-lanes): the `model` form-field values a
+                # transcription may name, each only while servable.
+                + stt_lane_model_ids(self.table, ready, as_routing_snapshot(mesh_snapshot)),
             ),
         )
 
@@ -6983,17 +7323,15 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
     # every deployment that has not declared HAND_LORA_MODULES — so this adds
     # no probe traffic and changes nothing until an operator declares one.
     adapter_targets = {b.name: (b.base_url, b.adapters) for b in table.backends if b.adapters}
-    # The render lane's readiness path override (see ``_COMFY_READY_PATH``
-    # above) — the ONLY backend that gets a non-``/health`` entry; every
-    # other lane is unaffected (`paths.get(name, "/health")` inside
-    # ReadinessCache falls through to the shared default).
-    readiness_paths = {
-        b.name: _COMFY_READY_PATH for b in table.backends if b.name == _RENDER_BACKEND
-    }
+    # Readiness path overrides (see :func:`readiness_paths`): the render lane
+    # (``_COMFY_READY_PATH``) and the stt lanes (``/v1/health/ready``); every
+    # other backend falls through to the shared ``/health`` default
+    # (`paths.get(name, "/health")` inside ReadinessCache).
+    paths = readiness_paths(table)
     # Decider domains (odm t7): each domain's sidecar is its own readiness
     # target, probed on /health, so the per-domain `ready` is honest.
     decider_targets = decider_readiness_targets(table)
-    readiness_paths.update(dict.fromkeys(decider_targets, "/health"))
+    paths.update(dict.fromkeys(decider_targets, "/health"))
     readiness_cache = ReadinessCache.from_backends(
         (
             *table.backends,
@@ -7004,7 +7342,7 @@ def serve(table: RoutingTable, cfg: ServerConfig) -> None:  # pragma: no cover
         ),
         peer_specs=tuple(peer_specs.values()),
         adapter_targets=adapter_targets,
-        paths=readiness_paths,
+        paths=paths,
         start=False,
     )
     readiness_cache.refresh()

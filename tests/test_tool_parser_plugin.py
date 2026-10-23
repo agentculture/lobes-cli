@@ -272,7 +272,10 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # catalog's native ceiling). `gateway` is the ONLY service moved.
     # Recomputed for lane-safety #311 (deviation d1): the gateway gains the three
     # LOBES_THERMAL_* passthroughs.
-    "gateway": "4e6b9931d7aa6d24e86a5ddd46290fc4165bccd9aee63ff6dd39610d88d96abd",
+    # Recomputed for stt-lanes: the gateway gains the four STT_HE_/STT_EN_
+    # BASE_URL/FEASIBLE passthroughs (empty defaults). `gateway` is the ONLY
+    # service moved.
+    "gateway": "d19794e85500dfdae2dbc0c5c78439bd7868817be41a13f1ce1872feeca1ab9f",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.

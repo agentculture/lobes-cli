@@ -1,0 +1,47 @@
+# lobes stt-he lane — ivrit.ai Zipformer2 (66M, streaming) Hebrew ASR on
+# sherpa-onnx, CPU-only (stt-lanes). Serves listen_server_zipformer.py:
+# POST /v1/audio/transcriptions, GET /v1/health/ready, GET /health.
+#
+# No CUDA base and no GPU reservation: the int8 sherpa-onnx export decodes on
+# CPU (2026-10-23 experiment on a Thor's CPU: RTF ~0.05-0.07, RSS ~280 MB —
+# an experiment, not an acceptance; DECLARED/UNVALIDATED until a live
+# acceptance transcript lands under docs/evidence/, #108).
+#
+# WEIGHTS are fetched at container start into the mounted HuggingFace cache,
+# pinned by revision (STT_HE_REVISION, default in listen_server_zipformer.py),
+# and only the sherpa-onnx/ export is downloaded. They are CC-BY-4.0
+# (ivrit-ai/zipformer2-66m-streaming-he): attribution is required wherever
+# their output is published — see docs/stt-lanes.md.
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.11.6 /uv /usr/local/bin/uv
+
+# sherpa-onnx is pinned to the last 1.x release (2.0.0 landed the day this was
+# written and is untried); huggingface_hub pinned for the revision download.
+RUN uv pip install --system --no-cache \
+        "sherpa-onnx==2.0.0" \
+        "huggingface_hub==2.3.0" \
+        "numpy>=1.26" \
+        "fastapi>=0.115" \
+        "uvicorn[standard]>=0.30" \
+        "python-multipart>=0.0.9"
+
+# Xet transfers are disabled fleet-wide for HF downloads (an uncapped xet
+# fetch has OOM-killed a co-resident engine before); plain HTTP is enough for
+# ~73 MB of weights.
+ENV HF_HUB_DISABLE_XET=1 \
+    OMP_NUM_THREADS=1 \
+    CUDA_VISIBLE_DEVICES=
+
+WORKDIR /app
+# _readiness.py is the vendored readiness decision listen_server.py and
+# listen_server_whisper.py already COPY (twin of lobes/realtime/_readiness.py).
+COPY _readiness.py /app/_readiness.py
+COPY listen_server_zipformer.py /app/listen_server_zipformer.py
+
+EXPOSE 9002
+CMD ["python3", "/app/listen_server_zipformer.py"]

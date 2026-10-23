@@ -739,6 +739,7 @@ def _templates(
     audio: bool,
     audio_lang: str = AUDIO_LANG_DEFAULT,
     shape: Shape | None = None,
+    stt_he: bool = False,
 ) -> dict[str, str]:
     if not fleet:
         return _compose.SINGLE_TEMPLATES
@@ -754,6 +755,10 @@ def _templates(
     if audio:
         templates.update(_compose.AUDIO_TEMPLATES)
         templates.update(AUDIO_LANG_TEMPLATES[audio_lang])
+    if stt_he:
+        # The stt-he speech-to-text lane overlay (stt-lanes): independent of
+        # --audio — the lane is reached through the gateway, not the bridge.
+        templates.update(_compose.STT_HE_TEMPLATES)
     return templates
 
 
@@ -1086,8 +1091,9 @@ def _emit_dry_run(
     shape_explicit: bool = False,
     force: bool = False,
     audio_lang: str = AUDIO_LANG_DEFAULT,
+    stt_he: bool = False,
 ) -> None:
-    plan = _compose.scaffold_plan(target, _templates(fleet, audio, audio_lang, shape))
+    plan = _compose.scaffold_plan(target, _templates(fleet, audio, audio_lang, shape, stt_he))
     profile = card = None
     if fleet:
         # Detection/warning happens on a dry run too — the plan must be honest
@@ -1249,6 +1255,7 @@ def _emit_apply(
     shape: Shape | None,
     shape_explicit: bool = False,
     audio_lang: str = AUDIO_LANG_DEFAULT,
+    stt_he: bool = False,
 ) -> None:
     profile = card = None
     if fleet:
@@ -1260,7 +1267,7 @@ def _emit_apply(
             target, profile_name, shape, shape_explicit=shape_explicit
         )
     written = _compose.write_scaffold(
-        target, force=force, templates=_templates(fleet, audio, audio_lang, shape)
+        target, force=force, templates=_templates(fleet, audio, audio_lang, shape, stt_he)
     )
     # Create the durable-log dir now (as the invoking user) so the compose bind-mount
     # source exists before `lobes serve` / `fleet up` — otherwise Docker makes it
@@ -1935,6 +1942,7 @@ _RENDERER_AXES: tuple[tuple[str, str], ...] = (
     ("audio_lang", "--audio-lang"),
     ("profile", "--profile"),
     ("shape", "--shape"),
+    ("stt_he", "--stt-he"),
 )
 
 
@@ -2022,6 +2030,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     fleet = not single
     audio = bool(getattr(args, "audio", False))
     audio_lang = _resolve_audio_lang(args, audio=audio, fleet=fleet)
+    stt_he = bool(getattr(args, "stt_he", False))
+    if stt_he and not fleet:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message="--stt-he is incompatible with --single",
+            remediation="the stt-he lane overlay layers on the fleet (the default): "
+            "drop --single, e.g. 'lobes init --stt-he'",
+        )
     if audio and not fleet:
         raise ModelGearError(
             code=EXIT_USER_ERROR,
@@ -2065,6 +2081,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             shape,
             shape_explicit,
             audio_lang,
+            stt_he=stt_he,
         )
     else:
         _emit_dry_run(
@@ -2077,6 +2094,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             shape_explicit=shape_explicit,
             force=args.force,
             audio_lang=audio_lang,
+            stt_he=stt_he,
         )
     return 0
 
@@ -2130,6 +2148,16 @@ def register(sub: argparse._SubParsersAction) -> None:
         "(docker-compose.audio-he.yml: Whisper STT + Chatterbox Multilingual) "
         "on top of it. Needs --audio; language is an overlay choice, not a "
         "shape and not a variation.",
+    )
+    p.add_argument(
+        "--stt-he",
+        dest="stt_he",
+        action="store_true",
+        help="Also scaffold the stt-he speech-to-text lane overlay "
+        "(docker-compose.stt-he.yml: ivrit.ai Zipformer2 on sherpa-onnx, "
+        "CPU-only, profile-gated as 'stt-he'). Independent of --audio; "
+        "route it with STT_HE_BASE_URL=http://stt-he:9002 (docs/stt-lanes.md). "
+        "Incompatible with --single.",
     )
     p.add_argument(
         "--profile",

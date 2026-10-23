@@ -725,6 +725,26 @@ MEASURED live on the DGX Spark from a hand-carried deployment (first audio
 is DECLARED/UNVALIDATED (#108), the continuation merge is proven on a recording
 only, and mixed Hebrew/English is weak (#277). See `docs/hebrew-realtime.md`.
 
+**Speech-to-text LANES `stt-he` / `stt-en` (stt-lanes, 2026-10-23).** Two
+lanes on `POST /v1/audio/transcriptions`, NOT roles (`ROLES` untouched;
+registry `lobes/stt_lanes.py`, a sibling of the embed-lane registry so the mesh
+announce/verify/forward machinery is shared while no embed-only path sees
+them). Selected by the multipart `model` field, else the `X-Lobes-Model`
+header (form wins when both name lanes); any other request keeps the `stt`
+role path byte for byte. `stt-he` = `ivrit-ai/zipformer2-66m-streaming-he`
+(pinned revision, sherpa-onnx int8, CPU-only, weights **CC-BY-4.0 —
+attribution required**), packaged as the `stt-he` sidecar (`lobes init
+--stt-he` → `docker-compose.stt-he.yml`); `stt-en` = the box's own `stt`
+container asked for English. The serving box appends `language=<lane
+language>` when the form has none. Hosted when `<LANE>_BASE_URL` is set, else
+one mesh hop, else 404 `role_infeasible`; a hosted lane that is down is 503,
+never another engine. `stt-*` passes the `{role}-{member}` name rule only via a
+narrow `audio_role="stt"` exception (stt has no member lanes). The realtime
+bridge does not pick a lane by session language yet (follow-up).
+DECLARED/UNVALIDATED (#108): unit-tested only; the 2026-10-23 Thor-CPU
+numbers (RTF ~0.05-0.07, RSS ~280 MB) are an experiment, not an acceptance.
+See `docs/stt-lanes.md` and `lobes explain stt-lanes`.
+
 See `docs/realtime-pipeline.md`, `docs/parakeet-stt.md`,
 `docs/chatterbox-tts.md`, `docs/gateway-fleet.md` (the realtime lane), and
 `docs/openai-api.md` (the full

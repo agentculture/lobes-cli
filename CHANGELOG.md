@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.92.0] - 2026-10-23
+
+### Added
+
+- stt-he / stt-en speech-to-text LANES on POST /v1/audio/transcriptions, selected by the multipart model field or the X-Lobes-Model header (form wins); the serving box appends `language=<lane language>` when absent; local via `<LANE>_BASE_URL`, else one mesh hop, else 404 role_infeasible; a down lane is 503, never another engine. Advertised as lane: true entries on GET /capabilities and listed on /v1/models while servable. DECLARED/UNVALIDATED (#108).
+- Packaged CPU-only stt-he sidecar (ivrit-ai/zipformer2-66m-streaming-he @ee769a2 on sherpa-onnx; weights CC-BY-4.0, attribution required): listen_server_zipformer.py, Dockerfile.stt-zipformer, docker-compose.stt-he.yml, scaffolded by lobes init --stt-he and chained when present.
+- docs/stt-lanes.md and lobes explain stt-lanes.
+
+### Changed
+
+- validate_lane_name gains a narrow audio_role="stt" exception for stt-* lane names (stt has no member lanes); lane_placement accepts served_id=None for an unpinned lane.
+
 ## [0.91.0] - 2026-10-23
 
 ### Added

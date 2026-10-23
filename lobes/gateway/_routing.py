@@ -229,10 +229,16 @@ RENDER_TASK: str = "render"
 #: ``POST /v1/systemone`` lane, path-routed like render (see below).
 DECIDE_TASK: str = "decide"
 
+#: The task family of a speech-to-text LANE (``stt-he``/``stt-en``,
+#: :mod:`lobes.stt_lanes`). Path-routed: such a lane is reached only on
+#: ``POST /v1/audio/transcriptions`` (selected by the multipart ``model`` field
+#: or the ``X-Lobes-Model`` header), never through a JSON ``model`` field.
+TRANSCRIBE_TASK: str = "transcribe"
+
 # Task families that are NOT addressable through a request's ``model`` field.
 # Kept as a set (rather than an ``== RENDER_TASK`` check) so a second such
 # tenant joins by naming its task here and nowhere else.
-_PATH_ROUTED_TASKS: frozenset[str] = frozenset({RENDER_TASK, DECIDE_TASK})
+_PATH_ROUTED_TASKS: frozenset[str] = frozenset({RENDER_TASK, DECIDE_TASK, TRANSCRIBE_TASK})
 
 # --- the /v1/systemone decider lane -----------------------------------------
 #
