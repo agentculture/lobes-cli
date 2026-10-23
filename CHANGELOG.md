@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.91.0] - 2026-10-23
+
+### Added
+
+- Hebrew Whisper STT (audio-he overlay): decode-quality knobs for long recordings (issue #329) - STT_NO_REPEAT_NGRAM_SIZE (default 6), STT_REPETITION_PENALTY (default 1.0 = off), STT_COMPRESSION_RATIO_MAX (default 2.4), STT_TEMPERATURE_FALLBACK (default 0.2,0.4), STT_LOGPROB_STAT (default mean), STT_VAD (default auto) with STT_VAD_THRESHOLD / STT_VAD_MIN_SPEECH_MS; each has an off value that restores the previous decode exactly.
+- Structured stt_chunk (retry / dropped / skipped) and per-request stt_request log lines in the stt container, so dropped and retried chunks are observable server-side; the client-facing dropped[] field waits for verbose_json (#328).
+
+### Changed
+
+- Dockerfile.whisper-stt installs silero-vad==6.2.1 with --no-deps (its torchaudio dependency would replace the base image torch); the server loads the bundled TorchScript model by path and falls back to decoding every chunk if it cannot.
+
+### Fixed
+
+- Hebrew batch STT no longer passes a phrase looped to the token cap (n-gram block plus a per-character zlib compression-ratio check), and re-decodes a chunk failing either gate at sampling temperatures before dropping it (#329). Defaults are unmeasured on this checkpoint until the operator re-runs the recording.
+
 ## [0.90.3] - 2026-10-18
 
 ### Fixed

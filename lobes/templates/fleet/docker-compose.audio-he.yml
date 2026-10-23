@@ -87,6 +87,31 @@ services:
       # 'תודה רבה'). Measured 2026-09-18: speech >= -0.12, hallucinations <= -0.58.
       # `off` disables the gate.
       - STT_MIN_AVG_LOGPROB=${STT_MIN_AVG_LOGPROB:--0.35}
+      # Decode-quality knobs (issue #329; docs/hebrew-realtime.md). Each has
+      # an OFF value that restores the pre-#329 decode exactly.
+      # STT_LOGPROB_STAT: `mean` (the statistic -0.35 was measured on) or
+      # `median` (ignores a few rare tokens in an otherwise confident chunk).
+      - STT_LOGPROB_STAT=${STT_LOGPROB_STAT:-mean}
+      # STT_NO_REPEAT_NGRAM_SIZE: block any repeated token n-gram at decode
+      # time (stops a phrase looping to the token cap). 0 = off.
+      - STT_NO_REPEAT_NGRAM_SIZE=${STT_NO_REPEAT_NGRAM_SIZE:-6}
+      # STT_REPETITION_PENALTY: transformers' repetition penalty. 1.0 = off
+      # (default: it penalises every recurring Hebrew prefix letter too).
+      - STT_REPETITION_PENALTY=${STT_REPETITION_PENALTY:-1.0}
+      # STT_COMPRESSION_RATIO_MAX: a chunk whose text compresses better than
+      # this (zlib, one byte per character) is a loop. `off` disables.
+      - STT_COMPRESSION_RATIO_MAX=${STT_COMPRESSION_RATIO_MAX:-2.4}
+      # STT_TEMPERATURE_FALLBACK: sampling temperatures a chunk failing either
+      # gate is re-decoded at before it is dropped. `off` = drop at once.
+      - STT_TEMPERATURE_FALLBACK=${STT_TEMPERATURE_FALLBACK:-0.2,0.4}
+      # STT_VAD: `auto` skips non-speech chunks of a multi-window upload with
+      # Silero before decoding (never a single-window/realtime turn; falls
+      # back to decoding everything if Silero cannot load); `off`.
+      - STT_VAD=${STT_VAD:-auto}
+      # STT_VAD_THRESHOLD / STT_VAD_MIN_SPEECH_MS: a chunk is speech once this
+      # many ms of 32 ms windows score at or above the threshold.
+      - STT_VAD_THRESHOLD=${STT_VAD_THRESHOLD:-0.5}
+      - STT_VAD_MIN_SPEECH_MS=${STT_VAD_MIN_SPEECH_MS:-250}
       # STT_RUNTIME: informational — names the serving stack for
       # GET /capabilities; the container fixed on transformers, not a
       # switchable knob.

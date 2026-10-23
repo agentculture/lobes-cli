@@ -52,8 +52,8 @@ still read directly and never touches ffmpeg; anything else is transcoded to
 
 An upload longer than Whisper's 30 s window is **chunked**, not refused: each
 cut goes at the quietest 20 ms frame in the last 5 s of its window, every
-window passes the `STT_MIN_AVG_LOGPROB` gate on its own, and the non-empty
-pieces are joined with a space. `STT_MAX_AUDIO_SECONDS` (default 600) caps the
+window is judged on its own (silence skip, gates and retries, below), and the
+non-empty pieces are joined with a space. `STT_MAX_AUDIO_SECONDS` (default 600) caps the
 total; past it the reply is a 413 `clip_too_long`. The upload byte cap
 (`STT_MAX_UPLOAD_BYTES`, 16 MiB) still applies first, so ten minutes of
 uncompressed 16 kHz WAV (~19 MB) needs it raised; a compressed voice note does
@@ -61,6 +61,80 @@ not. MEASURED on the DGX Spark, 2026-10-09, with synthetic BlueTTS speech: an
 80 s m4a was transcribed in 3 windows in 3.9 s with every sentence intact at
 the seams; mp3, ogg/opus, webm, 24-bit WAV and m4a single sentences each came
 back verbatim. A real microphone recording is still UNVALIDATED (#108).
+
+### Decode quality: loops, retries and silence (issue #329)
+
+On a real 56-minute recording, the decode above failed in two ways. A two-word
+phrase looped until the token cap, and a loop is high-confidence, so it passed
+the gate. The gate also dropped 61 of 125 chunks whole with no second try, and
+some of them were real speech. Each chunk now goes through four steps. Each
+step has a knob whose off value gives back the old decode exactly.
+
+1. **Silence skipping (`STT_VAD`).** On an upload longer than one window,
+   Silero VAD reads each chunk first. A single-window request, which covers
+   every realtime turn, is never skipped: the bridge's own VAD already opened
+   that turn, and a one-word reply may hold very little speech. If Silero
+   finds less than `STT_VAD_MIN_SPEECH_MS` of speech, Whisper never decodes
+   the chunk, so a silent chunk cannot turn into `תודה רבה`. The scan stops as
+   soon as it has found enough speech, so a speech chunk costs only a few VAD
+   calls. The image installs the `silero-vad` wheel `--no-deps`, because its
+   torchaudio dependency would replace the base image's torch. The server loads
+   the bundled TorchScript model by path. If Silero fails to load, or fails on
+   a call, the server logs a warning and decodes the chunk as before.
+2. **Loop prevention at decode time.** `STT_NO_REPEAT_NGRAM_SIZE` sets the
+   transformers n-gram block. `STT_REPETITION_PENALTY` is off by default,
+   because it penalises every recurring token, Hebrew prefix letters included.
+   Beam search was considered and left out. It would cost about 4× the GPU
+   time on a shared box, and the per-token log-probabilities the gate reads
+   would need different bookkeeping.
+3. **Two gates per attempt.** The first is the confidence gate,
+   `STT_MIN_AVG_LOGPROB` on `STT_LOGPROB_STAT` (`mean` by default, the
+   statistic −0.35 was measured on). The second is OpenAI Whisper's zlib
+   compression ratio, `STT_COMPRESSION_RATIO_MAX`, default 2.4. The ratio is
+   taken one byte per character, not over UTF-8. Every Hebrew letter shares
+   one UTF-8 lead byte, which alone pushes ordinary Hebrew prose to about 2.3.
+   Counted per character, the same prose scores about 1.7, like English. Those
+   figures come from synthetic text, not from a recording.
+4. **Retry before dropping (`STT_TEMPERATURE_FALLBACK`).** A chunk that fails
+   either gate is decoded again at each sampling temperature in turn. Sampling
+   uses the full distribution, and the gate undoes the temperature, so it
+   reads the same quantity every time. The first result that passes both
+   gates is kept. If none passes, the chunk is dropped, as before. An empty or
+   tags-only transcript counts as silence and is never retried.
+
+| knob | default | off | what it does |
+|---|---|---|---|
+| `STT_LOGPROB_STAT` | `mean` | `mean` | Which statistic the confidence gate reads. `median` ignores a few rare tokens, such as a name, in an otherwise confident chunk. UNMEASURED: compare the two on a real run before switching. The log lines carry both. |
+| `STT_NO_REPEAT_NGRAM_SIZE` | `6` | `0` | Blocks any repeated token n-gram within a chunk. |
+| `STT_REPETITION_PENALTY` | `1.0` | `1.0` | transformers' repetition penalty. `1.1` is the issue's suggestion. |
+| `STT_COMPRESSION_RATIO_MAX` | `2.4` | `off` | Treats a chunk whose text compresses better than this as a loop. |
+| `STT_TEMPERATURE_FALLBACK` | `0.2,0.4` | `off` | Re-decode temperatures for a failing chunk. Each one is another Whisper decode. |
+| `STT_VAD` | `auto` | `off` | Skips non-speech chunks of a multi-window upload with Silero before decoding. |
+| `STT_VAD_THRESHOLD` | `0.5` | — | Silero speech probability per 32 ms window. |
+| `STT_VAD_MIN_SPEECH_MS` | `250` | — | How much speech makes a chunk worth decoding. |
+
+**Observability.** The stt container logs one line for each retried, dropped
+or skipped chunk:
+
+```text
+stt_chunk event=retry chunk=3/18 attempt=0 temperature=0.0 reason=compression_ratio avg_logprob=-0.04 median_logprob=-0.01 compression_ratio=9.80 tokens=440 ...
+stt_chunk event=dropped chunk=7/18 attempt=2 temperature=0.4 reason=low_logprob ... text='...'
+stt_chunk event=skipped chunk=9/18 reason=no_speech
+```
+
+It also logs one summary line per request:
+`stt_request chunks= decoded= vad_skipped= retried= recovered= dropped= decodes= seconds=`.
+Clients cannot see any of this yet. A `dropped[]` field and per-segment
+`avg_logprob` / `compression_ratio` wait for `response_format=verbose_json`
+(#328).
+
+**Status (#108).** Unit-tested with a fake decoder only. No live decode has
+run, and none of the defaults were measured on this checkpoint. They are the
+issue's and OpenAI Whisper's starting points. To validate, re-run the issue's
+recording on the live lane and read the `stt_request` and `stt_chunk` lines.
+Acceptance means no phrase repeated more than 3 times in a row, fewer than
+10 % of non-silent chunks dropped, and still no text from silence. Also check
+that `stt_vad silero loaded` appears at startup.
 
 ## Latency: what was built, and what it bought
 

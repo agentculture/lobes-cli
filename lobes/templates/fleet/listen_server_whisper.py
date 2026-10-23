@@ -168,6 +168,260 @@ def is_low_confidence(avg_logprob: float | None, threshold: float | None) -> boo
 MIN_AVG_LOGPROB = parse_min_avg_logprob(os.environ.get("STT_MIN_AVG_LOGPROB"))
 
 
+# --------------------------------------------------------------------------
+# Issue #329 — decoding quality on long, real recordings. Measured on one
+# 56-minute Hebrew recording: a two-word phrase looped to the token cap (a
+# loop is HIGH-confidence, so the log-probability gate above passed it), and
+# 61 of 125 chunks were dropped whole by that gate with no second try, some
+# of them real speech. Four mechanisms, each with an env knob whose OFF value
+# restores the previous behaviour exactly:
+#
+#   1. STT_NO_REPEAT_NGRAM_SIZE — transformers' n-gram block at decode time.
+#   2. STT_COMPRESSION_RATIO_MAX — OpenAI Whisper's zlib-ratio loop check.
+#   3. STT_TEMPERATURE_FALLBACK — a chunk failing either gate is re-decoded
+#      at these sampling temperatures before it is dropped.
+#   4. STT_VAD — Silero skips non-speech chunks before Whisper sees them.
+#
+# None of the defaults below were measured on this checkpoint: they are the
+# issue's and OpenAI Whisper's starting points, to be checked against the
+# recording on the live lane (see docs/hebrew-realtime.md).
+# --------------------------------------------------------------------------
+
+_OFF_TOKENS = ("", "off", "none", "disabled", "false", "no")
+
+# Token n-grams, not words. 6 (the cautious end of the issue's 4-6) blocks a
+# loop after one period while leaving a legitimately repeated short phrase
+# ("כן כן", "תודה תודה") alone.
+DEFAULT_NO_REPEAT_NGRAM_SIZE = 6
+# OFF by default, deliberately: transformers' repetition penalty penalises
+# EVERY previously emitted token, and in Hebrew the prefix letters (ו/ה/ב/ל/ש)
+# and the space recur constantly, so a 1.1 penalty over a dense 30 s window
+# is an unmeasured accuracy risk. The n-gram block and the compression-ratio
+# fallback target loops specifically. 1.1 is the issue's suggested value.
+DEFAULT_REPETITION_PENALTY = 1.0
+# OpenAI Whisper's own threshold. See compression_ratio() for why the ratio is
+# taken one byte per character — UTF-8 Hebrew would otherwise sit near 2.4.
+DEFAULT_MAX_COMPRESSION_RATIO = 2.4
+# Attempt 0 is always greedy (temperature 0); these are the RE-decodes. Two
+# retries bound the cost at three decodes per failing chunk on a shared GPU.
+DEFAULT_FALLBACK_TEMPERATURES: tuple[float, ...] = (0.2, 0.4)
+LOGPROB_STATS = ("mean", "median")
+DEFAULT_LOGPROB_STAT = "mean"
+VAD_MODES = ("auto", "off")
+DEFAULT_VAD_MODE = "auto"
+DEFAULT_VAD_THRESHOLD = 0.5
+DEFAULT_VAD_MIN_SPEECH_MS = 250.0
+# Silero's v5+ model reads exactly 512 samples (32 ms) per call at 16 kHz.
+VAD_WINDOW_SAMPLES = 512
+
+
+def parse_no_repeat_ngram_size(raw: str | None) -> int:
+    """``STT_NO_REPEAT_NGRAM_SIZE``: a positive int; ``0``/``off``/empty
+    disables; a typo or a negative value falls back to the default."""
+    if raw is None:
+        return DEFAULT_NO_REPEAT_NGRAM_SIZE
+    value = raw.strip().lower()
+    if value in _OFF_TOKENS or value == "0":
+        return 0
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_NO_REPEAT_NGRAM_SIZE
+    return parsed if parsed > 0 else DEFAULT_NO_REPEAT_NGRAM_SIZE
+
+
+def parse_repetition_penalty(raw: str | None) -> float:
+    """``STT_REPETITION_PENALTY``: a float >= 1.0 (1.0 = off); ``off``/empty
+    is 1.0. Below 1.0 would REWARD repeats, so it falls back to the default,
+    as does a typo."""
+    if raw is None:
+        return DEFAULT_REPETITION_PENALTY
+    value = raw.strip().lower()
+    if value in _OFF_TOKENS:
+        return 1.0
+    try:
+        parsed = float(value)
+    except ValueError:
+        return DEFAULT_REPETITION_PENALTY
+    if not math.isfinite(parsed) or parsed < 1.0:
+        return DEFAULT_REPETITION_PENALTY
+    return parsed
+
+
+def parse_max_compression_ratio(raw: str | None) -> float | None:
+    """``STT_COMPRESSION_RATIO_MAX``: a positive float; ``off``/``0``/empty
+    disables the check (``None``); a typo falls back to the default."""
+    if raw is None:
+        return DEFAULT_MAX_COMPRESSION_RATIO
+    value = raw.strip().lower()
+    if value in _OFF_TOKENS or value == "0":
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return DEFAULT_MAX_COMPRESSION_RATIO
+    return parsed if parsed > 0 and math.isfinite(parsed) else DEFAULT_MAX_COMPRESSION_RATIO
+
+
+def parse_fallback_temperatures(raw: str | None) -> tuple[float, ...]:
+    """``STT_TEMPERATURE_FALLBACK``: comma-separated sampling temperatures in
+    (0, 1] for the re-decodes; ``off``/empty means no retry (a failing chunk
+    is dropped on its first decode, the previous behaviour). Any entry that
+    is not a number in (0, 1] invalidates the whole list -> the default."""
+    if raw is None:
+        return DEFAULT_FALLBACK_TEMPERATURES
+    value = raw.strip().lower()
+    if value in _OFF_TOKENS:
+        return ()
+    out: list[float] = []
+    for part in value.split(","):
+        try:
+            temp = float(part.strip())
+        except ValueError:
+            return DEFAULT_FALLBACK_TEMPERATURES
+        if not (0.0 < temp <= 1.0):
+            return DEFAULT_FALLBACK_TEMPERATURES
+        out.append(temp)
+    return tuple(out)
+
+
+def parse_logprob_stat(raw: str | None) -> str:
+    """``STT_LOGPROB_STAT``: ``mean`` (default — the statistic
+    ``STT_MIN_AVG_LOGPROB``'s -0.35 was measured on) or ``median``."""
+    value = (raw or "").strip().lower()
+    return value if value in LOGPROB_STATS else DEFAULT_LOGPROB_STAT
+
+
+def parse_vad_mode(raw: str | None) -> str:
+    """``STT_VAD``: ``auto`` (default — use Silero when it loads, otherwise
+    decode every chunk as before) or ``off``."""
+    value = (raw or "").strip().lower()
+    if not value:
+        return DEFAULT_VAD_MODE
+    if value in _OFF_TOKENS or value == "0":
+        return "off"
+    return value if value in VAD_MODES else DEFAULT_VAD_MODE
+
+
+def _parse_float(raw: str | None, default: float, lo: float, hi: float) -> float:
+    try:
+        parsed = float((raw or "").strip())
+    except ValueError:
+        return default
+    return parsed if lo <= parsed <= hi else default
+
+
+def compression_ratio(text: str) -> float:
+    """zlib compression ratio of *text*, OpenAI Whisper's loop detector
+    (> 2.4 there means "repetitive"). ``0.0`` for empty text.
+
+    Taken over ONE BYTE PER DISTINCT CHARACTER rather than UTF-8: every
+    Hebrew letter shares the 0xD7 lead byte, which alone makes ordinary
+    Hebrew prose compress better — ~575 characters of it score 2.3 in UTF-8
+    (a hair under the gate) but ~1.7 here, the same as English, so the
+    English-calibrated threshold means the same thing. A text with more than
+    256 distinct characters falls back to UTF-8."""
+    import zlib
+
+    if not text:
+        return 0.0
+    codes: dict[str, int] = {}
+    buf = bytearray()
+    for ch in text:
+        code = codes.setdefault(ch, len(codes))
+        if code > 255:
+            buf = bytearray(text.encode("utf-8"))
+            break
+        buf.append(code)
+    data = bytes(buf)
+    return len(data) / len(zlib.compress(data))
+
+
+def confidence(token_logprobs: Sequence[float], stat: str = DEFAULT_LOGPROB_STAT) -> float | None:
+    """The per-chunk confidence the gate compares against
+    ``STT_MIN_AVG_LOGPROB``: the mean (default, today's statistic) or the
+    median of the text tokens' log-probabilities. ``None`` without tokens."""
+    if not token_logprobs:
+        return None
+    if stat == "median":
+        import statistics
+
+        return statistics.median(token_logprobs)
+    return average_logprob(list(token_logprobs))
+
+
+class DecodeSettings:
+    """Decode-time loop prevention passed to every ``generate`` call."""
+
+    def __init__(
+        self,
+        no_repeat_ngram_size: int = DEFAULT_NO_REPEAT_NGRAM_SIZE,
+        repetition_penalty: float = DEFAULT_REPETITION_PENALTY,
+    ) -> None:
+        self.no_repeat_ngram_size = no_repeat_ngram_size
+        self.repetition_penalty = repetition_penalty
+
+
+class DecodePolicy:
+    """The gates and the fallback ladder one chunk is judged by."""
+
+    def __init__(
+        self,
+        min_logprob: float | None = DEFAULT_MIN_AVG_LOGPROB,
+        logprob_stat: str = DEFAULT_LOGPROB_STAT,
+        max_compression_ratio: float | None = DEFAULT_MAX_COMPRESSION_RATIO,
+        fallback_temperatures: Sequence[float] = DEFAULT_FALLBACK_TEMPERATURES,
+    ) -> None:
+        self.min_logprob = min_logprob
+        self.logprob_stat = logprob_stat
+        self.max_compression_ratio = max_compression_ratio
+        self.fallback_temperatures = tuple(fallback_temperatures)
+
+    @property
+    def temperatures(self) -> tuple[float, ...]:
+        return (0.0, *self.fallback_temperatures)
+
+
+def build_generate_kwargs(language: str, temperature: float, settings: DecodeSettings) -> dict:
+    """The keyword arguments for one ``model.generate`` attempt. With every
+    knob off and ``temperature == 0`` this is exactly the call the server made
+    before issue #329. A fallback attempt samples from the FULL distribution
+    (``top_k=0``, ``top_p=1.0``, as OpenAI Whisper does), so ``scores *
+    temperature`` are the processed logits and the confidence gate reads the
+    same quantity on every attempt."""
+    kwargs: dict = {
+        "language": language,
+        "task": "transcribe",
+        "max_new_tokens": MAX_NEW_TOKENS,
+        "return_dict_in_generate": True,
+        "output_scores": True,
+    }
+    if settings.no_repeat_ngram_size > 0:
+        kwargs["no_repeat_ngram_size"] = settings.no_repeat_ngram_size
+    if settings.repetition_penalty != 1.0:
+        kwargs["repetition_penalty"] = settings.repetition_penalty
+    if temperature > 0:
+        kwargs.update(do_sample=True, temperature=temperature, top_k=0, top_p=1.0)
+    return kwargs
+
+
+DECODE_SETTINGS = DecodeSettings(
+    no_repeat_ngram_size=parse_no_repeat_ngram_size(os.environ.get("STT_NO_REPEAT_NGRAM_SIZE")),
+    repetition_penalty=parse_repetition_penalty(os.environ.get("STT_REPETITION_PENALTY")),
+)
+DECODE_POLICY = DecodePolicy(
+    min_logprob=MIN_AVG_LOGPROB,
+    logprob_stat=parse_logprob_stat(os.environ.get("STT_LOGPROB_STAT")),
+    max_compression_ratio=parse_max_compression_ratio(os.environ.get("STT_COMPRESSION_RATIO_MAX")),
+    fallback_temperatures=parse_fallback_temperatures(os.environ.get("STT_TEMPERATURE_FALLBACK")),
+)
+VAD_MODE = parse_vad_mode(os.environ.get("STT_VAD"))
+VAD_THRESHOLD = _parse_float(os.environ.get("STT_VAD_THRESHOLD"), DEFAULT_VAD_THRESHOLD, 0.0, 1.0)
+VAD_MIN_SPEECH_MS = _parse_float(
+    os.environ.get("STT_VAD_MIN_SPEECH_MS"), DEFAULT_VAD_MIN_SPEECH_MS, 0.0, 30000.0
+)
+
+
 def strip_bidi_controls(text: str) -> str:
     """Remove invisible bidi control characters; every visible character,
     Hebrew or not, is left exactly as it was."""
@@ -465,6 +719,192 @@ def join_chunk_texts(texts: Sequence[str]) -> str:
     return " ".join(t for t in (x.strip() for x in texts) if t)
 
 
+def chunk_has_speech(
+    samples: Sequence[float],
+    sample_rate: int,
+    speech_prob,
+    threshold: float = DEFAULT_VAD_THRESHOLD,
+    min_speech_ms: float = DEFAULT_VAD_MIN_SPEECH_MS,
+) -> bool:
+    """True iff at least *min_speech_ms* of *samples* (16 kHz) score at or
+    above *threshold* on *speech_prob* — a callable taking one
+    :data:`VAD_WINDOW_SAMPLES`-sample window and returning a probability
+    (Silero in the container, a fake in the tests).
+
+    Stops at the first window that reaches the minimum, so a chunk of speech
+    costs a handful of VAD calls and only a silent chunk is scanned to the
+    end (and then saves a Whisper decode). A VAD error counts as speech: the
+    chunk is decoded exactly as it would have been without the VAD.
+    ``speech_prob.reset()``, when present, runs once per chunk (Silero is
+    stateful across windows)."""
+    window_ms = VAD_WINDOW_SAMPLES * 1000.0 / sample_rate
+    needed = max(1, math.ceil(min_speech_ms / window_ms))
+    reset = getattr(speech_prob, "reset", None)
+    try:
+        if reset is not None:
+            reset()
+        hits = 0
+        for start in range(0, len(samples) - VAD_WINDOW_SAMPLES + 1, VAD_WINDOW_SAMPLES):
+            if speech_prob(samples[start : start + VAD_WINDOW_SAMPLES]) >= threshold:
+                hits += 1
+                if hits >= needed:
+                    return True
+    except Exception as exc:  # the VAD is an optimisation, never a gate on failure
+        logger.warning("stt_vad error=%s: %s — decoding the chunk", type(exc).__name__, exc)
+        return True
+    return False
+
+
+class ChunkOutcome:
+    """What :func:`decode_chunk` decided for one chunk."""
+
+    def __init__(
+        self,
+        text: str,
+        attempts: int,
+        dropped: bool = False,
+        reason: str = "",
+        avg_logprob: float | None = None,
+        median_logprob: float | None = None,
+        compression_ratio: float = 0.0,
+    ) -> None:
+        self.text = text
+        self.attempts = attempts
+        self.dropped = dropped
+        self.reason = reason
+        self.avg_logprob = avg_logprob
+        self.median_logprob = median_logprob
+        self.compression_ratio = compression_ratio
+
+    @property
+    def retried(self) -> bool:
+        return self.attempts > 1
+
+
+def clean_transcript(raw: str) -> str:
+    """Bidi controls stripped, the leading space Whisper leaves removed, and
+    a tags-only transcript ('(צחוק)') turned into ``""``."""
+    return filter_non_speech_only(strip_bidi_controls(raw).strip())
+
+
+def _fmt(value: float | None) -> str:
+    return "none" if value is None else f"{value:.2f}"
+
+
+def _failure_reasons(policy: DecodePolicy, conf: float | None, ratio: float) -> list[str]:
+    reasons = []
+    if is_low_confidence(conf, policy.min_logprob):
+        reasons.append("low_logprob")
+    if policy.max_compression_ratio is not None and ratio > policy.max_compression_ratio:
+        reasons.append("compression_ratio")
+    return reasons
+
+
+def decode_chunk(samples, decode, policy: DecodePolicy, label: str = "1/1") -> ChunkOutcome:
+    """Decode one chunk through the fallback ladder.
+
+    *decode(samples, temperature)* returns ``(raw_text, text_token_logprobs)``.
+    Attempt 0 is greedy; while an attempt fails the confidence gate
+    (``STT_MIN_AVG_LOGPROB`` on ``STT_LOGPROB_STAT``) or the compression-ratio
+    check (``STT_COMPRESSION_RATIO_MAX``), the next temperature in
+    ``STT_TEMPERATURE_FALLBACK`` is tried; the first attempt passing both is
+    kept. If none does, the chunk is dropped — the policy the gate always had.
+    An empty (or tags-only) transcript is silence: kept as ``""``, never
+    retried. Logs one ``stt_chunk event=retry`` line per failed attempt that
+    is followed by another, and one ``stt_chunk event=dropped`` per drop."""
+    temperatures = policy.temperatures
+    outcome = ChunkOutcome("", 0)
+    for attempt, temperature in enumerate(temperatures):
+        raw, token_logprobs = decode(samples, temperature)
+        text = clean_transcript(raw)
+        if not text:
+            return ChunkOutcome("", attempt + 1)
+        mean = average_logprob(list(token_logprobs))
+        median = confidence(token_logprobs, "median")
+        ratio = compression_ratio(text)
+        conf = median if policy.logprob_stat == "median" else mean
+        reasons = _failure_reasons(policy, conf, ratio)
+        outcome = ChunkOutcome(text, attempt + 1, False, ",".join(reasons), mean, median, ratio)
+        if not reasons:
+            return outcome
+        fields = (
+            f"chunk={label} attempt={attempt} temperature={temperature:.1f} "
+            f"reason={outcome.reason} avg_logprob={_fmt(mean)} "
+            f"median_logprob={_fmt(median)} compression_ratio={ratio:.2f} "
+            f"tokens={len(token_logprobs)} stat={policy.logprob_stat} "
+            f"min_logprob={_fmt(policy.min_logprob)} "
+            f"max_compression_ratio={_fmt(policy.max_compression_ratio)}"
+        )
+        if attempt + 1 < len(temperatures):
+            logger.info("stt_chunk event=retry %s", fields)
+        else:
+            logger.info("stt_chunk event=dropped %s text=%r", fields, text[:120])
+    outcome.text = ""
+    outcome.dropped = True
+    return outcome
+
+
+class RequestSummary:
+    """Per-request counts for the ``stt_request`` log line."""
+
+    def __init__(self) -> None:
+        self.chunks = 0
+        self.vad_skipped = 0
+        self.decoded = 0
+        self.decodes = 0
+        self.retried = 0
+        self.recovered = 0
+        self.dropped = 0
+
+    def log_line(self, seconds: float) -> str:
+        return (
+            f"stt_request chunks={self.chunks} decoded={self.decoded} "
+            f"vad_skipped={self.vad_skipped} retried={self.retried} "
+            f"recovered={self.recovered} dropped={self.dropped} "
+            f"decodes={self.decodes} seconds={seconds:.1f}"
+        )
+
+
+def transcribe_chunks(windows, decode, policy: DecodePolicy, has_speech=None, seconds=0.0):
+    """Run every chunk through the optional VAD skip and :func:`decode_chunk`.
+
+    Returns ``(texts, summary)`` — one text per window, in order (``""`` for a
+    skipped, silent or dropped one) — and logs one ``stt_request`` summary
+    line. *has_speech(window)* is ``None`` when the VAD is off or unavailable:
+    then every chunk is decoded, exactly as before.
+
+    The VAD only judges a request of MORE than one window — a long upload,
+    where whole 30 s windows of silence are what hallucinate. A single window
+    (every realtime turn, which the bridge's own Silero opened on one
+    above-threshold chunk) is never second-guessed: a one-word reply may hold
+    less than ``STT_VAD_MIN_SPEECH_MS`` of speech."""
+    summary = RequestSummary()
+    texts: list[str] = []
+    total = len(windows)
+    if total < 2:
+        has_speech = None
+    for index, window in enumerate(windows, start=1):
+        summary.chunks += 1
+        label = f"{index}/{total}"
+        if has_speech is not None and not has_speech(window):
+            summary.vad_skipped += 1
+            logger.info("stt_chunk event=skipped chunk=%s reason=no_speech", label)
+            texts.append("")
+            continue
+        summary.decoded += 1
+        outcome = decode_chunk(window, decode, policy, label)
+        summary.decodes += outcome.attempts
+        if outcome.retried:
+            summary.retried += 1
+            if not outcome.dropped:
+                summary.recovered += 1
+        if outcome.dropped:
+            summary.dropped += 1
+        texts.append(outcome.text)
+    logger.info("%s", summary.log_line(seconds))
+    return texts, summary
+
+
 def build_success_response(text: str) -> dict:
     """Same top-level shape as ``listen_server.py``'s ``return {"text": text}``."""
     return {"text": text}
@@ -533,6 +973,60 @@ if _FASTAPI_AVAILABLE:
             logger.info("Model loaded.")
         return _model, _processor
 
+    _vad = None
+    _vad_loaded = False
+
+    def _load_silero():
+        """Silero VAD from the ``silero-vad`` wheel's bundled TorchScript file,
+        on CPU. Loaded by PATH, never ``import silero_vad``: that package's
+        ``__init__`` imports torchaudio, which this image does not promise
+        (Dockerfile.whisper-stt installs the wheel ``--no-deps`` so the base
+        image's validated torch is never replaced). Returns a callable
+        ``prob(window) -> float`` with a ``reset()`` attribute."""
+        import importlib.util
+        import threading
+
+        import torch
+
+        spec = importlib.util.find_spec("silero_vad")
+        if spec is None or not spec.submodule_search_locations:
+            raise ImportError("silero-vad is not installed")
+        path = os.path.join(list(spec.submodule_search_locations)[0], "data", "silero_vad.jit")
+        model = torch.jit.load(path, map_location="cpu").eval()
+        lock = threading.Lock()
+
+        def prob(window) -> float:
+            with lock, torch.no_grad():
+                return float(model(torch.tensor(window, dtype=torch.float32), SAMPLE_RATE).item())
+
+        prob.reset = model.reset_states
+        prob([0.0] * VAD_WINDOW_SAMPLES)  # fail at load, not on the first request
+        return prob
+
+    def get_vad():
+        """The Silero callable, or ``None`` when ``STT_VAD=off`` or Silero
+        cannot load — then every chunk is decoded, the previous behaviour."""
+        global _vad, _vad_loaded
+        if VAD_MODE == "off":
+            return None
+        if not _vad_loaded:
+            _vad_loaded = True
+            try:
+                _vad = _load_silero()
+                logger.info(
+                    "stt_vad silero loaded threshold=%.2f min_speech_ms=%.0f",
+                    VAD_THRESHOLD,
+                    VAD_MIN_SPEECH_MS,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "stt_vad silero unavailable (%s: %s) — decoding every chunk",
+                    type(exc).__name__,
+                    exc,
+                )
+                _vad = None
+        return _vad
+
     def _run_warmup() -> bool:
         """A tiny (1s of zeros) transcription on CUDA — readiness stays
         non-200 until this succeeds, not merely until the model object
@@ -564,6 +1058,7 @@ if _FASTAPI_AVAILABLE:
     async def startup():
         get_model_and_processor()
         _run_warmup()
+        get_vad()
 
     @app.get("/v1/health/ready")
     async def health():
@@ -668,47 +1163,45 @@ if _FASTAPI_AVAILABLE:
         model, processor = get_model_and_processor()
         eot = processor.tokenizer.convert_tokens_to_ids("<|endoftext|>")
 
-        def transcribe_window(window: Sequence[float]) -> str:
+        def decode(window: Sequence[float], temperature: float):
+            """One Whisper attempt -> (raw text, text-token log-probabilities)."""
             audio = np.array(window, dtype=np.float32)
             inputs = processor(audio, sampling_rate=SAMPLE_RATE, return_tensors="pt")
             input_features = inputs.input_features.to("cuda", dtype=torch.float16)
+            kwargs = build_generate_kwargs(lang, temperature, DECODE_SETTINGS)
             with torch.no_grad():
-                out = model.generate(
-                    input_features,
-                    language=lang,
-                    task="transcribe",
-                    max_new_tokens=MAX_NEW_TOKENS,
-                    return_dict_in_generate=True,
-                    output_scores=True,
-                )
+                out = model.generate(input_features, **kwargs)
             n_new = len(out.scores)
             new_ids = out.sequences[0][-n_new:] if n_new else out.sequences[0][:0]
+            # A sampling attempt's scores are the processed logits divided by
+            # the temperature (top-k/top-p are off, build_generate_kwargs);
+            # undo that so every attempt is gated on the same quantity.
+            scale = temperature if temperature > 0 else 1.0
             token_logprobs = [
-                torch.log_softmax(step[0].float(), dim=-1)[tok].item()
+                torch.log_softmax(step[0].float() * scale, dim=-1)[tok].item()
                 for step, tok in zip(out.scores, new_ids)
                 if tok.item() < eot  # text tokens only — specials sit at/after <|endoftext|>
             ]
             text = processor.batch_decode(out.sequences, skip_special_tokens=True)[0]
-            # Whisper's decode leaves a leading space (measured live: ' מה מזג ...');
-            # listen_server.py's callers never see one, so strip before filtering.
-            text = filter_non_speech_only(strip_bidi_controls(text).strip())
-            confidence = average_logprob(token_logprobs)
-            # Gated per window: one hallucinated silent window is dropped on
-            # its own instead of poisoning (or rescuing) its neighbours.
-            if text and is_low_confidence(confidence, MIN_AVG_LOGPROB):
-                logger.info(
-                    "dropping low-confidence transcript (avg_logprob %.2f < %.2f): %r",
-                    confidence,
-                    MIN_AVG_LOGPROB,
-                    text,
-                )
-                text = ""
-            return text
+            return text, token_logprobs
 
         chunks = plan_chunks(floats, SAMPLE_RATE)
+        seconds = len(floats) / SAMPLE_RATE
         if len(chunks) > 1:
-            logger.info("transcribing %.1fs in %d windows", len(floats) / SAMPLE_RATE, len(chunks))
-        text = join_chunk_texts([transcribe_window(floats[a:b]) for a, b in chunks])
+            logger.info("transcribing %.1fs in %d windows", seconds, len(chunks))
+        vad = get_vad()
+
+        def window_has_speech(window: Sequence[float]) -> bool:
+            return chunk_has_speech(window, SAMPLE_RATE, vad, VAD_THRESHOLD, VAD_MIN_SPEECH_MS)
+
+        has_speech = window_has_speech if vad is not None else None
+
+        # Gated per window: one hallucinated silent window is dropped on its
+        # own instead of poisoning (or rescuing) its neighbours.
+        texts, _summary = transcribe_chunks(
+            [floats[a:b] for a, b in chunks], decode, DECODE_POLICY, has_speech, seconds
+        )
+        text = join_chunk_texts(texts)
 
         return build_success_response(text)
 

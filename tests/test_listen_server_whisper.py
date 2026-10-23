@@ -542,3 +542,351 @@ class TestJoinChunkTexts:
 
     def test_all_empty_is_empty(self, lsw) -> None:
         assert lsw.join_chunk_texts(["", ""]) == ""
+
+
+# --------------------------------------------------------------------------
+# Issue #329: decode-time loop prevention, compression-ratio gate, retry
+# before dropping, Silero silence skipping, and drop/retry observability.
+# Every model call below is a FAKE — no torch, no transformers, no weights.
+# --------------------------------------------------------------------------
+
+
+_SPEECH = "שלום לכולם, היום אנחנו נדבר על הפרויקט החדש שלנו ועל הדרך שבה אנחנו עובדים."
+_LOOP = "נפשט קרוב. -" * 30  # the shape of the issue's loop, not its recording
+
+
+class TestGenerateKwargs:
+    def test_all_knobs_off_is_exactly_todays_call(self, lsw) -> None:
+        settings = lsw.DecodeSettings(no_repeat_ngram_size=0, repetition_penalty=1.0)
+        assert lsw.build_generate_kwargs("he", 0.0, settings) == {
+            "language": "he",
+            "task": "transcribe",
+            "max_new_tokens": lsw.MAX_NEW_TOKENS,
+            "return_dict_in_generate": True,
+            "output_scores": True,
+        }
+
+    def test_loop_prevention_knobs_reach_generate(self, lsw) -> None:
+        settings = lsw.DecodeSettings(no_repeat_ngram_size=6, repetition_penalty=1.1)
+        kwargs = lsw.build_generate_kwargs("he", 0.0, settings)
+        assert kwargs["no_repeat_ngram_size"] == 6
+        assert kwargs["repetition_penalty"] == pytest.approx(1.1)
+        assert "do_sample" not in kwargs  # attempt 0 stays greedy
+
+    def test_a_fallback_attempt_samples_from_the_full_distribution(self, lsw) -> None:
+        kwargs = lsw.build_generate_kwargs("he", 0.4, lsw.DecodeSettings())
+        assert kwargs["do_sample"] is True
+        assert kwargs["temperature"] == pytest.approx(0.4)
+        # top-k/top-p off, so scores * temperature are the processed logits
+        # and the confidence gate reads the same quantity on every attempt.
+        assert kwargs["top_k"] == 0
+        assert kwargs["top_p"] == pytest.approx(1.0)
+
+    def test_defaults(self, lsw) -> None:
+        settings = lsw.DecodeSettings()
+        assert settings.no_repeat_ngram_size == lsw.DEFAULT_NO_REPEAT_NGRAM_SIZE == 6
+        assert settings.repetition_penalty == lsw.DEFAULT_REPETITION_PENALTY == 1.0
+
+
+class TestDecodeKnobParsing:
+    @pytest.mark.parametrize("raw", ["0", "off", "OFF", "none", "", " "])
+    def test_ngram_off(self, lsw, raw) -> None:
+        assert lsw.parse_no_repeat_ngram_size(raw) == 0
+
+    def test_ngram_value_and_typo(self, lsw) -> None:
+        assert lsw.parse_no_repeat_ngram_size(None) == 6
+        assert lsw.parse_no_repeat_ngram_size("4") == 4
+        assert lsw.parse_no_repeat_ngram_size("four") == 6
+        assert lsw.parse_no_repeat_ngram_size("-3") == 6
+
+    @pytest.mark.parametrize("raw", ["1", "1.0", "off", "none", ""])
+    def test_repetition_penalty_off(self, lsw, raw) -> None:
+        assert lsw.parse_repetition_penalty(raw) == 1.0
+
+    def test_repetition_penalty_value_and_typo(self, lsw) -> None:
+        assert lsw.parse_repetition_penalty(None) == 1.0
+        assert lsw.parse_repetition_penalty("1.1") == pytest.approx(1.1)
+        assert lsw.parse_repetition_penalty("1,1") == 1.0
+        assert lsw.parse_repetition_penalty("0.5") == 1.0  # < 1 would REWARD repeats
+
+    @pytest.mark.parametrize("raw", ["off", "none", "", "0"])
+    def test_compression_ratio_gate_off(self, lsw, raw) -> None:
+        assert lsw.parse_max_compression_ratio(raw) is None
+
+    def test_compression_ratio_value_and_typo(self, lsw) -> None:
+        assert lsw.parse_max_compression_ratio(None) == pytest.approx(2.4)
+        assert lsw.parse_max_compression_ratio("3") == pytest.approx(3.0)
+        assert lsw.parse_max_compression_ratio("two") == pytest.approx(2.4)
+
+    @pytest.mark.parametrize("raw", ["off", "none", "", "  "])
+    def test_fallback_temperatures_off(self, lsw, raw) -> None:
+        assert lsw.parse_fallback_temperatures(raw) == ()
+
+    def test_fallback_temperatures_value_and_typo(self, lsw) -> None:
+        assert lsw.parse_fallback_temperatures(None) == (0.2, 0.4)
+        assert lsw.parse_fallback_temperatures("0.2, 0.4,0.6") == (0.2, 0.4, 0.6)
+        assert lsw.parse_fallback_temperatures("0.2,hot") == (0.2, 0.4)
+        assert lsw.parse_fallback_temperatures("0,0.2") == (0.2, 0.4)  # 0 is attempt 0
+        assert lsw.parse_fallback_temperatures("0.2,1.5") == (0.2, 0.4)
+
+    def test_logprob_stat(self, lsw) -> None:
+        assert lsw.parse_logprob_stat(None) == "mean"
+        assert lsw.parse_logprob_stat("median") == "median"
+        assert lsw.parse_logprob_stat(" MEDIAN ") == "median"
+        assert lsw.parse_logprob_stat("mode") == "mean"
+
+    def test_vad_mode(self, lsw) -> None:
+        assert lsw.parse_vad_mode(None) == "auto"
+        assert lsw.parse_vad_mode("off") == "off"
+        assert lsw.parse_vad_mode("false") == "off"
+        assert lsw.parse_vad_mode("0") == "off"
+        assert lsw.parse_vad_mode("silero") == "auto"
+
+
+class TestCompressionRatio:
+    def test_empty_is_zero(self, lsw) -> None:
+        assert lsw.compression_ratio("") == 0.0
+
+    def test_a_loop_is_far_above_the_gate(self, lsw) -> None:
+        assert lsw.compression_ratio(_LOOP) > 10
+
+    def test_ordinary_hebrew_is_comparable_to_english(self, lsw) -> None:
+        """UTF-8 gives every Hebrew letter the same lead byte, which alone
+        pushes ~575 chars of ordinary Hebrew prose to ~2.3 — a hair under
+        OpenAI's English-calibrated 2.4. The ratio is therefore taken over
+        one byte per character, where the same prose scores ~1.7."""
+        prose = (_SPEECH + " ") * 1 + (
+            "אז מה שקרה זה שהלכתי לחנות ולא היה להם את מה שחיפשתי, אז חזרתי "
+            "הביתה והזמנתי באינטרנט. זה הגיע אחרי שבוע, וכשפתחתי את החבילה "
+            "ראיתי שזה בכלל לא הצבע שהזמנתי. התקשרתי לשירות לקוחות והם אמרו "
+            "שיחליפו לי, אבל עד היום לא קיבלתי כלום."
+        )
+        assert lsw.compression_ratio(prose) < 2.0
+
+    def test_speech_followed_by_a_loop_trips_the_gate(self, lsw) -> None:
+        assert lsw.compression_ratio(_SPEECH + " " + "נפשט קרוב. -" * 20) > 2.4
+
+
+class TestConfidenceStat:
+    def test_mean_is_todays_statistic(self, lsw) -> None:
+        assert lsw.confidence([-0.1, -0.1, -2.5], "mean") == pytest.approx(-0.9)
+
+    def test_median_ignores_one_rare_token(self, lsw) -> None:
+        assert lsw.confidence([-0.1, -0.1, -2.5], "median") == pytest.approx(-0.1)
+
+    def test_none_without_tokens(self, lsw) -> None:
+        assert lsw.confidence([], "median") is None
+
+
+class TestChunkHasSpeech:
+    def test_silence_has_no_speech(self, lsw) -> None:
+        calls = []
+
+        def prob(window):
+            calls.append(len(window))
+            return 0.01
+
+        assert not lsw.chunk_has_speech([0.0] * 16000, 16000, prob, 0.5, 250)
+        assert calls and all(n == 512 for n in calls)
+
+    def test_speech_stops_early(self, lsw) -> None:
+        calls = []
+
+        def prob(window):
+            calls.append(1)
+            return 0.9
+
+        assert lsw.chunk_has_speech([0.0] * 16000 * 30, 16000, prob, 0.5, 250)
+        # 250 ms at 32 ms per window -> 8 windows, never the whole 30 s.
+        assert len(calls) == 8
+
+    def test_a_cough_shorter_than_the_minimum_is_not_speech(self, lsw) -> None:
+        seq = iter([0.9, 0.9] + [0.0] * 1000)
+        assert not lsw.chunk_has_speech([0.0] * 16000 * 5, 16000, lambda w: next(seq), 0.5, 250)
+
+    def test_a_vad_error_counts_as_speech(self, lsw) -> None:
+        def boom(window):
+            raise RuntimeError("vad died")
+
+        assert lsw.chunk_has_speech([0.0] * 16000, 16000, boom, 0.5, 250)
+
+    def test_reset_is_called_once_per_chunk(self, lsw) -> None:
+        resets = []
+
+        def prob(window):
+            return 0.0
+
+        prob.reset = lambda: resets.append(1)
+        lsw.chunk_has_speech([0.0] * 4000, 16000, prob, 0.5, 250)
+        assert resets == [1]
+
+
+class _Decoder:
+    """A fake Whisper: returns a scripted (text, token_logprobs) per call and
+    records the temperature of every attempt."""
+
+    def __init__(self, *results) -> None:
+        self.results = list(results)
+        self.temperatures: list[float] = []
+
+    def __call__(self, samples, temperature):
+        self.temperatures.append(temperature)
+        return self.results[min(len(self.temperatures) - 1, len(self.results) - 1)]
+
+
+def _policy(lsw, **over):
+    base = dict(
+        min_logprob=-0.35,
+        logprob_stat="mean",
+        max_compression_ratio=2.4,
+        fallback_temperatures=(0.2, 0.4),
+    )
+    base.update(over)
+    return lsw.DecodePolicy(**base)
+
+
+class TestDecodeChunk:
+    def test_confident_speech_is_kept_on_the_first_attempt(self, lsw) -> None:
+        dec = _Decoder((_SPEECH, [-0.05] * 20))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == _SPEECH
+        assert outcome.attempts == 1 and not outcome.dropped
+        assert dec.temperatures == [0.0]
+
+    def test_a_loop_is_re_decoded_with_temperature_fallback(self, lsw) -> None:
+        dec = _Decoder((_LOOP, [-0.01] * 440), (_SPEECH, [-0.1] * 20))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == _SPEECH
+        assert dec.temperatures == [0.0, 0.2]
+        assert outcome.attempts == 2 and outcome.retried and not outcome.dropped
+
+    def test_low_confidence_is_retried_before_dropping(self, lsw) -> None:
+        dec = _Decoder((_SPEECH, [-0.8] * 20), (_SPEECH, [-0.2] * 20))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == _SPEECH
+        assert dec.temperatures == [0.0, 0.2]
+
+    def test_every_attempt_failing_drops_the_chunk(self, lsw) -> None:
+        dec = _Decoder((_SPEECH, [-0.9] * 20))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == "" and outcome.dropped
+        assert outcome.reason == "low_logprob"
+        assert dec.temperatures == [0.0, 0.2, 0.4]
+
+    def test_a_loop_that_never_clears_is_dropped(self, lsw) -> None:
+        dec = _Decoder((_LOOP, [-0.01] * 440))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == "" and outcome.reason == "compression_ratio"
+
+    def test_silence_is_never_retried(self, lsw) -> None:
+        dec = _Decoder(("", []))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == "" and not outcome.dropped
+        assert dec.temperatures == [0.0]
+
+    def test_a_tags_only_transcript_is_silence_not_a_retry(self, lsw) -> None:
+        dec = _Decoder((" ‫(צחוק)", [-1.5] * 4))
+        outcome = lsw.decode_chunk([0.0], dec, _policy(lsw))
+        assert outcome.text == "" and not outcome.dropped
+        assert dec.temperatures == [0.0]
+
+    def test_text_is_cleaned_like_today(self, lsw) -> None:
+        dec = _Decoder((" ‫תודה רבה.", [-0.01] * 4))
+        assert lsw.decode_chunk([0.0], dec, _policy(lsw)).text == "תודה רבה."
+
+    def test_all_knobs_off_is_todays_single_greedy_gate(self, lsw) -> None:
+        off = _policy(lsw, max_compression_ratio=None, fallback_temperatures=())
+        loop = _Decoder((_LOOP, [-0.01] * 440))
+        assert lsw.decode_chunk([0.0], loop, off).text == _LOOP.strip()  # today's bug, restored
+        low = _Decoder((_SPEECH, [-0.9] * 20))
+        assert lsw.decode_chunk([0.0], low, off).text == ""
+        assert low.temperatures == [0.0]
+
+    def test_the_gate_off_keeps_everything(self, lsw) -> None:
+        off = _policy(lsw, min_logprob=None, max_compression_ratio=None)
+        dec = _Decoder((_SPEECH, [-3.0] * 20))
+        assert lsw.decode_chunk([0.0], dec, off).text == _SPEECH
+
+    def test_median_gate_keeps_speech_with_one_rare_token(self, lsw) -> None:
+        lps = [-0.05] * 6 + [-6.0]  # mean -0.90, median -0.05
+        mean = lsw.decode_chunk([0.0], _Decoder((_SPEECH, lps)), _policy(lsw))
+        median = lsw.decode_chunk(
+            [0.0], _Decoder((_SPEECH, lps)), _policy(lsw, logprob_stat="median")
+        )
+        assert mean.dropped and median.text == _SPEECH
+
+    def test_outcome_carries_both_statistics_and_the_ratio(self, lsw) -> None:
+        lps = [-0.05] * 6 + [-6.0]
+        outcome = lsw.decode_chunk([0.0], _Decoder((_SPEECH, lps)), _policy(lsw))
+        assert outcome.avg_logprob == pytest.approx(sum(lps) / len(lps))
+        assert outcome.median_logprob == pytest.approx(-0.05)
+        assert outcome.compression_ratio == pytest.approx(lsw.compression_ratio(_SPEECH))
+
+
+class TestTranscribeChunks:
+    def test_vad_skips_silence_without_decoding_it(self, lsw) -> None:
+        dec = _Decoder((_SPEECH, [-0.05] * 20))
+        windows = [[0.0] * 10, [1.0] * 10]
+        texts, summary = lsw.transcribe_chunks(
+            windows, dec, _policy(lsw), has_speech=lambda w: w[0] > 0
+        )
+        assert texts == ["", _SPEECH]
+        assert dec.temperatures == [0.0]  # the silent window never reached Whisper
+        assert summary.chunks == 2 and summary.vad_skipped == 1 and summary.decoded == 1
+
+    def test_a_single_window_request_is_never_vad_skipped(self, lsw) -> None:
+        """A realtime turn is one window the bridge's own Silero already
+        opened on a single above-threshold chunk; a short word ('כן') may hold
+        less than STT_VAD_MIN_SPEECH_MS of speech, so it is not re-judged."""
+        dec = _Decoder((_SPEECH, [-0.05] * 20))
+        asked = []
+        texts, summary = lsw.transcribe_chunks(
+            [[0.0]], dec, _policy(lsw), has_speech=lambda w: asked.append(1) or False
+        )
+        assert texts == [_SPEECH] and asked == [] and summary.vad_skipped == 0
+
+    def test_without_vad_every_chunk_is_decoded(self, lsw) -> None:
+        dec = _Decoder((_SPEECH, [-0.05] * 20))
+        texts, summary = lsw.transcribe_chunks([[0.0], [0.0]], dec, _policy(lsw), None)
+        assert texts == [_SPEECH, _SPEECH] and summary.vad_skipped == 0
+
+    def test_summary_counts_retries_recoveries_and_drops(self, lsw) -> None:
+        dec = _Decoder(
+            (_LOOP, [-0.01] * 440),  # chunk 1, attempt 0: loop
+            (_SPEECH, [-0.1] * 20),  # chunk 1, attempt 1: recovered
+            (_SPEECH, [-0.9] * 20),  # chunk 2: low every time -> dropped
+        )
+        texts, summary = lsw.transcribe_chunks([[0.0], [0.0]], dec, _policy(lsw), None)
+        assert texts == [_SPEECH, ""]
+        assert (summary.retried, summary.recovered, summary.dropped) == (2, 1, 1)
+        assert summary.decodes == 5
+
+    def test_one_log_line_per_retry_and_drop_plus_a_summary(self, lsw, caplog) -> None:
+        dec = _Decoder(
+            (_LOOP, [-0.01] * 440),  # chunk 1, attempt 0: loop -> retry
+            (_SPEECH, [-0.1] * 20),  # chunk 1, attempt 1: recovered
+            (_SPEECH, [-0.9] * 20),  # chunk 2: low -> retry, then dropped
+        )
+        with caplog.at_level("INFO", logger=lsw.logger.name):
+            lsw.transcribe_chunks(
+                [[0.0], [0.0]], dec, _policy(lsw, fallback_temperatures=(0.2,)), None
+            )
+        lines = [r.getMessage() for r in caplog.records]
+        retries = [ln for ln in lines if ln.startswith("stt_chunk event=retry")]
+        drops = [ln for ln in lines if ln.startswith("stt_chunk event=dropped")]
+        summaries = [ln for ln in lines if ln.startswith("stt_request ")]
+        assert len(retries) == 2  # chunk 1 attempt 0 (loop), chunk 2 attempt 0 (low)
+        assert len(drops) == 1
+        assert len(summaries) == 1
+        assert "reason=compression_ratio" in retries[0]
+        for field in (
+            "chunk=1/2",
+            "attempt=0",
+            "temperature=0.0",
+            "avg_logprob=",
+            "median_logprob=",
+        ):
+            assert field in retries[0]
+        assert "compression_ratio=" in drops[0] and "reason=low_logprob" in drops[0]
+        for field in ("chunks=2", "dropped=1", "retried=2", "recovered=1", "vad_skipped=0"):
+            assert field in summaries[0]
