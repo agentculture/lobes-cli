@@ -159,6 +159,12 @@ class SupportedModel:
     modalities: tuple[str, ...] = ()
     mrl_dims: tuple[int, ...] = ()
     normalization: str = ""
+    # A vLLM gear the STOCK lane cannot boot, in one sentence naming what it
+    # needs instead (an image, a lane). "" (the default) means the stock
+    # template serves it. When set, `lobes switch` prints this note INSTEAD of
+    # its stock-template edit notices (which would be wrong advice) and its
+    # `--apply` writes `.env` without restarting, exactly like a non-vLLM gear.
+    serving_note: str = ""
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -1057,8 +1063,77 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
     ),
     SupportedModel(
+        id="nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+        # The `worker` gear (operator decision, 2026-10-26), replacing
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 below (demoted to a kept candidate). It
+        # fits the worker contract unchanged — a fast multimodal (image+video)
+        # coder/doer with tool calls — so roles.py's responsibilities do not
+        # move. It is hosted on the DGX Spark (sm_12x is the only card its IQ2
+        # experts run on); other members reach `worker` through the mesh.
+        #
+        # Verified against the checkpoint's ACTUAL config files at the pinned
+        # revision below, not card prose:
+        #   config.json
+        #     - architectures ["NemotronHPuzzleForCausalLM"] inside a
+        #       `nemotron_h_omni` wrapper; llm_config.max_position_embeddings
+        #       = 262144 (native); a RADIO vision_config, image and video
+        #       context tokens, and no sound_config — text+image+video.
+        #     - quantization_config.quant_method = "modelopt",
+        #       quant_algo = "MIXED_PRECISION": 27,728 IQ2_XXS layers (the
+        #       routed experts, ggml packing, ~2.06 bits), 113 Q8_0 and 80
+        #       W4A16_NVFP4 (the mixer in/out projections). That is what
+        #       makes 74B fit in ~24 GiB.
+        #   README (vLLM serve command): --moe-backend b12x and
+        #   --linear-backend b12x, the `ultra_v3` reasoning parser shipped as
+        #   a plugin file in the checkpoint, --tool-call-parser qwen3_coder,
+        #   and a DFlash draft from the separate -LiLiCorr repo.
+        #
+        # ENGINE: the IQ2 expert path is gated to sm_12x (the Spark's GB10) —
+        # vLLM refuses it on the Orin (sm_87) and nothing has been tried on
+        # the Thor. It needs the card's nightly plus the `b12x` package,
+        # neither of which the fleet's pinned vLLM image carries, so
+        # `lobes switch` to this id will NOT boot on the stock template.
+        role_hint="worker",
+        shape="MoE (~9B active of 74B) hybrid Mamba-2/attention + RADIO ViT (text+image+video)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        # quant_method is "modelopt"; vLLM resolves this MIXED_PRECISION config
+        # to "modelopt_mixed", which is what the Spark lane passes and what
+        # was measured to boot.
+        quantization="modelopt_mixed",
+        # Spark GB10 2026-10-25, docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt:
+        # PART 1 a standalone container (text/image/tools, 231,935-token needle
+        # PASS); PART 2 the Spark's lobes `vllm-worker` lane, reached as
+        # `model=worker` from the spark, thor and spark2 gateways.
+        status="load-tested",
+        doc="nemotron-3.5-bolt-74b-a9b-24gb.md",
+        moe_backend="b12x",
+        speculative_config=(
+            '{"method": "dflash",'
+            ' "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr",'
+            ' "revision": "449d24140160b8e51871bfc0f0a7338abf640aa1",'
+            ' "num_speculative_tokens": 7}'
+        ),
+        hf_revision="c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
+        serving_note=(
+            "needs the card's vLLM nightly plus b12x and an sm_12x card (the"
+            " DGX Spark), with flags the stock lane does not pass — serve it on"
+            " the vllm-worker lane"
+        ),
+        task="generate",
+    ),
+    SupportedModel(
         id="nvidia/Qwen3.6-35B-A3B-NVFP4",
-        # The NEW `worker` gear (issue #244, t1), taking the seat back from
+        # DEMOTED from role_hint="worker" to a kept candidate (2026-10-26,
+        # operator decision): the `worker` seat moves to
+        # nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB above, hosted on the DGX
+        # Spark. Kept, not deleted (cite-don't-delete): every 2026-09-10..
+        # 2026-10-26 worker-lane evidence transcript (the Thor, and the Spark's
+        # proxy to it) was measured against this checkpoint, and the
+        # `thor-worker` shape still renders it. Only role_hint moved.
+        #
+        # (History) The `worker` gear from issue #244, t1, taking the seat back from
         # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 above (demoted to
         # role_hint="candidate", kept — cite-don't-delete). A DISTINCT entry
         # from BOTH other Qwen3.6-35B-A3B-NVFP4 catalog ids: unsloth/'s (the
@@ -1124,7 +1199,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # is left empty (auto-select) rather than carrying an untested guess
         # forward — the outgoing unsloth 35B-A3B worker's own hard-won sm_110
         # lesson was that every FORCED NVFP4 MoE backend was refused there.
-        role_hint="worker",
+        role_hint="candidate",
         shape=(
             "hybrid Mamba/linear-attn MoE (~3B active) + ViT "
             "(text+image+video, self-hosted MTP draft)"
@@ -1133,7 +1208,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt",
-        status="configured",  # declared 2026-09-10 (issue #244); no live boot yet
+        # VALIDATED live on the Jetson AGX Thor 2026-09-10 as the worker:
+        # docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt.
+        status="load-tested",
         doc="nvidia-qwen3.6-35b-a3b-nvfp4.md",
         moe_backend="",
         # Self-hosted draft (no external "model"/"draft_model_id" key), same

@@ -61,7 +61,9 @@ from lobes.profiles.shapes import DEFAULT_HOSTED_ROLES, OPT_IN_CORE_ROLES
 # catalog resolutions are independent as of t2: changing which checkpoint
 # carries role_hint="worker" cannot move associate's default.
 _LIGHTNING_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
-_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# 2026-10-26: worker moved to Nemotron 3.5 Bolt (operator); the nvidia Qwen
+# export is a kept candidate.
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
 
 #: The nine role names that existed BEFORE associate — the no-regression set.
 _PRE_EXISTING_ROLES: tuple[str, ...] = (

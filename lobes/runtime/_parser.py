@@ -123,6 +123,10 @@ _RULES: list[tuple[tuple[str, ...], str]] = [
     # retired NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4, a different family with
     # no such card claim).
     (("nemotron-3.5-lightning", "nemotron_3.5_lightning"), "qwen3_coder"),
+    # NVIDIA Nemotron 3.5 Bolt (the `worker` gear since 2026-10-26): its card's
+    # vLLM serve command passes `--tool-call-parser qwen3_coder`, the same
+    # cross-family claim as Lightning above. Scoped to the Bolt spelling only.
+    (("nemotron-3.5-bolt", "nemotron_3.5_bolt"), "qwen3_coder"),
 ]
 
 

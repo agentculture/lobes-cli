@@ -236,7 +236,9 @@ def test_tier_role_capability_order_is_ascending_with_muse_worker_and_associate(
 # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as a
 # candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
 # also a kept candidate) to nvidia/Qwen3.6-35B-A3B-NVFP4.
-_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# 2026-10-26: worker moved to Nemotron 3.5 Bolt (operator); the nvidia Qwen
+# export is a kept candidate.
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
 
 
 def test_tier_role_map_includes_worker_as_its_own_backend() -> None:

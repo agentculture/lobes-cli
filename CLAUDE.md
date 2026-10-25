@@ -345,6 +345,19 @@ entry, and the `thor-muse` shape all **stay in-tree** (cite-don't-delete) —
 dormant, not deleted — and the tier vocabulary above still ranks `worker` <
 `muse`. See `docs/gemma-4-31b-nvfp4.md`.
 
+**`worker` re-checkpointed again (2026-10-26, operator decision): Nemotron 3.5
+Bolt 74B-A9B 24GB, hosted on the DGX Spark.** The catalog's `worker` role_hint
+moved from `nvidia/Qwen3.6-35B-A3B-NVFP4` (now a kept candidate) to
+`nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB`: a ~9B-active MoE hybrid with a
+RADIO ViT (image+video), 262144 native, DFlash from its LiLiCorr draft, the
+same multimodal-coder contract. Its IQ2 experts run only on sm_12x, so the
+Spark hosts it (cortex is dropped there and served by spark2) and the Thor
+stops hosting worker. The packaged `vllm-worker` lane cannot express its flags
+yet; the Spark serves it through a full command in its hand-kept override. See
+`docs/nemotron-3.5-bolt-74b-a9b-24gb.md` and
+`docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt`. The paragraphs
+below are the record of the Qwen and Lightning workers before it.
+
 **`worker` — the eighth role (opt-in hosting), the fast ground-work DOER —
 RE-CHECKPOINTED AGAIN, issue #244 (2026-09-10), off Lightning onto
 `nvidia/Qwen3.6-35B-A3B-NVFP4`.** Deviation d1 (2026-08-20) had put worker on
@@ -383,8 +396,8 @@ exactly (`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
 like `muse`). Under pressure `worker` sheds (429) exactly like
 cortex/senses/muse.
 
-**Hosted on the Jetson AGX Thor again (#244); the DGX Spark reaches it by
-proxy (2026-09-11).** The Thor serves the lane locally through the
+**(Superseded 2026-10-26 — see the Bolt paragraph above.) Hosted on the Jetson
+AGX Thor again (#244); the DGX Spark reaches it by proxy (2026-09-11).** The Thor serves the lane locally through the
 `thor-worker` shape at `gpu_mem_util=0.45`, full `max_model_len=262144`,
 DFlash speculation, and `WORKER_MAX_NUM_SEQS=1`. One request at a time is
 **by design** and is still to be tested under a real multi-agent load. See

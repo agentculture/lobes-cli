@@ -298,6 +298,22 @@
   msg: tool-call parser (auto-selected): qwen3_coder
   msg: quantization (from catalog): modelopt
   note: non-MTP model — the template ships the MTP default primary's flags; REMOVE these `command:` list items by hand to serve this model (see docs/qwen3.6-27b-text-nvfp4-mtp.md):\n      - '--speculative-config={"method": "mtp", "num_speculative_tokens": 2}'\n      - --trust-remote-code
+### nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+  VLLM_MODEL=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+  VLLM_SERVED_NAME=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB
+  VLLM_PORT=8000
+  VLLM_PURPOSE=balanced
+  VLLM_MACHINE=spark
+  VLLM_MAX_MODEL_LEN=262144
+  VLLM_GPU_MEM_UTIL=0.6
+  VLLM_ATTENTION_BACKEND=flashinfer
+  VLLM_MAX_NUM_SEQS=4
+  VLLM_MAX_NUM_BATCHED_TOKENS=8192
+  VLLM_TOOL_CALL_PARSER=qwen3_coder
+  VLLM_QUANTIZATION=modelopt_mixed
+  msg: tool-call parser (auto-selected): qwen3_coder
+  msg: quantization (from catalog): modelopt_mixed
+  note: the stock vLLM lane cannot boot this gear: it needs the card's vLLM nightly plus b12x and an sm_12x card (the DGX Spark), with flags the stock lane does not pass — serve it on the vllm-worker lane; see docs/nemotron-3.5-bolt-74b-a9b-24gb.md.
 ### nvidia/Qwen3.6-35B-A3B-NVFP4
   VLLM_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4
   VLLM_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4
