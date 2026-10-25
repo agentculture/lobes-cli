@@ -352,8 +352,10 @@ moved from `nvidia/Qwen3.6-35B-A3B-NVFP4` (now a kept candidate) to
 RADIO ViT (image+video), 262144 native, DFlash from its LiLiCorr draft, the
 same multimodal-coder contract. Its IQ2 experts run only on sm_12x, so the
 Spark hosts it (cortex is dropped there and served by spark2) and the Thor
-stops hosting worker. The packaged `vllm-worker` lane cannot express its flags
-yet; the Spark serves it through a full command in its hand-kept override. See
+stops hosting worker. The packaged `vllm-worker` lane expresses its flags
+through `WORKER_*` knobs plus a scaffolded `Dockerfile.vllm-bolt` (recipe in the
+fleet `env.example`); the Spark itself still serves it through a full command in
+its hand-kept override, which predates them. See
 `docs/nemotron-3.5-bolt-74b-a9b-24gb.md` and
 `docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt`. The paragraphs
 below are the record of the Qwen and Lightning workers before it.

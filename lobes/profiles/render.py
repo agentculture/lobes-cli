@@ -225,6 +225,18 @@ _KNOB_ENV_SUFFIX: dict[str, str] = {
     "async_scheduling": "ASYNC_SCHEDULING",
     "prefix_caching": "PREFIX_CACHING",
     "tool_call_parser": "TOOL_CALL_PARSER",
+    # The Bolt worker's flags (2026-10-26): worker-only slots, gated at LOAD.
+    "linear_backend": "LINEAR_BACKEND",
+    "mamba_backend": "MAMBA_BACKEND",
+    "mamba_ssm_cache_dtype": "MAMBA_SSM_CACHE_DTYPE",
+    "mamba_cache_dtype": "MAMBA_CACHE_DTYPE",
+    "mamba_cache_mode": "MAMBA_CACHE_MODE",
+    "kv_cache_memory_bytes": "KV_CACHE_MEMORY_BYTES",
+    "limit_mm_per_prompt": "LIMIT_MM_PER_PROMPT",
+    "video_pruning_rate": "VIDEO_PRUNING_RATE",
+    "media_io_kwargs": "MEDIA_IO_KWARGS",
+    "reasoning_parser_plugin": "REASONING_PARSER_PLUGIN",
+    "revision": "REVISION",
     # declared_peak_gib -> INNEREYE_DECLARED_PEAK_GIB (t6, issue #268): the
     # same generic pass-through every other knob gets, gated to the
     # `innereye` role alone at LOAD time (schema.KNOB_LANE_ROLES). Nothing in

@@ -72,6 +72,18 @@ def test_roles_and_knob_names_are_the_expected_vocabulary() -> None:
         "async_scheduling",
         "prefix_caching",
         "tool_call_parser",
+        # the Bolt worker's flags (2026-10-26)
+        "linear_backend",
+        "mamba_backend",
+        "mamba_ssm_cache_dtype",
+        "mamba_cache_dtype",
+        "mamba_cache_mode",
+        "kv_cache_memory_bytes",
+        "limit_mm_per_prompt",
+        "video_pruning_rate",
+        "media_io_kwargs",
+        "reasoning_parser_plugin",
+        "revision",
         # the innereye co-residency veto's declared peak (t6, issue #268)
         "declared_peak_gib",
     }
