@@ -862,7 +862,7 @@ _GOLDEN_CAPABILITIES = {
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
-        "quant": "modelopt",
+        "quant": "modelopt_mixed",
         "mtp": True,
         # True even though this deployment does not HOST worker: `tools` is a
         # fact about the model the role would serve (the catalog's

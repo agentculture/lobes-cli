@@ -159,6 +159,12 @@ class SupportedModel:
     modalities: tuple[str, ...] = ()
     mrl_dims: tuple[int, ...] = ()
     normalization: str = ""
+    # A vLLM gear the STOCK lane cannot boot, in one sentence naming what it
+    # needs instead (an image, a lane). "" (the default) means the stock
+    # template serves it. When set, `lobes switch` prints this note INSTEAD of
+    # its stock-template edit notices (which would be wrong advice) and its
+    # `--apply` writes `.env` without restarting, exactly like a non-vLLM gear.
+    serving_note: str = ""
 
 
 SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
@@ -1092,10 +1098,14 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
-        quantization="modelopt",
-        # Spark GB10 2026-10-25, standalone container (not a lobes lane):
-        # boots, 1x 262144 with a pinned 4 GiB KV pool, text/image/tools PASS,
-        # 231,935-token needle PASS — docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt.
+        # quant_method is "modelopt"; vLLM resolves this MIXED_PRECISION config
+        # to "modelopt_mixed", which is what the Spark lane passes and what
+        # was measured to boot.
+        quantization="modelopt_mixed",
+        # Spark GB10 2026-10-25, docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt:
+        # PART 1 a standalone container (text/image/tools, 231,935-token needle
+        # PASS); PART 2 the Spark's lobes `vllm-worker` lane, reached as
+        # `model=worker` from the spark, thor and spark2 gateways.
         status="load-tested",
         doc="nemotron-3.5-bolt-74b-a9b-24gb.md",
         moe_backend="b12x",
@@ -1106,6 +1116,11 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
             ' "num_speculative_tokens": 7}'
         ),
         hf_revision="c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
+        serving_note=(
+            "needs the card's vLLM nightly plus b12x and an sm_12x card (the"
+            " DGX Spark), with flags the stock lane does not pass — serve it on"
+            " the vllm-worker lane"
+        ),
         task="generate",
     ),
     SupportedModel(
@@ -1193,7 +1208,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         native_max_model_len=262144,
         tool_parser="qwen3_coder",
         quantization="modelopt",
-        status="configured",  # declared 2026-09-10 (issue #244); no live boot yet
+        # VALIDATED live on the Jetson AGX Thor 2026-09-10 as the worker:
+        # docs/evidence/2026-09-10-accept-nvidia-35b-a3b-thor.txt.
+        status="load-tested",
         doc="nvidia-qwen3.6-35b-a3b-nvfp4.md",
         moe_backend="",
         # Self-hosted draft (no external "model"/"draft_model_id" key), same

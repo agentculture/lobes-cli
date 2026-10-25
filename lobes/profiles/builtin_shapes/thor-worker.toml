@@ -1,3 +1,10 @@
+# NOT THE DEPLOYED STATE (2026-10-26): the mesh's `worker` is now Nemotron 3.5
+# Bolt, hosted on the DGX Spark, and the Thor stopped hosting worker by hand
+# (.env: WORKER_FEASIBLE=false, worker dropped from COMPOSE_PROFILES). This
+# shape still hosts nvidia/Qwen3.6-35B-A3B-NVFP4 as `worker` and is kept as the
+# rollback shape (cite-don't-delete). Re-rendering it on the Thor re-hosts that
+# Qwen worker beside the Spark's Bolt: the mesh then sees two disagreeing
+# `worker` members and exposes them only as worker-thor / worker-spark.
 # The Jetson AGX Thor WORKER variant of a mesh-brain deployment: hosts the
 # opt-in `worker` lobe (nvidia/Qwen3.6-35B-A3B-NVFP4 — the eighth Colleague
 # role, the fast MULTIMODAL ground-work DOER) + the two pooling gears + the

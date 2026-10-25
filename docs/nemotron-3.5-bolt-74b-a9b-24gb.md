@@ -32,7 +32,7 @@
 | architecture | `NemotronHPuzzleForCausalLM` in a `nemotron_h_omni` wrapper: hybrid Mamba-2 / attention with sparse MoE, about 9B active of 74B total |
 | modalities | text, image and video (RADIO vision encoder); no audio |
 | context | 262144 native (`llm_config.max_position_embeddings`) |
-| quantization | modelopt `MIXED_PRECISION`: IQ2_XXS on the routed experts (~2.06 bits, ggml packing), Q8_0, and W4A16 NVFP4 on the mixer projections — 24.09 GiB loaded |
+| quantization | `modelopt_mixed` (the checkpoint's `quant_method` is modelopt, `MIXED_PRECISION`): IQ2_XXS on the routed experts (~2.06 bits, ggml packing), Q8_0, and W4A16 NVFP4 on the mixer projections — 24.09 GiB loaded |
 | tool parser | `qwen3_coder` (the card's own serve command) |
 | reasoning parser | `ultra_v3`, shipped as a plugin file inside the checkpoint |
 | speculative decoding | DFlash, 7 draft tokens, from `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr` @ `449d2414…` |
@@ -85,9 +85,20 @@ From
 | speed | 69.3 tok/s wall on one short request (includes prefill and reasoning) |
 | long context | PASS — 231,935-token needle retrieved in 200.3 s |
 
+## Measured — as the `worker` lane, 2026-10-25
+
+PART 2 of the same transcript: the Spark's lobes `vllm-worker` lane (cold
+compile, the same 350,464-token pinned pool), reached as `model=worker` from
+the spark, thor and spark2 gateways — the Thor and spark2 by mesh forward,
+with `X-Lobes-Mesh-Member: spark`. Through the Thor's forward the red/blue
+image controls and a `get_weather` tool call passed.
+
 ## Not proven
 
-- Any lobes path: `lobes switch`, a fleet lane, a shape, a gateway route.
+- The packaged template serving it (the Spark uses an override command), a
+  deployment shape that hosts it, and `lobes switch` to it — switch prints
+  the gear's serving note and, on `--apply`, writes `.env` without
+  restarting.
 - Any card other than the Spark GB10.
 - Concurrency above 1, sustained decode under load, and DFlash acceptance
   rates.

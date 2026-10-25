@@ -270,7 +270,7 @@
         "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
         "mtp": true,
         "path": "/v1/chat/completions",
-        "quant": "modelopt",
+        "quant": "modelopt_mixed",
         "ready": false,
         "responsibilities": [
           "execution",

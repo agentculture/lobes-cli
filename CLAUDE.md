@@ -396,8 +396,8 @@ exactly (`WORKER_FEASIBLE` / `WORKER_PEER_ORIGIN` / `WORKER_PEER_PROXY` /
 like `muse`). Under pressure `worker` sheds (429) exactly like
 cortex/senses/muse.
 
-**Hosted on the Jetson AGX Thor again (#244); the DGX Spark reaches it by
-proxy (2026-09-11).** The Thor serves the lane locally through the
+**(Superseded 2026-10-26 — see the Bolt paragraph above.) Hosted on the Jetson
+AGX Thor again (#244); the DGX Spark reaches it by proxy (2026-09-11).** The Thor serves the lane locally through the
 `thor-worker` shape at `gpu_mem_util=0.45`, full `max_model_len=262144`,
 DFlash speculation, and `WORKER_MAX_NUM_SEQS=1`. One request at a time is
 **by design** and is still to be tested under a real multi-agent load. See

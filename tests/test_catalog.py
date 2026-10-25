@@ -771,7 +771,11 @@ def test_worker_gear_exists_with_correct_fields() -> None:
     assert worker is not None, f"{_WORKER_ID} not found in catalog"
     assert worker.role_hint == "worker"
     assert worker.native_max_model_len == 262144  # llm_config.max_position_embeddings
-    assert worker.quantization == "modelopt"  # quantization_config.quant_method
+    # quant_method is modelopt; vLLM resolves MIXED_PRECISION to modelopt_mixed,
+    # the value the Spark lane passes and was measured to boot with.
+    assert worker.quantization == "modelopt_mixed"
+    # The stock lane cannot boot it, so `lobes switch` must say so.
+    assert "b12x" in worker.serving_note
     assert worker.tool_parser == "qwen3_coder"  # the card's vLLM command
     # Spark GB10 2026-10-25, docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt
     assert worker.status == "load-tested"
