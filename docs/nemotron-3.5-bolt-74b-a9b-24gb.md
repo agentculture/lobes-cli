@@ -15,13 +15,17 @@
 > mesh. Measured as a standalone container first
 > ([`evidence/2026-10-26-accept-nemotron-bolt-spark.txt`](evidence/2026-10-26-accept-nemotron-bolt-spark.txt)).
 >
-> **The packaged template cannot express Bolt's flags yet.** The fleet
-> `vllm-worker` lane has no knob for `--linear-backend`, the mamba cache
-> flags, `--kv-cache-memory-bytes`, the media limits or the reasoning-parser
-> plugin, and it always passes `--quantization`. The Spark serves it through a
-> full `command:` replacement in its hand-kept `docker-compose.override.yml`
-> (the [recipe](#serving-it-on-the-spark) below). `lobes switch` to this id
-> will not boot on the stock template either (see [Engine](#engine)).
+> **Serving it from the packaged template.** The fleet `vllm-worker` lane
+> has a knob for every flag Bolt's card needs (`WORKER_LINEAR_BACKEND`, the
+> `WORKER_MAMBA_*` caches, `WORKER_KV_CACHE_MEMORY_BYTES`, the media limits,
+> `WORKER_REASONING_PARSER_PLUGIN`, `WORKER_REVISION`, and
+> `WORKER_VLLM_USE_V2_MODEL_RUNNER`), and the deployment scaffold carries
+> `Dockerfile.vllm-bolt` (the card's nightly + b12x). The full `.env` recipe
+> is in the fleet `env.example` ("the Bolt worker's flags"), and a test renders
+> it through `docker compose config` to the argv the Spark runs. The Spark
+> itself still serves Bolt through the `command:` replacement in its hand-kept
+> `docker-compose.override.yml`, which predates these knobs. `lobes switch`
+> to this id will not boot on the stock image (see [Engine](#engine)).
 
 ## What it is
 
@@ -95,10 +99,13 @@ image controls and a `get_weather` tool call passed.
 
 ## Not proven
 
-- The packaged template serving it (the Spark uses an override command), a
-  deployment shape that hosts it, and `lobes switch` to it — switch prints
-  the gear's serving note and, on `--apply`, writes `.env` without
-  restarting.
+- A live boot from the packaged template's knobs (the recipe's rendered argv
+  is test-proven equal to the Spark's override command, but the Spark still
+  runs the override), a deployment shape that hosts it, and `lobes switch` to
+  it — switch prints the gear's serving note and, on `--apply`, writes `.env`
+  without restarting.
+- `--seed`: the template has no seed knob, so the recipe omits the card's
+  `--seed 42` (it fixes sampling seeds only).
 - Any card other than the Spark GB10.
 - Concurrency above 1, sustained decode under load, and DFlash acceptance
   rates.

@@ -156,6 +156,25 @@ KNOB_NAMES: tuple[str, ...] = (
     # deployment serving a checkpoint that emits a different call shape (e.g.
     # qwen3_xml) can now say so in a profile instead of editing the template.
     "tool_call_parser",
+    # --- the Bolt worker's flags (2026-10-26, stacked on PR #333) -------------
+    # `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` (the `worker` gear) needs
+    # eleven serve flags the lane could not express, so the Spark served it
+    # through a hand-written override command. All are plain value-carrying
+    # knobs rendered into ${VAR:+--flag=${VAR}} slots (unset leaves no argv
+    # token), worker-only via KNOB_LANE_ROLES. `limit_mm_per_prompt` and
+    # `media_io_kwargs` carry raw JSON; the template single-quotes the token,
+    # so the value itself carries no shell quoting (unlike speculative_config).
+    "linear_backend",
+    "mamba_backend",
+    "mamba_ssm_cache_dtype",
+    "mamba_cache_dtype",
+    "mamba_cache_mode",
+    "kv_cache_memory_bytes",
+    "limit_mm_per_prompt",
+    "video_pruning_rate",
+    "media_io_kwargs",
+    "reasoning_parser_plugin",
+    "revision",
     # `declared_peak_gib` (issue #268, plan innereye-lobes-hosts-comfyui, t6)
     # -- a per-card, peak-GiB FIGURE for the `innereye` role only (gated by
     # KNOB_LANE_ROLES below). It is deliberately NOT a `gpu_mem_util`
@@ -230,6 +249,17 @@ KNOB_LANE_ROLES: dict[str, frozenset[str]] = {
     "async_scheduling": _WORKER_ONLY,
     "prefix_caching": _WORKER_ONLY | frozenset({"associate"}),
     "tool_call_parser": frozenset({"worker", "associate"}),
+    "linear_backend": _WORKER_ONLY,
+    "mamba_backend": _WORKER_ONLY,
+    "mamba_ssm_cache_dtype": _WORKER_ONLY,
+    "mamba_cache_dtype": _WORKER_ONLY,
+    "mamba_cache_mode": _WORKER_ONLY,
+    "kv_cache_memory_bytes": _WORKER_ONLY,
+    "limit_mm_per_prompt": _WORKER_ONLY,
+    "video_pruning_rate": _WORKER_ONLY,
+    "media_io_kwargs": _WORKER_ONLY,
+    "reasoning_parser_plugin": _WORKER_ONLY,
+    "revision": _WORKER_ONLY,
     # `declared_peak_gib` is gated to `innereye` ONLY -- no vLLM lane has a
     # fixed-GiB knob (every other role's budget is a gpu_mem_util fraction),
     # and declaring it for any other role would render a `.env` key nothing
@@ -514,6 +544,17 @@ _FIELD_VALIDATORS: dict[str, tuple[Any, str]] = {
     "async_scheduling": (_is_optional_bool, _BOOL_OR_NONE),
     "prefix_caching": (_is_optional_bool, _BOOL_OR_NONE),
     "tool_call_parser": (_is_optional_str, _STR_OR_NONE),
+    "linear_backend": (_is_optional_str, _STR_OR_NONE),
+    "mamba_backend": (_is_optional_str, _STR_OR_NONE),
+    "mamba_ssm_cache_dtype": (_is_optional_str, _STR_OR_NONE),
+    "mamba_cache_dtype": (_is_optional_str, _STR_OR_NONE),
+    "mamba_cache_mode": (_is_optional_str, _STR_OR_NONE),
+    "kv_cache_memory_bytes": (_is_optional_int, _INT_OR_NONE),
+    "limit_mm_per_prompt": (_is_optional_str, _STR_OR_NONE),
+    "video_pruning_rate": (_is_optional_number, "int/float or None"),
+    "media_io_kwargs": (_is_optional_str, _STR_OR_NONE),
+    "reasoning_parser_plugin": (_is_optional_str, _STR_OR_NONE),
+    "revision": (_is_optional_str, _STR_OR_NONE),
     "declared_peak_gib": (_is_optional_number, "int/float or None"),
 }
 
@@ -642,6 +683,32 @@ class RoleProfile:
     # different call shape -- `qwen3_xml`, say -- can say so in a profile
     # instead of hand-editing the packaged compose file.
     tool_call_parser: str | None = None
+    # --- the Bolt worker's flags (see KNOB_NAMES) ---------------------------
+    # `--linear-backend` / `--mamba-backend`: kernel selection (Bolt's card:
+    # b12x / flashinfer).
+    linear_backend: str | None = None
+    mamba_backend: str | None = None
+    # The Mamba state caches: `--mamba-ssm-cache-dtype`, `--mamba-cache-dtype`
+    # and `--mamba-cache-mode` (Bolt's card: bfloat16 / bfloat16 / align).
+    mamba_ssm_cache_dtype: str | None = None
+    mamba_cache_dtype: str | None = None
+    mamba_cache_mode: str | None = None
+    # `--kv-cache-memory-bytes`: a FIXED KV pool that skips vLLM's memory
+    # profiling. On a unified-memory card the profiled pool moves with other
+    # processes' memory, so a pinned pool is the only predictable one
+    # (measured on the Spark 2026-10-25: util 0.70 / 0.60 / 0.63 gave 22.99 /
+    # 5.87 / 2.94 GiB). `--gpu-memory-utilization` then only gates startup.
+    kv_cache_memory_bytes: int | None = None
+    # `--limit-mm-per-prompt` and `--media-io-kwargs`: raw JSON, e.g.
+    # '{"video":1,"image":1}'. `--video-pruning-rate`: a fraction.
+    limit_mm_per_prompt: str | None = None
+    video_pruning_rate: float | None = None
+    media_io_kwargs: str | None = None
+    # `--reasoning-parser-plugin`: an in-container path to a parser file the
+    # checkpoint ships (Bolt's ultra_v3_reasoning_parser.py).
+    reasoning_parser_plugin: str | None = None
+    # `--revision`: pin the checkpoint to a commit instead of floating `main`.
+    revision: str | None = None
     # `declared_peak_gib` -- see KNOB_NAMES' entry above for the full
     # rationale. A plain float/int (never a fraction, never a bool -- the
     # same `_is_optional_number` type family as `gpu_mem_util`), gated to the

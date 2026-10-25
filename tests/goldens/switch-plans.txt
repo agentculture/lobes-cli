@@ -313,7 +313,7 @@
   VLLM_QUANTIZATION=modelopt_mixed
   msg: tool-call parser (auto-selected): qwen3_coder
   msg: quantization (from catalog): modelopt_mixed
-  note: the stock vLLM lane cannot boot this gear: it needs the card's vLLM nightly plus b12x and an sm_12x card (the DGX Spark), with flags the stock lane does not pass — serve it on the vllm-worker lane; see docs/nemotron-3.5-bolt-74b-a9b-24gb.md.
+  note: the stock vLLM lane cannot boot this gear: it needs the card's vLLM nightly plus b12x (Dockerfile.vllm-bolt) and an sm_12x card (the DGX Spark), with flags the stock lane does not pass — serve it on the vllm-worker lane (env.example's Bolt recipe); see docs/nemotron-3.5-bolt-74b-a9b-24gb.md.
 ### nvidia/Qwen3.6-35B-A3B-NVFP4
   VLLM_MODEL=nvidia/Qwen3.6-35B-A3B-NVFP4
   VLLM_SERVED_NAME=nvidia/Qwen3.6-35B-A3B-NVFP4

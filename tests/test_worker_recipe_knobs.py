@@ -72,7 +72,34 @@ WORKER_RECIPE_KNOBS: dict[str, str] = {
     "load_format": "WORKER_LOAD_FORMAT",
     "mm_encoder_attn_backend": "WORKER_MM_ENCODER_ATTN_BACKEND",
     "tool_call_parser": "WORKER_TOOL_CALL_PARSER",
+    # The Bolt worker's flags (2026-10-26).
+    "linear_backend": "WORKER_LINEAR_BACKEND",
+    "mamba_backend": "WORKER_MAMBA_BACKEND",
+    "mamba_ssm_cache_dtype": "WORKER_MAMBA_SSM_CACHE_DTYPE",
+    "mamba_cache_dtype": "WORKER_MAMBA_CACHE_DTYPE",
+    "mamba_cache_mode": "WORKER_MAMBA_CACHE_MODE",
+    "kv_cache_memory_bytes": "WORKER_KV_CACHE_MEMORY_BYTES",
+    "limit_mm_per_prompt": "WORKER_LIMIT_MM_PER_PROMPT",
+    "video_pruning_rate": "WORKER_VIDEO_PRUNING_RATE",
+    "media_io_kwargs": "WORKER_MEDIA_IO_KWARGS",
+    "reasoning_parser_plugin": "WORKER_REASONING_PARSER_PLUGIN",
+    "revision": "WORKER_REVISION",
 }
+
+#: The knobs the Bolt worker added (all worker-only, value-carrying).
+BOLT_KNOBS = (
+    "linear_backend",
+    "mamba_backend",
+    "mamba_ssm_cache_dtype",
+    "mamba_cache_dtype",
+    "mamba_cache_mode",
+    "kv_cache_memory_bytes",
+    "limit_mm_per_prompt",
+    "video_pruning_rate",
+    "media_io_kwargs",
+    "reasoning_parser_plugin",
+    "revision",
+)
 
 #: The knobs this task ADDS to the vocabulary (the rest already existed).
 NEW_KNOBS = (
@@ -84,7 +111,7 @@ NEW_KNOBS = (
     "load_format",
     "tool_call_parser",
     "mm_encoder_attn_backend",
-)
+) + BOLT_KNOBS
 
 #: The worker lane's argv on the UNMODIFIED template, captured from
 #: ``docker compose config --format json`` with ``COMPOSE_PROFILES=worker`` and
@@ -186,6 +213,17 @@ def _sample(knob: str):
         "load_format": "runai_streamer",
         "tool_call_parser": "qwen3_xml",
         "mm_encoder_attn_backend": "TORCH_SDPA",
+        "linear_backend": "b12x",
+        "mamba_backend": "flashinfer",
+        "mamba_ssm_cache_dtype": "bfloat16",
+        "mamba_cache_dtype": "bfloat16",
+        "mamba_cache_mode": "align",
+        "kv_cache_memory_bytes": 4294967296,
+        "limit_mm_per_prompt": '{"video":1,"image":1}',
+        "video_pruning_rate": 0.5,
+        "media_io_kwargs": '{"video":{"fps":2,"num_frames":256}}',
+        "reasoning_parser_plugin": "/plugins/ultra_v3_reasoning_parser.py",
+        "revision": "c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
     }[knob]
 
 
@@ -332,3 +370,99 @@ class TestLiveComposeRender:
         assert "--tool-call-parser=qwen3_coder" not in argv
         assert "--language-model-only" not in argv
         assert "" not in argv
+
+
+# --- 6. the Bolt worker recipe (2026-10-26) ---------------------------------
+
+#: The argv the Spark's worker lane runs Bolt with (its override command,
+#: docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt), in the order the
+#: template's slots emit it. Two spellings differ from that command and are
+#: equivalent: --attention-config's JSON for --attention-backend, and no
+#: --seed (the template has no seed knob; it only fixes sampling seeds).
+BOLT_ARGV = [
+    "vllm",
+    "serve",
+    "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+    "--served-model-name=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+    "--host=0.0.0.0",
+    "--port=8000",
+    "--quantization=modelopt_mixed",
+    "--max-model-len=262144",
+    "--gpu-memory-utilization=0.40",
+    "--kv-cache-dtype=fp8",
+    '--attention-config={"backend": "FLASHINFER"}',
+    "--moe-backend=b12x",
+    "--load-format=auto",
+    "--revision=c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
+    "--kv-cache-memory-bytes=4294967296",
+    "--linear-backend=b12x",
+    "--mamba-backend=flashinfer",
+    "--mamba-ssm-cache-dtype=bfloat16",
+    "--mamba-cache-dtype=bfloat16",
+    "--mamba-cache-mode=align",
+    '--limit-mm-per-prompt={"video":1,"image":1}',
+    "--video-pruning-rate=0.5",
+    '--media-io-kwargs={"video":{"fps":2,"num_frames":256}}',
+    "--reasoning-parser-plugin=/root/.cache/huggingface/hub/models--nvidia--"
+    "NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB/snapshots/"
+    "c6cc2e8ffa353403213d6b9b18aaf8eb684d705a/ultra_v3_reasoning_parser.py",
+    "--max-num-seqs=1",
+    "--enable-chunked-prefill",
+    '--speculative-config={"method":"dflash","model":'
+    '"nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr","revision":'
+    '"449d24140160b8e51871bfc0f0a7338abf640aa1","num_speculative_tokens":7,'
+    '"rejection_sample_method":"standard","attention_backend":"FLASHINFER",'
+    '"draft_load_config":{"load_format":"auto"}}',
+    "--enable-auto-tool-choice",
+    "--tool-call-parser=qwen3_coder",
+    "--reasoning-parser=ultra_v3",
+    "--trust-remote-code",
+]
+
+
+def _bolt_recipe_lines() -> list[str]:
+    """The `KEY=VALUE` lines of env.example's Bolt recipe, verbatim."""
+    text = _FLEET_ENV.read_text(encoding="utf-8")
+    block = text.split("# then:\n", 1)[1].split("# The vllm-worker service waits", 1)[0]
+    return [line.removeprefix("#   ") for line in block.splitlines() if line.startswith("#   ")]
+
+
+class TestBoltRecipe:
+    def test_the_recipe_documents_every_bolt_knob(self) -> None:
+        keys = {line.split("=", 1)[0] for line in _bolt_recipe_lines()}
+        for knob in BOLT_KNOBS:
+            assert WORKER_RECIPE_KNOBS[knob] in keys, f"recipe misses {knob}"
+        assert "WORKER_VLLM_USE_V2_MODEL_RUNNER" in keys
+
+    def test_v2_runner_is_worker_scoped_and_off_by_default(self) -> None:
+        svc = yaml.safe_load(_FLEET_COMPOSE.read_text(encoding="utf-8"))["services"]["vllm-worker"]
+        assert (
+            "VLLM_USE_V2_MODEL_RUNNER=${WORKER_VLLM_USE_V2_MODEL_RUNNER:-0}" in svc["environment"]
+        )
+
+    def test_dockerfile_is_scaffolded_and_pins_a_digest(self) -> None:
+        from lobes.runtime._compose import FLEET_TEMPLATES
+
+        assert FLEET_TEMPLATES["fleet/Dockerfile.vllm-bolt"] == "Dockerfile.vllm-bolt"
+        text = (_FLEET / "Dockerfile.vllm-bolt").read_text(encoding="utf-8")
+        assert "FROM vllm/vllm-openai@sha256:" in text
+        assert "b12x==1.5.1" in text
+
+    @pytest.mark.skipif(shutil.which("docker") is None, reason="docker not available")
+    def test_the_documented_env_file_renders_the_spark_argv(self, tmp_path: Path) -> None:
+        # Through a real .env file, so dotenv's quoting rules are what is tested
+        # (the JSON knobs bare, the speculative config carrying its own quotes).
+        env_file = tmp_path / ".env"
+        env_file.write_text("\n".join(_bolt_recipe_lines()) + "\n", encoding="utf-8")
+        proc = subprocess.run(
+            ["docker", "compose", "--env-file", str(env_file), "-f", str(_FLEET_COMPOSE), "config"],
+            capture_output=True,
+            text=True,
+            env={"PATH": os.environ.get("PATH", "")},
+            cwd=str(_FLEET),
+        )
+        assert proc.returncode == 0, f"docker compose config failed:\n{proc.stderr}"
+        svc = yaml.safe_load(proc.stdout)["services"]["vllm-worker"]
+        assert [str(tok) for tok in svc["command"]] == BOLT_ARGV
+        assert svc["image"] == "lobes/vllm-bolt:local"
+        assert svc["environment"]["VLLM_USE_V2_MODEL_RUNNER"] == "1"

@@ -1117,9 +1117,9 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         ),
         hf_revision="c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
         serving_note=(
-            "needs the card's vLLM nightly plus b12x and an sm_12x card (the"
-            " DGX Spark), with flags the stock lane does not pass — serve it on"
-            " the vllm-worker lane"
+            "needs the card's vLLM nightly plus b12x (Dockerfile.vllm-bolt) and"
+            " an sm_12x card (the DGX Spark), with flags the stock lane does not"
+            " pass — serve it on the vllm-worker lane (env.example's Bolt recipe)"
         ),
         task="generate",
     ),
