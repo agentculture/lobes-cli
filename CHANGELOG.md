@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.92.0] - 2026-10-26
+
+### Added
+
+- Catalog candidate `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` (74B-A9B MoE hybrid, text+image+video, 262144 native, modelopt mixed IQ2/Q8/NVFP4, DFlash LiLiCorr draft) with its doc, a `qwen3_coder` parser rule, and a Spark GB10 acceptance transcript (standalone container: text, image, tool call and a 231,935-token needle pass). It needs the card's vLLM nightly plus `b12x` and is sm_12x-only, so `lobes switch` to it does not boot on the stock template.
+
 ## [0.91.0] - 2026-10-23
 
 ### Added

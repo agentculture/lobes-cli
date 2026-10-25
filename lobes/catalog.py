@@ -1057,6 +1057,55 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         task="generate",
     ),
     SupportedModel(
+        id="nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+        # A plain CANDIDATE (operator request, 2026-10-26): no role, no tier
+        # resolves to it, and no shape hosts it. It is served on the DGX Spark
+        # as a side lane outside the fleet compose — see the doc for the recipe.
+        #
+        # Verified against the checkpoint's ACTUAL config files at the pinned
+        # revision below, not card prose:
+        #   config.json
+        #     - architectures ["NemotronHPuzzleForCausalLM"] inside a
+        #       `nemotron_h_omni` wrapper; llm_config.max_position_embeddings
+        #       = 262144 (native); a RADIO vision_config, image and video
+        #       context tokens, and no sound_config — text+image+video.
+        #     - quantization_config.quant_method = "modelopt",
+        #       quant_algo = "MIXED_PRECISION": 27,728 IQ2_XXS layers (the
+        #       routed experts, ggml packing, ~2.06 bits), 113 Q8_0 and 80
+        #       W4A16_NVFP4 (the mixer in/out projections). That is what
+        #       makes 74B fit in ~24 GiB.
+        #   README (vLLM serve command): --moe-backend b12x and
+        #   --linear-backend b12x, the `ultra_v3` reasoning parser shipped as
+        #   a plugin file in the checkpoint, --tool-call-parser qwen3_coder,
+        #   and a DFlash draft from the separate -LiLiCorr repo.
+        #
+        # ENGINE: the IQ2 expert path is gated to sm_12x (the Spark's GB10) —
+        # vLLM refuses it on the Orin (sm_87) and nothing has been tried on
+        # the Thor. It needs the card's nightly plus the `b12x` package,
+        # neither of which the fleet's pinned vLLM image carries, so
+        # `lobes switch` to this id will NOT boot on the stock template.
+        role_hint="candidate",
+        shape="MoE (~9B active of 74B) hybrid Mamba-2/attention + RADIO ViT (text+image+video)",
+        context=_CONTEXT_256K_NATIVE,
+        native_max_model_len=262144,
+        tool_parser="qwen3_coder",
+        quantization="modelopt",
+        # Spark GB10 2026-10-25, standalone container (not a lobes lane):
+        # boots, 1x 262144 with a pinned 4 GiB KV pool, text/image/tools PASS,
+        # 231,935-token needle PASS — docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt.
+        status="load-tested",
+        doc="nemotron-3.5-bolt-74b-a9b-24gb.md",
+        moe_backend="b12x",
+        speculative_config=(
+            '{"method": "dflash",'
+            ' "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr",'
+            ' "revision": "449d24140160b8e51871bfc0f0a7338abf640aa1",'
+            ' "num_speculative_tokens": 7}'
+        ),
+        hf_revision="c6cc2e8ffa353403213d6b9b18aaf8eb684d705a",
+        task="generate",
+    ),
+    SupportedModel(
         id="nvidia/Qwen3.6-35B-A3B-NVFP4",
         # The NEW `worker` gear (issue #244, t1), taking the seat back from
         # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 above (demoted to

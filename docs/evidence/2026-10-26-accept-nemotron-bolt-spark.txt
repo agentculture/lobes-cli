@@ -1,0 +1,72 @@
+ACCEPTANCE — nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB served standalone on the DGX Spark GB10
+Date: 2026-10-25 22:36Z - 22:47Z (UTC)
+Box: DGX Spark GB10 (sm_121, 128 GB unified memory)
+Scope: one standalone vLLM container via sparkrun, OUTSIDE the lobes fleet compose and gateway.
+       Proves the checkpoint boots and serves on this card with the recipe below. It does NOT
+       prove `lobes switch`, a fleet lane, a shape or a gateway route — none of those exist for it.
+
+== Checkpoint ==
+model:      nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB @ c6cc2e8ffa353403213d6b9b18aaf8eb684d705a
+draft:      nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr @ 449d24140160b8e51871bfc0f0a7338abf640aa1
+config.json: NemotronHPuzzleForCausalLM in a nemotron_h_omni wrapper; RADIO vision_config; no sound_config;
+             llm_config.max_position_embeddings 262144
+quantization_config: quant_method modelopt, quant_algo MIXED_PRECISION
+             IQ2_XXS 27,728 layers / Q8_0 113 / W4A16_NVFP4 80
+
+== Engine ==
+image:  vllm/vllm-openai:nightly-77154ca6116ae34cbfe314beef1016bde9b63989 + b12x 1.5.1 baked in
+        (the card installs b12x at container start; baked so the boot runs offline)
+vllm:   0.32.0rc1.dev100+g77154ca61   torch 2.13.0+cu130
+Resolved architecture: NemotronH_Omni_Reasoning_V3 (target), LiLiCorrDraftModel (draft)
+
+== Serve flags (the card's vLLM command, with the deviations marked) ==
+--revision c6cc2e8f... --trust-remote-code --load-format auto --tensor-parallel-size 1
+--max-model-len 262144 --max-num-seqs 1 --enable-chunked-prefill --kv-cache-dtype fp8
+--linear-backend b12x --moe-backend b12x --attention-backend FLASHINFER
+--mamba-backend flashinfer --mamba-ssm-cache-dtype bfloat16 --mamba-cache-dtype bfloat16 --mamba-cache-mode align
+--limit-mm-per-prompt '{"video":1,"image":1}' --video-pruning-rate 0.5
+--media-io-kwargs '{"video":{"fps":2,"num_frames":256}}'
+--enable-auto-tool-choice --tool-call-parser qwen3_coder
+--reasoning-parser-plugin <checkpoint>/ultra_v3_reasoning_parser.py --reasoning-parser ultra_v3
+--speculative-config '{"method":"dflash","model":"...-LiLiCorr","revision":"449d2414...","num_speculative_tokens":7,
+                       "rejection_sample_method":"standard","attention_backend":"FLASHINFER","draft_load_config":{"load_format":"auto"}}'
+--seed 42
+DEVIATION  --kv-cache-memory-bytes 4294967296 (4 GiB) added; --gpu-memory-utilization 0.40 then only gates the
+           startup free-memory check. Reason: on this unified-memory box a util-sized KV pool is not
+           deterministic (vLLM's profiling counts other processes' memory growth), measured the same night on a
+           different checkpoint at util 0.70 / 0.60 / 0.63 -> 22.99 / 5.87 / 2.94 GiB.
+DEVIATION  --allowed-local-media-path / dropped (it lets any caller read any file on the box via file:// URLs).
+DEVIATION  revisions pinned; bound to 127.0.0.1.
+
+== Boot ==
+22:39:14  Loading weights took 125.55 seconds (target); 22:39:34 5.63 seconds (draft)
+22:39:35  Model loading took 24.09 GiB memory and 150.801226 seconds
+22:40:18  Initial free memory 105.18 GiB, reserved 4.0 GiB memory for KV Cache as specified by kv_cache_memory_bytes
+22:40:18  GPU KV cache size: 350,464 tokens, Maximum concurrency for 262,144 tokens per request: 1.34x
+22:40:30  Application startup complete; inference ready
+WARNING   max_num_scheduled_tokens is set to 2048 based on the speculative decoding settings (vLLM's own note)
+
+== Probes (temperature 1.0, top_p 0.95, thinking on by default) ==
+/v1/models: ['nemotron-3.5-bolt', 'nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB']
+known-answer  "What is 17*23?"                 -> '391', reasoning split off (149 chars)        0.8 s   PASS
+image         64x64 solid red PNG              -> 'Red'                                         2.0 s   PASS
+image         64x64 solid blue PNG             -> 'Blue'                                        3.1 s   PASS
+image         64x64 solid green PNG            -> 'Green'                                       2.2 s   PASS
+tool call     get_weather, "weather in Haifa?" -> finish_reason tool_calls,
+                                                  get_weather({"city": "Haifa"}), content None  1.2 s   PASS
+speed         palindrome function              -> 359 completion tokens in 5.2 s wall = 69.3 tok/s
+                                                  (one request; wall clock includes prefill and reasoning)
+long context  231,935-token prompt, needle mid-document
+                                               -> 'PELICAN-4471'                              200.3 s   PASS
+The image probes are synthetic solid colours: they prove the vision path is wired and the colour
+negative controls separate, not real-image quality.
+
+== Host after the probes ==
+host MemAvailable  70,146 MiB
+kernel NV_ERR_NO_MEMORY lines since the boot: 0
+hottest ACPI zone  86 C (just after the 200 s long-context prefill)
+
+== Not proven here ==
+- Any lobes path: `lobes switch` (the stock template's image lacks the nightly + b12x), a fleet lane, a gateway route.
+- Other cards: the IQ2 expert path is sm_12x-only in vLLM; the Orin (sm_87) refuses it, the Thor (sm_110) is untried.
+- Concurrency above 1, sustained decode speed under load, DFlash acceptance rates.
