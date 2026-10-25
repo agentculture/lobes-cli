@@ -1058,9 +1058,12 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
-        # A plain CANDIDATE (operator request, 2026-10-26): no role, no tier
-        # resolves to it, and no shape hosts it. It is served on the DGX Spark
-        # as a side lane outside the fleet compose — see the doc for the recipe.
+        # The `worker` gear (operator decision, 2026-10-26), replacing
+        # nvidia/Qwen3.6-35B-A3B-NVFP4 below (demoted to a kept candidate). It
+        # fits the worker contract unchanged — a fast multimodal (image+video)
+        # coder/doer with tool calls — so roles.py's responsibilities do not
+        # move. It is hosted on the DGX Spark (sm_12x is the only card its IQ2
+        # experts run on); other members reach `worker` through the mesh.
         #
         # Verified against the checkpoint's ACTUAL config files at the pinned
         # revision below, not card prose:
@@ -1084,7 +1087,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # the Thor. It needs the card's nightly plus the `b12x` package,
         # neither of which the fleet's pinned vLLM image carries, so
         # `lobes switch` to this id will NOT boot on the stock template.
-        role_hint="candidate",
+        role_hint="worker",
         shape="MoE (~9B active of 74B) hybrid Mamba-2/attention + RADIO ViT (text+image+video)",
         context=_CONTEXT_256K_NATIVE,
         native_max_model_len=262144,
@@ -1107,7 +1110,15 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
     ),
     SupportedModel(
         id="nvidia/Qwen3.6-35B-A3B-NVFP4",
-        # The NEW `worker` gear (issue #244, t1), taking the seat back from
+        # DEMOTED from role_hint="worker" to a kept candidate (2026-10-26,
+        # operator decision): the `worker` seat moves to
+        # nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB above, hosted on the DGX
+        # Spark. Kept, not deleted (cite-don't-delete): every 2026-09-10..
+        # 2026-10-26 worker-lane evidence transcript (the Thor, and the Spark's
+        # proxy to it) was measured against this checkpoint, and the
+        # `thor-worker` shape still renders it. Only role_hint moved.
+        #
+        # (History) The `worker` gear from issue #244, t1, taking the seat back from
         # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 above (demoted to
         # role_hint="candidate", kept — cite-don't-delete). A DISTINCT entry
         # from BOTH other Qwen3.6-35B-A3B-NVFP4 catalog ids: unsloth/'s (the
@@ -1173,7 +1184,7 @@ SUPPORTED_MODELS: tuple[SupportedModel, ...] = (
         # is left empty (auto-select) rather than carrying an untested guess
         # forward — the outgoing unsloth 35B-A3B worker's own hard-won sm_110
         # lesson was that every FORCED NVFP4 MoE backend was refused there.
-        role_hint="worker",
+        role_hint="candidate",
         shape=(
             "hybrid Mamba/linear-attn MoE (~3B active) + ViT "
             "(text+image+video, self-hosted MTP draft)"

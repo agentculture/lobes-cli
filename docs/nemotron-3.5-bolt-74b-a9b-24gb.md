@@ -1,17 +1,27 @@
-# NVIDIA Nemotron 3.5 Bolt 74B-A9B 24GB — a catalog candidate
+# NVIDIA Nemotron 3.5 Bolt 74B-A9B 24GB — the `worker` role
 
 > One entry in lobes's **supported catalog** (`lobes overview --list`). For the
 > catalog-vs-warm distinction — what you *can* load vs. what's loaded *now* —
 > see
 > [`gateway-fleet.md`](gateway-fleet.md#supported-catalog-vs-warm-backends).
 >
-> **Status: a plain `candidate`.** It has no role, no tier resolves to it, and
-> no deployment shape hosts it. It has been served on the DGX Spark GB10 as a
-> standalone container outside the fleet
+> **Status: the `worker` role_hint (operator decision, 2026-10-26)**,
+> replacing `nvidia/Qwen3.6-35B-A3B-NVFP4` (now a kept candidate — see
+> [`nvidia-qwen3.6-35b-a3b-nvfp4.md`](nvidia-qwen3.6-35b-a3b-nvfp4.md)). The
+> worker contract does not move: Bolt is a fast multimodal (image+video)
+> coder/doer with tool calls, which is exactly what `roles.py` already
+> promises. It is hosted on the **DGX Spark** — the only card family its IQ2
+> experts run on — and every other mesh member reaches `worker` through the
+> mesh. Measured as a standalone container first
 > ([`evidence/2026-10-26-accept-nemotron-bolt-spark.txt`](evidence/2026-10-26-accept-nemotron-bolt-spark.txt)).
-> `lobes switch` to this id **will not boot on the stock template**, because
-> the engine it needs is not the fleet's pinned vLLM image (see
-> [Engine](#engine)).
+>
+> **The packaged template cannot express Bolt's flags yet.** The fleet
+> `vllm-worker` lane has no knob for `--linear-backend`, the mamba cache
+> flags, `--kv-cache-memory-bytes`, the media limits or the reasoning-parser
+> plugin, and it always passes `--quantization`. The Spark serves it through a
+> full `command:` replacement in its hand-kept `docker-compose.override.yml`
+> (the [recipe](#serving-it-on-the-spark) below). `lobes switch` to this id
+> will not boot on the stock template either (see [Engine](#engine)).
 
 ## What it is
 

@@ -267,7 +267,7 @@
           "security_decision"
         ],
         "loaded": false,
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
         "mtp": true,
         "path": "/v1/chat/completions",
         "quant": "modelopt",

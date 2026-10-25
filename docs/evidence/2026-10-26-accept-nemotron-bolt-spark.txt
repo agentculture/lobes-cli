@@ -70,3 +70,48 @@ hottest ACPI zone  86 C (just after the 200 s long-context prefill)
 - Any lobes path: `lobes switch` (the stock template's image lacks the nightly + b12x), a fleet lane, a gateway route.
 - Other cards: the IQ2 expert path is sm_12x-only in vLLM; the Orin (sm_87) refuses it, the Thor (sm_110) is untried.
 - Concurrency above 1, sustained decode speed under load, DFlash acceptance rates.
+
+======================================================================================================
+PART 2 — Bolt as THE `worker`, served by the Spark's lobes `vllm-worker` lane (2026-10-25 22:56Z - 23:20Z)
+======================================================================================================
+Operator decision: `worker` = Bolt, hosted on the Spark (sm_12x only); cortex dropped on the Spark and served
+by spark2 alone; the Thor stops hosting its nvidia/Qwen3.6-35B-A3B-NVFP4 worker and reaches `worker` by mesh.
+
+== Spark deployment (hand-kept files, each backed up first) ==
+.env:  WORKER_MODEL / WORKER_SERVED_NAME = nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB, WORKER_MAX_MODEL_LEN=262144,
+       WORKER_QUANTIZATION=modelopt_mixed (what vLLM resolves for this config), WORKER_GPU_MEM_UTIL=0.40,
+       WORKER_IMAGE=<the nightly + b12x image above>, WORKER_FEASIBLE=true, COMPOSE_PROFILES=worker,
+       PRIMARY_FEASIBLE=false
+docker-compose.override.yml: vllm-worker `command:` replaced with the PART 1 flag list (the packaged lane cannot
+       express --linear-backend, the mamba cache flags, --kv-cache-memory-bytes, the media limits or the
+       reasoning-parser plugin), `depends_on: !reset null` (the pooling lanes it waits on are not hosted here)
+docker-compose.shape.yml: vllm-primary parked in the inert shape-dropped profile
+`lobes up worker --apply`, then `lobes up gateway --apply`
+
+== Lane boot (cold compile cache) ==
+22:59:20  Model loading took 24.09 GiB memory and 155.386063 seconds
+23:01:24  GPU KV cache size: 350,464 tokens, Maximum concurrency for 262,144 tokens per request: 1.34x
+          Application startup complete; container healthy
+
+== Thor ==
+.env backed up; WORKER_FEASIBLE=false (explicit), worker dropped from COMPOSE_PROFILES, WORKER_MODEL /
+WORKER_SERVED_NAME set to the Bolt id (advert only). `lobes up worker --down --apply` (with worker still in
+COMPOSE_PROFILES: the verb refuses a role the .env does not activate), then `lobes up gateway --apply`.
+Host MemAvailable after the gateway was healthy: 62 GiB.
+
+== Through each member's gateway (API key on) ==
+                 /capabilities worker                                           model=worker   model=cortex
+spark (host)     feasible true, ready true, context 262144, quant modelopt      '391' local    '391' via spark2
+thor             feasible false, ready true, hosted_by spark, proxied true      '391' via spark '391' via spark2
+spark2           feasible false, ready true, hosted_by spark, proxied true      '391' via spark '391' local
+Every forward carried X-Lobes-Mesh-Member (spark for worker, spark2 for cortex) and X-Lobes-Proxied-By.
+
+Via the Thor's gateway (mesh forward to the Spark lane):
+image  64x64 solid red  -> 'red'   5.5 s   PASS
+image  64x64 solid blue -> 'Blue'  2.1 s   PASS
+tool   get_weather      -> finish_reason tool_calls, get_weather({"city": "Haifa"})  1.9 s   PASS
+
+== Not proven by PART 2 ==
+- The packaged template serving Bolt (it cannot yet; the Spark uses an override command).
+- Load: `--max-num-seqs 1`, so concurrent worker callers queue.
+- The Orin member's view (not probed).

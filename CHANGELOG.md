@@ -8,7 +8,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Catalog candidate `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` (74B-A9B MoE hybrid, text+image+video, 262144 native, modelopt mixed IQ2/Q8/NVFP4, DFlash LiLiCorr draft) with its doc, a `qwen3_coder` parser rule, and a Spark GB10 acceptance transcript (standalone container: text, image, tool call and a 231,935-token needle pass). It needs the card's vLLM nightly plus `b12x` and is sm_12x-only, so `lobes switch` to it does not boot on the stock template.
+- Catalog entry `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` (74B-A9B MoE hybrid, text+image+video, 262144 native, modelopt mixed IQ2/Q8/NVFP4, DFlash LiLiCorr draft) with its doc, a `qwen3_coder` parser rule, and a Spark GB10 acceptance transcript (text, image, tool call and a 231,935-token needle pass).
+
+### Changed
+
+- `worker` is now Nemotron 3.5 Bolt (operator decision, 2026-10-26), hosted on the DGX Spark; `nvidia/Qwen3.6-35B-A3B-NVFP4` is demoted to a kept candidate. The worker contract is unchanged. Bolt needs the card's vLLM nightly plus `b12x` and is sm_12x-only; the packaged `vllm-worker` lane cannot express its flags yet, so the Spark serves it through a full command in its hand-kept override.
 
 ## [0.91.0] - 2026-10-23
 

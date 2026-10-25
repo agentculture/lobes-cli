@@ -31,7 +31,10 @@ from lobes.runtime._parser import infer_parser
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _TEMPLATES = Path(__file__).resolve().parents[1] / "lobes" / "templates"
-_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# 2026-10-26: worker moved to Nemotron 3.5 Bolt (operator decision).
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
+# The previous worker (issue #244, t1), now a kept candidate.
+_NVIDIA_QWEN_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
 # The DEMOTED former worker gear (issue #244, t1) — kept in the catalog as a
 # candidate (cite-don't-delete), no longer the role_hint="worker" holder.
 _NEMOTRON_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4"
@@ -173,7 +176,7 @@ def test_moe_backend_aligns_with_shape() -> None:
 # module, no external draft repo, and no "-MTP" marker in its upstream id.
 _SELF_HOSTED_MTP_WITHOUT_ID_MARKER = frozenset(
     {
-        _WORKER_ID,
+        _NVIDIA_QWEN_WORKER_ID,
         _QWEN_WORKER_ID,
         "unsloth/Qwen3.6-27B-NVFP4",
         "unsloth/Qwen3.8-27B-NVFP4",
@@ -767,10 +770,12 @@ def test_worker_gear_exists_with_correct_fields() -> None:
     worker = next((m for m in SUPPORTED_MODELS if m.id == _WORKER_ID), None)
     assert worker is not None, f"{_WORKER_ID} not found in catalog"
     assert worker.role_hint == "worker"
-    assert worker.native_max_model_len == 262144  # config.json max_position_embeddings
-    assert worker.quantization == "modelopt"  # hf_quant_config.json producer/quant_algo
-    assert worker.tool_parser == "qwen3_coder"  # infer_parser("...qwen3.6...")
-    assert worker.status == "configured"  # declared 2026-09-10, no live boot yet
+    assert worker.native_max_model_len == 262144  # llm_config.max_position_embeddings
+    assert worker.quantization == "modelopt"  # quantization_config.quant_method
+    assert worker.tool_parser == "qwen3_coder"  # the card's vLLM command
+    # Spark GB10 2026-10-25, docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt
+    assert worker.status == "load-tested"
+    assert worker.hf_revision == "c6cc2e8ffa353403213d6b9b18aaf8eb684d705a"
     assert worker.task == "generate"
     assert worker.dimension == 0
     assert worker.hf_overrides == ""
@@ -778,34 +783,43 @@ def test_worker_gear_exists_with_correct_fields() -> None:
 
 
 def test_worker_gear_is_multimodal() -> None:
-    # config.json carries a vision_config (image+video intake), unlike the
-    # demoted Nemotron worker, which was text-only.
+    # config.json carries a RADIO vision_config (image+video intake), which the
+    # worker contract's image_understanding/video_understanding rely on.
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
     shape = worker.shape.lower()
     assert "vit" in shape or "vision" in shape or "image" in shape or "video" in shape
     assert "text-only" not in shape
 
 
-def test_worker_gear_has_self_hosted_mtp_speculative_config() -> None:
-    # config.json's text_config.mtp_num_hidden_layers=1 plus the ignore/
-    # exclude_modules ["mtp.layers.0*", "mtp*"] pattern confirm a physically
-    # present, self-hosted MTP draft module — declared here as a MEASUREMENT
-    # of the checkpoint's own config, not the card's separate MTP/DSpark prose.
+def test_worker_gear_drafts_with_the_external_lilicorr_dflash_head() -> None:
+    # The card's speculative decoding is DFlash from a SEPARATE draft repo, so
+    # the config names that repo (and pins its revision) instead of `mtp`.
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
     cfg = json.loads(worker.speculative_config)
-    assert cfg["method"] == "mtp"
-    assert "model" not in cfg
-    assert "draft_model_id" not in cfg
+    assert cfg["method"] == "dflash"
+    assert cfg["model"] == "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB-LiLiCorr"
+    assert cfg["revision"] == "449d24140160b8e51871bfc0f0a7338abf640aa1"
+    assert cfg["num_speculative_tokens"] == 7
 
 
-def test_worker_gear_is_moe_with_auto_selected_backend() -> None:
+def test_worker_gear_is_moe_with_the_cards_b12x_backend() -> None:
     worker = next(m for m in SUPPORTED_MODELS if m.id == _WORKER_ID)
-    assert worker.shape.lower().startswith("hybrid")
-    assert "moe" in worker.shape.lower()
-    # NO forced moe_backend: mirrors the demoted unsloth worker's own
-    # hard-won sm_110 lesson (forced NVFP4 MoE backends were refused there)
-    # rather than carrying an untested guess forward.
-    assert worker.moe_backend == ""
+    assert worker.shape.lower().startswith("moe")
+    # The card's own --moe-backend; the IQ2 expert path is sm_12x-only.
+    assert worker.moe_backend == "b12x"
+
+
+def test_previous_nvidia_qwen_worker_is_demoted_to_candidate_and_kept() -> None:
+    # nvidia/Qwen3.6-35B-A3B-NVFP4 (issue #244, t1) is KEPT (cite-don't-delete):
+    # the thor-worker shape still renders it and the 2026-09-10..2026-10-26
+    # worker evidence was measured against it. Only role_hint moved.
+    outgoing = next((m for m in SUPPORTED_MODELS if m.id == _NVIDIA_QWEN_WORKER_ID), None)
+    assert outgoing is not None, f"{_NVIDIA_QWEN_WORKER_ID}: expected to remain in the catalog"
+    assert outgoing.role_hint == "candidate"
+    assert outgoing.native_max_model_len == 262144
+    assert outgoing.quantization == "modelopt"
+    assert outgoing.tool_parser == "qwen3_coder"
+    assert json.loads(outgoing.speculative_config)["method"] == "mtp"
 
 
 def test_worker_gear_tool_parser_matches_infer_parser() -> None:
