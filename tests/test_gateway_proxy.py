@@ -70,7 +70,9 @@ _RERANK_ID = "Qwen/Qwen3-Reranker-0.6B"
 # nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (demoted, kept as
 # candidate — itself having earlier replaced unsloth/Qwen3.6-35B-A3B-NVFP4,
 # also a kept candidate).
-_WORKER_ID = "nvidia/Qwen3.6-35B-A3B-NVFP4"
+# 2026-10-26: worker moved to Nemotron 3.5 Bolt (operator); the nvidia Qwen
+# export is a kept candidate.
+_WORKER_ID = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
 _GATEWAY_URL = "http://localhost:8000"
 
 _THOR_ORIGIN = "http://thor.local:8001"

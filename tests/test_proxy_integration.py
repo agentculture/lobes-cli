@@ -838,6 +838,9 @@ _GOLDEN_CAPABILITIES = {
         # The opt-in worker lobe: unwired in this no-knob deployment, so it is
         # honestly infeasible-by-default (OPT_IN_BACKENDS, exactly like muse
         # above) and named by its catalog default. Catalog worker moved to
+        # nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB (2026-10-26, operator) —
+        # 256K native, modelopt quant, multimodal, DFlash draft (mtp True: the
+        # field means "speculative decoding configured"). Before that it was
         # nvidia/Qwen3.6-35B-A3B-NVFP4 (issue #244, t1) — 256K native ceiling,
         # nvidia modelopt quant, MULTIMODAL (image+video), self-hosted MTP
         # draft (mtp True: config.json's mtp_num_hidden_layers=1 plus the
@@ -854,12 +857,12 @@ _GOLDEN_CAPABILITIES = {
         # multimodal coder. Adding responsibilities is contract-compatible;
         # the #187 Lightning narrowing was the temporary state, not the
         # contract.
-        "model": "nvidia/Qwen3.6-35B-A3B-NVFP4",
+        "model": "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
         "runtime": "vllm",
         "endpoint": _GOLDEN_ORIGIN,
         "path": "/v1/chat/completions",
         "context": None,
-        "quant": "modelopt",
+        "quant": "modelopt_mixed",
         "mtp": True,
         # True even though this deployment does not HOST worker: `tools` is a
         # fact about the model the role would serve (the catalog's
