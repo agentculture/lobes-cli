@@ -178,6 +178,10 @@ FLEET_TEMPLATES = {
     # Layers a Transformers build (gemma4_unified) on the NGC 26.05 base.
     # Authored in t1; wired to vllm-multimodal's build: block in t2.
     "fleet/Dockerfile.vllm-gemma4": "Dockerfile.vllm-gemma4",
+    # The `worker` gear's engine (Nemotron 3.5 Bolt): the card's vLLM nightly +
+    # b12x. Not built by compose: WORKER_IMAGE names the tag an operator builds
+    # from it (see env.example's Bolt recipe).
+    "fleet/Dockerfile.vllm-bolt": "Dockerfile.vllm-bolt",
     # The innereye ComfyUI render tenant's image (issue #82, t2/t3). The
     # `comfyui` compose service's `build.dockerfile` now references this
     # file, so it MUST be scaffolded alongside docker-compose.yml or

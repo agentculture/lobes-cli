@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.93.0] - 2026-10-26
+
+### Added
+
+- Eleven worker-only profile knobs so the packaged `vllm-worker` lane can serve the Nemotron 3.5 Bolt worker: `linear_backend`, `mamba_backend`, `mamba_ssm_cache_dtype`, `mamba_cache_dtype`, `mamba_cache_mode`, `kv_cache_memory_bytes`, `limit_mm_per_prompt`, `video_pruning_rate`, `media_io_kwargs`, `reasoning_parser_plugin` and `revision` (each a default-absent `WORKER_*` slot; unset renders the old argv byte-for-byte), plus a worker-scoped `WORKER_VLLM_USE_V2_MODEL_RUNNER`.
+- A scaffolded `Dockerfile.vllm-bolt` (the card's vLLM nightly, pinned by digest, plus `b12x` 1.5.1) and a full Bolt `.env` recipe in the fleet `env.example`, test-proven through `docker compose config` to render the argv the Spark runs.
+
 ## [0.92.0] - 2026-10-26
 
 ### Added

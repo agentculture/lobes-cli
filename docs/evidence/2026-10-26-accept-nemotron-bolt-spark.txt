@@ -115,3 +115,38 @@ tool   get_weather      -> finish_reason tool_calls, get_weather({"city": "Haifa
 - The packaged template serving Bolt (it cannot yet; the Spark uses an override command).
 - Load: `--max-num-seqs 1`, so concurrent worker callers queue.
 - The Orin member's view (not probed).
+
+======================================================================================================
+PART 3 — the same lane, now driven by the packaged template's WORKER_* knobs (2026-10-25 23:32Z - 23:40Z)
+======================================================================================================
+Change on the Spark (backups *.bak-20261026-013247-pre-worker-knobs):
+- docker-compose.override.yml: the hand-written vllm-worker flag list replaced by the PACKAGED template's
+  vllm-worker `command:` string, verbatim, plus its `VLLM_USE_V2_MODEL_RUNNER=${WORKER_VLLM_USE_V2_MODEL_RUNNER:-0}`
+  environment line. (The base compose is hand-kept and still carries the old list-form command.)
+- .env: every line of the fleet env.example's Bolt recipe, copied verbatim (WORKER_REVISION,
+  WORKER_KV_CACHE_MEMORY_BYTES, the mamba/linear/attention/MoE backends, the media limits, the speculative
+  config, the reasoning parser + plugin, WORKER_VLLM_USE_V2_MODEL_RUNNER=1, ...).
+- WORKER_IMAGE=lobes/vllm-bolt:local, built from the scaffolded Dockerfile.vllm-bolt (imports b12x and
+  vllm 0.32.0rc1.dev100+g77154ca61).
+Rendered argv vs the running PART 2 argv: identical except '--attention-config={"backend": "FLASHINFER"}' for
+'--attention-backend=FLASHINFER', and no '--seed=42'.
+`lobes up worker --apply` recreated the lane.
+
+== Boot ==
+23:36:16  Model loading took 24.09 GiB memory and 152.686861 seconds
+23:38:11  GPU KV cache size: 350,464 tokens, Maximum concurrency for 262,144 tokens per request: 1.34x
+          Application startup complete; container healthy. Host MemAvailable 70,348 MiB.
+
+== Through the gateways ==
+spark   model=worker '391' (local); image red 'Red' / blue 'Blue'; tool get_weather({"city": "Haifa"})   PASS
+thor    image red 'Red' / blue 'Blue'; tool get_weather({"city": "Haifa"})                               PASS
+        model=worker '391', X-Lobes-Mesh-Member: spark (23:39Z re-check)                                PASS
+spark2  model=worker '391', X-Lobes-Mesh-Member: spark                                                  PASS
+
+== Observed: a hard 404 while the hosting lane restarts ==
+The Thor's first plain `model=worker` request, moments after the Spark lane came back, answered
+404 role_infeasible ("declared hardware-infeasible ... will never be served here") with /capabilities
+worker ready:false and no hosted_by; the image/tool requests seconds later, and a re-check at 23:39Z, were
+forwarded to the spark normally. A member whose only worker host is restarting answers the permanent-sounding
+404 rather than a retryable 503 role_unverified — not caused by this change (the lane restart is), recorded
+for the mesh boot-window work.

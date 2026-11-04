@@ -1512,6 +1512,11 @@ services:
       # vLLM keeps auto-selecting exactly as it did before the knob existed.
       - MG_LOG_DIR=/logs/model-gear   # in-container mount point (explicit, no drift)
       - MG_LOG_NAME=worker   # → /logs/model-gear/worker-<boot>.log
+      # vLLM's V2 model runner, which the Bolt worker's card requires
+      # (`export VLLM_USE_V2_MODEL_RUNNER=1`). Worker-scoped on purpose: the
+      # same key in .env would reach every lane through env_file. The default
+      # 0 is vLLM's own default, so an unset knob changes nothing.
+      - VLLM_USE_V2_MODEL_RUNNER=${WORKER_VLLM_USE_V2_MODEL_RUNNER:-0}
       # Lane-safety t8: durable per-lane compile cache (contract section 6).
       # Off value /root/.cache/vllm points vLLM at the writable layer; the mount
       # target stays /cache/vllm, so the host bind goes unused.
@@ -1649,6 +1654,17 @@ services:
       ${WORKER_MOE_BACKEND:+--moe-backend=${WORKER_MOE_BACKEND}}
       ${WORKER_LOAD_FORMAT:+--load-format=${WORKER_LOAD_FORMAT}}
       ${WORKER_MM_ENCODER_ATTN_BACKEND:+--mm-encoder-attn-backend=${WORKER_MM_ENCODER_ATTN_BACKEND}}
+      ${WORKER_REVISION:+--revision=${WORKER_REVISION}}
+      ${WORKER_KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes=${WORKER_KV_CACHE_MEMORY_BYTES}}
+      ${WORKER_LINEAR_BACKEND:+--linear-backend=${WORKER_LINEAR_BACKEND}}
+      ${WORKER_MAMBA_BACKEND:+--mamba-backend=${WORKER_MAMBA_BACKEND}}
+      ${WORKER_MAMBA_SSM_CACHE_DTYPE:+--mamba-ssm-cache-dtype=${WORKER_MAMBA_SSM_CACHE_DTYPE}}
+      ${WORKER_MAMBA_CACHE_DTYPE:+--mamba-cache-dtype=${WORKER_MAMBA_CACHE_DTYPE}}
+      ${WORKER_MAMBA_CACHE_MODE:+--mamba-cache-mode=${WORKER_MAMBA_CACHE_MODE}}
+      ${WORKER_LIMIT_MM_PER_PROMPT:+'--limit-mm-per-prompt=${WORKER_LIMIT_MM_PER_PROMPT}'}
+      ${WORKER_VIDEO_PRUNING_RATE:+--video-pruning-rate=${WORKER_VIDEO_PRUNING_RATE}}
+      ${WORKER_MEDIA_IO_KWARGS:+'--media-io-kwargs=${WORKER_MEDIA_IO_KWARGS}'}
+      ${WORKER_REASONING_PARSER_PLUGIN:+--reasoning-parser-plugin=${WORKER_REASONING_PARSER_PLUGIN}}
       ${WORKER_MAX_NUM_SEQS:+--max-num-seqs=${WORKER_MAX_NUM_SEQS}}
       ${WORKER_MAX_NUM_BATCHED_TOKENS:+--max-num-batched-tokens=${WORKER_MAX_NUM_BATCHED_TOKENS}}
       ${WORKER_CHUNKED_PREFILL-}

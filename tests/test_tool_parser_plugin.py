@@ -332,7 +332,8 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # against real `docker compose config` in
     # tests/test_worker_recipe_knobs.py); this tripwire is hashing the
     # TEMPLATE text, which did change.
-    "vllm-worker": "f653fab2281f6e33b497cf675fd82b60db004dac9de145bf74964cf9b1510fbc",
+    # Re-pinned 2026-10-26: the Bolt worker knobs + VLLM_USE_V2_MODEL_RUNNER.
+    "vllm-worker": "0775ec52550a48644555671a29cb3ce72e7444eb44b06e09b19e4ea671371a67",
 }
 
 
