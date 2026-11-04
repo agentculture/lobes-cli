@@ -1,5 +1,13 @@
 # `nvidia/Qwen3.6-35B-A3B-NVFP4` — the Thor `worker` lane
 
+> **SUPERSEDED as the `worker` role_hint (2026-10-26, operator decision).**
+> The catalog's `worker` moved to `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB`,
+> hosted on the DGX Spark (see
+> [`nemotron-3.5-bolt-74b-a9b-24gb.md`](nemotron-3.5-bolt-74b-a9b-24gb.md)).
+> This checkpoint is a kept `candidate` (cite-don't-delete); the
+> `thor-worker` shape still renders it. Read "the `worker` lane" below as
+> history.
+
 **Status: VALIDATED live on the physical Jetson AGX Thor, 2026-09-10, on the
 nightly `0.26.1rc1.dev942`; re-accepted on vLLM 0.31.0 (2026-10-17) for the
 items listed in [Engine relabel](#engine-relabel-310-t15) only** — see

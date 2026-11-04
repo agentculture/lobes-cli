@@ -1,0 +1,15 @@
+# The engine the `worker` gear (nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB)
+# needs: the vLLM nightly its model card names, plus `b12x`, which the card
+# installs at container start (`pip install b12x`) for --linear-backend /
+# --moe-backend b12x. Baked in here so the lane boots offline and the same
+# image serves every boot.
+#
+# Pinned by DIGEST: the card's tag nightly-77154ca6116ae34cbfe314beef1016bde9b63989
+# resolved to this digest on the DGX Spark (vLLM 0.32.0rc1.dev100+g77154ca61);
+# the measured run is docs/evidence/2026-10-26-accept-nemotron-bolt-spark.txt.
+# sm_12x only: vLLM refuses Bolt's IQ2 experts on other cards.
+#
+# Build (from the deployment dir), then set WORKER_IMAGE=lobes/vllm-bolt:local:
+#   docker build -f Dockerfile.vllm-bolt -t lobes/vllm-bolt:local .
+FROM vllm/vllm-openai@sha256:a7deff2c216def98c193352aca50fb03a2ee29231355b3033dc3789009f6d23e
+RUN uv pip install --system b12x==1.5.1

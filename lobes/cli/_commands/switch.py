@@ -270,6 +270,25 @@ def _engine_notice(model) -> str | None:
     )
 
 
+def _serving_note_notice(model) -> str | None:
+    """A vLLM gear the STOCK lane cannot boot: say what it needs instead.
+
+    The stock-template notices (remove the MTP primary's command items, add
+    ``--moe-backend``) assume the stock image and the stock flags can serve
+    the gear. For a gear whose catalog entry carries a ``serving_note`` that
+    is false, and following them would mislead — e.g. removing
+    ``--trust-remote-code`` from a checkpoint that needs it. Like
+    :func:`_engine_notice`, this is a notice, so ``--apply`` writes ``.env``
+    and does not restart the container (:func:`_apply_env_only`).
+    """
+    if not model.serving_note:
+        return None
+    return (
+        f"the stock vLLM lane cannot boot this gear: it {model.serving_note}; "
+        f"see docs/{model.doc}."
+    )
+
+
 def _lock_staleness_notice(deploy_dir) -> str | None:
     """A committed ``deployment.lock.toml`` is present — say so before writing ``.env``.
 
@@ -312,6 +331,10 @@ def _serve_notices(model_id: str, args: argparse.Namespace | None = None) -> lis
         # "remove the MTP command items" / "add --moe-backend" are edits to a
         # compose file that does not serve this gear at all.
         return [notice for notice in [_engine_notice(model)] if notice]
+    if model is not None and model.serving_note:
+        # Same short-circuit, for a vLLM gear the stock lane cannot boot: the
+        # stock-template edit notices would be wrong advice for it.
+        return [notice for notice in [_serving_note_notice(model)] if notice]
     if model is not None:
         candidates += [
             _mtp_removal_notice(model),

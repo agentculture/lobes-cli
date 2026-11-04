@@ -542,6 +542,43 @@ def test_switch_apply_to_a_llama_cpp_gear_writes_env_but_never_restarts(
     assert _env.read_env(tmp_path / ".env", "VLLM_MODEL") == _GGUF_GEAR
 
 
+_BOLT_GEAR = "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB"
+
+
+def test_switch_to_a_gear_with_a_serving_note_prints_only_that_note(tmp_path, capsys) -> None:
+    # Bolt is a vLLM gear the STOCK lane cannot boot (nightly + b12x, sm_12x).
+    # The stock-template notices would be wrong advice for it — "REMOVE
+    # --trust-remote-code" in particular, which Bolt needs.
+    _scaffold(tmp_path)
+    rc = main(["switch", _BOLT_GEAR, "--compose-dir", str(tmp_path)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    notices = [line for line in out.splitlines() if "NOTE:" in line]
+    assert len(notices) == 1, notices
+    assert "stock vLLM lane cannot boot this gear" in notices[0]
+    assert "b12x" in notices[0]
+    assert "REMOVE" not in out
+    assert "--moe-backend" not in out
+
+
+def test_switch_apply_to_a_gear_with_a_serving_note_never_restarts(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    _scaffold(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(_compose, "compose_down", lambda d: (calls.append("down"), _ok())[1])
+    monkeypatch.setattr(_compose, "compose_up_detached", lambda d: (calls.append("up"), _ok())[1])
+    monkeypatch.setattr(_health, "wait_health", lambda *a, **k: None)
+    monkeypatch.setattr(_runtime_ops, "probe_tool_calling", lambda *a, **k: None)
+
+    rc = main(["switch", _BOLT_GEAR, "--compose-dir", str(tmp_path), "--apply", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["restarted"] is False
+    assert payload["blocked_on_compose_edits"] is True
+    assert calls == []
+
+
 def test_switch_leaves_every_vllm_gear_alone_after_the_engine_guards(tmp_path, capsys) -> None:
     # The engine guards must be inert for a vLLM gear — the byte-for-byte proof
     # lives in tests/goldens/switch-plans.txt, this is the CLI-level spot check
