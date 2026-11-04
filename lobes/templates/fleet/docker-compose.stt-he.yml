@@ -1,0 +1,66 @@
+# lobes FLEET — the stt-he speech-to-text LANE overlay (stt-lanes).
+#
+# A docker-compose override layered on the base fleet:
+#   docker compose -f docker-compose.yml -f docker-compose.stt-he.yml \
+#     --profile stt-he up -d --no-deps stt-he
+# lobes chains it automatically whenever this file is present in the
+# deployment dir (`lobes init --stt-he` scaffolds it). The service sits behind
+# the `stt-he` compose profile, so chaining the file never starts it by itself.
+#
+# One CPU-only service: ivrit.ai Zipformer2 66M on sherpa-onnx
+# (Dockerfile.stt-zipformer / listen_server_zipformer.py). NO GPU reservation,
+# no host port (`expose` only — the gateway dials http://stt-he:9002), no
+# depends_on (issue #222). To route it, set in .env:
+#   COMPOSE_PROFILES=<existing>,stt-he
+#   STT_HE_BASE_URL=http://stt-he:9002
+# The base compose's gateway already passes STT_HE_BASE_URL/STT_HE_FEASIBLE
+# through; the gateway probes the lane on /v1/health/ready.
+#
+# The weights are CC-BY-4.0 (attribution required, docs/stt-lanes.md).
+# DECLARED/UNVALIDATED (#108): mem_limit, cpus and start_period are declared
+# from the 2026-10-23 experiment (RSS ~280 MB), not from a live acceptance.
+services:
+  stt-he:
+    build:
+      context: .
+      dockerfile: Dockerfile.stt-zipformer
+    container_name: model-gear-stt-he
+    profiles: ["stt-he"]
+    restart: unless-stopped
+    mem_limit: ${STT_HE_MEM_LIMIT:-1.5g}
+    cpus: ${STT_HE_CPUS:-2}
+    environment:
+      - STT_HE_PORT=9002
+      - STT_HE_WORKERS=${STT_HE_WORKERS:-2}
+      - STT_HE_REVISION=${STT_HE_REVISION:-ee769a2a13b887f91572eec349458bfb0fe79e7a}
+      - STT_HE_MODEL_DIR=${STT_HE_MODEL_DIR:-}
+      - HF_HOME=/root/.cache/huggingface
+      - HF_HUB_DISABLE_XET=1
+      - HF_TOKEN=${HF_TOKEN:-}
+      - OMP_NUM_THREADS=1
+      - CUDA_VISIBLE_DEVICES=
+      - MG_LOG_DIR=/logs/model-gear
+      - MG_LOG_NAME=stt-he
+      - LOBES_BOOT_DELAY_S=${LOBES_BOOT_DELAY_S:-120}
+      - LOBES_BOOT_ORDER=${LOBES_BOOT_ORDER:-}
+      - LOBES_BOOT_STAGGER_S=${LOBES_BOOT_STAGGER_S:-20}
+    volumes:
+      - ${HF_CACHE:-${HOME:-/root}/.cache/huggingface}:/root/.cache/huggingface
+      - ${MODEL_GEAR_LOG_DIR:-./logs}:/logs/model-gear
+      - ./mg-logwrap.sh:/usr/local/bin/mg-logwrap:ro
+    entrypoint: ["bash", "/usr/local/bin/mg-logwrap"]
+    # Image CMD (Dockerfile.stt-zipformer) respelled after the wrapper.
+    command: ["python3", "/app/listen_server_zipformer.py"]
+    expose:
+      - "9002"
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:9002/v1/health/ready')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # DECLARED: boot hold (<= 180 s) + a ~73 MB first download + model load.
+      start_period: ${STT_HE_START_PERIOD:-360s}

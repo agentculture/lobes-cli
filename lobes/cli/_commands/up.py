@@ -341,6 +341,7 @@ def _compose_file_args(
     gpu_present: bool = False,
     audio_he_present: bool = False,
     embed_present: bool = False,
+    stt_he_present: bool = False,
 ) -> list[str]:
     """The ``-f`` chain for the compose invocation — delegates to the single
     composition authority (:func:`lobes.runtime._compose.compose_file_args`,
@@ -370,6 +371,7 @@ def _compose_file_args(
         gpu=gpu_present,
         audio_he=audio_he_present,
         embed=embed_present,
+        stt_he=stt_he_present,
     )
 
 
@@ -520,6 +522,7 @@ def _chain(deploy_dir: Path, audio: bool, shape_present: bool) -> list[str]:
         _compose.gpu_overlay_present(deploy_dir),
         _compose.audio_he_overlay_present(deploy_dir),
         _compose.embed_overlay_present(deploy_dir),
+        _compose.stt_he_overlay_present(deploy_dir),
     )
 
 

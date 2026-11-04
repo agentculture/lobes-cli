@@ -16,7 +16,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/embeddings` | POST | `Qwen/Qwen3-Embedding-0.6B` (warm embed gear) | 1024-dim, Matryoshka-truncatable via `"dimensions"` |
 | `/v1/rerank` | POST | `Qwen/Qwen3-Reranker-0.6B` (warm rerank gear) | Jina/Cohere shape, sorted best-first |
 | `/v1/score` | POST | `Qwen/Qwen3-Reranker-0.6B` (same backend as rerank) | raw cross-encoder scores, input order |
-| `/v1/audio/transcriptions` | POST | Parakeet STT via the realtime bridge | multipart `file` upload → `{"text": ...}` |
+| `/v1/audio/transcriptions` | POST | Parakeet STT via the realtime bridge, or an `stt-he` / `stt-en` lane | multipart `file` upload (+ `model=stt-he`) → `{"text": ...}` |
 | `/v1/audio/speech` | POST | Chatterbox TTS via the realtime bridge | text → audio bytes (24 kHz) |
 | `/v1/realtime` | GET (WebSocket upgrade) | realtime bridge, tunneled through the gateway | server_vad session; base64 PCM16 mono LE JSON events both ways, 24000 Hz default / 16000 Hz accepted. Transcription-only by default; opt in with `response.create` for a spoken, interruptible reply on the same socket (issues #149, #151) — see below |
 | `/v1/systemone` | POST | the decider domain named by `X-Lobes-Model: decider:<name>` (absent → `general`) | not OpenAI: a `{state, questions}` decision request forwarded byte-identical; returns a probability for every option of every question. Never shed (no `429`). See [`decider.md`](decider.md) |
@@ -437,6 +437,29 @@ Response:
 ```json
 {"text": "the transcribed words here"}
 ```
+
+#### Speech-to-text lanes: `stt-he` / `stt-en`
+
+Name a **lane** to pick a language-specific engine instead of the box's `stt`
+container. Put the lane in the multipart `model` field, or send the header
+`X-Lobes-Model: stt-he`. If both name lanes, the form field wins.
+
+```bash
+curl -s http://localhost:8000/v1/audio/transcriptions \
+  -F "file=@clip.m4a" \
+  -F "model=stt-he"
+```
+
+- `stt-he` is ivrit.ai Zipformer2 on sherpa-onnx (CPU, Hebrew). The weights are
+  CC-BY-4.0, and attribution is required.
+- `stt-en` is the box's `stt` container, asked for English.
+
+When the form carries no `language`, the gateway appends the lane's language. A
+caller's own `language` is kept. A lane not hosted on this box is forwarded one
+hop to the mesh member that hosts it; otherwise it answers 404
+`role_infeasible`. A hosted lane that is down answers 503, never another
+engine. Any other `model` value (or none) keeps the behaviour above unchanged.
+Details: [`stt-lanes.md`](stt-lanes.md). DECLARED/UNVALIDATED (#108).
 
 ### Audio speech (TTS)
 

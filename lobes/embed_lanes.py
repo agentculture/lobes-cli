@@ -58,14 +58,40 @@ def reserved_names() -> frozenset[str]:
     )
 
 
-def validate_lane_name(name: str) -> None:
-    """Raise ``ValueError`` when *name* is unusable as a specialist lane name."""
+# Roles whose own ``{role}-*`` spelling a lane may use (stt-lanes). Only ``stt``,
+# and only because it takes NO member lanes (``MEMBER_LANE_EXCLUDED_ROLES``):
+# ``stt-he`` can therefore never mean "the stt role on a member named he". The
+# exception is opt-in per call (``audio_role=``), so every other lane registry
+# keeps the full rule.
+_AUDIO_LANE_ROLES = frozenset({"stt"})
+
+
+def _check_audio_role(name: str, audio_role: str) -> None:
+    from lobes.roles import MEMBER_LANE_EXCLUDED_ROLES
+
+    if audio_role not in _AUDIO_LANE_ROLES or audio_role not in MEMBER_LANE_EXCLUDED_ROLES:
+        raise ValueError(f"{audio_role!r} lanes may not use the {{role}}-<suffix> exception")
+    if not name.startswith(audio_role + "-"):
+        raise ValueError(f"lane name {name!r} must be named {audio_role}-<suffix>")
+
+
+def validate_lane_name(name: str, *, audio_role: str | None = None) -> None:
+    """Raise ``ValueError`` when *name* is unusable as a specialist lane name.
+
+    ``audio_role`` (stt-lanes) admits ``<audio_role>-<suffix>`` for a role in
+    :data:`_AUDIO_LANE_ROLES` that has no member lanes; the name must then use
+    exactly that prefix, and every other reserved prefix is still refused.
+    """
     if not _NAME_RE.match(name):
         raise ValueError(f"lane name {name!r} must be lowercase alphanumerics joined by '-'")
     reserved = reserved_names()
     if name in reserved:
         raise ValueError(f"lane name {name!r} collides with a role, tier or backend alias")
+    if audio_role is not None:
+        _check_audio_role(name, audio_role)
     for base in reserved:
+        if base == audio_role:
+            continue
         if name.startswith(base + "-"):
             raise ValueError(
                 f"lane name {name!r} matches the {{role}}-{{member}} member-lane pattern ({base}-*)"

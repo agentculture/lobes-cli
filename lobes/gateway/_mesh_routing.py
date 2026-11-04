@@ -1050,15 +1050,17 @@ def lane_for_model(requested: str | None, lanes: "Sequence[object]") -> object |
 
 
 def _announces_served_id(
-    ann_by_origin: Mapping[str, "Announcement"], origin: str, lane: str, served_id: str
+    ann_by_origin: Mapping[str, "Announcement"], origin: str, lane: str, served_id: str | None
 ) -> bool:
+    if served_id is None:
+        return True  # an unpinned lane (stt-en): any checkpoint announced under its name
     ann = ann_by_origin.get(origin)
     info = ann.roles.get(lane) if ann is not None else None
     fp = getattr(info, "fingerprint", None)
     return getattr(fp, "served_id", None) == served_id
 
 
-def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str) -> RolePlacement:
+def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str | None) -> RolePlacement:
     """Where a lane this box does not host is served, restricted to its checkpoint.
 
     A lane's vector space is its checkpoint, so the served id is the gate:
@@ -1071,6 +1073,11 @@ def lane_placement(snapshot: RoutingSnapshot, lane: str, served_id: str) -> Role
     ``{lane}-{member}`` addresses to fall back on. A member announcing another
     checkpoint under the lane's name is never a candidate. No local fingerprint:
     this is only consulted for a lane this box does not host.
+
+    ``served_id=None`` is a lane with NO pinned checkpoint (``stt-en`` serves
+    whatever its host's ``stt`` container declares): every verified member
+    announcing the lane name is a candidate. A transcription lane is defined by
+    its language, not a vector space, so there is no checkpoint to gate on.
     """
     ann_by_origin = dict(snapshot.announcements)
     plain = tuple(

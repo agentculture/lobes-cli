@@ -972,15 +972,49 @@ def _add_lane_aliases(aliases: dict[str, str], lane_backends: list[Backend]) -> 
         aliases.setdefault(backend.name, backend.served_name)
 
 
+def _stt_lanes() -> tuple:
+    """The speech-to-text lane registry (lazy, same cycle as :func:`_embed_lanes`)."""
+    from lobes.stt_lanes import STT_LANES
+
+    return STT_LANES
+
+
+def _stt_lane_backends(env: Mapping[str, str]) -> list[Backend]:
+    """One optional PATH-routed backend per stt lane, wired by ``<LANE>_BASE_URL``.
+
+    The embed-lane wiring rule (:func:`_lane_backends`) with two differences:
+    the task is ``transcribe`` (path-routed, so no JSON ``model`` field and no
+    alias ever reaches it), and the served name is the lane's identity on THIS
+    box (:func:`lobes.stt_lanes.served_identity` — ``stt-en`` follows the box's
+    ``STT_MODEL``). Unset ``BASE_URL`` means not wired here.
+    """
+    from lobes.stt_lanes import served_identity
+
+    out: list[Backend] = []
+    for lane in _stt_lanes():
+        url = (env.get(lane.base_url_env) or "").strip()
+        if url:
+            out.append(
+                Backend(
+                    name=lane.name,
+                    base_url=url.rstrip("/"),
+                    served_name=served_identity(lane, env)[0],
+                    task=lane.task,
+                )
+            )
+    return out
+
+
 def _infeasible_lanes(env: Mapping[str, str]) -> frozenset[str]:
     """Lane names this box declares it cannot serve (``<LANE>_FEASIBLE=false``).
 
     Independent of wiring, like :data:`FEASIBLE_ENV`. A wired-but-infeasible
-    lane 404s ``role_infeasible``; it is never served by a sibling lane.
+    lane 404s ``role_infeasible``; it is never served by a sibling lane. Covers
+    the embed lanes and the stt lanes alike.
     """
     return frozenset(
         lane.name
-        for lane in _embed_lanes(env)
+        for lane in (*_embed_lanes(env), *_stt_lanes())
         if (env.get(lane_env_key(lane.name, "FEASIBLE")) or "").strip().lower() in _FALSY_FEASIBLE
     )
 
@@ -1220,7 +1254,14 @@ def build_config(env: Mapping[str, str] | None = None) -> tuple[RoutingTable, Se
     # Specialist lanes (t6) are appended AFTER every pre-existing backend so the
     # first-match served-name ownership of embed/embed-deep is unchanged.
     lane_backends = _lane_backends(env)
-    backends = [primary, *(b for b in optional if b is not None), *lane_backends]
+    # Speech-to-text lanes (stt-lanes) last of all: path-routed, so they own no
+    # model-field id and cannot shift any served-name ownership above.
+    backends = [
+        primary,
+        *(b for b in optional if b is not None),
+        *lane_backends,
+        *_stt_lane_backends(env),
+    ]
     # The capability-tier layer: main/minor/multimodal (and back-compat
     # cheap/normal/hard) resolve to the served name of the wired minor /
     # multimodal / primary *generate* gear, on top of the task-family routing.
