@@ -1175,6 +1175,12 @@ lane-safety`. Open items: host conditions are on single-model/`--all-lobes` benc
 live Spark acceptance has not run (#313), and every Thor line is
 DECLARED/UNVALIDATED (#108).
 
+**Gradual fleet rollout.** `lobes rollout plan|apply|status|rollback` upgrades
+the resident boxes one wave at a time and verifies each through the mesh; it
+touches only the CLI install, the version pin and the gateway, never lanes
+(`tests/test_rollout_boundary.py`). DECLARED/UNVALIDATED until the live
+acceptance lands. See `docs/rollout.md` and `lobes explain rollout`.
+
 ## Build / test / publish
 
 - **Install for dev:** `uv sync`

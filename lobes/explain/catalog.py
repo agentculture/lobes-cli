@@ -67,6 +67,7 @@ are **dry-run by default** and require `--apply` to commit. The rest are read-on
 - `lobes explain roles` (the ten-role Colleague contract:
   cortex/senses/muse/embedder/reranker/stt/tts)
 - `lobes explain lock` (the committed deployment lock + the variation catalog)
+- `lobes explain rollout` (gradual mesh upgrade: plan / apply / status / rollback)
 - `lobes explain tunnel` (expose the API from anywhere)
 - `lobes explain assess`
 - `lobes explain backend`
@@ -1924,6 +1925,74 @@ switch` warns whenever a lock is present, since it writes `.env`.
 - `lobes explain shapes` / `lobes explain profiles` — the orthogonal axes
 """
 
+_ROLLOUT = """\
+# lobes rollout — gradual mesh upgrade
+
+**DECLARED/UNVALIDATED (#108).** Implemented and unit-tested with injected
+transports; no live rollout has run. The live acceptance (plan task t20) will
+land under `docs/evidence/`.
+
+`lobes rollout` upgrades the `lobes-cli` release across the mesh's resident
+boxes one wave at a time (canary first, this box last), verifies each member
+through the mesh, and stops on the first regression. Write verbs are dry-run
+unless `--apply`.
+
+## Verbs
+
+- `lobes rollout plan <version>` — read-only (exit 0): waves, skips (guest,
+  current, offline, downgrade), gateway-env drift, lock-affected members.
+  Flags: `--canary`, `--wave-size`, `--allow-downgrade`, `--template`,
+  `--local`, `--port`, `--compose-dir`, `--json`. It does NOT run preflight.
+- `lobes rollout apply <version> [--apply] [--patch-drift] [--allow-window]`
+  — refuse on drift, preflight the release in the gateway base image (pip,
+  retried with backoff for CDN lag), then per member: lock, window check, back
+  up `.env`, install the CLI, repin `MODEL_GEAR_VERSION`, tag the running
+  gateway image, rebuild the gateway, wait for health, verify through that
+  member's gateway. Never rolls back by itself.
+- `lobes rollout status [--target V]` — read-only journal projection and
+  resume point. A re-run of `apply` resumes from the journal.
+- `lobes rollout rollback --member M [--apply]` — restore `.env` and the
+  previous gateway image from the journal.
+
+Exit codes: `0` complete or incomplete; `1` drift refused or user error;
+`2` preflight failed or the rollout halted (names member, check, rollback).
+
+## Boundary
+
+It touches only the CLI install, the `MODEL_GEAR_VERSION` pin, an `.env`
+backup, the gateway image, the member lock, the journal, `residents.toml` and
+(`--patch-drift`) `docker-compose.override.yml`. Never lane images,
+checkpoints, shapes, profiles, `lobes init` or `up` of any lane but the
+gateway (`tests/test_rollout_boundary.py`).
+
+## Residents, export, site
+
+- `residents.toml` (deployment dir): `[resident.<name>]` / `[guest.<name>]`
+  with `ssh`, `user`, `port`, `lobes_path`, `gateway_key`; missing fields are
+  `needs_you`. `lobes mesh resident add <name> [--apply]` promotes a verified
+  roster member. `lobes doctor` adds `new_mesh_member`,
+  `resident_field_missing`, `gateway_open`.
+- `lobes lobe export <role>... --member M [--out DIR] [--apply]` — describe a
+  lobe's Dockerfile, inputs and compose service (or image + `docker run`);
+  read-only toward the member. Image-only lobes are described, not rebuilt.
+- `lobes site [--apply]` — local read-only page and `/api/mesh`,
+  `/api/rollout`, `/api/residents`, `/api/lobe-export` on
+  `127.0.0.1:9490` (unauthenticated).
+
+## Known limits
+
+- Drift is checked against this CLI's template unless `--template`.
+- `residents.toml` has no deploy-dir field (members assumed at `$HOME/.lobes`).
+- A rolled-back member still shows done in `status`.
+- The site shows no split brain, peer memory or remote hub unless members
+  advertise `world_size`/`spans`, memory or a tunnel; no gateway does today.
+
+## See also
+
+- `docs/rollout.md` — the deep reference, with the 2026-11-09 before-state
+- `lobes explain mesh` / `lobes explain lock` / `lobes explain doctor`
+"""
+
 ENTRIES: dict[tuple[str, ...], str] = {
     (): _ROOT,
     ("lobes",): _ROOT,
@@ -1975,6 +2044,8 @@ ENTRIES: dict[tuple[str, ...], str] = {
     ("lock",): _LOCK,
     ("deployment-lock",): _LOCK,
     ("variations",): _LOCK,
+    ("rollout",): _ROLLOUT,
+    ("fleet-rollout",): _ROLLOUT,
     ("lanes",): _LANES,
     ("decider",): _DECIDER,
     ("systemone",): _DECIDER,
