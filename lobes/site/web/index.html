@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lobes</title>
+<style>
+:root { --bg: #fbf8f3; --ink: #1d1b18; --soft: #6b655c; --line: #e4ddd2; }
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #171512; --ink: #f1ece4; --soft: #a59d91; --line: #34302a; }
+}
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+nav a { color: var(--ink); margin-right: 12px; }
+pre { overflow: auto; border: 1px solid var(--line); padding: 12px; font-size: 13px; }
+p { color: var(--soft); }
+</style>
+</head>
+<body>
+<main>
+<h1>lobes</h1>
+<nav aria-label="Data">
+<a href="#/api/mesh">Mesh</a><a href="#/api/rollout">Rollout</a><a href="#/api/residents">Residents</a>
+</nav>
+<p>Placeholder page. The designed views arrive with the front end; this shows the live /api data.</p>
+<pre id="out" aria-live="polite">loading</pre>
+</main>
+<script>
+(function () {
+  var out = document.getElementById("out");
+  function show() {
+    var path = (location.hash || "#/api/mesh").slice(1);
+    if (["/api/mesh", "/api/rollout", "/api/residents"].indexOf(path) < 0) path = "/api/mesh";
+    fetch(path).then(function (r) { return r.json(); }).then(function (d) {
+      out.textContent = JSON.stringify(d, null, 2);
+    }).catch(function (e) { out.textContent = String(e); });
+  }
+  window.addEventListener("hashchange", show);
+  show();
+})();
+</script>
+</body>
+</html>
