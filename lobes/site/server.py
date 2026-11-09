@@ -10,7 +10,8 @@ Routes (GET and HEAD; every other method is 405):
   ``..``, allow-listed extension); anything else is 404
 - ``/api/mesh`` -- members, versions, memory, roles, lobes (model ids), split
   brains, pairs and the outside-access hub
-- ``/api/rollout`` -- the rollout journal's status projection and resume point
+- ``/api/rollout`` -- the rollout journal's status projection, its step order, the
+  resume point and the rollback command for a failed member
 - ``/api/residents`` -- the residents file (detected / needs_you per field)
 - ``/api/lobe-export?role=&member=`` -- the export bundle listing (no writes)
 
@@ -53,9 +54,10 @@ from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from lobes.rollout import _export, _residents
-from lobes.rollout._journal import Journal
+from lobes.rollout._journal import FAILED, STEPS, Journal
 from lobes.rollout._observe import MemberObservation, observe_member
 from lobes.rollout._redact import redact
+from lobes.rollout._rollback import rollback_command
 from lobes.rollout._transport import Target
 
 DEFAULT_HOST = "127.0.0.1"
@@ -311,11 +313,18 @@ def build_rollout(sources: Sources) -> dict:
             "last_result": st.last_result,
             "done": st.done,
             "state": st.state,
+            "rollback_command": (
+                rollback_command(st.member) if st.last_result == FAILED and not st.done else None
+            ),
         }
         for st in journal.status().values()
     ]
     rp = journal.resume_point()
-    return {"members": members, "resume": {"member": rp.member, "step": rp.step} if rp else None}
+    return {
+        "steps": list(getattr(journal, "steps", STEPS)),
+        "members": members,
+        "resume": {"member": rp.member, "step": rp.step} if rp else None,
+    }
 
 
 def _resident_rows(group: dict) -> list:
