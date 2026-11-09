@@ -1,0 +1,395 @@
+{
+  "slug": "gradual-fleet-rollout",
+  "title": "gradual fleet rollout",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-11-09T05:21:48Z",
+  "updated": "2026-11-09T05:28:03Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes rolls a new version out across the mesh gradually from one CLI: it checks the release is installable, upgrades one member per wave, verifies each through the mesh, and stops (or rolls back) on the first regression",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "the announced flow exists as lobes rollout verbs and was used for at least one real release across the live mesh",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "deliver as 'lobes rollout plan|apply|status|rollback' verbs; accept with a docs/evidence/ transcript of one real release rolled across the live mesh",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The operator of a lobes mesh (and the agent driving lobes for them) who needs to move every member's gateway/CLI to a new lobes-cli release",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the operator can run it from any one member (including a gateway-only box like cultureos) without logging into the others by hand",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "check the spec's usage examples are written for the operator running lobes from one member box",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Upgrading the mesh is per-box hand work: SSH to each member, uv tool install, doctor --repin-version, lobes up gateway --build, then hand-test. On 2026-11-09 that took four ad-hoc scripts and hit an unpublished release, PyPI CDN lag, a doctor exit code, and a compose that silently dropped a new lane's env keys",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the before-state is evidenced by today's session (scope s1-s5), not reconstructed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "Each member upgraded by hand drifts (0.89.0 / 0.89.2 / dev694 / 0.93.0 coexisted today) and a half-done upgrade fails silently (stt-en infeasible with HTTP 404, not an error); a gradual, verified rollout turns that into a reported, stoppable sequence",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the drift and silent-failure examples are real: versions and the stt-en 404 were observed on 2026-11-09",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "One CLI flow - lobes rollout plan / apply / status - takes a target version, preflights it, upgrades members in waves (canary first), verifies each member before the next wave, and stops with the member, the failed check and a rollback path on the first regression",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "plan/apply/status are the whole surface; no step requires a hand-written script",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Scope is the lobes gateway image + lobes CLI version on mesh members (MODEL_GEAR_VERSION, the gateway service). It does not swap model checkpoints, change vLLM lane images, or re-render shapes/profiles",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "no rollout code path writes vLLM lane images, checkpoints, shape or profile files",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "non_goal",
+      "text": "Not a general config-management or fleet orchestrator: it never rewrites hand-kept compose files on its own; it reports drift and, at most, applies a narrow, backed-up, operator-approved patch",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "non_goal",
+      "text": "Not cross-repo code propagation (that is rollout-cli / mass-update, issue #198)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Preflight before touching any member: lobes-cli==<version> must pip-resolve inside the gateway's own base image (python:3.12-slim), retried with backoff to ride out index/CDN lag; refuse the rollout if it never resolves",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "the preflight resolves from the same index and base image the gateway Dockerfile uses, so a pass predicts the build",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "unit-test the preflight with a fake index that 404s then serves; live: point at an unpublished version and confirm no member is touched",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "plan is read-only and derived from the mesh: roster members + each member's GET /health version + /capabilities, plus per-member drift (gateway env keys the target template passes that the member's deployed compose does not)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "plan performs zero writes on any member",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "plan against the live mesh must list cultureos/spark/spark2/thor/orin with their current versions; a fixture compose missing STT_EN_BASE_URL must be reported as drift",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "apply upgrades one wave at a time (default: one member per wave, a member that hosts nothing first as canary), each member step idempotent: backup .env, install the CLI, repin MODEL_GEAR_VERSION, rebuild only the gateway, wait for health; re-running a finished step is a no-op",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "a member is never left without a running gateway: a failed build keeps the old one (as lobes up gateway --build does today)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "run apply twice on the same member; the second run changes nothing and exits 0",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "After each member: verify version on /health, diff /capabilities before vs after (no role that was feasible/ready may become infeasible/not-ready), and send one real request per role the member hosts or forwards; halt the rollout on any regression",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "verification exercises the request path through the mesh, not only docker ps or /health",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "inject a regression (e.g. a member whose compose drops a lane key) in a fixture and confirm apply halts at that member and names the role",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image; on a failed verification apply halts and prints the exact rollback command, which the operator runs (dry-run unless --apply)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the previous gateway image is kept (tagged) so rollback needs no index access",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h15",
+          "text": "the previous gateway image is kept (tagged) so rollback needs no index access, and rollback is never triggered without an operator command",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "after a forced failed verify, rollout rollback --member X --apply returns /health to the previous version",
+      "revisions": [
+        {
+          "text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image, and is offered (dry-run) automatically when verification fails",
+          "kind": "requirement",
+          "reason": "user decision: halt + offer rollback, no auto-rollback"
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Dry-run by default; --apply to commit, like every lobes write verb; rollout status reports per-member target/current version and last step result",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "no write happens without --apply",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "lobes rollout apply without --apply prints the plan and touches nothing",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "Re-running today's upgrade (4 members to 0.94.0) is 1 plan + 1 apply command with 0 hand-written scripts, and every member ends at the target version with 0 roles regressed in /capabilities",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "measured on the next real release, not a fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "repeat on the next release and record the transcript under docs/evidence/",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "A rollout to an unpublished version touches 0 members, and a member whose deployed compose lacks a gateway env key the target needs is flagged before its upgrade (100% of today's stt-en-style gaps caught)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "both cases are covered by tests that fail on today's code",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture tests for both cases",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "Transport is SSH from the operator box to each member (user decision 2026-11-09); no admin endpoint on the gateway",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "Compose drift (gateway env keys the target template passes but the member's deployed compose does not): plan reports it; apply patches docker-compose.override.yml only behind an explicit flag, after a backup, printing the diff (user decision 2026-11-09)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "On a failed post-upgrade verification: halt the rollout at that member, print the failed check and the exact rollback command; never auto-rollback (user decision 2026-11-09)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "2026-11-09 stt-lanes upgrade session",
+      "finding": "Upgrading 4 gateways (cultureos 0.93.0, spark2 0.89.2, orin 0.89.0; thor on 0.92.0.dev694) to 0.94.0 took one hand-written SSH script per box; Claude Code's auto-mode blocked remote writes, so the operator ran each script",
+      "seeds": []
+    },
+    {
+      "id": "s2",
+      "surface": "publish.yml run 41882958341",
+      "finding": "0.94.0 merged 2026-11-04 but never reached PyPI: the test job hit 'No space left on device' and publish was skipped; nobody noticed for 5 days. After the rerun published it, pip inside python:3.12-slim still could not resolve lobes-cli==0.94.0 for several minutes (CDN lag), so the first gateway build failed",
+      "seeds": []
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml gateway service",
+      "finding": "The gateway takes an explicit environment: list, never env_file. spark2's hand-kept 0.89-era compose lacked STT_EN_BASE_URL/STT_EN_FEASIBLE, so after upgrading to 0.94.0 the stt-en lane was silently infeasible until four lines were added to docker-compose.override.yml",
+      "seeds": []
+    },
+    {
+      "id": "s4",
+      "surface": "lobes doctor --repin-version --apply",
+      "finding": "Exits non-zero while gateway_version_match FAILs, which is the very skew it is about to fix; a set -e upgrade script stopped there on spark2",
+      "seeds": []
+    },
+    {
+      "id": "s5",
+      "surface": "lobes up gateway --build --apply",
+      "finding": "Single-box re-image path that works; a failed build leaves the old gateway running (safe). It does not wait for health or verify capabilities",
+      "seeds": []
+    },
+    {
+      "id": "s6",
+      "surface": "issue #262 and #198",
+      "finding": "#262: fleet up starts nothing when MODEL_GEAR_VERSION is unpublished (overlaps the preflight need). #198 'mass-update' is rollout-cli's cross-REPO code propagation, not box deployment; no existing fleet-rollout issue",
+      "seeds": []
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/gateway mesh (GET /mesh/roster, /capabilities)",
+      "finding": "GET /mesh/roster lists every member (name, origin, verified, roles) but carries NO version; each gateway's own unauthenticated GET /health returns {\"version\": ...} (issue #99), and /capabilities gives the per-role served state, so roster + per-member /health + /capabilities together give the before/after diff for verification",
+      "seeds": []
+    }
+  ],
+  "lapses": [],
+  "obligations": []
+}

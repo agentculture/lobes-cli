@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.94.1] - 2026-11-09
+
+### Added
+
+- Spec `docs/specs/2026-11-09-gradual-fleet-rollout.md` (devague /think): a
+  `lobes rollout plan|apply|status|rollback` flow that preflights a release,
+  upgrades mesh members' gateways in canary-first waves over SSH, verifies each
+  member through the mesh, and halts with a rollback command on the first
+  regression. Grounded in the 2026-11-09 stt-lanes upgrade of four gateways.
+
 ## [0.94.0] - 2026-11-04
 
 ### Added
