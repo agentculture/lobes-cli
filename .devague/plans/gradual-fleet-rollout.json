@@ -1,0 +1,825 @@
+{
+  "slug": "gradual-fleet-rollout",
+  "title": "gradual fleet rollout",
+  "frame_slug": "gradual-fleet-rollout",
+  "schema_version": 5,
+  "status": "exported",
+  "created": "2026-11-09T06:39:29Z",
+  "updated": "2026-11-09T06:44:19Z",
+  "targets": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes rolls a new version out across the mesh gradually from one CLI: it checks the release is installable, upgrades one member per wave, verifies each through the mesh, and stops (or rolls back) on the first regression",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h1",
+      "kind": "honesty",
+      "text": "the announced flow exists as lobes rollout verbs and was used for at least one real release across the live mesh",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The operator of a lobes mesh (and the agent driving lobes for them) who needs to move every member's gateway/CLI to a new lobes-cli release",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h2",
+      "kind": "honesty",
+      "text": "the operator can run it from any one member (including a gateway-only box like cultureos) without logging into the others by hand",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Upgrading the mesh is per-box hand work: SSH to each member, uv tool install, doctor --repin-version, lobes up gateway --build, then hand-test. On 2026-11-09 that took four ad-hoc scripts and hit an unpublished release, PyPI CDN lag, a doctor exit code, and a compose that silently dropped a new lane's env keys",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h3",
+      "kind": "honesty",
+      "text": "the before-state is evidenced by today's session (scope s1-s5), not reconstructed",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "Each member upgraded by hand drifts (0.89.0 / 0.89.2 / dev694 / 0.93.0 coexisted today) and a half-done upgrade fails silently (stt-en infeasible with HTTP 404, not an error); a gradual, verified rollout turns that into a reported, stoppable sequence",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h4",
+      "kind": "honesty",
+      "text": "the drift and silent-failure examples are real: versions and the stt-en 404 were observed on 2026-11-09",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "One CLI flow - lobes rollout plan / apply / status - takes a target version, preflights it, upgrades members in waves (canary first), verifies each member before the next wave, and stops with the member, the failed check and a rollback path on the first regression",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h5",
+      "kind": "honesty",
+      "text": "plan/apply/status are the whole surface; no step requires a hand-written script",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Scope is the lobes gateway image + lobes CLI version on mesh members (MODEL_GEAR_VERSION, the gateway service). It does not swap model checkpoints, change vLLM lane images, or re-render shapes/profiles",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h6",
+      "kind": "honesty",
+      "text": "no rollout code path writes vLLM lane images, checkpoints, shape or profile files",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Preflight before touching any member: lobes-cli==<version> must pip-resolve inside the gateway's own base image (python:3.12-slim), retried with backoff to ride out index/CDN lag; refuse the rollout if it never resolves",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h7",
+      "kind": "honesty",
+      "text": "the preflight resolves from the same index and base image the gateway Dockerfile uses, so a pass predicts the build",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "plan is read-only and derived from the mesh: roster members + each member's GET /health version + /capabilities, plus per-member drift (gateway env keys the target template passes that the member's deployed compose does not)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h8",
+      "kind": "honesty",
+      "text": "plan performs zero writes on any member",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "apply upgrades one wave at a time (default: one member per wave, a member that hosts nothing first as canary), each member step idempotent: backup .env, install the CLI, repin MODEL_GEAR_VERSION, rebuild only the gateway, wait for health; re-running a finished step is a no-op",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h9",
+      "kind": "honesty",
+      "text": "a member is never left without a running gateway: a failed build keeps the old one (as lobes up gateway --build does today)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "After each member: verify version on /health, diff /capabilities before vs after (no role that was feasible/ready may become infeasible/not-ready), and send one real request per role the member hosts or forwards; halt the rollout on any regression",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h10",
+      "kind": "honesty",
+      "text": "verification exercises the request path through the mesh, not only docker ps or /health",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image; on a failed verification apply halts and prints the exact rollback command, which the operator runs (dry-run unless --apply)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h15",
+      "kind": "honesty",
+      "text": "the previous gateway image is kept (tagged) so rollback needs no index access, and rollback is never triggered without an operator command",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Dry-run by default; --apply to commit, like every lobes write verb; rollout status reports per-member target/current version and last step result",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h12",
+      "kind": "honesty",
+      "text": "no write happens without --apply",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "Re-running today's upgrade (4 members to 0.94.0) is 1 plan + 1 apply command with 0 hand-written scripts, and every member ends at the target version with 0 roles regressed in /capabilities",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h13",
+      "kind": "honesty",
+      "text": "measured on the next real release, not a fixture",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "A rollout to an unpublished version touches 0 members, and a member whose deployed compose lacks a gateway env key the target needs is flagged before its upgrade (100% of today's stt-en-style gaps caught)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h14",
+      "kind": "honesty",
+      "text": "both cases are covered by tests that fail on today's code",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "[challenge / reversibility: lobes/templates/fleet/docker-compose.yml gateway build -> image lobes-gateway:latest] Before rebuilding, apply tags the running gateway image as lobes-gateway:<old-version>; rollback recreates the gateway from that tag. Today the rebuild overwrites the only tag, the old image goes dangling, and any prune deletes the rollback target",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h16",
+      "kind": "honesty",
+      "text": "a rollback succeeds with the package index unreachable",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: probes of spark, spark2, thor, orin 2026-11-09] Member addressing is explicit per member: SSH target and user (spark/spark2/thor/orin users differ), gateway port (8001 on spark and cultureos, 8000 elsewhere), and the lobes binary invoked by absolute path (~/.local/bin/lobes is NOT on the non-login SSH PATH on 3 of 4 members). The mesh name is not the hostname (mesh spark = host spark-f8a9)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h17",
+      "kind": "honesty",
+      "text": "no member target is derived by guessing; an unresolvable member is reported, not skipped silently",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: member CLI vs gateway versions] CLI and gateway versions are tracked separately per member (spark: CLI 0.90.0; thor: CLI 0.89.0 with gateway 0.92.0.dev694 from a dev index). Plan shows both; apply refuses a downgrade (target older than the running gateway, PEP 440 ordering) unless explicitly allowed, and preflight honours LOBES_DEV_INDEX_URL for dev targets",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h18",
+      "kind": "honesty",
+      "text": "a downgrade never happens without an explicit flag",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "[challenge / security: thor has no GATEWAY_API_KEY in .env; cultureos key accepted by others] Verification requests use each member's own gateway credential read over SSH, never the operator's by assumption; no key, mesh key or secret is ever printed in plan/apply/status output or the journal",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h19",
+      "kind": "honesty",
+      "text": "no secret value appears in any rollout output or file",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "[challenge / concurrency: no lock in lobes/runtime or lobes up] apply takes a per-member lock on the member before its first write and refuses a member whose lock is held (another rollout, or another operator mid-step); the lock is released on success, failure and interrupt",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h21",
+      "kind": "honesty",
+      "text": "two rollouts can never write to the same member at the same time",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "[challenge / operations: docs/contracts/machine-cli-window.md] apply refuses to recreate a member's gateway while that member has an active benchmark window (machine CLI 'window show'), unless explicitly overridden",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h22",
+      "kind": "honesty",
+      "text": "no gateway is recreated during an active benchmark window without an explicit override",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "[challenge / failure modes: operator box is itself a member (cultureos)] The operator's own box is upgraded last in the rollout, after every remote member verifies, because upgrading its CLI replaces the binary that is running the rollout",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h23",
+      "kind": "honesty",
+      "text": "the rollout never replaces its own running binary before the remote members are done",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "[challenge / observability: c14 status needs a source] Every apply writes an append-only journal on the operator box (member, step, before/after versions, verification result, timestamps); status reads it, and a rollout is resumable from it after an interrupt",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h24",
+      "kind": "honesty",
+      "text": "an interrupted rollout can be resumed and status never reports a member as done that did not verify",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: lobes/runtime/_lock.py tracks the .env digest; deployments/ holds jetson-agx-orin and jetson-agx-thor locks] A member with a deployment.lock.toml will report lock_drift after the repin; plan flags such members and apply reports the stale lock (re-capture stays the operator's call - there is no capture CLI)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h25",
+      "kind": "honesty",
+      "text": "every lock-affected member is named in plan output before any write",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h27",
+      "kind": "honesty",
+      "text": "a guest is never upgraded or written to by a rollout until it is made a resident",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "lobes doctor reports new_mesh_member for a verified roster member missing from the residents file, resident_field_missing for each needs-you field and gateway_open for a member without a gateway key, each with the command that fixes it",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h28",
+      "kind": "honesty",
+      "text": "doctor stays read-only for these checks; adding a resident is a separate explicit command",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h29",
+      "kind": "honesty",
+      "text": "an offline member never blocks or fails the rollout of the others",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "lobes serves a local site (stdlib HTTP server like heat-governor's mesh_server: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h30",
+      "kind": "honesty",
+      "text": "every figure on the site comes from live mesh data; the site performs no writes without --apply-equivalent confirmation",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h31",
+      "kind": "honesty",
+      "text": "no exported bundle contains a secret value, and an image-only lobe is never presented as rebuildable",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h32",
+      "kind": "honesty",
+      "text": "the site works with no internet access",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair",
+      "deferred": false,
+      "deferred_reason": ""
+    },
+    {
+      "id": "h33",
+      "kind": "honesty",
+      "text": "measured against the live mesh, not a fixture",
+      "deferred": false,
+      "deferred_reason": ""
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "summary": "Version ordering and downgrade refusal (lobes/rollout/_versions.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_versions.py: PEP 440 ordering incl. 0.92.0.dev694 < 0.94.0 < 0.94.1 and dev vs release",
+        "is_downgrade(target, running) true when target is older; plan refuses it unless allow_downgrade=True"
+      ],
+      "deps": [],
+      "covers": [
+        "c22",
+        "h18"
+      ],
+      "instruction": "New package lobes/rollout/ (add __init__.py). Use packaging.version if already a dependency (check pyproject), else a small PEP 440 subset. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t2",
+      "summary": "Release preflight in the gateway base image (lobes/rollout/_preflight.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_preflight.py: resolvable version passes; a version that 404s then resolves passes after retries; never-resolving version fails with a hint and no member is contacted",
+        "honours LOBES_DEV_INDEX_URL exactly as lobes/templates/fleet/Dockerfile.gateway does; base image read from that Dockerfile, not hard-coded"
+      ],
+      "deps": [],
+      "covers": [
+        "c9",
+        "h7",
+        "c16",
+        "h14"
+      ],
+      "instruction": "Run 'docker run --rm <base> pip download --no-deps lobes-cli==<v>' (inject a runner callable so tests fake it); exponential backoff, bounded total (default ~5 min). Today's evidence: PyPI CDN lag after publish, 2026-11-09. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t3",
+      "summary": "Residents file: generate, load, save (lobes/rollout/_residents.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_residents.py: generate() from a roster + probe results yields entries whose every field carries detected or needs_you; nothing is guessed (missing -> needs_you)",
+        "regenerate keeps any field the operator edited (h26); guests (verified roster members absent from the file) are listed separately",
+        "round-trips ~/.lobes/residents.toml (TOML, stdlib tomllib read + a small writer); refuses a path with .. or absolute escape"
+      ],
+      "deps": [],
+      "covers": [
+        "c21",
+        "h17"
+      ],
+      "instruction": "Fields per member: ssh target, user, gateway port, absolute lobes path, gateway_key present (bool, never the value). Mesh name != hostname (spark = spark-f8a9): never derive one from the other silently. See docs/design/lobes-site/Residents.dc.html for the shape. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t4",
+      "summary": "SSH transport and secret redaction (lobes/rollout/_transport.py, _redact.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_transport.py: commands run via the resident's ssh target/user with BatchMode and a timeout; lobes invoked by absolute path, never via PATH",
+        "redact() removes GATEWAY_API_KEY / LOBES_MESH_KEY / *_API_KEY / *_TOKEN values from any text; a fixture run's captured stdout/stderr contains zero injected secret values"
+      ],
+      "deps": [],
+      "covers": [
+        "c23",
+        "h19"
+      ],
+      "instruction": "Injectable runner for tests. Non-login SSH PATH lacks ~/.local/bin on 3 of 4 members (probed 2026-11-09). Read remote values (e.g. a gateway key) into memory only; never log them. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t5",
+      "summary": "Member observation: health, capabilities, roster, capability diff (lobes/rollout/_observe.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_observe.py: reads GET /health version, /capabilities and /mesh/roster per member (fixtures); performs only GET requests",
+        "diff(before, after) lists every role that was feasible+ready before and is not after; unchanged or improved roles are not regressions; roles new in the target are reported, not failed"
+      ],
+      "deps": [],
+      "covers": [
+        "c10",
+        "h8"
+      ],
+      "instruction": "Reuse lobes/runtime/_health.py patterns (urllib, timeouts). Roster carries no version; /health does (issue #99). Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t6",
+      "summary": "Compose drift and deployment-lock detection (lobes/rollout/_drift.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_drift.py: given the target template's gateway environment list and a member's deployed compose files, reports missing keys (fixture: spark2-style compose missing STT_EN_BASE_URL is flagged)",
+        "patch_override() adds only the missing keys to docker-compose.override.yml after a timestamped backup and returns the diff; never touches docker-compose.yml or shape files",
+        "flags members carrying deployment.lock.toml as lock-affected"
+      ],
+      "deps": [],
+      "covers": [
+        "c16",
+        "h14",
+        "c29",
+        "h25"
+      ],
+      "instruction": "Template source: lobes/templates/fleet/docker-compose.yml gateway service environment list. Operates on file text passed in (transport fetches it); pure functions. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t7",
+      "summary": "Rollout journal, status projection, resume (lobes/rollout/_journal.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_journal.py: append-only JSONL under the deployment dir; status() derives per-member target/current/last step/result; a member is done only after a verified record",
+        "after an interrupted run (no verified record), resume_point() names the member and step; offline members show pending"
+      ],
+      "deps": [],
+      "covers": [
+        "c28",
+        "h24"
+      ],
+      "instruction": "No secrets in records (use _redact if needed via dependency injection; do not import t4 to keep the wave parallel - accept a redact callable). Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge). Stdlib only unless the repo already depends on it."
+    },
+    {
+      "id": "t8",
+      "summary": "Per-member rollout lock (lobes/rollout/_member_lock.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_member_lock.py: acquire takes ~/.lobes/.rollout.lock on the member via transport; a second acquire while held is refused naming the holder",
+        "released on success, on failure and on KeyboardInterrupt (context manager)"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c25",
+        "h21"
+      ],
+      "instruction": "Atomic create (mkdir or O_EXCL) on the remote side; store holder host + pid + start time. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t9",
+      "summary": "Post-member verification (lobes/rollout/_verify.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_verify.py: passes only if /health reports the target, the capability diff has no regression, and one real request per role the member hosts or forwards succeeds",
+        "a failure returns the member, the failed check and the role; requests go through the member's gateway (mesh path), not only docker ps or /health"
+      ],
+      "deps": [
+        "t5"
+      ],
+      "covers": [
+        "c12",
+        "h10"
+      ],
+      "instruction": "Per-role probe table: chat completion for generate roles, /v1/embeddings, /v1/rerank, a short audio clip for stt lanes; inject the HTTP client. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t10",
+      "summary": "Rollback (lobes/rollout/_rollback.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_rollback.py: restores the pre-apply .env backup and recreates the gateway from lobes-gateway:<old-version> with no index access",
+        "dry-run unless apply=True; never invoked automatically by apply (apply only prints the rollback command)"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c13",
+        "h15"
+      ],
+      "instruction": "The lobes-gateway:<old-version> tag is created by the member step (t11); rollback only consumes it. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t11",
+      "summary": "Member step: idempotent upgrade of one member (lobes/rollout/_member_step.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_member_step.py: order = lock, refuse on active benchmark window (machine CLI 'window show') unless overridden, back up .env, install CLI (uv tool install lobes-cli==X via absolute path), repin MODEL_GEAR_VERSION, docker tag current gateway image as lobes-gateway:<old-version>, lobes up gateway --build --apply, wait for health",
+        "running it twice on an upgraded member changes nothing and exits 0; a failed build leaves the old gateway running",
+        "doctor --repin-version's non-zero exit on the very skew it fixes does not abort the step (2026-11-09 trap)"
+      ],
+      "deps": [
+        "t4",
+        "t8"
+      ],
+      "covers": [
+        "c11",
+        "h9",
+        "c20",
+        "h16",
+        "c26",
+        "h22"
+      ],
+      "instruction": "Everything remote goes through _transport. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t12",
+      "summary": "Rollout plan: members, waves, skips (lobes/rollout/_plan.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_plan.py: members come from the residents file; guests and already-current members are skipped; downgrades refused; one member per wave by default; canary first; the operator's own box always last",
+        "an unreachable resident is planned as skipped-offline (pending), never failing the rollout; drift and lock-affected findings are attached per member",
+        "building a plan performs zero writes anywhere"
+      ],
+      "deps": [
+        "t1",
+        "t3",
+        "t5",
+        "t6"
+      ],
+      "covers": [
+        "c27",
+        "h23",
+        "c33",
+        "h29"
+      ],
+      "instruction": "Canary default: the reachable resident with the fewest roles that are not hosted elsewhere; overridable. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t13",
+      "summary": "lobes rollout verb: plan / apply / status / rollback (lobes/cli/_commands/rollout.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_cli_rollout.py: every subcommand is dry-run without --apply and writes nothing locally or remotely; --json output on every subcommand",
+        "apply runs preflight then waves; halts at the first failed verification, prints member + failed check + the exact rollback command; resumes from the journal",
+        "works from any resident incl. a gateway-only box; registered in lobes/cli/__init__.py; afi cli doctor --strict passes"
+      ],
+      "deps": [
+        "t2",
+        "t7",
+        "t9",
+        "t10",
+        "t11",
+        "t12"
+      ],
+      "covers": [
+        "c5",
+        "h5",
+        "c14",
+        "h12",
+        "c2",
+        "h2"
+      ],
+      "instruction": "Follow lobes/cli/_commands conventions (register(sub) + handler, _output strict stdout/stderr split, _errors exit codes). Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t14",
+      "summary": "lobes mesh resident add (lobes/cli/_commands/mesh.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_cli_mesh_resident.py: 'lobes mesh resident add <name>' turns a verified guest into a resident entry with detected/needs-you fields; dry-run without --apply",
+        "rollouts skip guests (asserted against _plan via residents file)"
+      ],
+      "deps": [
+        "t3",
+        "t12"
+      ],
+      "covers": [
+        "c31",
+        "h27"
+      ],
+      "instruction": "Only file in this task touching mesh.py; add a 'resident' noun beside approve/revoke. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t15",
+      "summary": "doctor residency checks (lobes/cli/_commands/_doctor_residents.py + one wiring line in doctor.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_doctor_residents.py: new_mesh_member, resident_field_missing, gateway_open findings, each with its fix command; read-only (no writes)",
+        "no residents file present -> no findings (mirrors lock_drift's absent-lock rule)"
+      ],
+      "deps": [
+        "t3"
+      ],
+      "covers": [
+        "c32",
+        "h28"
+      ],
+      "instruction": "Mirror _doctor_plugin.py's structure; the only doctor.py change is appending this check. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t16",
+      "summary": "Lobe export (lobes/rollout/_export.py + lobes/cli/_commands/lobe.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_export.py: built lobe (fixture: Parakeet on spark2) exports its Dockerfile, build inputs and compose service; image-only lobe (fixture: GLM tensorfold, super-worker) exports image reference + run command or compose service labelled image-only",
+        "per-member bundle export; zero secret values in any bundle (redaction from t4); CLI 'lobes lobe export <role> --member <m>' dry-run lists files, --apply writes the bundle"
+      ],
+      "deps": [
+        "t4"
+      ],
+      "covers": [
+        "c35",
+        "h31"
+      ],
+      "instruction": "Map role -> compose service -> build.dockerfile + COPY inputs by parsing the member's compose chain (lobes fleet files --json on the member). Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t17",
+      "summary": "Local site server and /api (lobes/site/server.py + lobes/cli/_commands/site.py)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_site_server.py: stdlib ThreadingHTTPServer serves / and /vendor/* plus GET /api/mesh (members, versions, memory, roles, lobes per member with model ids, split brains, pairs, the outside-access hub), /api/rollout (journal status), /api/residents, /api/lobe-export?role=&member= (bundle listing); all data from live roster/health/capabilities/residents/journal, nothing hard-coded",
+        "split brain = one model whose serving spans several members; pair = one model served by several members as a pool; hub = the member running the outside tunnel; binds 127.0.0.1 by default",
+        "'lobes site' verb starts it (dry-run prints the URL); writes nothing"
+      ],
+      "deps": [
+        "t3",
+        "t5",
+        "t7",
+        "t16"
+      ],
+      "covers": [
+        "c34",
+        "h30"
+      ],
+      "instruction": "Pattern: ../heat-governor/heat_governor/mesh_server.py (single index.html + /api JSON). Split detection needs evidence from the member (e.g. a TP world size); if none is available, report the model as single rather than guessing. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t18",
+      "summary": "Site front end per the confirmed design (lobes/site/web/index.html + vendored Lato)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "Mesh view: Graph tab (full-mesh wheel, outside-access hub, positronic brain per member sized by memory with memory ring and version badge, split brains, pairs, lobes coloured by family with text labels, lobe export panel) and Table tab; Rollout and Residents views; light/dark",
+        "Lato 300/400/700/900 woff2 + lato-OFL.txt shipped in the package (pyproject package-data); zero external requests; responsive at 390 px; visible focus; reduced motion respected"
+      ],
+      "deps": [
+        "t17"
+      ],
+      "covers": [
+        "c36",
+        "h32"
+      ],
+      "instruction": "Match docs/design/lobes-site/*.dc.html (design canvas, c38). Minimal prose. Copy fonts from ../heat-governor/heat_governor/web/vendor/. Colour tokens and the validated family palette are in the design files. Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t19",
+      "summary": "Boundary test, docs and explain entry (tests/test_rollout_boundary.py, docs/rollout.md, lobes/explain)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "tests/test_rollout_boundary.py: static check that no module under lobes/rollout/ writes vLLM lane images, checkpoints, shape or profile files, or runs 'lobes init'",
+        "docs/rollout.md cites the 2026-11-09 evidence (four hand scripts, unpublished release, CDN lag, doctor exit code, missing stt-en keys) as the before-state, and documents plan/apply/status/rollback, residents, export and the site; 'lobes explain rollout' renders it"
+      ],
+      "deps": [
+        "t13"
+      ],
+      "covers": [
+        "c6",
+        "h6",
+        "c3",
+        "h3",
+        "c4",
+        "h4"
+      ],
+      "instruction": "Docs only describe what shipped; mark anything unmeasured DECLARED/UNVALIDATED (#108). Do not bump the version or edit CHANGELOG.md/pyproject.toml (the main agent does that once at merge)."
+    },
+    {
+      "id": "t20",
+      "summary": "Live acceptance on the mesh (docs/evidence/)",
+      "origin": "llm",
+      "status": "confirmed",
+      "acceptance_criteria": [
+        "one 'lobes rollout plan' + one 'lobes rollout apply --apply' brings every resident to the next release with 0 hand-written scripts and 0 regressed roles; transcript in docs/evidence/",
+        "Playwright: Mesh, Rollout, Residents at 1440 and 390 px with 0 console errors and 0 non-local requests; graph shows every resident, the split brain and the pair; screenshots in docs/evidence/"
+      ],
+      "deps": [
+        "t13",
+        "t14",
+        "t15",
+        "t18"
+      ],
+      "covers": [
+        "c1",
+        "h1",
+        "c15",
+        "h13",
+        "c37",
+        "h33"
+      ],
+      "instruction": "Operator-run against the live mesh (remote writes need the operator's go). Use the Playwright MCP tools. Record failures exactly as they happen."
+    }
+  ],
+  "risks": [],
+  "obligations": []
+}
