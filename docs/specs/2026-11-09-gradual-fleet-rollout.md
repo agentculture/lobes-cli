@@ -64,6 +64,24 @@
 - \[challenge / adjacent systems: lobes/runtime/`_lock.py` tracks the .env digest; deployments/ holds jetson-agx-orin and jetson-agx-thor locks\] A member with a deployment.lock.toml will report `lock_drift` after the repin; plan flags such members and apply reports the stale lock (re-capture stays the operator's call - there is no capture CLI)
   - instruction: fixture member with a lock: plan lists it under lock-affected members
   - honesty: every lock-affected member is named in plan output before any write
+- Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests
+  - instruction: fixture roster with an extra verified member: it is listed as guest, add writes a resident entry, the next plan includes it
+  - honesty: a guest is never upgraded or written to by a rollout until it is made a resident
+- lobes doctor reports `new_mesh_member` for a verified roster member missing from the residents file, `resident_field_missing` for each needs-you field and `gateway_open` for a member without a gateway key, each with the command that fixes it
+  - instruction: doctor against a fixture roster + residents file shows the three findings with fix commands
+  - honesty: doctor stays read-only for these checks; adding a resident is a separate explicit command
+- A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)
+  - instruction: fixture: unreachable member is skipped, status pending; reachable on re-run, upgraded
+  - honesty: an offline member never blocks or fails the rollout of the others
+- lobes serves a local site (stdlib HTTP server like heat-governor's `mesh_server`: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons
+  - instruction: match the design canvas and docs/design/lobes-site/; data comes from roster, /health, /capabilities and residents file, never hard-coded
+  - honesty: every figure on the site comes from live mesh data; the site performs no writes without --apply-equivalent confirmation
+- Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons
+  - instruction: export Parakeet on spark2 yields Dockerfile.parakeet, `listen_server.py`, `_readiness.py` and the stt service; export GLM yields image-only run command; no secret value in any bundle
+  - honesty: no exported bundle contains a secret value, and an image-only lobe is never presented as rebuildable
+- Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request
+  - instruction: Playwright network log shows only same-origin requests
+  - honesty: the site works with no internet access
 
 ## Honesty conditions
 
@@ -76,6 +94,8 @@
 - measured on the next real release, not a fixture
 - both cases are covered by tests that fail on today's code
 - a rollout between two adjacent released versions keeps every not-yet-upgraded member verified in the roster (no role drops to unverified because of the version mix)
+- the residents file is regenerated without overwriting a field the operator fixed by hand
+- measured against the live mesh, not a fixture
 
 ## Success signals
 
@@ -83,6 +103,8 @@
   - instruction: repeat on the next release and record the transcript under docs/evidence/
 - A rollout to an unpublished version touches 0 members, and a member whose deployed compose lacks a gateway env key the target needs is flagged before its upgrade (100% of today's stt-en-style gaps caught)
   - instruction: fixture tests for both cases
+- Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair
+  - instruction: store screenshots + log under docs/evidence/
 
 ## Scope / boundaries
 
@@ -131,9 +153,11 @@
 - Transport is SSH from the operator box to each member (user decision 2026-11-09); no admin endpoint on the gateway
 - Compose drift (gateway env keys the target template passes but the member's deployed compose does not): plan reports it; apply patches docker-compose.override.yml only behind an explicit flag, after a backup, printing the diff (user decision 2026-11-09)
 - On a failed post-upgrade verification: halt the rollout at that member, print the failed check and the exact rollback command; never auto-rollback (user decision 2026-11-09)
-- Member addressing comes from an operator-typed rollout members file on the operator box (SSH target, user, gateway port, lobes path), never derived from the roster; plan reports roster members missing from the file as unreachable (user decision 2026-11-09, consistent with #92)
+- Member addressing comes from a residents file (~/.lobes/residents.toml) that lobes GENERATES from the mesh roster plus per-member probes (SSH target, user, gateway port, lobes path, gateway-key presence); every derived field is marked detected, and the operator only fixes fields flagged needs-you; nothing is guessed silently (user decision 2026-11-09, supersedes the typed-only form)
+- Design reference for the site is the design canvas confirmed 2026-11-09 (positronic brains, full-mesh wheel with the outside-access hub, Graph/Table tabs, lobe export panel, Lato served locally); its files are committed under docs/design/lobes-site/ (user decision 2026-11-09)
 
 ## Open parks
 
 - [unknown_nonblocking] Single-box deployments with no mesh (no roster) - whether rollout should support them, or they keep using doctor --repin-version + lobes up gateway
 - [unknown_nonblocking] The cloudflared tunnel container on cultureos (lobes-cloudflared) and other per-box sidecars were not examined for behaviour across a gateway recreate
+- [follow_up] Image-only lobes (GLM-5.3-Flash tensorfold image, the super-worker container) have no build lineage in lobes, so export can describe them but not rebuild them; recording how they were built is a follow-up

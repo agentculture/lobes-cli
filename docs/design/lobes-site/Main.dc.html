@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lobes — mesh</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+@font-face{font-family:"Lato";font-style:normal;font-weight:300;font-display:swap;src:url(/_blob/6eb2b2f5a6b453a7a00033631a70f3ec) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:400;font-display:swap;src:url(/_blob/ad4f720ed236dd17bfc0ba615922e8f1) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:700;font-display:swap;src:url(/_blob/0dd3fbe442c0266a42b721f8dba72a9e) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:900;font-display:swap;src:url(/_blob/9dc1793a5dd1e227ec00a299a1f4174f) format("woff2")}
+.lb{--bg:#f1eff6;--surface:#fbfafd;--raise:#e7e4ef;--ink:#24222f;--soft:#57536a;--faint:#6e6a82;--line:rgba(36,34,47,.10);--line2:rgba(36,34,47,.18);--web:rgba(36,34,47,.17);--accent:#5a3fd0;--accent-tint:rgba(90,63,208,.08);--ok:#1b7a4c;--warn:#9a5b0b;--info:#2f66ad;--f-gen:#2a78d6;--f-dec:#eb6834;--f-emb:#1baf7a;--f-sp:#eda100;--track:#e4e1ec;--shell:#dcd8e8;color-scheme:light}
+.lb.dark{--bg:#0f0e17;--surface:#171622;--raise:#24222f;--ink:#ecebf3;--soft:#a9a5bb;--faint:#8a869e;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--web:rgba(255,255,255,.15);--accent:#a593ff;--accent-tint:rgba(165,147,255,.10);--ok:#4fc58a;--warn:#e6a64a;--info:#7fb0f0;--f-gen:#3987e5;--f-dec:#d95926;--f-emb:#199e70;--f-sp:#c98500;--track:#2a2836;--shell:#2c2a3a;color-scheme:dark}
+.lb button:focus-visible,.lb a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lb a{color:var(--accent)}.lb a:hover{color:var(--ink)}
+.lb .lobe{position:absolute;width:214px;height:42px;box-sizing:border-box;display:flex;align-items:center;gap:9px;padding:4px 12px 4px 8px;background:var(--surface);border-radius:14px;font:inherit;font-size:13px;line-height:15px;color:var(--ink);text-align:left;cursor:pointer;appearance:none}
+.lb .lobe small{display:block;font-size:11px;color:var(--soft)}
+.lb .nm{position:absolute;text-align:center;font-size:15px;font-weight:700;line-height:18px}
+.lb .nm small{display:block;font-size:12px;font-weight:400;color:var(--soft);font-variant-numeric:tabular-nums}
+.lb .dl{appearance:none;font:inherit;font-size:14px;border-radius:10px;padding:9px 14px;min-height:42px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+@media (prefers-reduced-motion:reduce){.lb *{transition:none !important}}
+</style>
+</helmet>
+<div class="lb {{modeClass}}" style="background: var(--bg); color: var(--ink); font-family: Lato, -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.5; min-height: 100vh; -webkit-font-smoothing: antialiased">
+
+<header style="position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line)">
+<div style="max-width: 1320px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px">
+<div style="display: flex; align-items: center; gap: 10px; font-family: Lato, sans-serif; font-weight: 900; font-size: 20px; letter-spacing: -0.01em">
+<svg width="24" height="24" viewBox="0 0 120 120" fill="none" aria-hidden="true" style="color: var(--accent)"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"></path><circle cx="60" cy="58" r="9" fill="currentColor"></circle></svg>
+<span>lobes</span>
+</div>
+<nav aria-label="Sections" style="display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<a href="Main.dc.html" aria-current="page" style="text-decoration: none; color: var(--ink); background: var(--raise); font-weight: 700; font-size: 14px; padding: 6px 16px; border-radius: 999px">Mesh</a>
+<a href="Rollout.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Rollout</a>
+<a href="Residents.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Residents</a>
+</nav>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--soft)">
+<span>cultureos</span>
+<button type="button" onClick="{{toggleMode}}" aria-label="Switch light or dark" style="appearance: none; border: 1px solid var(--line2); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px">{{modeLabel}}</button>
+</div>
+</div>
+</header>
+
+<main style="max-width: 1320px; margin: 0 auto; padding: 28px 24px 80px">
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px">
+<sc-for list="{{stats}}" as="s" hint-placeholder-count="6">
+<div style="background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px">
+<div style="font-family: Lato, sans-serif; font-size: 26px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums">{{s.value}}</div>
+<div style="font-size: 12px; color: var(--soft)">{{s.label}}</div>
+</div>
+</sc-for>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 22px">
+<div role="tablist" aria-label="View" style="display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="2">
+<button type="button" role="tab" aria-selected="{{t.selected}}" onClick="{{t.pick}}" style="appearance: none; border: 0; background: {{t.bg}}; color: var(--ink); font: inherit; font-size: 14px; font-weight: {{t.weight}}; padding: 6px 18px; border-radius: 999px; cursor: pointer; min-height: 36px">{{t.label}}</button>
+</sc-for>
+</div>
+<span style="flex: 1"></span>
+<span style="display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 12px; border-radius: 999px; border: 1px dashed var(--accent); background: var(--accent-tint)"><b>orin-nano</b><span style="color: var(--soft)">guest</span></span>
+<button type="button" style="appearance: none; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 14px; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; min-height: 40px">Make resident</button>
+</div>
+
+<sc-if value="{{isGraph}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; align-items: flex-start">
+
+<section aria-label="Mesh graph" style="flex: 999 1 860px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 28px; overflow-x: auto">
+<div style="position: relative; width: 1280px; height: 780px; margin: 0 auto">
+
+<svg width="1280" height="780" viewBox="0 0 1280 780" role="img" aria-label="Full mesh: every machine links to every other; cultureos in the centre holds the outside tunnel" style="position: absolute; left: 0; top: 0; width: 1280px; height: 780px; fill: none; stroke-linecap: round">
+<g style="stroke: var(--web); stroke-width: 1.6">
+<path d="M330 230L950 230M330 230L950 570M330 230L640 400M330 570L950 230M330 570L950 570M330 570L640 400M950 230L640 400M950 570L640 400"></path>
+</g>
+<g style="stroke: var(--faint); stroke-width: 1.4; stroke-dasharray: 5 7">
+<path d="M640 690L330 230M640 690L330 570M640 690L950 230M640 690L950 570M640 690L640 400"></path>
+</g>
+<path d="M640 346L640 92" style="stroke: var(--accent); stroke-width: 5"></path>
+<path d="M330 307L330 493" style="stroke: var(--f-gen); stroke-width: 12"></path>
+<path d="M943 307L943 515M957 307L957 515" style="stroke: var(--f-emb); stroke-width: 3; stroke-dasharray: 8 6"></path>
+</svg>
+
+<div style="position: absolute; left: 610px; top: 30px; width: 60px; height: 60px; box-sizing: border-box; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--accent); color: var(--accent)">
+<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Outside world"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"></path></svg>
+</div>
+<div style="position: absolute; left: 682px; top: 48px; font-size: 13px; line-height: 16px; font-weight: 700">outside<div style="font-weight: 400; color: var(--soft)">cloudflared tunnel</div></div>
+
+<div style="position: absolute; left: 228px; top: 386px; width: 204px; height: 28px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: var(--f-gen); color: #fff; border-radius: 999px; font-size: 13px; font-weight: 700">GLM-5.3-Flash split ×2</div>
+<div style="position: absolute; left: 870px; top: 398px; width: 160px; height: 28px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; background: var(--surface); border: 2px solid var(--f-emb); border-radius: 999px; font-size: 13px; font-weight: 700">reranker pair</div>
+
+<div style="position: absolute; left: 255px; top: 155px; width: 150px; height: 150px">
+<svg width="150" height="150" viewBox="0 0 120 120" role="img" aria-label="spark: 111 of 121 GB in use; half of GLM-5.3-Flash">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5" stroke-linecap="round" stroke-dasharray="317 346" transform="rotate(-90 60 60)"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="var(--f-gen)" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M36 46H47V56H40M34 68H46V76M50 36V46M47 84V74H53" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>
+<circle cx="60" cy="58" r="8.5" fill="var(--accent)"></circle>
+</svg>
+<span style="position: absolute; right: 4px; bottom: 4px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--warn); color: #fff; border: 3px solid var(--surface)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-label="behind" role="img"><path d="M12 6v8M12 18h.01"></path></svg></span>
+</div>
+<div class="nm" style="left: 255px; top: 112px; width: 150px">spark<small>DGX Spark, 0.92.0.dev694</small></div>
+
+<div style="position: absolute; left: 255px; top: 495px; width: 150px; height: 150px">
+<svg width="150" height="150" viewBox="0 0 120 120" role="img" aria-label="spark2: 112 of 121 GB in use; half of GLM-5.3-Flash and Parakeet">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5" stroke-linecap="round" stroke-dasharray="320 346" transform="rotate(-90 60 60)"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z" fill="var(--f-gen)" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M84 46H73V56H80M86 68H74V76M70 36V46M73 84V74H67" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>
+<circle cx="60" cy="58" r="8.5" fill="var(--accent)"></circle>
+</svg>
+<span style="position: absolute; right: 4px; bottom: 4px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: #fff; border: 3px solid var(--surface)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-label="current" role="img"><path d="M5 12l4 4 10-10"></path></svg></span>
+</div>
+<div class="nm" style="left: 255px; top: 652px; width: 150px">spark2<small>DGX Spark, 0.94.0</small></div>
+
+<div style="position: absolute; left: 584px; top: 344px; width: 112px; height: 112px">
+<svg width="112" height="112" viewBox="0 0 120 120" role="img" aria-label="cultureos: the hub with outside access, gateway only, 5 of 14 GB in use">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5" stroke-linecap="round" stroke-dasharray="124 346" transform="rotate(-90 60 60)"></circle>
+<circle cx="60" cy="60" r="46" fill="var(--accent-tint)" stroke="var(--accent)" stroke-width="2"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"></path>
+<circle cx="60" cy="58" r="10" fill="var(--accent)"></circle>
+</svg>
+</div>
+<div class="nm" style="left: 560px; top: 460px; width: 160px">cultureos<small>VENTUNO Q, hub</small></div>
+
+<div style="position: absolute; left: 875px; top: 155px; width: 150px; height: 150px">
+<svg width="150" height="150" viewBox="0 0 120 120" role="img" aria-label="thor: 111 of 122 GB in use; worker, reranker, stt-he">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5" stroke-linecap="round" stroke-dasharray="314 346" transform="rotate(-90 60 60)"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>
+<path d="M36 46H47V56H40M34 68H46V76M50 36V46M47 84V74H53M84 46H73V56H80M86 68H74V76M70 36V46M73 84V74H67" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>
+<circle cx="60" cy="58" r="11" fill="var(--accent)"></circle>
+</svg>
+<span style="position: absolute; right: 4px; bottom: 4px; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; background: var(--warn); color: #fff; border: 3px solid var(--surface)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-label="behind" role="img"><path d="M12 6v8M12 18h.01"></path></svg></span>
+</div>
+<div class="nm" style="left: 875px; top: 112px; width: 150px">thor<small>Jetson AGX Thor, 0.92.0.dev694</small></div>
+
+<div style="position: absolute; left: 897px; top: 517px; width: 106px; height: 106px">
+<svg width="106" height="106" viewBox="0 0 120 120" role="img" aria-label="orin: 51 of 61 GB in use; decider, embedder, reranker, gemma2-embed">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5.5"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5.5" stroke-linecap="round" stroke-dasharray="289 346" transform="rotate(-90 60 60)"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="var(--shell)" stroke="var(--ink)" stroke-width="2.8" stroke-linejoin="round"></path>
+<path d="M36 46H47V56H40M34 68H46V76M84 46H73V56H80M86 68H74V76" fill="none" stroke="var(--ink)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>
+<circle cx="60" cy="58" r="12" fill="var(--accent)"></circle>
+</svg>
+<span style="position: absolute; right: 0; bottom: 0; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--ok); color: #fff; border: 3px solid var(--surface)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-label="current" role="img"><path d="M5 12l4 4 10-10"></path></svg></span>
+</div>
+<div class="nm" style="left: 870px; top: 630px; width: 160px">orin<small>Jetson AGX Orin, 0.94.0</small></div>
+
+<div style="position: absolute; left: 604px; top: 654px; width: 72px; height: 72px">
+<svg width="72" height="72" viewBox="0 0 120 120" role="img" aria-label="orin-nano: guest, not in the residents file">
+<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>
+<circle cx="60" cy="60" r="55" fill="none" stroke="var(--faint)" stroke-width="4" stroke-dasharray="7 7"></circle>
+<path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="none" stroke="var(--faint)" stroke-width="4" stroke-dasharray="9 7" stroke-linejoin="round"></path>
+</svg>
+<span style="position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--info); color: #fff; border: 3px solid var(--surface)"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-label="guest" role="img"><path d="M12 6v12M6 12h12"></path></svg></span>
+</div>
+<div class="nm" style="left: 688px; top: 672px; width: 120px; text-align: left">orin-nano<small>guest</small></div>
+
+<button type="button" class="lobe" onClick="{{L.glm.pick}}" aria-pressed="{{L.glm.pressed}}" style="left: 28px; top: 209px; border: {{L.glm.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-gen)"></path></svg><span><b>GLM-5.3-Flash</b> half<small>cortex, split</small></span></button>
+<button type="button" class="lobe" onClick="{{L.glm2.pick}}" aria-pressed="{{L.glm2.pressed}}" style="left: 28px; top: 525px; border: {{L.glm2.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-gen)"></path></svg><span><b>GLM-5.3-Flash</b> half<small>cortex, split</small></span></button>
+<button type="button" class="lobe" onClick="{{L.parakeet.pick}}" aria-pressed="{{L.parakeet.pressed}}" style="left: 28px; top: 573px; border: {{L.parakeet.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-sp)"></path></svg><span><b>Parakeet TDT 0.6B</b><small>stt-en</small></span></button>
+
+<button type="button" class="lobe" onClick="{{L.nemo.pick}}" aria-pressed="{{L.nemo.pressed}}" style="left: 1046px; top: 161px; border: {{L.nemo.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-gen)"></path></svg><span><b>Nemotron 3.5 Super VL</b><small>worker, 120B</small></span></button>
+<button type="button" class="lobe" onClick="{{L.rrT.pick}}" aria-pressed="{{L.rrT.pressed}}" style="left: 1046px; top: 209px; border: {{L.rrT.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-emb)"></path></svg><span><b>Qwen3-Reranker 0.6B</b><small>reranker</small></span></button>
+<button type="button" class="lobe" onClick="{{L.zip.pick}}" aria-pressed="{{L.zip.pressed}}" style="left: 1046px; top: 257px; border: {{L.zip.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-sp)"></path></svg><span><b>Zipformer2 66M</b><small>stt-he</small></span></button>
+
+<button type="button" class="lobe" onClick="{{L.clef.pick}}" aria-pressed="{{L.clef.pressed}}" style="left: 1046px; top: 477px; border: {{L.clef.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-dec)"></path></svg><span><b>Clef 27B</b><small>decider</small></span></button>
+<button type="button" class="lobe" onClick="{{L.emb.pick}}" aria-pressed="{{L.emb.pressed}}" style="left: 1046px; top: 525px; border: {{L.emb.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-emb)"></path></svg><span><b>Qwen3-Embedding 0.6B</b><small>embedder</small></span></button>
+<button type="button" class="lobe" onClick="{{L.rrO.pick}}" aria-pressed="{{L.rrO.pressed}}" style="left: 1046px; top: 573px; border: {{L.rrO.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-emb)"></path></svg><span><b>Qwen3-Reranker 0.6B</b><small>reranker</small></span></button>
+<button type="button" class="lobe" onClick="{{L.gemma.pick}}" aria-pressed="{{L.gemma.pressed}}" style="left: 1046px; top: 621px; border: {{L.gemma.border}}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="var(--f-emb)"></path></svg><span><b>EmbeddingGemma 2</b><small>gemma2-embed</small></span></button>
+
+</div>
+<div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 20px; padding: 14px 20px 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--soft)">
+<sc-for list="{{legend}}" as="l" hint-placeholder-count="9">
+<span style="display: inline-flex; align-items: center; gap: 7px"><span aria-hidden="true" style="width: {{l.w}}px; height: {{l.h}}px; border-radius: {{l.r}}; background: {{l.fill}}; border: {{l.border}}"></span>{{l.label}}</span>
+</sc-for>
+</div>
+</section>
+
+<aside aria-label="Selected lobe" style="flex: 1 1 340px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 20px">
+<div style="display: flex; align-items: center; gap: 10px">
+<svg width="26" height="26" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="{{sel.color}}"></path></svg>
+<div>
+<div style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.25rem; line-height: 1.2">{{sel.model}}</div>
+<div style="font-size: 13px; color: var(--soft)">{{sel.role}} on {{sel.machine}}</div>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px">
+<span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: {{sel.kindBg}}; color: {{sel.kindFg}}">{{sel.kind}}</span>
+<span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--raise)">{{sel.shape}}</span>
+<span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--raise)">secrets removed</span>
+</div>
+<div style="margin-top: 14px; font-size: 12px; color: var(--soft)">Image</div>
+<code style="display: block; margin-top: 2px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; overflow-wrap: anywhere">{{sel.image}}</code>
+<div style="margin-top: 14px; font-size: 12px; color: var(--soft)">Files</div>
+<ul style="list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+<sc-for list="{{sel.files}}" as="f" hint-placeholder-count="3">
+<li style="display: flex; align-items: center; gap: 8px; font-size: 13px">
+<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color: var(--soft); flex: none"><path d="M14 3H6v18h12V7zM14 3v4h4"></path></svg>
+<code style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px">{{f.name}}</code>
+<span style="margin-left: auto; font-size: 12px; color: var(--soft)">{{f.what}}</span>
+</li>
+</sc-for>
+</ul>
+<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 18px">
+<sc-if value="{{sel.hasDockerfile}}" hint-placeholder-val="{{ true }}">
+<button type="button" class="dl" style="border: 0; background: var(--accent); color: #fff; font-weight: 700"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>Download {{sel.dockerfile}}</button>
+</sc-if>
+<sc-if value="{{sel.imageOnly}}" hint-placeholder-val="{{ false }}">
+<button type="button" class="dl" style="border: 0; background: var(--accent); color: #fff; font-weight: 700"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>Download {{sel.runFile}}</button>
+</sc-if>
+<button type="button" class="dl" style="border: 1px solid var(--line2); background: var(--surface); color: var(--ink)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16v13H4zM4 7l3-4h10l3 4M10 12h4"></path></svg>Download lobe bundle</button>
+<button type="button" class="dl" style="border: 1px solid var(--line2); background: var(--surface); color: var(--ink)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18v6H3zM3 13h18v6H3zM7 8h.01M7 16h.01"></path></svg>Download {{sel.machineShort}} bundle</button>
+</div>
+<code style="display: block; margin-top: 14px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--soft); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; overflow-wrap: anywhere">{{sel.cli}}</code>
+<sc-if value="{{sel.hasElsewhere}}" hint-placeholder-val="{{ false }}">
+<button type="button" onClick="{{sel.goElsewhere}}" style="appearance: none; border: 0; background: none; color: var(--accent); font: inherit; font-size: 13px; padding: 10px 0 0; cursor: pointer">Also on {{sel.elsewhere}}</button>
+</sc-if>
+</aside>
+
+</div>
+</sc-if>
+
+<sc-if value="{{isTable}}" hint-placeholder-val="{{ false }}">
+<section aria-label="Lobes by mind" style="margin-top: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; overflow-x: auto">
+<table style="border-collapse: collapse; width: 100%; min-width: 1000px; font-size: 14px">
+<caption style="position: absolute; left: -9999px">Which model runs in which machine, and how to get its container</caption>
+<thead>
+<tr>
+<th scope="col" style="text-align: left; padding: 12px 20px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Lobe</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Role</th>
+<sc-for list="{{cols}}" as="c" hint-placeholder-count="5">
+<th scope="col" style="padding: 12px 8px; font-weight: 700; border-bottom: 1px solid var(--line)">{{c.name}}<div style="font-size: 11px; font-weight: 400; color: var(--soft)">{{c.sub}}</div></th>
+</sc-for>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Shape</th>
+<th scope="col" style="text-align: left; padding: 12px 20px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Container</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{rows}}" as="row" hint-placeholder-count="8">
+<tr>
+<th scope="row" style="text-align: left; padding: 10px 20px; border-top: 1px solid var(--line)"><span style="display: inline-flex; align-items: center; gap: 8px"><svg width="14" height="14" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z" fill="{{row.color}}"></path></svg>{{row.model}}</span></th>
+<td style="padding: 10px; border-top: 1px solid var(--line); color: var(--soft)">{{row.role}}</td>
+<sc-for list="{{row.cells}}" as="cell" hint-placeholder-count="5">
+<td style="text-align: center; padding: 10px 8px; border-top: 1px solid var(--line)"><span role="img" aria-label="{{cell.label}}" style="display: inline-block; width: {{cell.w}}px; height: 12px; border-radius: {{cell.r}}; background: {{cell.fill}}; border: {{cell.border}}"></span></td>
+</sc-for>
+<td style="padding: 10px; border-top: 1px solid var(--line)"><span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--raise)">{{row.shape}}</span></td>
+<td style="padding: 10px 20px; border-top: 1px solid var(--line)"><button type="button" class="dl" style="border: 1px solid var(--line2); background: var(--surface); color: var(--ink); font-size: 13px; padding: 6px 12px; min-height: 36px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>{{row.dl}}</button></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</section>
+</sc-if>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"view":{"editor":"enum","options":["graph","table"],"default":"graph"},"$preview":{"width":1440,"height":1720}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { dark: null, view: null, sel: 'parakeet' }; }
+  renderVals() {
+    const dark = this.state.dark ?? (this.props.dark ?? false);
+    const view = this.state.view ?? (this.props.view ?? 'graph');
+    const tab = (id, label) => ({ label, selected: view === id ? 'true' : 'false', bg: view === id ? 'var(--raise)' : 'transparent', weight: view === id ? 700 : 400, pick: () => this.setState({ view: id }) });
+    const VLLM = 'vllm/vllm-openai@sha256:3fb023cc987c…';
+    const D = {
+      glm: { model: 'GLM-5.3-Flash', role: 'cortex', machine: 'spark, with spark2', machineShort: 'spark', color: 'var(--f-gen)', shape: 'split ×2', image: 'tensorfold-glm53-spark:74e19a63a9a5', dockerfile: '', runFile: 'docker run command', files: [{ name: 'run.sh', what: 'docker run, rank 1' }, { name: 'image.txt', what: 'image reference' }], cli: 'lobes lobe export cortex --member spark', elsewhere: 'spark2', other: 'glm2' },
+      glm2: { model: 'GLM-5.3-Flash', role: 'cortex', machine: 'spark2, with spark', machineShort: 'spark2', color: 'var(--f-gen)', shape: 'split ×2', image: 'tensorfold-glm53-spark:74e19a63a9a5', dockerfile: '', runFile: 'docker run command', files: [{ name: 'run.sh', what: 'docker run' }, { name: 'image.txt', what: 'image reference' }], cli: 'lobes lobe export cortex --member spark2', elsewhere: 'spark', other: 'glm' },
+      parakeet: { model: 'Parakeet TDT 0.6B', role: 'stt-en', machine: 'spark2', machineShort: 'spark2', color: 'var(--f-sp)', shape: 'single', image: 'lobes-stt (built here)', dockerfile: 'Dockerfile.parakeet', files: [{ name: 'Dockerfile.parakeet', what: 'Dockerfile' }, { name: 'listen_server.py', what: 'build input' }, { name: '_readiness.py', what: 'build input' }, { name: 'stt.compose.yml', what: 'service stt' }], cli: 'lobes lobe export stt-en --member spark2', elsewhere: '', other: '' },
+      nemo: { model: 'Nemotron 3.5 Super VL 120B', role: 'worker', machine: 'thor', machineShort: 'thor', color: 'var(--f-gen)', shape: 'single', image: 'vllm/vllm-openai:v0.32.0-ubuntu2404', dockerfile: '', runFile: 'docker run command', files: [{ name: 'run.sh', what: 'docker run, super-worker' }, { name: 'image.txt', what: 'image reference' }], cli: 'lobes lobe export worker --member thor', elsewhere: '', other: '' },
+      rrT: { model: 'Qwen3-Reranker 0.6B', role: 'reranker', machine: 'thor', machineShort: 'thor', color: 'var(--f-emb)', shape: 'pair', image: VLLM, dockerfile: '', runFile: 'compose service', files: [{ name: 'vllm-rerank.compose.yml', what: 'service' }, { name: 'qwen3_reranker.jinja', what: 'chat template' }], cli: 'lobes lobe export reranker --member thor', elsewhere: 'orin', other: 'rrO' },
+      zip: { model: 'Zipformer2 66M', role: 'stt-he', machine: 'thor', machineShort: 'thor', color: 'var(--f-sp)', shape: 'single', image: 'lobes-stt-he (built here)', dockerfile: 'Dockerfile.stt-zipformer', files: [{ name: 'Dockerfile.stt-zipformer', what: 'Dockerfile' }, { name: 'listen_server_zipformer.py', what: 'build input' }, { name: 'stt-he.compose.yml', what: 'service stt-he' }], cli: 'lobes lobe export stt-he --member thor', elsewhere: '', other: '' },
+      clef: { model: 'Clef 27B', role: 'decider', machine: 'orin', machineShort: 'orin', color: 'var(--f-dec)', shape: 'single', image: 'lobes-decider-general (built here)', dockerfile: 'Dockerfile.decider-vllm', files: [{ name: 'Dockerfile.decider-vllm', what: 'Dockerfile' }, { name: 'decider-general.compose.yml', what: 'service' }], cli: 'lobes lobe export decider --member orin', elsewhere: '', other: '' },
+      emb: { model: 'Qwen3-Embedding 0.6B', role: 'embedder', machine: 'orin', machineShort: 'orin', color: 'var(--f-emb)', shape: 'single', image: VLLM, dockerfile: '', runFile: 'compose service', files: [{ name: 'vllm-embed.compose.yml', what: 'service' }], cli: 'lobes lobe export embedder --member orin', elsewhere: '', other: '' },
+      rrO: { model: 'Qwen3-Reranker 0.6B', role: 'reranker', machine: 'orin', machineShort: 'orin', color: 'var(--f-emb)', shape: 'pair', image: VLLM, dockerfile: '', runFile: 'compose service', files: [{ name: 'vllm-rerank.compose.yml', what: 'service' }, { name: 'qwen3_reranker.jinja', what: 'chat template' }], cli: 'lobes lobe export reranker --member orin', elsewhere: 'thor', other: 'rrT' },
+      gemma: { model: 'EmbeddingGemma 2', role: 'gemma2-embed', machine: 'orin', machineShort: 'orin', color: 'var(--f-emb)', shape: 'single', image: 'lobes-embed-gemma2-embed (built here)', dockerfile: 'Dockerfile.embed-st', files: [{ name: 'Dockerfile.embed-st', what: 'Dockerfile' }, { name: 'gemma2-embed.compose.yml', what: 'service' }], cli: 'lobes lobe export gemma2-embed --member orin', elsewhere: '', other: '' } };
+    const cur = this.state.sel;
+    const L = {};
+    Object.keys(D).forEach((k) => { L[k] = { pick: () => this.setState({ sel: k }), pressed: cur === k ? 'true' : 'false', border: cur === k ? '2px solid var(--accent)' : '1px solid var(--line2)' }; });
+    const d = D[cur];
+    const sel = Object.assign({}, d, {
+      hasDockerfile: !!d.dockerfile, imageOnly: !d.dockerfile,
+      kind: d.dockerfile ? 'has Dockerfile' : 'image only', kindBg: d.dockerfile ? 'var(--accent-tint)' : 'var(--raise)', kindFg: d.dockerfile ? 'var(--accent)' : 'var(--soft)',
+      hasElsewhere: !!d.elsewhere, goElsewhere: () => this.setState({ sel: d.other }) });
+    const stats = [{ value: '5 + 1', label: 'minds + guest' }, { value: '8', label: 'lobes' }, { value: '1', label: 'split brain' }, { value: '1', label: 'pair' }, { value: '3 / 5', label: 'on 0.94.0' }, { value: '49 / 439 GB', label: 'memory free' }];
+    const lobeShape = '50% 50% 45% 55%';
+    const legend = [
+      { label: 'generate', fill: 'var(--f-gen)', border: '0', w: 14, h: 14, r: lobeShape },
+      { label: 'decide', fill: 'var(--f-dec)', border: '0', w: 14, h: 14, r: lobeShape },
+      { label: 'embed, rank', fill: 'var(--f-emb)', border: '0', w: 14, h: 14, r: lobeShape },
+      { label: 'speech', fill: 'var(--f-sp)', border: '0', w: 14, h: 14, r: lobeShape },
+      { label: 'split brain', fill: 'var(--f-gen)', border: '0', w: 24, h: 8, r: '4px' },
+      { label: 'pair', fill: 'transparent', border: '2px dashed var(--f-emb)', w: 24, h: 6, r: '4px' },
+      { label: 'mesh link', fill: 'var(--web)', border: '0', w: 24, h: 2, r: '1px' },
+      { label: 'outside tunnel', fill: 'var(--accent)', border: '0', w: 24, h: 4, r: '2px' },
+      { label: 'ring = memory in use', fill: 'transparent', border: '3px solid var(--soft)', w: 14, h: 14, r: '50%' } ];
+    const cols = [{ name: 'spark', sub: 'DGX Spark' }, { name: 'spark2', sub: 'DGX Spark' }, { name: 'thor', sub: 'Jetson AGX Thor' }, { name: 'orin', sub: 'Jetson AGX Orin' }, { name: 'cultureos', sub: 'VENTUNO Q, hub' }];
+    const R = (model, role, color, hosts, shape, split, dl) => ({ model, role, color, shape, dl, cells: cols.map((c) => {
+      const h = hosts.includes(c.name);
+      return { w: h && split ? 22 : 12, r: h && split ? '4px' : '50%', fill: h ? color : 'transparent', border: h ? '0' : '1.5px solid var(--line2)', label: c.name + (h ? (split ? ' holds half of ' : ' runs ') : ' reaches ') + model };
+    }) });
+    const rows = [
+      R('GLM-5.3-Flash', 'cortex', 'var(--f-gen)', ['spark', 'spark2'], 'split ×2', true, 'run command'),
+      R('Nemotron 3.5 Super VL 120B', 'worker', 'var(--f-gen)', ['thor'], 'single', false, 'run command'),
+      R('Clef 27B', 'decider', 'var(--f-dec)', ['orin'], 'single', false, 'Dockerfile.decider-vllm'),
+      R('Qwen3-Reranker 0.6B', 'reranker', 'var(--f-emb)', ['thor', 'orin'], 'pair', false, 'compose service'),
+      R('Qwen3-Embedding 0.6B', 'embedder', 'var(--f-emb)', ['orin'], 'single', false, 'compose service'),
+      R('EmbeddingGemma 2', 'gemma2-embed', 'var(--f-emb)', ['orin'], 'single', false, 'Dockerfile.embed-st'),
+      R('Parakeet TDT 0.6B', 'stt-en', 'var(--f-sp)', ['spark2'], 'single', false, 'Dockerfile.parakeet'),
+      R('Zipformer2 66M', 'stt-he', 'var(--f-sp)', ['thor'], 'single', false, 'Dockerfile.stt-zipformer') ];
+    return { modeClass: dark ? 'dark' : '', modeLabel: dark ? 'Light' : 'Dark', toggleMode: () => this.setState({ dark: !dark }),
+      tabs: [tab('graph', 'Graph'), tab('table', 'Table')], isGraph: view === 'graph', isTable: view === 'table',
+      stats, legend, cols, rows, L, sel };
+  }
+}
+</script>
+</body>
+</html>

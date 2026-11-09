@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-09T05:21:48Z",
-  "updated": "2026-11-09T05:57:42Z",
+  "updated": "2026-11-09T06:39:16Z",
   "claims": [
     {
       "id": "c1",
@@ -537,7 +537,165 @@
     {
       "id": "c30",
       "kind": "decision",
-      "text": "Member addressing comes from an operator-typed rollout members file on the operator box (SSH target, user, gateway port, lobes path), never derived from the roster; plan reports roster members missing from the file as unreachable (user decision 2026-11-09, consistent with #92)",
+      "text": "Member addressing comes from a residents file (~/.lobes/residents.toml) that lobes GENERATES from the mesh roster plus per-member probes (SSH target, user, gateway port, lobes path, gateway-key presence); every derived field is marked detected, and the operator only fixes fields flagged needs-you; nothing is guessed silently (user decision 2026-11-09, supersedes the typed-only form)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "the residents file is regenerated without overwriting a field the operator fixed by hand",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Member addressing comes from an operator-typed rollout members file on the operator box (SSH target, user, gateway port, lobes path), never derived from the roster; plan reports roster members missing from the file as unreachable (user decision 2026-11-09, consistent with #92)",
+          "kind": "decision",
+          "reason": "user: operator file generated, operator only needs to fix"
+        }
+      ]
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "a guest is never upgraded or written to by a rollout until it is made a resident",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture roster with an extra verified member: it is listed as guest, add writes a resident entry, the next plan includes it",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "lobes doctor reports new_mesh_member for a verified roster member missing from the residents file, resident_field_missing for each needs-you field and gateway_open for a member without a gateway key, each with the command that fixes it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "doctor stays read-only for these checks; adding a resident is a separate explicit command",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "doctor against a fixture roster + residents file shows the three findings with fix commands",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "an offline member never blocks or fails the rollout of the others",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture: unreachable member is skipped, status pending; reachable on re-run, upgraded",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "lobes serves a local site (stdlib HTTP server like heat-governor's mesh_server: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "every figure on the site comes from live mesh data; the site performs no writes without --apply-equivalent confirmation",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "match the design canvas and docs/design/lobes-site/; data comes from roster, /health, /capabilities and residents file, never hard-coded",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "no exported bundle contains a secret value, and an image-only lobe is never presented as rebuildable",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "export Parakeet on spark2 yields Dockerfile.parakeet, listen_server.py, _readiness.py and the stt service; export GLM yields image-only run command; no secret value in any bundle",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "the site works with no internet access",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Playwright network log shows only same-origin requests",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "measured against the live mesh, not a fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "store screenshots + log under docs/evidence/",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "decision",
+      "text": "Design reference for the site is the design canvas confirmed 2026-11-09 (positronic brains, full-mesh wheel with the outside-access hub, Graph/Table tabs, lobe export panel, Lato served locally); its files are committed under docs/design/lobes-site/ (user decision 2026-11-09)",
       "origin": "user",
       "status": "confirmed",
       "honesty_conditions": [],
@@ -561,6 +719,15 @@
       "id": "v2",
       "text": "The cloudflared tunnel container on cultureos (lobes-cloudflared) and other per-box sidecars were not examined for behaviour across a gateway recreate",
       "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Image-only lobes (GLM-5.3-Flash tensorfold image, the super-worker container) have no build lineage in lobes, so export can describe them but not rebuild them; recording how they were built is a follow-up",
+      "kind": "follow_up",
       "claim_id": null,
       "resolved": false,
       "resolution": "",
@@ -842,6 +1009,78 @@
       "seam": "live mesh (cultureos, spark, spark2, thor, orin) on the next lobes release",
       "behavior": "one 'lobes rollout plan' + one 'lobes rollout apply --apply' brings every member to the target with 0 hand-written scripts and 0 roles regressed in /capabilities; transcript under docs/evidence/",
       "source_text": "Re-running today's upgrade (4 members to 0.94.0) is 1 plan + 1 apply command with 0 hand-written scripts, and every member ends at the target version with 0 roles regressed in /capabilities",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c30",
+      "seam": "residents file generator",
+      "behavior": "every field carries detected or needs-you; re-generation keeps operator-edited fields",
+      "source_text": "Member addressing comes from a residents file (~/.lobes/residents.toml) that lobes GENERATES from the mesh roster plus per-member probes (SSH target, user, gateway port, lobes path, gateway-key presence); every derived field is marked detected, and the operator only fixes fields flagged needs-you; nothing is guessed silently (user decision 2026-11-09, supersedes the typed-only form)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o19",
+      "claim_id": "c31",
+      "seam": "lobes mesh resident add + site Make resident",
+      "behavior": "a verified guest becomes a resident entry; plan includes it; rollouts skip guests",
+      "source_text": "Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o20",
+      "claim_id": "c32",
+      "seam": "lobes doctor",
+      "behavior": "reports new_mesh_member, resident_field_missing, gateway_open with fix commands, and writes nothing",
+      "source_text": "lobes doctor reports new_mesh_member for a verified roster member missing from the residents file, resident_field_missing for each needs-you field and gateway_open for a member without a gateway key, each with the command that fixes it",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o21",
+      "claim_id": "c33",
+      "seam": "rollout apply/status with an unreachable resident",
+      "behavior": "member marked skipped-offline and pending; upgraded on a later apply once reachable",
+      "source_text": "A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o22",
+      "claim_id": "c34",
+      "seam": "local site /api + views",
+      "behavior": "Mesh graph draws every resident with full-mesh links, the outside-access hub, split brains and pairs from live data; Table tab lists the same lobes",
+      "source_text": "lobes serves a local site (stdlib HTTP server like heat-governor's mesh_server: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o23",
+      "claim_id": "c35",
+      "seam": "lobes lobe export",
+      "behavior": "built lobes export Dockerfile + inputs + service; image-only lobes export image + run/compose labelled image-only; zero secret values in output",
+      "source_text": "Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o24",
+      "claim_id": "c36",
+      "seam": "site static assets",
+      "behavior": "Lato woff2 + OFL served locally; zero external requests",
+      "source_text": "Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o25",
+      "claim_id": "c37",
+      "seam": "Playwright against the live mesh",
+      "behavior": "screenshots at 1440 and 390 px, 0 console errors, 0 non-local requests; transcript in docs/evidence/",
+      "source_text": "Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair",
       "origin": "llm",
       "status": "approved"
     }

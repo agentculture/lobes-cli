@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lobes — residents</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+@font-face{font-family:"Lato";font-style:normal;font-weight:300;font-display:swap;src:url(/_blob/6eb2b2f5a6b453a7a00033631a70f3ec) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:400;font-display:swap;src:url(/_blob/ad4f720ed236dd17bfc0ba615922e8f1) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:700;font-display:swap;src:url(/_blob/0dd3fbe442c0266a42b721f8dba72a9e) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:900;font-display:swap;src:url(/_blob/9dc1793a5dd1e227ec00a299a1f4174f) format("woff2")}
+.lb{--bg:#f1eff6;--surface:#fbfafd;--raise:#e7e4ef;--ink:#24222f;--soft:#57536a;--faint:#6e6a82;--line:rgba(36,34,47,.10);--line2:rgba(36,34,47,.18);--accent:#5a3fd0;--accent-tint:rgba(90,63,208,.08);--ok:#1b7a4c;--warn:#9a5b0b;--warn-tint:rgba(154,91,11,.09);--crit:#b8302a;--info:#2f66ad;--g1:#2a78d6;--g2:#eb6834;--g3:#1baf7a;--track:#e4e1ec;--shell:#dcd8e8;color-scheme:light}
+.lb.dark{--bg:#0f0e17;--surface:#171622;--raise:#24222f;--ink:#ecebf3;--soft:#a9a5bb;--faint:#8a869e;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--accent:#a593ff;--accent-tint:rgba(165,147,255,.10);--ok:#4fc58a;--warn:#e6a64a;--warn-tint:rgba(230,166,74,.10);--crit:#ff7a6b;--info:#7fb0f0;--g1:#3987e5;--g2:#d95926;--g3:#199e70;--track:#2a2836;--shell:#2c2a3a;color-scheme:dark}
+.lb button:focus-visible,.lb a:focus-visible,.lb input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lb a{color:var(--accent)}.lb a:hover{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.lb *{transition:none !important}}
+</style>
+</helmet>
+<div class="lb {{modeClass}}" style="background: var(--bg); color: var(--ink); font-family: Lato, -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.5; min-height: 100vh; -webkit-font-smoothing: antialiased">
+
+<header style="position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line)">
+<div style="max-width: 1240px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px">
+<div style="display: flex; align-items: center; gap: 10px; font-family: Lato, sans-serif; font-weight: 900; font-size: 20px; letter-spacing: -0.01em">
+<svg width="24" height="24" viewBox="0 0 120 120" fill="none" aria-hidden="true" style="color: var(--accent)"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"></path><circle cx="60" cy="58" r="9" fill="currentColor"></circle></svg>
+<span>lobes</span>
+</div>
+<nav aria-label="Sections" style="display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<a href="Main.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Mesh</a>
+<a href="Rollout.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Rollout</a>
+<a href="Residents.dc.html" aria-current="page" style="text-decoration: none; color: var(--ink); background: var(--raise); font-weight: 700; font-size: 14px; padding: 6px 16px; border-radius: 999px">Residents</a>
+</nav>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--soft)">
+<span style="display: inline-flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: var(--g3)"></span>cultureos</span>
+<button type="button" onClick="{{toggleMode}}" aria-label="Switch light or dark" style="appearance: none; border: 1px solid var(--line2); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px">{{modeLabel}}</button>
+</div>
+</div>
+</header>
+
+<main style="max-width: 1240px; margin: 0 auto; padding: 32px 24px 80px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px 20px">
+<h1 style="font-family: Lato, sans-serif; font-weight: 900; font-size: clamp(1.8rem, 3.6vw, 2.6rem); letter-spacing: -0.02em; margin: 0">Residents</h1>
+<code style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--soft); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px">~/.lobes/residents.toml</code>
+<div role="group" aria-label="Filter" style="margin-left: auto; display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<sc-for list="{{filters}}" as="f" hint-placeholder-count="3">
+<button type="button" onClick="{{f.pick}}" aria-pressed="{{f.pressed}}" style="appearance: none; border: 0; background: {{f.bg}}; color: var(--ink); font: inherit; font-size: 14px; font-weight: {{f.weight}}; padding: 6px 14px; border-radius: 999px; cursor: pointer; min-height: 36px">{{f.label}} <span style="color: var(--faint); font-weight: 400; font-variant-numeric: tabular-nums">{{f.n}}</span></button>
+</sc-for>
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 14px; font-size: 13px; color: var(--soft)">
+<span style="display: inline-flex; align-items: center; gap: 6px"><span style="color: var(--ok); display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l4 4 10-10"></path></svg></span>detected</span>
+<span style="display: inline-flex; align-items: center; gap: 6px"><span style="color: var(--warn); display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v8M12 18h.01"></path></svg></span>needs you</span>
+<span style="display: inline-flex; align-items: center; gap: 6px"><span style="color: var(--info); display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6v12M6 12h12"></path></svg></span>guest</span>
+</div>
+
+<section aria-label="Residents" style="margin-top: 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; overflow-x: auto">
+<table style="border-collapse: collapse; width: 100%; min-width: 980px; font-size: 14px">
+<caption style="position: absolute; left: -9999px">Residents file, generated from the mesh</caption>
+<thead>
+<tr>
+<th scope="col" style="text-align: left; padding: 12px 18px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Machine</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">SSH</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">User</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Port</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">lobes</th>
+<th scope="col" style="text-align: left; padding: 12px 10px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Gateway key</th>
+<th scope="col" style="text-align: right; padding: 12px 18px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)"><span style="position: absolute; left: -9999px">Action</span></th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="6">
+<tr style="background: {{r.rowBg}}">
+<th scope="row" style="text-align: left; padding: 12px 18px; font-weight: 700; border-top: 1px solid var(--line)">
+<span style="display: inline-flex; align-items: center; gap: 10px">
+<svg width="30" height="30" viewBox="0 0 120 120" aria-hidden="true"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="var(--shell)" stroke="{{r.color}}" stroke-width="7" stroke-dasharray="{{r.dash}}" stroke-linejoin="round"></path><circle cx="60" cy="58" r="10" fill="{{r.color}}"></circle></svg>
+<span>{{r.name}}</span>
+</span>
+</th>
+<sc-for list="{{r.cells}}" as="c" hint-placeholder-count="5">
+<td style="padding: 12px 10px; border-top: 1px solid var(--line)">
+<span style="display: inline-flex; align-items: center; gap: 7px">
+<span style="color: {{c.color}}; display: grid"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="{{c.state}}"><path d="{{c.icon}}"></path></svg></span>
+<sc-if value="{{c.isInput}}" hint-placeholder-val="{{ false }}">
+<label style="display: inline-flex; align-items: center; gap: 6px"><span style="position: absolute; left: -9999px">{{c.inputLabel}}</span><input type="text" placeholder="{{c.value}}" style="font: inherit; font-size: 14px; width: 120px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--warn); background: var(--surface); color: var(--ink)"></label>
+</sc-if>
+<sc-if value="{{c.isText}}" hint-placeholder-val="{{ true }}">
+<span style="font-variant-numeric: tabular-nums; color: {{c.textColor}}">{{c.value}}</span>
+</sc-if>
+</span>
+</td>
+</sc-for>
+<td style="padding: 12px 18px; border-top: 1px solid var(--line); text-align: right">
+<sc-if value="{{r.isGuest}}" hint-placeholder-val="{{ false }}">
+<button type="button" style="appearance: none; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 8px 14px; font: inherit; font-weight: 700; font-size: 13px; cursor: pointer; min-height: 40px">Make resident</button>
+</sc-if>
+</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</section>
+
+<div style="display: flex; flex-wrap: wrap; gap: 16px; margin-top: 16px">
+<section aria-label="File" style="flex: 2 1 520px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 16px 18px">
+<div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px">
+<h2 style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.1rem; margin: 0">Generated file</h2>
+<span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--warn-tint); color: var(--warn)">2 to fix</span>
+</div>
+<pre style="margin: 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; line-height: 1.6; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; overflow-x: auto; color: var(--ink); white-space: pre">{{fileText}}</pre>
+</section>
+<section aria-label="Doctor" style="flex: 1 1 320px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 16px 18px">
+<h2 style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.1rem; margin: 0 0 10px">lobes doctor</h2>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 14px">
+<li style="display: flex; gap: 8px"><span style="color: var(--info); display: grid; margin-top: 3px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 6v12M6 12h12"></path></svg></span><span><b>new_mesh_member</b> orin-nano</span></li>
+<li style="display: flex; gap: 8px"><span style="color: var(--warn); display: grid; margin-top: 3px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 6v8M12 18h.01"></path></svg></span><span><b>resident_field_missing</b> orin-nano user</span></li>
+<li style="display: flex; gap: 8px"><span style="color: var(--warn); display: grid; margin-top: 3px"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 6v8M12 18h.01"></path></svg></span><span><b>gateway_open</b> thor</span></li>
+</ul>
+<code style="display: block; margin-top: 14px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: var(--bg); border: 1px solid var(--line2); border-radius: 10px; padding: 9px 12px">lobes mesh resident add orin-nano</code>
+</section>
+</div>
+
+<div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px">
+<button type="button" style="appearance: none; border: 1px solid var(--line2); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 10px 18px; font: inherit; font-size: 14px; cursor: pointer; min-height: 44px">Re-detect</button>
+<button type="button" style="appearance: none; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; min-height: 44px">Save residents file</button>
+</div>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"$preview":{"width":1440,"height":1500}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { dark: null, filter: 'all' }; }
+  renderVals() {
+    const dark = this.state.dark ?? (this.props.dark ?? false);
+    const CHECK = 'M5 12l4 4 10-10', BANG = 'M12 6v8M12 18h.01';
+    const det = (value) => ({ value, state: 'detected', color: 'var(--ok)', icon: CHECK, isText: true, isInput: false, textColor: 'var(--ink)' });
+    const fix = (value, inputLabel) => ({ value, state: 'needs you', color: 'var(--warn)', icon: BANG, isText: false, isInput: true, inputLabel });
+    const warnText = (value) => ({ value, state: 'needs you', color: 'var(--warn)', icon: BANG, isText: true, isInput: false, textColor: 'var(--warn)' });
+    const all = [
+      { name: 'cultureos', color: 'var(--g3)', dash: 'none', isGuest: false, needs: false, cells: [det('local'), det('arduino'), det('8001'), det('0.94.0'), det('set')] },
+      { name: 'spark', color: 'var(--g1)', dash: 'none', isGuest: false, needs: false, cells: [det('spark'), det('spark'), det('8001'), det('0.90.0'), det('set')] },
+      { name: 'spark2', color: 'var(--g1)', dash: 'none', isGuest: false, needs: false, cells: [det('spark2'), det('spark2'), det('8000'), det('0.94.0'), det('set')] },
+      { name: 'thor', color: 'var(--g2)', dash: 'none', isGuest: false, needs: true, cells: [det('thor'), det('thor'), det('8000'), det('0.89.0'), warnText('none (open)')] },
+      { name: 'orin', color: 'var(--g2)', dash: 'none', isGuest: false, needs: false, cells: [det('orin'), det('orin'), det('8000'), det('0.94.0'), det('set')] },
+      { name: 'orin-nano', color: 'var(--info)', dash: '10 8', isGuest: true, needs: true, cells: [det('orin-nano'), fix('user?', 'SSH user for orin-nano'), det('8000'), det('not installed'), det('set')] } ];
+    const f = this.state.filter;
+    const rows = all.filter((r) => f === 'all' || (f === 'needs' && r.needs) || (f === 'guests' && r.isGuest))
+      .map((r) => Object.assign({}, r, { rowBg: r.isGuest ? 'var(--accent-tint)' : 'transparent' }));
+    const tab = (id, label, n) => ({ label, n, pressed: f === id ? 'true' : 'false', bg: f === id ? 'var(--raise)' : 'transparent', weight: f === id ? 700 : 400, pick: () => this.setState({ filter: id }) });
+    const fileText = [
+      '# generated by lobes from the mesh roster; fix lines marked "fix:"',
+      '[resident.spark]',
+      'ssh = "spark"      # detected',
+      'user = "spark"',
+      'port = 8001',
+      '',
+      '[resident.thor]',
+      'ssh = "thor"',
+      'user = "thor"',
+      'port = 8000',
+      '# fix: gateway has no GATEWAY_API_KEY (open)',
+      '',
+      '[guest.orin-nano]',
+      'ssh = "orin-nano"',
+      'user = ""          # fix: unknown',
+      'port = 8000' ].join('\n');
+    return { modeClass: dark ? 'dark' : '', modeLabel: dark ? 'Light' : 'Dark', toggleMode: () => this.setState({ dark: !dark }),
+      rows, fileText, filters: [tab('all', 'All', 6), tab('needs', 'Needs you', 2), tab('guests', 'Guests', 1)] };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>lobes — rollout</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+@font-face{font-family:"Lato";font-style:normal;font-weight:300;font-display:swap;src:url(/_blob/6eb2b2f5a6b453a7a00033631a70f3ec) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:400;font-display:swap;src:url(/_blob/ad4f720ed236dd17bfc0ba615922e8f1) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:700;font-display:swap;src:url(/_blob/0dd3fbe442c0266a42b721f8dba72a9e) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:900;font-display:swap;src:url(/_blob/9dc1793a5dd1e227ec00a299a1f4174f) format("woff2")}
+.lb{--bg:#f1eff6;--surface:#fbfafd;--raise:#e7e4ef;--ink:#24222f;--soft:#57536a;--faint:#6e6a82;--line:rgba(36,34,47,.10);--line2:rgba(36,34,47,.18);--accent:#5a3fd0;--accent-tint:rgba(90,63,208,.08);--ok:#1b7a4c;--ok-tint:rgba(27,122,76,.09);--warn:#9a5b0b;--crit:#b8302a;--crit-tint:rgba(184,48,42,.08);--info:#2f66ad;--track:#e4e1ec;--code:#ecE9f3;color-scheme:light}
+.lb.dark{--bg:#0f0e17;--surface:#171622;--raise:#24222f;--ink:#ecebf3;--soft:#a9a5bb;--faint:#8a869e;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--accent:#a593ff;--accent-tint:rgba(165,147,255,.10);--ok:#4fc58a;--ok-tint:rgba(79,197,138,.10);--warn:#e6a64a;--crit:#ff7a6b;--crit-tint:rgba(255,122,107,.10);--info:#7fb0f0;--track:#2a2836;--code:#1f1d2b;color-scheme:dark}
+.lb button:focus-visible,.lb a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.lb a{color:var(--accent)}.lb a:hover{color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.lb *{transition:none !important}}
+</style>
+</helmet>
+<div class="lb {{modeClass}}" style="background: var(--bg); color: var(--ink); font-family: Lato, -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.55; min-height: 100vh; -webkit-font-smoothing: antialiased">
+
+<header style="position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line)">
+<div style="max-width: 1240px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px">
+<div style="display: flex; align-items: center; gap: 10px; font-family: Lato, sans-serif; font-weight: 900; font-size: 20px; letter-spacing: -0.01em">
+<svg width="24" height="24" viewBox="0 0 120 120" fill="none" aria-hidden="true" style="color: var(--accent)"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"></path><circle cx="60" cy="58" r="9" fill="currentColor"></circle></svg>
+<span>lobes</span>
+</div>
+<nav aria-label="Sections" style="display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<a href="Main.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Mesh</a>
+<a href="Rollout.dc.html" aria-current="page" style="text-decoration: none; color: var(--ink); background: var(--raise); font-weight: 700; font-size: 14px; padding: 6px 16px; border-radius: 999px">Rollout</a>
+<a href="Residents.dc.html" style="text-decoration: none; color: var(--soft); font-size: 14px; padding: 6px 16px; border-radius: 999px">Residents</a>
+</nav>
+<div style="margin-left: auto; display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--soft)">
+<span style="display: inline-flex; align-items: center; gap: 6px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #1baf7a"></span>cultureos</span>
+<button type="button" onClick="{{toggleMode}}" aria-label="Switch light or dark" style="appearance: none; border: 1px solid var(--line2); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; min-height: 36px">{{modeLabel}}</button>
+</div>
+</div>
+</header>
+
+<main style="max-width: 1240px; margin: 0 auto; padding: 40px 24px 80px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px 32px">
+<div style="flex: 999 1 520px; min-width: 0">
+<h1 style="font-family: Lato, sans-serif; font-weight: 900; font-size: clamp(2rem, 4.4vw, 3.4rem); line-height: 1.04; letter-spacing: -0.025em; margin: 0">{{headline}}</h1>
+</div>
+<div role="group" aria-label="Show state" style="display: flex; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px">
+<sc-for list="{{stateTabs}}" as="t" hint-placeholder-count="3">
+<button type="button" onClick="{{t.pick}}" aria-pressed="{{t.pressed}}" style="appearance: none; border: 0; background: {{t.bg}}; color: var(--ink); font: inherit; font-size: 14px; font-weight: {{t.weight}}; padding: 6px 16px; border-radius: 999px; cursor: pointer; min-height: 36px">{{t.label}}</button>
+</sc-for>
+</div>
+</div>
+<sc-if value="{{isExample}}" hint-placeholder-val="{{ false }}">
+<span style="display: inline-block; margin-top: 10px; font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px dashed var(--line2); color: var(--faint)">example state</span>
+</sc-if>
+
+<section aria-label="Waves" style="margin-top: 36px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; padding: 28px 28px 24px; overflow-x: auto">
+<ol style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: 0; min-width: 860px">
+<sc-for list="{{waves}}" as="w" hint-placeholder-count="4">
+<li style="position: relative; padding-right: 20px">
+<div style="display: flex; align-items: center; gap: 0">
+<span style="flex: none; position: relative; width: 64px; height: 64px">
+<svg width="64" height="64" viewBox="0 0 120 120" aria-hidden="true"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" fill="{{w.dotBg}}" stroke="{{w.dotBorder}}" stroke-width="4" stroke-linejoin="round"></path><circle cx="60" cy="58" r="8" fill="{{w.dotFg}}"></circle></svg>
+<span style="position: absolute; right: -2px; bottom: 0; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid {{w.dotBorder}}; color: var(--ink); font-size: 12px; font-weight: 800">
+<sc-if value="{{w.showIcon}}" hint-placeholder-val="{{ false }}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="{{w.dotBorder}}" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="{{w.icon}}"></path></svg></sc-if>
+<sc-if value="{{w.showNum}}" hint-placeholder-val="{{ true }}">{{w.num}}</sc-if>
+</span>
+</span>
+<span aria-hidden="true" style="flex: 1; height: 3px; border-radius: 2px; background: {{w.lineBg}}; margin-left: 8px"></span>
+</div>
+<div style="margin-top: 14px; font-size: 13px; color: var(--soft)">{{w.kind}}</div>
+<div style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.35rem; line-height: 1.2">{{w.title}}</div>
+<div style="font-size: 14px; color: {{w.stateColor}}; font-weight: 700; margin-top: 4px">{{w.state}}</div>
+<div style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px"><sc-for list="{{w.roles}}" as="r" hint-placeholder-count="2"><span style="font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--raise)">{{r}}</span></sc-for></div>
+</li>
+</sc-for>
+</ol>
+</section>
+
+<sc-if value="{{isHalted}}" hint-placeholder-val="{{ false }}">
+<section aria-label="Rollout halted" style="margin-top: 20px; background: var(--crit-tint); border: 1px solid var(--crit); border-radius: 20px; padding: 20px 22px">
+<div style="display: flex; align-items: center; gap: 10px; color: var(--crit); font-weight: 700">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6M12 16.5h.01"></path></svg>
+<span>spark halted: cortex ready before, not after</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px"><span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--surface)">others untouched</span><span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--surface)">lobes-gateway:0.92.0.dev694 kept</span><span style="font-size: 12px; padding: 2px 10px; border-radius: 999px; background: var(--surface)">.env backup kept</span></div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<code style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; background: var(--surface); border: 1px solid var(--line2); border-radius: 10px; padding: 10px 14px">lobes rollout rollback --member spark --apply</code>
+<button type="button" style="appearance: none; border: 0; background: var(--crit); color: #fff; border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; min-height: 44px">Roll back spark</button>
+<button type="button" style="appearance: none; border: 1px solid var(--line2); background: var(--surface); color: var(--ink); border-radius: 10px; padding: 10px 18px; font: inherit; font-size: 14px; cursor: pointer; min-height: 44px">Keep it and investigate</button>
+</div>
+</section>
+</sc-if>
+
+<div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 28px">
+
+<section aria-label="Before any member" style="flex: 1 1 340px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 20px 22px">
+<h2 style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.2rem; margin: 0 0 12px">Preflight</h2>
+<ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px">
+<sc-for list="{{preflight}}" as="p" hint-placeholder-count="4">
+<li style="display: flex; gap: 10px; align-items: flex-start">
+<span style="flex: none; color: {{p.color}}; margin-top: 2px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="{{p.icon}}"></path></svg></span>
+<div>
+<div style="font-weight: 700; font-size: 14px">{{p.title}}</div>
+</div>
+</li>
+</sc-for>
+</ul>
+</section>
+
+<section aria-label="Member steps" style="flex: 2 1 560px; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 20px 22px">
+<h2 style="font-family: Lato, sans-serif; font-weight: 700; font-size: 1.2rem; margin: 0 0 12px">Steps</h2>
+
+<div style="overflow-x: auto">
+<table style="border-collapse: collapse; width: 100%; min-width: 520px; font-size: 14px">
+<thead>
+<tr>
+<th scope="col" style="text-align: left; padding: 8px 10px 8px 0; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--line)">Step</th>
+<th scope="col" style="text-align: left; padding: 8px 10px; font-weight: 700; border-bottom: 1px solid var(--line)">thor</th>
+<th scope="col" style="text-align: left; padding: 8px 10px; font-weight: 700; border-bottom: 1px solid var(--line)">spark</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{steps}}" as="s" hint-placeholder-count="9">
+<tr>
+<th scope="row" style="text-align: left; font-weight: 400; padding: 9px 10px 9px 0; border-top: 1px solid var(--line)">{{s.name}}</th>
+<td style="padding: 9px 10px; border-top: 1px solid var(--line); color: {{s.aColor}}; font-weight: {{s.aWeight}}">{{s.a}}</td>
+<td style="padding: 9px 10px; border-top: 1px solid var(--line); color: {{s.bColor}}; font-weight: {{s.bWeight}}">{{s.b}}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</section>
+
+</div>
+
+<section aria-label="Run it" style="margin-top: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 20px; padding: 18px 22px">
+<div style="flex: 999 1 380px; min-width: 0">
+<div style="font-weight: 700">{{ctaTitle}}</div>
+</div>
+<code style="font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; background: var(--bg); border: 1px solid var(--line2); border-radius: 10px; padding: 10px 14px">{{ctaCmd}}</code>
+<button type="button" style="appearance: none; border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 10px 18px; font: inherit; font-weight: 700; font-size: 14px; cursor: pointer; min-height: 44px">{{ctaButton}}</button>
+</section>
+
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"state":{"editor":"enum","options":["plan","running","halted"],"default":"plan"},"$preview":{"width":1440,"height":1640}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { dark: null, view: null }; }
+  renderVals() {
+    const dark = this.state.dark ?? (this.props.dark ?? false);
+    const view = this.state.view ?? (this.props.state ?? 'plan');
+    const CHECK = 'M5 12l4 4 10-10', CROSS = 'M7 7l10 10M17 7L7 17', DOT = 'M12 12h.01';
+    const done = { dotBg: 'var(--ok)', dotFg: '#fff', dotBorder: 'var(--ok)', showIcon: true, showNum: false, icon: CHECK, stateColor: 'var(--ok)' };
+    const todo = { dotBg: 'var(--surface)', dotFg: 'var(--ink)', dotBorder: 'var(--line2)', showIcon: false, showNum: true, icon: DOT, stateColor: 'var(--soft)' };
+    const live = { dotBg: 'var(--accent)', dotFg: '#fff', dotBorder: 'var(--accent)', showIcon: false, showNum: true, icon: DOT, stateColor: 'var(--accent)' };
+    const fail = { dotBg: 'var(--crit)', dotFg: '#fff', dotBorder: 'var(--crit)', showIcon: true, showNum: false, icon: CROSS, stateColor: 'var(--crit)' };
+    const line = (s) => (s === done ? 'var(--ok)' : 'var(--track)');
+    const W = (num, kind, title, st, state, roles) => Object.assign({ num, kind, title, state, roles, lineBg: line(st) }, st);
+    const pre = W('', 'Preflight', 'lobes-cli 0.94.0', done, 'Installable', ['pip ok']);
+    let waves;
+    if (view === 'plan') waves = [pre,
+      W('1', 'Wave 1, canary', 'thor', todo, 'Waiting', ['worker', 'reranker', 'stt-he']),
+      W('2', 'Wave 2', 'spark', todo, 'Waiting', ['cortex']),
+      W('3', 'Operator box, last', 'cultureos', done, 'Already current', ['runs rollout'])];
+    else if (view === 'running') waves = [pre,
+      W('1', 'Wave 1, canary', 'thor', done, 'Verified', ['worker', 'reranker', 'stt-he']),
+      W('2', 'Wave 2', 'spark', live, 'Rebuilding gateway', ['step 6 / 9']),
+      W('3', 'Operator box, last', 'cultureos', done, 'Already current', ['runs rollout'])];
+    else waves = [pre,
+      W('1', 'Wave 1, canary', 'thor', done, 'Verified', ['worker', 'reranker', 'stt-he']),
+      W('2', 'Wave 2', 'spark', fail, 'Halted', ['cortex']),
+      W('3', 'Operator box, last', 'cultureos', todo, 'Not started', ['runs rollout'])];
+    const preflight = [
+      { title: 'lobes-cli 0.94.0 installable', detail: '', color: 'var(--ok)', icon: CHECK },
+      { title: 'orin, spark2, cultureos current', detail: '', color: 'var(--ok)', icon: CHECK },
+      { title: 'Compose drift: run at plan', detail: '', color: 'var(--info)', icon: 'M12 8h.01M12 11v5' },
+      { title: 'orin-nano skipped (guest)', detail: '', color: 'var(--info)', icon: 'M12 6v12M6 12h12' } ];
+    const names = ['Take the member lock', 'Back up .env', 'Install the lobes CLI', 'Pin MODEL_GEAR_VERSION', 'Tag the current gateway image', 'Rebuild the gateway', 'Wait for health', 'Compare capabilities', 'Send one request per role'];
+    const okc = { c: 'var(--ok)', w: 400 }, wait = { c: 'var(--faint)', w: 400 }, now = { c: 'var(--accent)', w: 700 }, bad = { c: 'var(--crit)', w: 700 };
+    const steps = names.map((name, i) => {
+      let a = ['Waiting', wait], b = ['Waiting', wait];
+      if (view !== 'plan') a = ['Done', okc];
+      if (view === 'running') b = i < 5 ? ['Done', okc] : (i === 5 ? ['Running', now] : ['Waiting', wait]);
+      if (view === 'halted') b = i < 7 ? ['Done', okc] : (i === 7 ? ['cortex not ready', bad] : ['Skipped', wait]);
+      return { name, a: a[0], aColor: a[1].c, aWeight: a[1].w, b: b[0], bColor: b[1].c, bWeight: b[1].w };
+    });
+    const heads = { plan: '0.94.0 to thor, spark', running: '0.94.0: thor done, spark next', halted: '0.94.0: halted at spark' };
+    const ledes = {
+      plan: 'thor and spark run 0.92.0.dev694. One member per wave, thor first as the canary. Each must verify before the next one starts.',
+      running: 'thor upgraded and every role it hosts answered. spark is rebuilding its gateway; its old gateway keeps serving until the new one is healthy.',
+      halted: 'thor is upgraded and verified. spark upgraded, then failed verification, so the rollout stopped and touched nothing else.' };
+    const cta = {
+      plan: ['Wave 1 ready', 'lobes rollout apply --apply', 'Start wave 1'],
+      running: ['Wave 2 running', 'lobes rollout status', 'Refresh status'],
+      halted: ['spark: your call', 'lobes rollout status', 'Refresh status'] }[view];
+    const tab = (id, label) => ({ label, pressed: view === id ? 'true' : 'false', bg: view === id ? 'var(--raise)' : 'transparent', weight: view === id ? 700 : 400, pick: () => this.setState({ view: id }) });
+    return {
+      modeClass: dark ? 'dark' : '', modeLabel: dark ? 'Light' : 'Dark', toggleMode: () => this.setState({ dark: !dark }),
+      stateTabs: [tab('plan', 'Plan'), tab('running', 'Running'), tab('halted', 'Halted')],
+      isExample: view !== 'plan', isHalted: view === 'halted',
+      headline: heads[view], waves, preflight, steps,
+      ctaTitle: cta[0], ctaCmd: cta[1], ctaButton: cta[2]
+    };
+  }
+}
+</script>
+</body>
+</html>
