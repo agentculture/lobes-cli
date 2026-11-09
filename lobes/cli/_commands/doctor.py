@@ -35,7 +35,12 @@ from pathlib import Path
 
 from lobes import __version__
 from lobes.cli import _runtime_ops
-from lobes.cli._commands import _doctor_lane_safety, _doctor_plugin, _role_probe
+from lobes.cli._commands import (
+    _doctor_lane_safety,
+    _doctor_plugin,
+    _doctor_residents,
+    _role_probe,
+)
 from lobes.cli._commands.capabilities import _fetch_gateway_capabilities
 from lobes.cli._commands.init import DEFAULT_SHAPE, SHAPE_KEY, _values_equal
 from lobes.cli._commands.whoami import _find_culture_yaml
@@ -1235,6 +1240,7 @@ def _deploy_dir_diagnostics(deploy_dir: Path) -> tuple[list[dict], int, dict[str
     plugin_check = _doctor_plugin.plugin_stale_check(deploy_dir)
     if plugin_check is not None:
         checks.append(plugin_check)
+    checks.extend(_doctor_residents.residents_checks(deploy_dir))
     return checks, port, fix_plan
 
 
