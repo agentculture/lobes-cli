@@ -4,7 +4,7 @@
   "schema_version": 6,
   "status": "exported",
   "created": "2026-11-09T05:21:48Z",
-  "updated": "2026-11-09T06:39:16Z",
+  "updated": "2026-11-09T06:55:29Z",
   "claims": [
     {
       "id": "c1",
@@ -857,7 +857,41 @@
       ]
     }
   ],
-  "lapses": [],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "control-absent",
+      "what": "t4 tests were written alongside the implementation, not watched failing first (agent's own report)",
+      "skipped_check": "red test before implementation (TDD)",
+      "refs": [
+        "plan t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "assumption-for-measurement",
+      "what": "t3 regenerate keeps every non-empty existing field, so a detected value that later changes (e.g. port) is not refreshed; operator edits are not distinguished from earlier detections",
+      "skipped_check": "a provenance marker per field distinguishing operator edits from detections",
+      "refs": [
+        "plan t3; c30/h26"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "grader-unverified",
+      "what": "wave-1 agents did not complete a repo-wide black/isort run (timeouts); only scoped lint ran per task; the main agent's scoped lint on lobes/rollout passed, the full suite is pending",
+      "skipped_check": "repo-wide lint + full test suite per task",
+      "refs": [
+        "plan wave 1"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
   "obligations": [
     {
       "id": "o1",
