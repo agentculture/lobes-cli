@@ -65,7 +65,7 @@ def dev_index_url(environ: Optional[dict] = None) -> str:
 def build_command(base: str, version: str, index_url: str = "") -> list:
     """argv for the resolvability probe; mirrors the Dockerfile's dev-lane step."""
     cmd = ["docker", "run", "--rm", base, "pip", "download", "--no-deps"]
-    cmd += ["--dest", "/tmp/lobes-preflight", "--quiet"]
+    cmd += ["--quiet"]
     if index_url:
         cmd += ["--index-url", index_url]
     cmd.append(f"lobes-cli=={version}")
