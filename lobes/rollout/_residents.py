@@ -85,9 +85,8 @@ def _dump(res: Residents) -> str:
     for kind, group in (("resident", res.residents), ("guest", res.guests)):
         for name, entry in group.items():
             lines.append("")
-            lines.append(
-                f"[{kind}.{_toml_val(name) if not name.replace('-', '').replace('_', '').isalnum() else name}]"
-            )
+            bare = name.replace("-", "").replace("_", "").isalnum()
+            lines.append(f"[{kind}.{name if bare else _toml_val(name)}]")
             needs = [f for f in FIELDS if entry[f].state == NEEDS_YOU]
             for f in FIELDS:
                 if entry[f].state == DETECTED:
