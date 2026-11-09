@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from lobes.cli import main
-from lobes.rollout._journal import Journal
+from lobes.rollout._journal import STEPS, Journal
 from lobes.rollout._observe import MemberObservation
 from lobes.rollout._residents import DETECTED, NEEDS_YOU, Field, Residents
 from lobes.site import server as site
@@ -384,7 +384,18 @@ def test_api_rollout_projects_the_journal(serve, tmp_path):
 
 def test_api_rollout_empty_journal(serve):
     code, data = _json(serve(), "/api/rollout")
-    assert code == 200 and data == {"members": [], "resume": None}
+    assert code == 200 and data["members"] == [] and data["resume"] is None
+    assert data["steps"] == list(STEPS)
+
+
+def test_api_rollout_names_the_rollback_for_a_failed_member(serve, tmp_path):
+    j = Journal(tmp_path)
+    j.append("thor", "verify", "ok", target="0.94.0", current="0.94.0")
+    j.append("spark", "verify", "failed", target="0.94.0", current="0.94.0")
+    code, data = _json(serve(make_sources(tmp_path, journal=lambda: j)), "/api/rollout")
+    by = {m["member"]: m for m in data["members"]}
+    assert by["spark"]["rollback_command"] == "lobes rollout rollback --member spark --apply"
+    assert by["thor"]["rollback_command"] is None
 
 
 def test_api_residents(serve):
