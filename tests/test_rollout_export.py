@@ -14,37 +14,37 @@ SECRET = "sk-fake-secret-value-123456"
 DEPLOY = "/home/u/.lobes"
 LOBES = "/home/u/.local/bin/lobes"
 
-BASE = """\
-services:
-  gateway:
-    image: lobes-gateway
-    container_name: model-gear-gateway
-    environment:
-      - STT_BASE_URL=http://stt:9002
-      - WORKER_BASE_URL=http://super-worker:8000
-      - GATEWAY_API_KEY=${GATEWAY_API_KEY:-}
-  vllm-rerank:
-    image: vllm/vllm-openai@sha256:abc
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./qwen3_reranker.jinja:/app/qwen3_reranker.jinja:ro
-      - ./logs:/logs
-    command: ["--model", "x"]
-"""
-AUDIO = """\
-services:
-  stt:
-    build:
-      context: .
-      dockerfile: Dockerfile.parakeet
-    container_name: model-gear-stt
-    environment:
-      - HF_TOKEN=%s
-      - PARAKEET_PORT=${PARAKEET_PORT:-9002}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-EMPTY}
-"""
+
+def _config(ctx=DEPLOY):
+    """What `docker compose config --no-interpolate --format json` returns."""
+    return {
+        "services": {
+            "gateway": {
+                "image": "lobes-gateway",
+                "container_name": "model-gear-gateway",
+                "environment": {"GATEWAY_API_KEY": "${GATEWAY_API_KEY:-}"},
+            },
+            "vllm-rerank": {
+                "image": "vllm/vllm-openai@sha256:abc",
+                "volumes": [
+                    {"type": "bind", "source": f"{DEPLOY}/qwen3_reranker.jinja", "target": "/a"},
+                    {"type": "bind", "source": f"{DEPLOY}/logs", "target": "/logs"},
+                ],
+                "command": ["--model", "x"],
+            },
+            "stt": {
+                "build": {"context": ctx, "dockerfile": "Dockerfile.parakeet"},
+                "container_name": "model-gear-stt",
+                "environment": {
+                    "HF_TOKEN": SECRET,
+                    "PARAKEET_PORT": "${PARAKEET_PORT:-9002}",
+                    "OPENAI_API_KEY": "${OPENAI_API_KEY:-EMPTY}",
+                },
+            },
+        }
+    }
+
+
 DOCKERFILE = """\
 FROM nvcr.io/nvidia/nemo:25
 COPY listen_server.py /app/listen_server.py
@@ -75,8 +75,6 @@ INSPECT = [
 
 def _files(extra=None):
     f = {
-        f"{DEPLOY}/docker-compose.yml": BASE,
-        f"{DEPLOY}/docker-compose.audio.yml": AUDIO % SECRET,
         f"{DEPLOY}/Dockerfile.parakeet": DOCKERFILE,
         f"{DEPLOY}/listen_server.py": f"# server\nTOKEN = '{SECRET}'\n",
         f"{DEPLOY}/_readiness.py": "# ready\n",
@@ -87,7 +85,7 @@ def _files(extra=None):
     return f
 
 
-def make_runner(files=None, containers=None, with_gateway=True):
+def make_runner(files=None, containers=None, with_gateway=True, config=None):
     files = _files() if files is None else files
     containers = INSPECT if containers is None else containers
     calls = []
@@ -102,6 +100,8 @@ def make_runner(files=None, containers=None, with_gateway=True):
                 chain = ["-f", "docker-compose.yml", "-f", "docker-compose.audio.yml"]
                 return 0, json.dumps({"deployment_dir": DEPLOY, "files": chain}), ""
             return 2, "", "unknown"
+        if argv[:2] == ["docker", "compose"]:
+            return 0, json.dumps(config or _config()), ""
         if argv[0] == "cat":
             if argv[1] in files:
                 return 0, files[argv[1]], ""
@@ -138,10 +138,10 @@ def test_built_lobe_parakeet_exports_dockerfile_inputs_and_service():
         "Dockerfile.parakeet",
         "listen_server.py",
         "_readiness.py",
-        "compose-service.yml",
+        "compose-service.json",
     } <= names
     assert "manifest.json" in names
-    svc = r.files["compose-service.yml"]
+    svc = r.files["compose-service.json"]
     assert "Dockerfile.parakeet" in svc
     # ${VAR} references stay as they are
     assert "${PARAKEET_PORT:-9002}" in svc
@@ -185,7 +185,7 @@ def test_image_only_compose_service_with_mounted_file():
     assert r.service == "vllm-rerank"
     assert r.image == "vllm/vllm-openai@sha256:abc"
     assert "qwen3_reranker.jinja" in r.files
-    assert "compose-service.yml" in r.files
+    assert "compose-service.json" in r.files
     # logs dir is not a file: reported, not fatal
     assert any("logs" in n for n in r.notes)
 
@@ -226,14 +226,20 @@ def test_export_member_bundle_and_write(tmp_path: Path):
 
 
 def test_build_path_escape_refused():
-    files = _files(
-        {f"{DEPLOY}/docker-compose.audio.yml": AUDIO.replace("context: .", "context: ../..") % "x"}
-    )
     r = _export.export_role(
-        "stt-en", TARGET, member="m", runner=make_runner(files=files), secrets=[]
+        "stt-en", TARGET, member="m", runner=make_runner(config=_config("/etc")), secrets=[]
     )
     assert "Dockerfile.parakeet" not in r.files
     assert any("escape" in n for n in r.notes)
+
+
+def test_compose_config_uses_no_interpolate_and_no_env_files():
+    runner = make_runner()
+    _export.export_role("stt-en", TARGET, member="m", runner=runner, secrets=[])
+    cfg = [c for c in runner.calls if c[:2] == ["docker", "compose"]]
+    assert cfg and "--no-interpolate" in cfg[0] and "json" in cfg[0]
+    assert f"{DEPLOY}/docker-compose.audio.yml" in cfg[0]
+    assert not any(c[0] == "cat" and c[1].endswith(".env") for c in runner.calls)
 
 
 def test_dockerfile_copy_parsing():

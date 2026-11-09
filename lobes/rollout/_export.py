@@ -147,25 +147,6 @@ class Chain:
     services: dict
 
 
-def _yaml():
-    try:
-        import yaml  # type: ignore[import-untyped]
-    except ImportError as exc:  # pragma: no cover - environment dependent
-        raise ExportError("PyYAML is required for lobe export (pip install pyyaml)") from exc
-    return yaml
-
-
-def _merge(a: Any, b: Any, key: str = "") -> Any:
-    if isinstance(a, dict) and isinstance(b, dict):
-        out = dict(a)
-        for k, v in b.items():
-            out[k] = _merge(a[k], v, k) if k in a else v
-        return out
-    if isinstance(a, list) and isinstance(b, list) and key not in ("command", "entrypoint"):
-        return a + [x for x in b if x not in a]
-    return b
-
-
 def _safe_join(base: str, rel: str) -> str | None:
     if rel.startswith("/"):
         return None
@@ -173,6 +154,30 @@ def _safe_join(base: str, rel: str) -> str | None:
     if joined != base and not joined.startswith(base.rstrip("/") + "/"):
         return None
     return joined
+
+
+def _rel(path: Any, base: str) -> Any:
+    """``docker compose config`` absolutises paths; make ones under base relative again."""
+    if isinstance(path, str) and path.startswith(base.rstrip("/") + "/"):
+        return "./" + posixpath.relpath(path, base)
+    if path == base:
+        return "."
+    return path
+
+
+def _relativize(spec: dict, base: str) -> dict:
+    spec = dict(spec)
+    build = spec.get("build")
+    if isinstance(build, dict):
+        spec["build"] = {**build, "context": _rel(build.get("context", "."), base)}
+    vols = []
+    for v in spec.get("volumes") or []:
+        if isinstance(v, dict) and v.get("type") == "bind":
+            v = {**v, "source": _rel(v.get("source"), base)}
+        vols.append(v)
+    if vols:
+        spec["volumes"] = vols
+    return spec
 
 
 def _cat(target, path: str, runner, secrets) -> str | None:
@@ -195,20 +200,33 @@ def load_chain(target, *, runner: Runner | None = None, secrets: Sequence[str] =
         names = [f for f in data["files"] if f != "-f"]
     except (ValueError, KeyError, TypeError) as exc:
         raise ExportError("unreadable `lobes fleet files --json` output") from exc
-    yaml = _yaml()
-    services: dict = {}
     paths = []
     for name in names:
         path = name if name.startswith("/") else _safe_join(base, name)
         if path is None:
-            continue
-        text = _cat(target, path, runner, secrets)
-        if text is None:
-            raise ExportError(f"cannot read compose file {name}")
+            raise ExportError(f"compose file {name} escapes the deployment dir")
         paths.append(path)
-        doc = yaml.safe_load(text) or {}
-        for svc, spec in (doc.get("services") or {}).items():
-            services[svc] = _merge(services[svc], spec or {}) if svc in services else (spec or {})
+    argv = ["docker", "compose", "--project-directory", base]
+    for p in paths:
+        argv += ["-f", p]
+    # Docker does the merge. --no-interpolate keeps ${VAR} references, so no
+    # .env value comes back; --no-env-resolution keeps env_file contents out
+    # (older docker lacks it, so retry without).
+    rc, out, err = 1, "", ""
+    for extra in (["--no-interpolate", "--no-env-resolution"], ["--no-interpolate"]):
+        cmd = argv + ["config", *extra, "--format", "json"]
+        rc, out, err = runner(build_argv(as_target(target), cmd, 60.0), 60.0)
+        if rc == 0:
+            break
+    if rc != 0:
+        raise ExportError(
+            f"`docker compose config` failed on the member: {redact_text(err, secrets).strip()}"
+        )
+    try:
+        services = json.loads(out).get("services") or {}
+    except (ValueError, AttributeError) as exc:
+        raise ExportError("unreadable `docker compose config` output") from exc
+    services = {n: _relativize(spec or {}, base) for n, spec in services.items()}
     return Chain(base, paths, services)
 
 
@@ -381,9 +399,8 @@ def _add_file(r, target, chain, rel, runner, secrets, what) -> bool:
 
 
 def _export_service(r, name, spec, target, chain, runner, secrets):
-    yaml = _yaml()
     r.service, r.source = name, "compose"
-    r.files["compose-service.yml"] = yaml.safe_dump({"services": {name: spec}}, sort_keys=False)
+    r.files["compose-service.json"] = json.dumps({"services": {name: spec}}, indent=2) + "\n"
     build = spec.get("build")
     if build:
         r.status = BUILT
@@ -410,7 +427,7 @@ def _export_service(r, name, spec, target, chain, runner, secrets):
     else:
         r.status = IMAGE_ONLY
         r.image = str(spec.get("image", ""))
-        r.notes.append("image-only: no build; the image reference is in compose-service.yml")
+        r.notes.append("image-only: no build; the image reference is in compose-service.json")
     for vol in spec.get("volumes") or []:
         src = (vol.get("source") if isinstance(vol, dict) else str(vol).split(":")[0]) or ""
         if src.startswith("./") or src.startswith("../"):
