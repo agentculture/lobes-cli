@@ -8,7 +8,7 @@ from typing import Iterable
 REDACTED = "[REDACTED]"
 
 # NAME=value / NAME: value / "NAME": "value" for secret-looking names.
-_NAME = r"[A-Za-z0-9_]*(?:API_KEY|_TOKEN|MESH_KEY|GATEWAY_KEY)|GATEWAY_API_KEY|LOBES_MESH_KEY|[A-Za-z0-9_]*TOKEN"
+_NAME = r"[A-Za-z0-9_]*(?:API_KEY|TOKEN|MESH_KEY|GATEWAY_KEY)"
 _ASSIGN = re.compile(
     r"(?P<name>\b(?:" + _NAME + r")\b[\"']?\s*[=:]\s*)(?P<q>[\"']?)(?P<val>[^\s\"',;]+)(?P=q)"
 )
