@@ -1977,7 +1977,9 @@ gateway (`tests/test_rollout_boundary.py`).
   read-only toward the member. Image-only lobes are described, not rebuilt.
 - `lobes site [--apply]` — local read-only page and `/api/mesh`,
   `/api/rollout`, `/api/residents`, `/api/lobe-export` on
-  `127.0.0.1:9490` (unauthenticated).
+  `127.0.0.1:9490` (unauthenticated). `lobes site install --apply` keeps it
+  up across reboots as a systemd user unit (`Restart=always`, linger
+  required); `uninstall --apply` / `status`.
 
 ## Known limits
 

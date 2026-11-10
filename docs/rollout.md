@@ -198,6 +198,25 @@ Only GET and HEAD are served, nothing is written, and bodies are scrubbed of
 secrets. The server has no authentication; binding anything but loopback
 exposes it to that network and prints a warning.
 
+### Keeping it up across reboots
+
+```text
+lobes site install [--host H] [--port P] [--gateway URL] [--apply]
+lobes site uninstall [--apply]
+lobes site status
+```
+
+`install --apply` writes a systemd **user** unit,
+`~/.config/systemd/user/lobes-site.service`, running `lobes site --apply`
+with the given flags, enables it for `default.target` and (re)starts it. It
+uses `Restart=always` (5 s), which also covers a boot where the bind address,
+such as the tailnet IP, is not up yet. Linger is required (`sudo loginctl
+enable-linger $USER`); without it the install refuses. Re-running `install`
+with other flags rewrites the unit and restarts it. The files written are
+recorded in `<deploy>/.lobes-site.json`, and `uninstall --apply` removes only
+those. The unit runs the `lobes` binary that installed it (and that binary's
+`PATH`), so re-run `install --apply` after moving to a different install.
+
 ## Known limits
 
 - `plan` does not run the preflight (it would pull an image); only

@@ -5,6 +5,11 @@ would serve. ``--apply`` starts the server in the foreground until Ctrl-C.
 The site is read-only either way: it issues GETs to gateways, reads the
 residents file and the rollout journal, and writes nothing. It binds
 127.0.0.1 unless ``--host`` says otherwise; it has no authentication.
+
+``lobes site install [--host --port --gateway] --apply`` keeps it up across
+reboots as a systemd user unit (``Restart=always``; linger required);
+``uninstall --apply`` removes it; ``status`` reports it. Install and uninstall
+are dry-run without ``--apply``.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from pathlib import Path
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.runtime import _compose, _env
+from lobes.site import _service
 from lobes.site import server as _server
 
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
@@ -36,6 +42,78 @@ def _gateway(args: argparse.Namespace, deploy_dir: Path) -> str:
     return f"http://127.0.0.1:{_env.parse_port(port, 'VLLM_PORT')}"
 
 
+def _cmd_install(args: argparse.Namespace, deploy_dir: Path, json_mode: bool) -> int:
+    ctx = _service.default_context()
+    plan = _service.plan_install(
+        deploy_dir, ctx, host=args.host, port=args.port, gateway=args.gateway
+    )
+    if not args.apply:
+        if json_mode:
+            emit_result({"dry_run": True, **plan.to_dict()}, json_mode=True)
+        else:
+            lines = [
+                f"DRY RUN — would {'rewrite' if plan.replaces else 'write'} {plan.unit_path}:",
+                plan.content.rstrip(),
+                "then: " + "; ".join(" ".join(c) for c in plan.commands),
+                f"manifest: {deploy_dir / _service.MANIFEST}",
+            ]
+            lines += [f"BLOCKED: {b}" for b in plan.blockers]
+            lines.append("Re-run with --apply to install it.")
+            emit_result("\n".join(lines), json_mode=False)
+        return 0
+    result = _service.apply_install(plan, ctx)
+    url = f"http://{args.host}:{args.port}/"
+    if json_mode:
+        emit_result({"dry_run": False, "url": url, **result}, json_mode=True)
+    else:
+        emit_result(
+            f"installed {_service.UNIT_NAME} (user unit, enabled, starts at boot): {url}",
+            json_mode=False,
+        )
+    return 0
+
+
+def _cmd_uninstall(args: argparse.Namespace, deploy_dir: Path, json_mode: bool) -> int:
+    ctx = _service.default_context()
+    if not args.apply:
+        plan = _service.plan_uninstall(deploy_dir, ctx)
+        if json_mode:
+            emit_result({"dry_run": True, **plan}, json_mode=True)
+        elif not plan["installed"]:
+            emit_result("lobes site service is not installed; nothing to do", json_mode=False)
+        else:
+            emit_result(
+                "DRY RUN — would run: "
+                + "; ".join(" ".join(c) for c in plan["commands"])
+                + f"\n  remove: {', '.join(plan['files'])}\nRe-run with --apply.",
+                json_mode=False,
+            )
+        return 0
+    result = _service.apply_uninstall(deploy_dir, ctx)
+    if json_mode:
+        emit_result({"dry_run": False, **result}, json_mode=True)
+    else:
+        emit_result(f"removed {', '.join(result.get('removed', [])) or 'nothing'}", json_mode=False)
+    return 0
+
+
+def _cmd_status(deploy_dir: Path, json_mode: bool) -> int:
+    st = _service.status(deploy_dir, _service.default_context())
+    if json_mode:
+        emit_result(st, json_mode=True)
+    elif not st["installed"]:
+        emit_result(
+            "lobes site service: not installed ('lobes site install --apply')", json_mode=False
+        )
+    else:
+        emit_result(
+            f"lobes site service: {st['active']}, {st['enabled']}, linger={st['linger']}, "
+            f"unit {'present' if st['files_present'] else 'MISSING'}",
+            json_mode=False,
+        )
+    return 0
+
+
 def cmd_site(args: argparse.Namespace) -> int:
     json_mode = bool(getattr(args, "json", False))
     if not 0 <= args.port <= 65535:
@@ -43,6 +121,13 @@ def cmd_site(args: argparse.Namespace) -> int:
             code=EXIT_USER_ERROR, message=f"--port out of range: {args.port}", remediation=""
         )
     deploy_dir = _deploy_dir(args)
+    action = getattr(args, "action", None) or "serve"
+    if action == "install":
+        return _cmd_install(args, deploy_dir, json_mode)
+    if action == "uninstall":
+        return _cmd_uninstall(args, deploy_dir, json_mode)
+    if action == "status":
+        return _cmd_status(deploy_dir, json_mode)
     gateway = _gateway(args, deploy_dir)
     if args.host not in _LOOPBACK:
         emit_diagnostic(
@@ -98,7 +183,15 @@ def register(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "site",
         help="Serve the local lobes site (Mesh, Rollout, Residents) and its read-only /api. "
-        "Dry-run prints the URL; --apply starts it.",
+        "Dry-run prints the URL; --apply starts it. 'install --apply' keeps it up across "
+        "reboots (systemd user unit).",
+    )
+    p.add_argument(
+        "action",
+        nargs="?",
+        default="serve",
+        choices=("serve", "install", "uninstall", "status"),
+        help="serve (default, foreground); install/uninstall the systemd user unit; status.",
     )
     p.add_argument("--host", default=_server.DEFAULT_HOST, help="Bind address (default 127.0.0.1).")
     p.add_argument(
@@ -115,6 +208,10 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--compose-dir", default=None, help="Deployment dir (default $LOBES_DIR or ~/.lobes)."
     )
-    p.add_argument("--apply", action="store_true", help="Start the server (foreground).")
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="Commit: start the server (serve) or write/remove the unit (install/uninstall).",
+    )
     p.add_argument("--json", action="store_true", help="Emit structured JSON.")
     p.set_defaults(func=cmd_site)

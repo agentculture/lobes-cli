@@ -23,6 +23,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needs ready members; a role with no backend wired is not a lobe; a member
   serving no model is drawn as a gateway; the `gateway-only` shape renders
   `STT_FEASIBLE`/`TTS_FEASIBLE=false`.
+- `lobes site install|uninstall|status`: keep the site up across reboots as a
+  systemd user unit (`Restart=always`, which also rides out a tailnet IP that
+  is not up yet at boot; linger required; manifest-tracked removal).
 - `docs/rollout.md`, `lobes explain rollout`, and a static boundary test that
   rollout never touches lanes, checkpoints, shapes or profiles.
   DECLARED/UNVALIDATED (#108).
