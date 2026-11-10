@@ -16,7 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lobes lobe export <role> --member <m>`: role -> compose service -> Dockerfile
   and build inputs (or image reference for image-only lobes), merged by the
   member's own `docker compose config --no-interpolate`; zero secret values.
-  DECLARED/UNVALIDATED (#108).
+  A Dockerfile in a build subdirectory is exported with its inputs; `--local`
+  needs an absolute `lobes` (residents.toml `lobes_path` or PATH) and says so
+  instead of crashing. DECLARED/UNVALIDATED (#108).
 
 ## [0.96.0] - 2026-11-10
 

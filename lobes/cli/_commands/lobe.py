@@ -24,7 +24,13 @@ def _target_for(base_dir: str, member: str, local: bool) -> Target:
         res = _residents.load(base_dir)
         entry = res.residents.get(member) or res.guests.get(member) or {}
         lp = entry.get("lobes_path")
-        return Target(local=True, lobes_path=(lp.value if lp and lp.value else "") or "lobes")
+        try:
+            path = _export.local_lobes_path(str(lp.value) if lp and lp.value else "")
+        except _export.ExportError as exc:
+            raise ModelGearError(
+                code=EXIT_USER_ERROR, message=str(exc), remediation="set lobes_path"
+            ) from exc
+        return Target(local=True, lobes_path=path)
     res = _residents.load(base_dir)
     entry = res.residents.get(member) or res.guests.get(member)
     if entry is None:
