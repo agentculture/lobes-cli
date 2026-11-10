@@ -2,7 +2,7 @@
   "plan_slug": "gradual-fleet-rollout",
   "schema_version": 2,
   "created": "2026-11-09T21:35:49Z",
-  "updated": "2026-11-09T21:35:49Z",
+  "updated": "2026-11-10T06:23:10Z",
   "deviations": [
     {
       "id": "d1",
@@ -17,6 +17,20 @@
       "status": "approved",
       "classification": "acceptable",
       "seq": 1
+    },
+    {
+      "id": "d2",
+      "what": "Amend d1 (t21): split-brain and hub evidence are read from the running system, not hand-defined. Drop <PREFIX>_SPANS, <PREFIX>_WORLD_SIZE and LOBES_TUNNEL_PUBLIC_URL; the site derives a split from each resident's serving containers (allowlisted world/rank config, e.g. TensorFold TF_*_WORLD/TF_*_RANK, read over the residents' SSH) and the hub from the member actually running lobes-cloudflared. /health memory (measured) stays.",
+      "task_ref": "t17",
+      "reason": "Operator review 2026-11-10: the site must read how the system is set, not hand-typed declarations that can drift. Live: glm53-spark TensorFold containers carry TF_GLM_WORLD=2 with rank 1 on spark and rank 0 on spark2; the engine's /health and /v1/models do not expose world/rank, and the gateway cannot see container env.",
+      "affects": [
+        "t18",
+        "t20"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 2
     }
   ],
   "evidence": [],
