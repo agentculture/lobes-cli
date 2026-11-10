@@ -588,8 +588,9 @@ class SiteServer:
 
     @property
     def url(self) -> str:
+        # plain HTTP by design: loopback or the tailnet, no TLS terminator here
         host, port = self.address[:2]
-        return f"http://{host}:{port}/"
+        return f"http://{host}:{port}/"  # NOSONAR python:S5332
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)

@@ -24,6 +24,8 @@ from lobes.site import _service
 from lobes.site import server as _server
 
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+# The site is plain HTTP by design (loopback or the tailnet; no TLS terminator),
+# so its own URL is http:// (SonarCloud python:S5332 is suppressed on those lines).
 
 
 def _deploy_dir(args: argparse.Namespace) -> Path:
@@ -62,7 +64,7 @@ def _cmd_install(args: argparse.Namespace, deploy_dir: Path, json_mode: bool) ->
             emit_result("\n".join(lines), json_mode=False)
         return 0
     result = _service.apply_install(plan, ctx)
-    url = f"http://{args.host}:{args.port}/"
+    url = f"http://{args.host}:{args.port}/"  # NOSONAR python:S5332
     if json_mode:
         emit_result({"dry_run": False, "url": url, **result}, json_mode=True)
     else:
@@ -134,7 +136,7 @@ def cmd_site(args: argparse.Namespace) -> int:
             f"warning: binding {args.host} exposes the unauthenticated site to that network"
         )
     if not args.apply:
-        url = f"http://{args.host}:{args.port}/"
+        url = f"http://{args.host}:{args.port}/"  # NOSONAR python:S5332
         payload = {
             "dry_run": True,
             "url": url,
