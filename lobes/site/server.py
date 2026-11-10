@@ -68,7 +68,7 @@ from typing import Any, Callable, Mapping, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from lobes.rollout import _export, _identity, _residents, _transport
-from lobes.rollout._journal import FAILED, STEPS, Journal
+from lobes.rollout._journal import FAILED, STEPS, Journal, TargetJournal, latest_target
 from lobes.rollout._observe import MemberObservation, observe_member
 from lobes.rollout._redact import redact
 from lobes.rollout._rollback import rollback_command
@@ -408,7 +408,17 @@ def build_mesh(sources: Sources) -> dict:
 # ------------------------------------------------------------ rollout/residents
 
 
+def _latest_journal(base: Path, redact_fn: Callable[[str], str]) -> Journal:
+    """The journal filtered to its latest target (all of it when empty)."""
+    target = latest_target(Journal(base, redact=redact_fn))
+    return (
+        TargetJournal(base, target, redact=redact_fn) if target else Journal(base, redact=redact_fn)
+    )
+
+
 def build_rollout(sources: Sources) -> dict:
+    """The latest rollout only, exactly as ``lobes rollout status`` shows it: a
+    member verified for an earlier target is not done for this one."""
     journal = sources.journal()
     members = [
         {
@@ -636,7 +646,10 @@ def _export_target(member: str, local_name: Optional[str], deploy_dir: Path) -> 
         return str(f.value) if f is not None and f.value not in (None, "") else ""
 
     if val("ssh") == "local" or (member == local_name and not val("ssh")):
-        return Target(local=True, lobes_path=val("lobes_path") or "lobes")
+        try:
+            return Target(local=True, lobes_path=_export.local_lobes_path(val("lobes_path")))
+        except _export.ExportError as exc:
+            raise ExportUnavailable(str(exc)) from exc
     if not val("ssh") or not val("lobes_path"):
         raise ExportUnavailable(f"{member}: ssh or lobes_path is needs_you in residents.toml")
     return Target(ssh_target=val("ssh"), user=val("user"), lobes_path=val("lobes_path"))
@@ -750,7 +763,7 @@ def default_sources(
         local_name=local_name,
         observe=observe,
         residents=lambda: _residents.load(base),
-        journal=lambda: Journal(base, redact=lambda s: redact(s, secrets)),
+        journal=lambda: _latest_journal(base, lambda s: redact(s, secrets)),
         export_listing=export_listing,
         # remote members: only what their own /health advertised (already
         # fetched by observe); local: the same, then /proc

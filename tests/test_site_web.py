@@ -127,9 +127,15 @@ def test_page_has_the_designed_views_and_controls():
         'html[data-theme="dark"]',
     ):
         assert needle in html, needle
-    # the validated family palette, light and dark
-    for colour in ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#3987e5", "#d95926", "#199e70"):
+    # role families are signs, never colours: colour is kept for health and
+    # one neutral "spans boxes" blue (light, dark)
+    assert "var SIGN = {" in html
+    for fam in ("gen:", "dec:", "emb:", "sp:"):
+        assert fam in html.split("var SIGN = {", 1)[1].split("};", 1)[0], fam
+    for colour in ("--link:#2a78d6", "--link:#3987e5"):
         assert colour in html, colour
+    for retired in ("--f-gen", "--f-dec", "--f-emb", "--f-sp"):
+        assert retired not in html, retired
 
 
 def test_page_hard_codes_no_fleet_member():

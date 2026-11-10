@@ -44,7 +44,7 @@ from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
 from lobes.rollout import _drift, _identity, _residents, _transport
-from lobes.rollout._journal import SKIPPED_OFFLINE, Journal
+from lobes.rollout._journal import SKIPPED_OFFLINE, Journal, TargetJournal, latest_target
 from lobes.rollout._member_lock import LockHeld, member_lock
 from lobes.rollout._member_step import run_member_step
 from lobes.rollout._observe import MemberObservation, observe_member
@@ -112,16 +112,7 @@ class Seams:
 SEAMS = Seams()
 
 
-class _TargetJournal(Journal):
-    """The journal restricted to one rollout target, so an earlier rollout's
-    verified records never mark a member done for this one."""
-
-    def __init__(self, deploy_dir, target: str, redact_fn: Callable[[str], str]):
-        super().__init__(deploy_dir, redact=redact_fn)
-        self.target = target
-
-    def records(self) -> list:
-        return [r for r in super().records() if r.get("target") == self.target]
+_TargetJournal = TargetJournal
 
 
 # ---------------------------------------------------------------------------
@@ -865,12 +856,7 @@ def _soft_deploy_dir(args) -> Path:
         return Path(explicit).expanduser() if explicit else _compose.default_deployment_dir()
 
 
-def _latest_target(journal: Journal, member: Optional[str] = None) -> Optional[str]:
-    target = None
-    for r in journal.records():
-        if member is None or r.get("member") == member:
-            target = r.get("target") or target
-    return target
+_latest_target = latest_target
 
 
 def cmd_status(args: argparse.Namespace) -> int:

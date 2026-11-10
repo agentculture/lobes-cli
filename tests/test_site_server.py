@@ -1067,3 +1067,32 @@ def test_a_wired_lane_that_is_down_is_still_a_lobe():
         src, {"name": "orin", "origin": "http://orin:8000"}, obs, False, site._residents.Residents()
     )
     assert [lobe["role"] for lobe in m["lobes"]] == ["stt"] and m["kind"] == "brain"
+
+
+def test_rollout_board_shows_latest_target_only(tmp_path):
+    from lobes.rollout._journal import Journal
+
+    j = Journal(tmp_path)
+    j.append("x", "verify", "ok", target="0.96.0", current="0.96.0")
+    j.append("x", "wait_health", "failed", target="0.97.0", current="0.96.0")
+    data = site.build_rollout(
+        site.Sources(
+            observe=None,
+            local_origin="",
+            local_name="core",
+            residents=None,
+            journal=lambda: site._latest_journal(tmp_path, lambda s: s),
+            export_listing=None,
+        )
+    )
+    x = next(m for m in data["members"] if m["member"] == "x")
+    assert x["done"] is False and x["target"] == "0.97.0"
+    assert x["rollback_command"]
+
+
+def test_local_export_target_resolves_absolute_lobes(tmp_path, monkeypatch):
+    from lobes.rollout import _export
+
+    monkeypatch.setattr(_export.shutil, "which", lambda name: None)
+    with pytest.raises(site.ExportUnavailable):
+        site._export_target("core", "core", tmp_path)

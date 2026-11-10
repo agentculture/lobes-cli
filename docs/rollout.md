@@ -127,20 +127,26 @@ steps. With `--apply`:
 2. **Preflight** the release: `pip download --no-deps lobes-cli==<v>` inside
    the gateway's own base image (`docker run`), retried with exponential
    backoff for up to five minutes to ride out index lag. If it never
-   resolves, no member is contacted.
+   resolves, no member is contacted. With `LOBES_DEV_INDEX_URL` set (a
+   `.devN` build on TestPyPI), the preflight resolves from that index and
+   each member's CLI install adds it as an extra index, so dependencies still
+   come from PyPI.
 3. **Per member, one at a time**, taking the member's lock: window check,
    back up `.env`, install the CLI, repin `MODEL_GEAR_VERSION`, tag the running
    gateway image, rebuild the gateway, wait for `/health` to report the
    target. Each step is idempotent. The window check skips a member during an
-   active benchmark window unless `--allow-window`.
+   active benchmark window unless `--allow-window`, and a skipped member
+   stops the run there: later members are not touched, so a skipped canary
+   still gates the rest.
 4. **Verify through that member's gateway**: `/health` reports the target, no
    role regressed in the `/capabilities` diff, and one real request per
    feasible and ready role succeeds. Only then does the next member start.
 
 It never rolls back by itself. Exit codes:
 
-- **0**: `complete` or `incomplete` (some members skipped, for example
-  offline; the output says which are pending).
+- **0**: `complete` or `incomplete` (a member was skipped, for example
+  offline or in a benchmark window; the output says which are pending and
+  where the run stopped).
 - **1**: drift refused (nothing was touched), or another user error.
 - **2**: preflight failed, or the rollout `halted`. A halt names the member,
   the failed check, the role and the exact rollback command.
@@ -149,7 +155,10 @@ It never rolls back by itself. Exit codes:
 
 Every step goes to `rollout-journal.jsonl` in the deployment dir
 (secret-scrubbed). Re-running `apply <version> --apply` resumes: a verified
-member is not redone, and a half-done member continues idempotently.
+member is not redone, and a half-done member continues idempotently. A
+member rolled back with `rollback --apply` is no longer done, so the next
+`apply` upgrades it again. The site's Rollout board shows the same latest-target
+view as `status`.
 
 ```text
 lobes rollout status [--target V] [--compose-dir D] [--json]
@@ -225,8 +234,6 @@ those. The unit runs the `lobes` binary that installed it (and that binary's
   given.
 - `residents.toml` has no deploy-dir field: members are assumed to deploy in
   `$HOME/.lobes`.
-- A rolled-back member still shows `done` in `status`: the journal never
-  clears `done`.
 - The site reads split brains and the hub from the running system, never
   from typed declarations (deviation d2). On each page load (cached for
   120 s) it runs one read-only command per resident over the residents' ssh

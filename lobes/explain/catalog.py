@@ -1985,7 +1985,6 @@ gateway (`tests/test_rollout_boundary.py`).
 
 - Drift is checked against this CLI's template unless `--template`.
 - `residents.toml` has no deploy-dir field (members assumed at `$HOME/.lobes`).
-- A rolled-back member still shows done in `status`.
 - The site reads split brains (TensorFold `TF_<X>_WORLD`/`TF_<X>_RANK`) and
   the hub (a running `lobes-cloudflared`) from each resident's containers
   over ssh, cached 120 s; a member it cannot read is unknown. Peer memory
