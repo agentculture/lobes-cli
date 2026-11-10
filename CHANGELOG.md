@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.98.1] - 2026-11-10
+
+### Added
+
+- CI fails a pull request that has any unresolved SonarCloud issue (status
+  OPEN or CONFIRMED), not only a red quality gate: a code smell leaves the gate
+  green. Issues a person marks ACCEPTED or FALSE_POSITIVE on SonarCloud pass.
+  `scripts/sonar-pr-issues.py` waits for SonarCloud's analysis of the PR's
+  head commit, then lists every unresolved issue. Cited from
+  agentculture/culture-rules, with its tests.
+
 ## [0.98.0] - 2026-11-10
 
 ### Added

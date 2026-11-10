@@ -1189,6 +1189,11 @@ acceptance lands. See `docs/rollout.md` and `lobes explain rollout`.
 - **Single test:** `uv run pytest tests/test_cli_runtime.py::test_name -v`
 - **Lint:** `uv run black --check lobes tests`, `uv run isort --check-only lobes tests`, `uv run flake8 lobes tests`, `uv run bandit -c pyproject.toml -r lobes`
 - **Rubric gate:** `uv run afi cli doctor . --strict` (CI blocks merge if it fails).
+- **SonarCloud issues gate:** CI fails a PR with any OPEN or CONFIRMED SonarCloud
+  issue (`scripts/sonar-pr-issues.py`), even when the quality gate is green. Fix
+  each issue, or accept it (or mark it a false positive) on SonarCloud with a
+  reason. Check a PR locally with `PR_NUMBER=<n> HEAD_SHA=<sha>
+  SONAR_HOST_URL=https://sonarcloud.io python3 scripts/sonar-pr-issues.py`.
 - **Version bump (required every PR):** `python3 .claude/skills/version-bump/scripts/bump.py {patch|minor|major}` — updates `pyproject.toml` and prepends a CHANGELOG entry. The `version-check` CI job **fails the PR if the version equals main's** (AgentCulture every-PR-bumps rule — no exceptions, even for docs/config-only changes). Version is the single source of truth in `pyproject.toml`; `lobes.__version__` is read from package metadata at import.
 - **Publish:** push to `main` → `publish.yml` builds with `uv build` and publishes `lobes-cli` to PyPI via Trusted Publishing (no API tokens); `model-gear` is published as a deprecated alias that redirects to `lobes-cli`. PRs publish a `.dev<run_number>` to TestPyPI. Fork PRs are skipped (no OIDC).
 

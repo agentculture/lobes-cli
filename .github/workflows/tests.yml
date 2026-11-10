@@ -40,6 +40,18 @@ jobs:
         env:
           SONAR_HOST_URL: https://sonarcloud.io
 
+      # No unresolved SonarCloud issue on the PR. A code smell leaves the quality
+      # gate green, so this fails the job while the PR has any OPEN or CONFIRMED
+      # issue; ACCEPTED and FALSE_POSITIVE ones (resolved by a person on
+      # SonarCloud) pass. Same gate as agentculture/culture-rules.
+      - name: SonarCloud unresolved issues
+        if: env.SONAR_TOKEN != '' && github.event_name == 'pull_request'
+        env:
+          SONAR_HOST_URL: https://sonarcloud.io
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/sonar-pr-issues.py
+
   lint:
     runs-on: ubuntu-latest
     permissions:
