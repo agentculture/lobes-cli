@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 
 [[package]]
@@ -520,7 +520,7 @@ wheels = [
 
 [[package]]
 name = "lobes-cli"
-version = "0.94.1"
+version = "0.98.0"
 source = { editable = "." }
 
 [package.optional-dependencies]

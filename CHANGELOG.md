@@ -12,10 +12,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Rollout, Residents) per the confirmed design, fed by `/api/mesh`,
   `/api/rollout`, `/api/residents`, `/api/lobe-export`. Plain JS, vendored Lato
   (OFL), zero external requests.
-- Gateway evidence (deviation d1): `/capabilities` role entries carry
-  operator-typed `spans` / `world_size` (`<PREFIX>_SPANS`, `<PREFIX>_WORLD_SIZE`);
-  `/health` carries host `memory` and, when `LOBES_TUNNEL_PUBLIC_URL` is set, a
-  declared `tunnel`. Not part of the mesh fingerprint.
+- Read, never hand-defined (deviations d1, d2): a split brain is read from
+  each resident's running serving containers over SSH (an allowlisted
+  projection: served model name, TensorFold `TF_*_WORLD`/`TF_*_RANK`, vLLM TP/PP
+  flags); a split needs N members reporting world=N with ranks 0..N-1. The hub
+  is the member running `lobes-cloudflared`. Gateway `/health` carries measured
+  host `memory`.
+- Live-review fixes: this box's name comes from the running gateway, not `.env`
+  (a roster peer's name is refused — also protects `lobes rollout`); a pair
+  needs ready members; a role with no backend wired is not a lobe; a member
+  serving no model is drawn as a gateway; the `gateway-only` shape renders
+  `STT_FEASIBLE`/`TTS_FEASIBLE=false`.
 - `docs/rollout.md`, `lobes explain rollout`, and a static boundary test that
   rollout never touches lanes, checkpoints, shapes or profiles.
   DECLARED/UNVALIDATED (#108).
