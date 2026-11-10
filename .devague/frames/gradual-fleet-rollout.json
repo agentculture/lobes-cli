@@ -1,0 +1,1122 @@
+{
+  "slug": "gradual-fleet-rollout",
+  "title": "gradual fleet rollout",
+  "schema_version": 6,
+  "status": "exported",
+  "created": "2026-11-09T05:21:48Z",
+  "updated": "2026-11-09T06:55:29Z",
+  "claims": [
+    {
+      "id": "c1",
+      "kind": "announcement",
+      "text": "lobes rolls a new version out across the mesh gradually from one CLI: it checks the release is installable, upgrades one member per wave, verifies each through the mesh, and stops (or rolls back) on the first regression",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h1",
+          "text": "the announced flow exists as lobes rollout verbs and was used for at least one real release across the live mesh",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "deliver as 'lobes rollout plan|apply|status|rollback' verbs; accept with a docs/evidence/ transcript of one real release rolled across the live mesh",
+      "revisions": []
+    },
+    {
+      "id": "c2",
+      "kind": "audience",
+      "text": "The operator of a lobes mesh (and the agent driving lobes for them) who needs to move every member's gateway/CLI to a new lobes-cli release",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h2",
+          "text": "the operator can run it from any one member (including a gateway-only box like cultureos) without logging into the others by hand",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "check the spec's usage examples are written for the operator running lobes from one member box",
+      "revisions": []
+    },
+    {
+      "id": "c3",
+      "kind": "before_state",
+      "text": "Upgrading the mesh is per-box hand work: SSH to each member, uv tool install, doctor --repin-version, lobes up gateway --build, then hand-test. On 2026-11-09 that took four ad-hoc scripts and hit an unpublished release, PyPI CDN lag, a doctor exit code, and a compose that silently dropped a new lane's env keys",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h3",
+          "text": "the before-state is evidenced by today's session (scope s1-s5), not reconstructed",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c4",
+      "kind": "why_it_matters",
+      "text": "Each member upgraded by hand drifts (0.89.0 / 0.89.2 / dev694 / 0.93.0 coexisted today) and a half-done upgrade fails silently (stt-en infeasible with HTTP 404, not an error); a gradual, verified rollout turns that into a reported, stoppable sequence",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h4",
+          "text": "the drift and silent-failure examples are real: versions and the stt-en 404 were observed on 2026-11-09",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c5",
+      "kind": "after_state",
+      "text": "One CLI flow - lobes rollout plan / apply / status - takes a target version, preflights it, upgrades members in waves (canary first), verifies each member before the next wave, and stops with the member, the failed check and a rollback path on the first regression",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h5",
+          "text": "plan/apply/status are the whole surface; no step requires a hand-written script",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c6",
+      "kind": "boundary",
+      "text": "Scope is the lobes gateway image + lobes CLI version on mesh members (MODEL_GEAR_VERSION, the gateway service). It does not swap model checkpoints, change vLLM lane images, or re-render shapes/profiles",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h6",
+          "text": "no rollout code path writes vLLM lane images, checkpoints, shape or profile files",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c7",
+      "kind": "non_goal",
+      "text": "Not a general config-management or fleet orchestrator: it never rewrites hand-kept compose files on its own; it reports drift and, at most, applies a narrow, backed-up, operator-approved patch",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c8",
+      "kind": "non_goal",
+      "text": "Not cross-repo code propagation (that is rollout-cli / mass-update, issue #198)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c9",
+      "kind": "requirement",
+      "text": "Preflight before touching any member: lobes-cli==<version> must pip-resolve inside the gateway's own base image (python:3.12-slim), retried with backoff to ride out index/CDN lag; refuse the rollout if it never resolves",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h7",
+          "text": "the preflight resolves from the same index and base image the gateway Dockerfile uses, so a pass predicts the build",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "unit-test the preflight with a fake index that 404s then serves; live: point at an unpublished version and confirm no member is touched",
+      "revisions": []
+    },
+    {
+      "id": "c10",
+      "kind": "requirement",
+      "text": "plan is read-only and derived from the mesh: roster members + each member's GET /health version + /capabilities, plus per-member drift (gateway env keys the target template passes that the member's deployed compose does not)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h8",
+          "text": "plan performs zero writes on any member",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "plan against the live mesh must list cultureos/spark/spark2/thor/orin with their current versions; a fixture compose missing STT_EN_BASE_URL must be reported as drift",
+      "revisions": []
+    },
+    {
+      "id": "c11",
+      "kind": "requirement",
+      "text": "apply upgrades one wave at a time (default: one member per wave, a member that hosts nothing first as canary), each member step idempotent: backup .env, install the CLI, repin MODEL_GEAR_VERSION, rebuild only the gateway, wait for health; re-running a finished step is a no-op",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h9",
+          "text": "a member is never left without a running gateway: a failed build keeps the old one (as lobes up gateway --build does today)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "run apply twice on the same member; the second run changes nothing and exits 0",
+      "revisions": []
+    },
+    {
+      "id": "c12",
+      "kind": "requirement",
+      "text": "After each member: verify version on /health, diff /capabilities before vs after (no role that was feasible/ready may become infeasible/not-ready), and send one real request per role the member hosts or forwards; halt the rollout on any regression",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h10",
+          "text": "verification exercises the request path through the mesh, not only docker ps or /health",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "inject a regression (e.g. a member whose compose drops a lane key) in a fixture and confirm apply halts at that member and names the role",
+      "revisions": []
+    },
+    {
+      "id": "c13",
+      "kind": "requirement",
+      "text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image; on a failed verification apply halts and prints the exact rollback command, which the operator runs (dry-run unless --apply)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h11",
+          "text": "the previous gateway image is kept (tagged) so rollback needs no index access",
+          "status": "rejected",
+          "instruction": ""
+        },
+        {
+          "id": "h15",
+          "text": "the previous gateway image is kept (tagged) so rollback needs no index access, and rollback is never triggered without an operator command",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "after a forced failed verify, rollout rollback --member X --apply returns /health to the previous version",
+      "revisions": [
+        {
+          "text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image, and is offered (dry-run) automatically when verification fails",
+          "kind": "requirement",
+          "reason": "user decision: halt + offer rollback, no auto-rollback"
+        }
+      ]
+    },
+    {
+      "id": "c14",
+      "kind": "requirement",
+      "text": "Dry-run by default; --apply to commit, like every lobes write verb; rollout status reports per-member target/current version and last step result",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h12",
+          "text": "no write happens without --apply",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "lobes rollout apply without --apply prints the plan and touches nothing",
+      "revisions": []
+    },
+    {
+      "id": "c15",
+      "kind": "success_signal",
+      "text": "Re-running today's upgrade (4 members to 0.94.0) is 1 plan + 1 apply command with 0 hand-written scripts, and every member ends at the target version with 0 roles regressed in /capabilities",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h13",
+          "text": "measured on the next real release, not a fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "repeat on the next release and record the transcript under docs/evidence/",
+      "revisions": []
+    },
+    {
+      "id": "c16",
+      "kind": "success_signal",
+      "text": "A rollout to an unpublished version touches 0 members, and a member whose deployed compose lacks a gateway env key the target needs is flagged before its upgrade (100% of today's stt-en-style gaps caught)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h14",
+          "text": "both cases are covered by tests that fail on today's code",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture tests for both cases",
+      "revisions": []
+    },
+    {
+      "id": "c17",
+      "kind": "decision",
+      "text": "Transport is SSH from the operator box to each member (user decision 2026-11-09); no admin endpoint on the gateway",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c18",
+      "kind": "decision",
+      "text": "Compose drift (gateway env keys the target template passes but the member's deployed compose does not): plan reports it; apply patches docker-compose.override.yml only behind an explicit flag, after a backup, printing the diff (user decision 2026-11-09)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c19",
+      "kind": "decision",
+      "text": "On a failed post-upgrade verification: halt the rollout at that member, print the failed check and the exact rollback command; never auto-rollback (user decision 2026-11-09)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c20",
+      "kind": "requirement",
+      "text": "[challenge / reversibility: lobes/templates/fleet/docker-compose.yml gateway build -> image lobes-gateway:latest] Before rebuilding, apply tags the running gateway image as lobes-gateway:<old-version>; rollback recreates the gateway from that tag. Today the rebuild overwrites the only tag, the old image goes dangling, and any prune deletes the rollback target",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h16",
+          "text": "a rollback succeeds with the package index unreachable",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture: after apply, docker images lists lobes-gateway:<old-version>; rollback uses it with no network",
+      "revisions": []
+    },
+    {
+      "id": "c21",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: probes of spark, spark2, thor, orin 2026-11-09] Member addressing is explicit per member: SSH target and user (spark/spark2/thor/orin users differ), gateway port (8001 on spark and cultureos, 8000 elsewhere), and the lobes binary invoked by absolute path (~/.local/bin/lobes is NOT on the non-login SSH PATH on 3 of 4 members). The mesh name is not the hostname (mesh spark = host spark-f8a9)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h17",
+          "text": "no member target is derived by guessing; an unresolvable member is reported, not skipped silently",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "plan shows each member's resolved ssh target, port and lobes path; a member with no resolvable target is listed as unreachable, never guessed",
+      "revisions": []
+    },
+    {
+      "id": "c22",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: member CLI vs gateway versions] CLI and gateway versions are tracked separately per member (spark: CLI 0.90.0; thor: CLI 0.89.0 with gateway 0.92.0.dev694 from a dev index). Plan shows both; apply refuses a downgrade (target older than the running gateway, PEP 440 ordering) unless explicitly allowed, and preflight honours LOBES_DEV_INDEX_URL for dev targets",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h18",
+          "text": "a downgrade never happens without an explicit flag",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "unit-test version ordering incl. 0.92.0.dev694 < 0.94.0 and a refused downgrade",
+      "revisions": []
+    },
+    {
+      "id": "c23",
+      "kind": "requirement",
+      "text": "[challenge / security: thor has no GATEWAY_API_KEY in .env; cultureos key accepted by others] Verification requests use each member's own gateway credential read over SSH, never the operator's by assumption; no key, mesh key or secret is ever printed in plan/apply/status output or the journal",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h19",
+          "text": "no secret value appears in any rollout output or file",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "grep the journal and captured stdout of a fixture run for the injected key value: zero hits",
+      "revisions": []
+    },
+    {
+      "id": "c24",
+      "kind": "assumption",
+      "text": "[challenge / distributed state: lobes/gateway/_mesh_*.py has no wire-protocol version or compat check] Consecutive lobes releases stay wire-compatible for mesh announce/verify, so old and new gateways coexist through the rollout window; features new in the target are reachable only from already-upgraded fronts (orin 0.89.0 could not route stt-en on 2026-11-09)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h20",
+          "text": "a rollout between two adjacent released versions keeps every not-yet-upgraded member verified in the roster (no role drops to unverified because of the version mix)",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    },
+    {
+      "id": "c25",
+      "kind": "requirement",
+      "text": "[challenge / concurrency: no lock in lobes/runtime or lobes up] apply takes a per-member lock on the member before its first write and refuses a member whose lock is held (another rollout, or another operator mid-step); the lock is released on success, failure and interrupt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h21",
+          "text": "two rollouts can never write to the same member at the same time",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "two concurrent applies on one fixture member: exactly one proceeds",
+      "revisions": []
+    },
+    {
+      "id": "c26",
+      "kind": "requirement",
+      "text": "[challenge / operations: docs/contracts/machine-cli-window.md] apply refuses to recreate a member's gateway while that member has an active benchmark window (machine CLI 'window show'), unless explicitly overridden",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h22",
+          "text": "no gateway is recreated during an active benchmark window without an explicit override",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture with an active window: member skipped with the reason",
+      "revisions": []
+    },
+    {
+      "id": "c27",
+      "kind": "requirement",
+      "text": "[challenge / failure modes: operator box is itself a member (cultureos)] The operator's own box is upgraded last in the rollout, after every remote member verifies, because upgrading its CLI replaces the binary that is running the rollout",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h23",
+          "text": "the rollout never replaces its own running binary before the remote members are done",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "plan orders the local member last regardless of canary choice",
+      "revisions": []
+    },
+    {
+      "id": "c28",
+      "kind": "requirement",
+      "text": "[challenge / observability: c14 status needs a source] Every apply writes an append-only journal on the operator box (member, step, before/after versions, verification result, timestamps); status reads it, and a rollout is resumable from it after an interrupt",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h24",
+          "text": "an interrupted rollout can be resumed and status never reports a member as done that did not verify",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "kill apply mid-wave; status shows the interrupted member and re-running apply resumes there",
+      "revisions": []
+    },
+    {
+      "id": "c29",
+      "kind": "requirement",
+      "text": "[challenge / adjacent systems: lobes/runtime/_lock.py tracks the .env digest; deployments/ holds jetson-agx-orin and jetson-agx-thor locks] A member with a deployment.lock.toml will report lock_drift after the repin; plan flags such members and apply reports the stale lock (re-capture stays the operator's call - there is no capture CLI)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h25",
+          "text": "every lock-affected member is named in plan output before any write",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture member with a lock: plan lists it under lock-affected members",
+      "revisions": []
+    },
+    {
+      "id": "c30",
+      "kind": "decision",
+      "text": "Member addressing comes from a residents file (~/.lobes/residents.toml) that lobes GENERATES from the mesh roster plus per-member probes (SSH target, user, gateway port, lobes path, gateway-key presence); every derived field is marked detected, and the operator only fixes fields flagged needs-you; nothing is guessed silently (user decision 2026-11-09, supersedes the typed-only form)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h26",
+          "text": "the residents file is regenerated without overwriting a field the operator fixed by hand",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": [
+        {
+          "text": "Member addressing comes from an operator-typed rollout members file on the operator box (SSH target, user, gateway port, lobes path), never derived from the roster; plan reports roster members missing from the file as unreachable (user decision 2026-11-09, consistent with #92)",
+          "kind": "decision",
+          "reason": "user: operator file generated, operator only needs to fix"
+        }
+      ]
+    },
+    {
+      "id": "c31",
+      "kind": "requirement",
+      "text": "Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h27",
+          "text": "a guest is never upgraded or written to by a rollout until it is made a resident",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture roster with an extra verified member: it is listed as guest, add writes a resident entry, the next plan includes it",
+      "revisions": []
+    },
+    {
+      "id": "c32",
+      "kind": "requirement",
+      "text": "lobes doctor reports new_mesh_member for a verified roster member missing from the residents file, resident_field_missing for each needs-you field and gateway_open for a member without a gateway key, each with the command that fixes it",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h28",
+          "text": "doctor stays read-only for these checks; adding a resident is a separate explicit command",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "doctor against a fixture roster + residents file shows the three findings with fix commands",
+      "revisions": []
+    },
+    {
+      "id": "c33",
+      "kind": "requirement",
+      "text": "A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h29",
+          "text": "an offline member never blocks or fails the rollout of the others",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "fixture: unreachable member is skipped, status pending; reachable on re-run, upgraded",
+      "revisions": []
+    },
+    {
+      "id": "c34",
+      "kind": "requirement",
+      "text": "lobes serves a local site (stdlib HTTP server like heat-governor's mesh_server: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h30",
+          "text": "every figure on the site comes from live mesh data; the site performs no writes without --apply-equivalent confirmation",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "match the design canvas and docs/design/lobes-site/; data comes from roster, /health, /capabilities and residents file, never hard-coded",
+      "revisions": []
+    },
+    {
+      "id": "c35",
+      "kind": "requirement",
+      "text": "Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h31",
+          "text": "no exported bundle contains a secret value, and an image-only lobe is never presented as rebuildable",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "export Parakeet on spark2 yields Dockerfile.parakeet, listen_server.py, _readiness.py and the stt service; export GLM yields image-only run command; no secret value in any bundle",
+      "revisions": []
+    },
+    {
+      "id": "c36",
+      "kind": "requirement",
+      "text": "Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h32",
+          "text": "the site works with no internet access",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "Playwright network log shows only same-origin requests",
+      "revisions": []
+    },
+    {
+      "id": "c37",
+      "kind": "success_signal",
+      "text": "Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair",
+      "origin": "llm",
+      "status": "confirmed",
+      "honesty_conditions": [
+        {
+          "id": "h33",
+          "text": "measured against the live mesh, not a fixture",
+          "status": "confirmed",
+          "instruction": ""
+        }
+      ],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "store screenshots + log under docs/evidence/",
+      "revisions": []
+    },
+    {
+      "id": "c38",
+      "kind": "decision",
+      "text": "Design reference for the site is the design canvas confirmed 2026-11-09 (positronic brains, full-mesh wheel with the outside-access hub, Graph/Table tabs, lobe export panel, Lato served locally); its files are committed under docs/design/lobes-site/ (user decision 2026-11-09)",
+      "origin": "user",
+      "status": "confirmed",
+      "honesty_conditions": [],
+      "hard_questions": [],
+      "links": [],
+      "instruction": "",
+      "revisions": []
+    }
+  ],
+  "open_vagueness": [
+    {
+      "id": "v1",
+      "text": "Single-box deployments with no mesh (no roster) - whether rollout should support them, or they keep using doctor --repin-version + lobes up gateway",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v2",
+      "text": "The cloudflared tunnel container on cultureos (lobes-cloudflared) and other per-box sidecars were not examined for behaviour across a gateway recreate",
+      "kind": "unknown_nonblocking",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    },
+    {
+      "id": "v3",
+      "text": "Image-only lobes (GLM-5.3-Flash tensorfold image, the super-worker container) have no build lineage in lobes, so export can describe them but not rebuild them; recording how they were built is a follow-up",
+      "kind": "follow_up",
+      "claim_id": null,
+      "resolved": false,
+      "resolution": "",
+      "resolution_claim_id": null
+    }
+  ],
+  "scope_entries": [
+    {
+      "id": "s1",
+      "surface": "2026-11-09 stt-lanes upgrade session",
+      "finding": "Upgrading 4 gateways (cultureos 0.93.0, spark2 0.89.2, orin 0.89.0; thor on 0.92.0.dev694) to 0.94.0 took one hand-written SSH script per box; Claude Code's auto-mode blocked remote writes, so the operator ran each script",
+      "seeds": []
+    },
+    {
+      "id": "s2",
+      "surface": "publish.yml run 41882958341",
+      "finding": "0.94.0 merged 2026-11-04 but never reached PyPI: the test job hit 'No space left on device' and publish was skipped; nobody noticed for 5 days. After the rerun published it, pip inside python:3.12-slim still could not resolve lobes-cli==0.94.0 for several minutes (CDN lag), so the first gateway build failed",
+      "seeds": []
+    },
+    {
+      "id": "s3",
+      "surface": "lobes/templates/fleet/docker-compose.yml gateway service",
+      "finding": "The gateway takes an explicit environment: list, never env_file. spark2's hand-kept 0.89-era compose lacked STT_EN_BASE_URL/STT_EN_FEASIBLE, so after upgrading to 0.94.0 the stt-en lane was silently infeasible until four lines were added to docker-compose.override.yml",
+      "seeds": []
+    },
+    {
+      "id": "s4",
+      "surface": "lobes doctor --repin-version --apply",
+      "finding": "Exits non-zero while gateway_version_match FAILs, which is the very skew it is about to fix; a set -e upgrade script stopped there on spark2",
+      "seeds": []
+    },
+    {
+      "id": "s5",
+      "surface": "lobes up gateway --build --apply",
+      "finding": "Single-box re-image path that works; a failed build leaves the old gateway running (safe). It does not wait for health or verify capabilities",
+      "seeds": []
+    },
+    {
+      "id": "s6",
+      "surface": "issue #262 and #198",
+      "finding": "#262: fleet up starts nothing when MODEL_GEAR_VERSION is unpublished (overlaps the preflight need). #198 'mass-update' is rollout-cli's cross-REPO code propagation, not box deployment; no existing fleet-rollout issue",
+      "seeds": []
+    },
+    {
+      "id": "s7",
+      "surface": "lobes/gateway mesh (GET /mesh/roster, /capabilities)",
+      "finding": "GET /mesh/roster lists every member (name, origin, verified, roles) but carries NO version; each gateway's own unauthenticated GET /health returns {\"version\": ...} (issue #99), and /capabilities gives the per-role served state, so roster + per-member /health + /capabilities together give the before/after diff for verification",
+      "seeds": []
+    },
+    {
+      "id": "s8",
+      "surface": "challenge pass / reversibility lens: lobes/templates/fleet/docker-compose.yml gateway service + docker images on cultureos",
+      "finding": "gateway image is lobes-gateway:latest; rebuild overwrites it, so h15 (previous image kept) does not hold today",
+      "seeds": [
+        "c20"
+      ]
+    },
+    {
+      "id": "s9",
+      "surface": "challenge pass / security lens: GATEWAY_API_KEY presence per member",
+      "finding": "thor .env has no GATEWAY_API_KEY; keys are per-box and must not be assumed or printed",
+      "seeds": [
+        "c23"
+      ]
+    },
+    {
+      "id": "s10",
+      "surface": "challenge pass / distributed-state lens: lobes/gateway/_mesh_roster.py, _mesh_routing.py, _mesh_wire.py",
+      "finding": "no wire-protocol version or compat negotiation found by grep; mixed-version coexistence is implicit (worked 0.89 to 0.94 on 2026-11-09)",
+      "seeds": [
+        "c24"
+      ]
+    },
+    {
+      "id": "s11",
+      "surface": "challenge pass / concurrency lens: lobes/runtime/_compose.py, lobes/cli/_commands/up.py",
+      "finding": "no lock file or flock around compose actions",
+      "seeds": [
+        "c25"
+      ]
+    },
+    {
+      "id": "s12",
+      "surface": "challenge pass / operations lens: docs/contracts/machine-cli-window.md, lane-safety-runtime.md",
+      "finding": "benchmark window and boot hold exist; a gateway recreate during a window was not covered by the spec",
+      "seeds": [
+        "c26"
+      ]
+    },
+    {
+      "id": "s13",
+      "surface": "challenge pass / lifecycle lens: operator box as member",
+      "finding": "cultureos runs the rollout and is itself a member; self-upgrade ordering was missing",
+      "seeds": [
+        "c27"
+      ]
+    },
+    {
+      "id": "s14",
+      "surface": "challenge pass / observability lens: spec c14 rollout status",
+      "finding": "status had no defined state source and no resume story",
+      "seeds": [
+        "c28"
+      ]
+    },
+    {
+      "id": "s15",
+      "surface": "challenge pass / adjacent-systems lens: lobes/runtime/_lock.py, deployments/",
+      "finding": "the lock tracks the .env digest, so a repin produces lock_drift on orin/thor variations",
+      "seeds": [
+        "c29"
+      ]
+    },
+    {
+      "id": "s16",
+      "surface": "challenge pass / unexamined surfaces",
+      "finding": "NOT examined: non-mesh single-box deployments (parked v1), per-box sidecars across a gateway recreate such as lobes-cloudflared (parked v2), macOS/non-uv installs, gateway-only boxes other than cultureos",
+      "seeds": []
+    },
+    {
+      "id": "s17",
+      "surface": "challenge pass / adjacent-systems lens: ssh probes of spark, spark2, thor, orin",
+      "finding": "users, ports (8000/8001), hostnames vs mesh names, and lobes install path differ per member; CLI and gateway versions diverge (spark CLI 0.90.0, thor CLI 0.89.0 + gateway dev694); addressing source is open question q2",
+      "seeds": [
+        "c21",
+        "c22"
+      ]
+    }
+  ],
+  "lapses": [
+    {
+      "id": "l1",
+      "code": "control-absent",
+      "what": "t4 tests were written alongside the implementation, not watched failing first (agent's own report)",
+      "skipped_check": "red test before implementation (TDD)",
+      "refs": [
+        "plan t4"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l2",
+      "code": "assumption-for-measurement",
+      "what": "t3 regenerate keeps every non-empty existing field, so a detected value that later changes (e.g. port) is not refreshed; operator edits are not distinguished from earlier detections",
+      "skipped_check": "a provenance marker per field distinguishing operator edits from detections",
+      "refs": [
+        "plan t3; c30/h26"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    },
+    {
+      "id": "l3",
+      "code": "grader-unverified",
+      "what": "wave-1 agents did not complete a repo-wide black/isort run (timeouts); only scoped lint ran per task; the main agent's scoped lint on lobes/rollout passed, the full suite is pending",
+      "skipped_check": "repo-wide lint + full test suite per task",
+      "refs": [
+        "plan wave 1"
+      ],
+      "origin": "llm",
+      "status": "proposed"
+    }
+  ],
+  "obligations": [
+    {
+      "id": "o1",
+      "claim_id": "c9",
+      "seam": "lobes rollout plan/apply preflight -> pip in python:3.12-slim",
+      "behavior": "an unresolvable lobes-cli==<target> makes apply exit non-zero before any SSH write; a target that resolves only after retries proceeds",
+      "source_text": "Preflight before touching any member: lobes-cli==<version> must pip-resolve inside the gateway's own base image (python:3.12-slim), retried with backoff to ride out index/CDN lag; refuse the rollout if it never resolves",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o2",
+      "claim_id": "c10",
+      "seam": "lobes rollout plan (read-only)",
+      "behavior": "lists every roster member with CLI version, gateway /health version, roles, and env-key drift; performs zero writes on any member",
+      "source_text": "plan is read-only and derived from the mesh: roster members + each member's GET /health version + /capabilities, plus per-member drift (gateway env keys the target template passes that the member's deployed compose does not)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o3",
+      "claim_id": "c11",
+      "seam": "lobes rollout apply -> one member step over SSH",
+      "behavior": "a second apply on an already-upgraded member makes no change and exits 0; waves run one member at a time with the canary first",
+      "source_text": "apply upgrades one wave at a time (default: one member per wave, a member that hosts nothing first as canary), each member step idempotent: backup .env, install the CLI, repin MODEL_GEAR_VERSION, rebuild only the gateway, wait for health; re-running a finished step is a no-op",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o4",
+      "claim_id": "c12",
+      "seam": "post-member verification (/health, /capabilities, one request per role)",
+      "behavior": "a role feasible+ready before and not after halts the rollout naming member and role; no further member is touched",
+      "source_text": "After each member: verify version on /health, diff /capabilities before vs after (no role that was feasible/ready may become infeasible/not-ready), and send one real request per role the member hosts or forwards; halt the rollout on any regression",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o5",
+      "claim_id": "c13",
+      "seam": "lobes rollout rollback --member X",
+      "behavior": "restores the pre-apply .env and gateway image; dry-run without --apply; never invoked automatically",
+      "source_text": "Rollback per member restores the backed-up .env and recreates the gateway from the previous image; on a failed verification apply halts and prints the exact rollback command, which the operator runs (dry-run unless --apply)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o6",
+      "claim_id": "c14",
+      "seam": "every rollout write verb",
+      "behavior": "without --apply prints intended actions and writes nothing locally or remotely",
+      "source_text": "Dry-run by default; --apply to commit, like every lobes write verb; rollout status reports per-member target/current version and last step result",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o7",
+      "claim_id": "c16",
+      "seam": "plan drift check -> member deployed compose gateway environment list",
+      "behavior": "a compose lacking a gateway env key the target template passes (e.g. STT_EN_BASE_URL) is reported for that member before its upgrade",
+      "source_text": "A rollout to an unpublished version touches 0 members, and a member whose deployed compose lacks a gateway env key the target needs is flagged before its upgrade (100% of today's stt-en-style gaps caught)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o8",
+      "claim_id": "c20",
+      "seam": "apply -> docker tag before build",
+      "behavior": "lobes-gateway:<old-version> exists after apply; rollback recreates from it with the index unreachable",
+      "source_text": "[challenge / reversibility: lobes/templates/fleet/docker-compose.yml gateway build -> image lobes-gateway:latest] Before rebuilding, apply tags the running gateway image as lobes-gateway:<old-version>; rollback recreates the gateway from that tag. Today the rebuild overwrites the only tag, the old image goes dangling, and any prune deletes the rollback target",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o9",
+      "claim_id": "c21",
+      "seam": "member addressing resolution",
+      "behavior": "each member's ssh target, user, gateway port and absolute lobes path are shown in plan; an unresolvable member is reported unreachable and not touched",
+      "source_text": "[challenge / adjacent systems: probes of spark, spark2, thor, orin 2026-11-09] Member addressing is explicit per member: SSH target and user (spark/spark2/thor/orin users differ), gateway port (8001 on spark and cultureos, 8000 elsewhere), and the lobes binary invoked by absolute path (~/.local/bin/lobes is NOT on the non-login SSH PATH on 3 of 4 members). The mesh name is not the hostname (mesh spark = host spark-f8a9)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o10",
+      "claim_id": "c22",
+      "seam": "version comparison (PEP 440)",
+      "behavior": "a target older than the member's running gateway is refused without the explicit downgrade flag; dev versions order correctly",
+      "source_text": "[challenge / adjacent systems: member CLI vs gateway versions] CLI and gateway versions are tracked separately per member (spark: CLI 0.90.0; thor: CLI 0.89.0 with gateway 0.92.0.dev694 from a dev index). Plan shows both; apply refuses a downgrade (target older than the running gateway, PEP 440 ordering) unless explicitly allowed, and preflight honours LOBES_DEV_INDEX_URL for dev targets",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o11",
+      "claim_id": "c23",
+      "seam": "plan/apply/status stdout+stderr and the journal",
+      "behavior": "no GATEWAY_API_KEY / LOBES_MESH_KEY value appears in any output or file",
+      "source_text": "[challenge / security: thor has no GATEWAY_API_KEY in .env; cultureos key accepted by others] Verification requests use each member's own gateway credential read over SSH, never the operator's by assumption; no key, mesh key or secret is ever printed in plan/apply/status output or the journal",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o12",
+      "claim_id": "c25",
+      "seam": "per-member rollout lock",
+      "behavior": "two concurrent applies against one member: exactly one writes; the lock is released on success, failure and SIGINT",
+      "source_text": "[challenge / concurrency: no lock in lobes/runtime or lobes up] apply takes a per-member lock on the member before its first write and refuses a member whose lock is held (another rollout, or another operator mid-step); the lock is released on success, failure and interrupt",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o13",
+      "claim_id": "c26",
+      "seam": "apply -> member machine CLI 'window show'",
+      "behavior": "a member with an active benchmark window is skipped with that reason unless overridden",
+      "source_text": "[challenge / operations: docs/contracts/machine-cli-window.md] apply refuses to recreate a member's gateway while that member has an active benchmark window (machine CLI 'window show'), unless explicitly overridden",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o14",
+      "claim_id": "c27",
+      "seam": "wave ordering",
+      "behavior": "the operator's own box is always the last member upgraded",
+      "source_text": "[challenge / failure modes: operator box is itself a member (cultureos)] The operator's own box is upgraded last in the rollout, after every remote member verifies, because upgrading its CLI replaces the binary that is running the rollout",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o15",
+      "claim_id": "c28",
+      "seam": "rollout journal + status",
+      "behavior": "after an interrupted apply, status names the interrupted member and step; re-running apply resumes there; no unverified member is shown as done",
+      "source_text": "[challenge / observability: c14 status needs a source] Every apply writes an append-only journal on the operator box (member, step, before/after versions, verification result, timestamps); status reads it, and a rollout is resumable from it after an interrupt",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o16",
+      "claim_id": "c29",
+      "seam": "plan -> member deployment.lock.toml",
+      "behavior": "members carrying a deployment lock are listed as lock-affected before any write; apply reports the lock as stale afterwards",
+      "source_text": "[challenge / adjacent systems: lobes/runtime/_lock.py tracks the .env digest; deployments/ holds jetson-agx-orin and jetson-agx-thor locks] A member with a deployment.lock.toml will report lock_drift after the repin; plan flags such members and apply reports the stale lock (re-capture stays the operator's call - there is no capture CLI)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o17",
+      "claim_id": "c15",
+      "seam": "live mesh (cultureos, spark, spark2, thor, orin) on the next lobes release",
+      "behavior": "one 'lobes rollout plan' + one 'lobes rollout apply --apply' brings every member to the target with 0 hand-written scripts and 0 roles regressed in /capabilities; transcript under docs/evidence/",
+      "source_text": "Re-running today's upgrade (4 members to 0.94.0) is 1 plan + 1 apply command with 0 hand-written scripts, and every member ends at the target version with 0 roles regressed in /capabilities",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o18",
+      "claim_id": "c30",
+      "seam": "residents file generator",
+      "behavior": "every field carries detected or needs-you; re-generation keeps operator-edited fields",
+      "source_text": "Member addressing comes from a residents file (~/.lobes/residents.toml) that lobes GENERATES from the mesh roster plus per-member probes (SSH target, user, gateway port, lobes path, gateway-key presence); every derived field is marked detected, and the operator only fixes fields flagged needs-you; nothing is guessed silently (user decision 2026-11-09, supersedes the typed-only form)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o19",
+      "claim_id": "c31",
+      "seam": "lobes mesh resident add + site Make resident",
+      "behavior": "a verified guest becomes a resident entry; plan includes it; rollouts skip guests",
+      "source_text": "Residency: a machine that authenticates with the mesh key but is not in the residents file is a guest; lobes offers to make it a known resident (site 'Make resident', CLI 'lobes mesh resident add <name>'), which writes it to the residents file; rollouts skip guests",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o20",
+      "claim_id": "c32",
+      "seam": "lobes doctor",
+      "behavior": "reports new_mesh_member, resident_field_missing, gateway_open with fix commands, and writes nothing",
+      "source_text": "lobes doctor reports new_mesh_member for a verified roster member missing from the residents file, resident_field_missing for each needs-you field and gateway_open for a member without a gateway key, each with the command that fixes it",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o21",
+      "claim_id": "c33",
+      "seam": "rollout apply/status with an unreachable resident",
+      "behavior": "member marked skipped-offline and pending; upgraded on a later apply once reachable",
+      "source_text": "A resident that is offline at apply time is reported as skipped-offline, stays pending in status, and is upgraded by a later apply once it is online (e.g. orin-nano added while off)",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o22",
+      "claim_id": "c34",
+      "seam": "local site /api + views",
+      "behavior": "Mesh graph draws every resident with full-mesh links, the outside-access hub, split brains and pairs from live data; Table tab lists the same lobes",
+      "source_text": "lobes serves a local site (stdlib HTTP server like heat-governor's mesh_server: one index.html plus /api JSON) with Mesh, Rollout and Residents views. Mesh defaults to a Graph tab: a full-mesh wheel with the gateway that has outside access at the hub, a positronic brain per machine (size by memory, ring = memory in use, version badge), split brains (one model across machines), pairs (one model pooled on several), and each mind's lobes (models) coloured by family; a Table tab shows the same data. Minimal prose: names, numbers, icons",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o23",
+      "claim_id": "c35",
+      "seam": "lobes lobe export",
+      "behavior": "built lobes export Dockerfile + inputs + service; image-only lobes export image + run/compose labelled image-only; zero secret values in output",
+      "source_text": "Lobe export: for any lobe on any member, and for a whole member, lobes exports what runs it - Dockerfile + build inputs + compose service when lobes builds it, else the image reference + run command or compose service, labelled image-only - with every secret stripped; CLI 'lobes lobe export <role> --member <m>' and site buttons",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o24",
+      "claim_id": "c36",
+      "seam": "site static assets",
+      "behavior": "Lato woff2 + OFL served locally; zero external requests",
+      "source_text": "Site assets are local: Lato 300/400/700/900 woff2 plus lato-OFL.txt ship in the package; the site makes no external network request",
+      "origin": "llm",
+      "status": "approved"
+    },
+    {
+      "id": "o25",
+      "claim_id": "c37",
+      "seam": "Playwright against the live mesh",
+      "behavior": "screenshots at 1440 and 390 px, 0 console errors, 0 non-local requests; transcript in docs/evidence/",
+      "source_text": "Playwright run against the live mesh: Mesh, Rollout and Residents render at 1440 px and 390 px widths with 0 console errors and 0 non-local requests, and the graph shows all 5 residents, 1 split brain and 1 pair",
+      "origin": "llm",
+      "status": "approved"
+    }
+  ]
+}
