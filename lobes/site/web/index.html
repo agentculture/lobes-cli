@@ -18,14 +18,14 @@
   --accent:#5a3fd0;--accent-tint:rgba(90,63,208,.08);--on-accent:#fff;--on-badge:#fff;
   --ok:#1b7a4c;--ok-tint:rgba(27,122,76,.09);--warn:#9a5b0b;--warn-tint:rgba(154,91,11,.09);
   --crit:#b8302a;--crit-tint:rgba(184,48,42,.08);--on-crit:#fff;--info:#2f66ad;
-  --f-gen:#2a78d6;--f-dec:#eb6834;--f-emb:#1baf7a;--f-sp:#eda100;
+  --link:#2a78d6;
   --track:#e4e1ec;--shell:#dcd8e8;--mono:ui-monospace,Menlo,Consolas,monospace;color-scheme:light}
 html[data-theme="dark"]{--bg:#0f0e17;--surface:#171622;--raise:#24222f;--ink:#ecebf3;--soft:#a9a5bb;--faint:#8a869e;
   --line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--web:rgba(255,255,255,.15);
   --accent:#a593ff;--accent-tint:rgba(165,147,255,.10);--on-accent:#0f0e17;--on-badge:#0f0e17;
   --ok:#4fc58a;--ok-tint:rgba(79,197,138,.10);--warn:#e6a64a;--warn-tint:rgba(230,166,74,.10);
   --crit:#ff7a6b;--crit-tint:rgba(255,122,107,.10);--on-crit:#0f0e17;--info:#7fb0f0;
-  --f-gen:#3987e5;--f-dec:#d95926;--f-emb:#199e70;--f-sp:#c98500;
+  --link:#3987e5;
   --track:#2a2836;--shell:#2c2a3a;color-scheme:dark}
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--ink)}
@@ -133,11 +133,18 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
   var GATEWAY_ARROWS = "M38 52h40m-9-7 9 7-9 7M82 68H42m9-7-9 7 9 7";
   var TRACE_L = "M36 46H47V56H40M34 68H46V76M50 36V46M47 84V74H53";
   var TRACE_R = "M84 46H73V56H80M86 68H74V76M70 36V46M73 84V74H67";
-  var LOBE = "M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z";
   var CHECK = "M5 12l4 4 10-10", BANG = "M12 6v8M12 18h.01", PLUS = "M12 6v12M6 12h12", CROSS = "M7 7l10 10M17 7L7 17";
   var CIRC = 2 * Math.PI * 55;
   var FAM = { gen: "generate", dec: "decide", emb: "embed, rank", sp: "speech" };
   var FAM_ORDER = ["gen", "dec", "emb", "sp"];
+  // a family is told apart by its SIGN, never by colour: colour means health
+  // (ink = ready, warn = not ready) and blue means a model spans boxes
+  var SIGN = {
+    gen: "M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z",
+    dec: "M12 21v-8M12 13L6 6M12 13l6-7M3.5 7.5L6 6l1 2.8M20.5 7.5L18 6l-1 2.8",
+    emb: "M4 6h16M4 12h11M4 18h6",
+    sp: "M3 12h2M7 8v8M11 4v16M15 8v8M19 10v4"
+  };
   var STEP_LABEL = {
     lock: "Take the member lock", window_check: "Check the machine window", backup_env: "Back up .env",
     install_cli: "Install the lobes CLI", repin: "Pin MODEL_GEAR_VERSION", tag_image: "Tag the current gateway image",
@@ -158,7 +165,6 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     if (/^(stt|tts)(-|$)|realtime|speech/.test(r)) return "sp";
     return "gen";
   }
-  function fvar(f) { return "var(--f-" + f + ")"; }
   function stepName(s) { return STEP_LABEL[s] || String(s || "").replace(/_/g, " "); }
   function shortModel(m) { var s = String(m || ""); var i = s.lastIndexOf("/"); return i >= 0 ? s.slice(i + 1) : s; }
   function gb(bytes) { return Math.round(bytes / 1e9); }
@@ -184,8 +190,10 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + (color || "currentColor") +
       '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"' + a + '><path d="' + d + '"></path></svg>';
   }
-  function lobeGlyph(f, size) {
-    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 20 20" aria-hidden="true"><path d="' + LOBE + '" fill="' + fvar(f) + '"></path></svg>';
+  function lobeGlyph(f, size, ready) {
+    var c = ready === false ? "var(--warn)" : "var(--ink)";
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="' + c +
+      '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' + (ready === false ? ' stroke-dasharray="3 2.5"' : "") + '><path d="' + SIGN[f] + '"></path></svg>';
   }
   function copyBtn(text) {
     return '<span class="copy"><code class="cmd">' + esc(text) + '</code><button type="button" class="btn ghost" data-act="copy" data-text="' +
@@ -347,7 +355,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       out.push('<path d="' + GATEWAY_ARROWS + '" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>');
       if (p.hub) out.push('<circle cx="60" cy="60" r="57" fill="none" stroke="var(--accent)" stroke-width="2"></circle>');
     } else {
-      var col = sp ? fvar(family(sp.s.roles[0])) : null, leftOn = sp && sp.i % 2 === 1, rightOn = sp && sp.i % 2 === 0;
+      var col = sp ? "var(--link)" : null, leftOn = sp && sp.i % 2 === 1, rightOn = sp && sp.i % 2 === 0;
       out.push('<path d="' + BRAIN_L + '" fill="' + (leftOn ? col : "var(--shell)") + '" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>');
       out.push('<path d="' + BRAIN_R + '" fill="' + (rightOn ? col : "var(--shell)") + '" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>');
       var tr = (leftOn ? "" : TRACE_L) + (rightOn ? "" : TRACE_R);
@@ -370,7 +378,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       (a.guest || b.guest ? dash : web).push(line(edge(a, b, 2), 0, 0));
     }
     (mesh.split_brains || []).forEach(function (s) {
-      var ps = s.members.map(function (n) { return P[n]; }).filter(Boolean), col = fvar(family(s.roles[0]));
+      var ps = s.members.map(function (n) { return P[n]; }).filter(Boolean), col = "var(--link)";
       for (var k = 0; k + 1 < ps.length; k++) {
         var e = edge(ps[k], ps[k + 1], 0);
         deco.push('<path d="' + line(e, 0, 0) + '" style="stroke:' + col + ';stroke-width:12"></path>');
@@ -378,7 +386,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       }
     });
     (mesh.pools || []).forEach(function (pr) {
-      var ps = pr.members.map(function (n) { return P[n]; }).filter(Boolean), col = fvar(family(pr.roles[0]));
+      var ps = pr.members.map(function (n) { return P[n]; }).filter(Boolean), col = "var(--link)";
       for (var k = 0; k + 1 < ps.length; k++) {
         var e = edge(ps[k], ps[k + 1], 0);
         deco.push('<path d="' + line(e, e.nx * 7, e.ny * 7) + line(e, -e.nx * 7, -e.ny * 7) + '" style="stroke:' + col + ';stroke-width:3;stroke-dasharray:8 6"></path>');
@@ -420,20 +428,15 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       var l = o.l, f = family(l.role), on = S.sel && S.sel.role === l.role && S.sel.member === o.m.name;
       h.push('<button type="button" class="lobe" data-act="lobe" data-role="' + esc(l.role) + '" data-member="' + esc(o.m.name) + '" data-k="' + esc("lobe:" + l.role + "@" + o.m.name) +
         '" aria-pressed="' + (on ? "true" : "false") + '" title="' + esc(l.model + " (" + l.role + " on " + o.m.name + ")") + '" style="left:' + o.x + "px;top:" + o.y.toFixed(0) + 'px">' +
-        lobeGlyph(f, 18) + "<span><b>" + esc(shortModel(l.model)) + esc(partLabel(l, M)) + "</b><small>" + esc(l.role + ", " + shapeLabel(l, M) + (l.ready ? "" : ", not ready")) + "</small></span></button>");
+        lobeGlyph(f, 18, l.ready) + "<span><b>" + esc(shortModel(l.model)) + esc(partLabel(l, M)) + "</b><small>" + esc(l.role + ", " + shapeLabel(l, M) + (l.ready ? "" : ", not ready")) + "</small></span></button>");
     });
     h.push("</div></div></div>");
     var leg = FAM_ORDER.map(function (f) {
-      return '<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50% 50% 45% 55%;background:' + fvar(f) + '"></span>' + FAM[f] + "</span>";
+      return "<span>" + lobeGlyph(f, 16) + FAM[f] + "</span>";
     });
-    // role-family colours: the colour says what a lobe does, never its health
-    var fams = {};
-    (mesh.members || []).forEach(function (m) { (m.lobes || []).forEach(function (l) { fams[family(l.role)] = 1; }); });
-    [["gen", "generate"], ["dec", "decider"], ["emb", "embed / rerank"], ["sp", "speech (stt / tts)"]].forEach(function (fl) {
-      if (fams[fl[0]]) leg.push('<span><span class="sw" aria-hidden="true" style="width:12px;height:12px;border-radius:50%;background:' + fvar(fl[0]) + '"></span>' + fl[1] + "</span>");
-    });
-    if ((mesh.split_brains || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:8px;border-radius:4px;background:var(--f-gen)"></span>split brain</span>');
-    if ((mesh.pools || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--f-emb)"></span>shared pool</span>');
+    leg.push("<span>" + lobeGlyph("gen", 16, false) + "not ready</span>");
+    if ((mesh.split_brains || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:8px;border-radius:4px;background:var(--link)"></span>split brain</span>');
+    if ((mesh.pools || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--link)"></span>shared pool</span>');
     leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:2px;background:var(--web)"></span>mesh link</span>');
     if (L.hub) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:4px;border-radius:2px;background:var(--accent)"></span>outside tunnel</span>');
     if (L.maxTotal) leg.push('<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:3px solid var(--soft)"></span>ring = memory in use</span>');
@@ -454,7 +457,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     h.push('<th scope="col">Shape</th><th scope="col">Container</th></tr></thead><tbody>');
     if (!M.rows.length) h.push('<tr><td colspan="' + (ms.length + 4) + '" class="empty">No member reports a hosted lobe.</td></tr>');
     M.rows.forEach(function (r) {
-      var f = family(r.role), col = fvar(f), split = r.shape === "split", first = r.hosts[0];
+      var f = family(r.role), col = "var(--link)", split = r.shape === "split", first = r.hosts[0];
       h.push('<tr><th scope="row"><span style="display:inline-flex;align-items:center;gap:8px">' + lobeGlyph(f, 14) + '<span title="' + esc(r.model) + '">' + esc(shortModel(r.model)) + "</span></span></th>");
       h.push('<td style="color:var(--soft)">' + esc(r.role) + "</td>");
       ms.forEach(function (m) {
@@ -481,7 +484,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     if (!S.sel) return h.concat(['<p style="margin:0;color:var(--soft)">Pick a lobe to see its export.</p></aside>']).join("");
     var role = S.sel.role, member = S.sel.member, l = lobeOf(M, role, member), f = family(role), chips = [];
     var E = S.exp && S.exp.key === role + "@" + member ? S.exp : null, d = E && E.data;
-    h.push('<div style="display:flex;align-items:center;gap:10px">' + lobeGlyph(f, 26) + '<div style="min-width:0"><h2>' + esc(l ? shortModel(l.model) : role) +
+    h.push('<div style="display:flex;align-items:center;gap:10px">' + lobeGlyph(f, 26, l ? l.ready : undefined) + '<div style="min-width:0"><h2>' + esc(l ? shortModel(l.model) : role) +
       '</h2><div style="font-size:13px;color:var(--soft)">' + esc(role + " on " + member) + "</div></div></div>");
     if (d) {
       var st = d.status, lab = st === "built" ? "has build files" : st === "image-only" ? "image only" : st || "unknown";

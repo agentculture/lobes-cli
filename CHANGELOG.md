@@ -21,7 +21,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Live-review fixes: this box's name comes from the running gateway, not `.env`
   (a roster peer's name is refused — also protects `lobes rollout`); a shared
   pool needs ready members; a role with no backend wired is not a lobe; a member
-  serving no model is drawn as a gateway; the `gateway-only` shape renders
+  serving no model is drawn as a gateway; a lobe's family is a sign (generate,
+  decide, embed/rank, speech), never a colour, so amber means only "not
+  ready" or "behind"; the `gateway-only` shape renders
   `STT_FEASIBLE`/`TTS_FEASIBLE=false`.
 - `lobes site install|uninstall|status`: keep the site up across reboots as a
   systemd user unit (`Restart=always`, which also rides out a tailnet IP that
