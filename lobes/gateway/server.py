@@ -5885,7 +5885,7 @@ class _Handler(BaseHTTPRequestHandler):
             #
             # t21 (amended by deviation d2): `memory` (host /proc/meminfo,
             # omitted when unreadable) is additive evidence for `lobes site`.
-            self._send_json(200, health_payload(os.environ, version=__version__))
+            self._send_json(200, health_payload(version=__version__))
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.

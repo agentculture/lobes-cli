@@ -52,7 +52,7 @@ ENV_ALLOW = re.compile(r"^TF_([A-Z0-9]+(?:_[A-Z0-9]+)*)_(WORLD|RANK)$")
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,255}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9/][A-Za-z0-9._/:@+-]{0,199}$")
-INT_RE = re.compile(r"^[0-9]{1,4}$")
+INT_RE = re.compile(r"^\d{1,4}$")
 
 # The projection, run ON THE MEMBER by ``python3 -I`` with the inspect JSON on
 # stdin. Keep it self-contained (stdlib only) and print nothing but the

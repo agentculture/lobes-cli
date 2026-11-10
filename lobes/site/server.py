@@ -206,13 +206,8 @@ def _same_model(served: str, advertised: str) -> bool:
     return bool(key) and key == _model_key(advertised)
 
 
-def _topology_splits(topology: Mapping[str, Optional[list]], names: list) -> list:
-    """Complete TensorFold worlds: ``[{served_name, members, evidence}]``.
-
-    Groups containers by (served model, ``TF_<X>`` group); a group is a split
-    when its entries sit on N >= 2 distinct members, every entry reports
-    world N, and the ranks are exactly ``0..N-1``. Anything else is no split.
-    """
+def _rank_groups(topology: Mapping[str, Optional[list]], names: list) -> dict:
+    """``{(served model, TF group): [(member, world, rank), ...]}``."""
     groups: dict = {}
     for member in names:
         for c in topology.get(member) or []:
@@ -220,14 +215,29 @@ def _topology_splits(topology: Mapping[str, Optional[list]], names: list) -> lis
                 continue
             for group, world, rank in c.ranks:
                 groups.setdefault((c.model, group), []).append((member, world, rank))
+    return groups
+
+
+def _complete_world(entries: list) -> bool:
+    """N >= 2 distinct members, all reporting world N, ranks exactly 0..N-1."""
+    n = len(entries)
+    if n < 2 or len({m for m, _, _ in entries}) != n:
+        return False
+    return {w for _, w, _ in entries} == {n} and sorted(r for _, _, r in entries) == list(range(n))
+
+
+def _topology_splits(topology: Mapping[str, Optional[list]], names: list) -> list:
+    """Complete TensorFold worlds: ``[{served_name, members, evidence}]``.
+
+    Groups containers by (served model, ``TF_<X>`` group); a group is a split
+    when its entries sit on N >= 2 distinct members, every entry reports
+    world N, and the ranks are exactly ``0..N-1``. Anything else is no split.
+    """
     out = []
-    for (served, group), entries in groups.items():
+    for (served, group), entries in _rank_groups(topology, names).items():
+        if not _complete_world(entries):
+            continue
         n = len(entries)
-        members = {m for m, _, _ in entries}
-        if n < 2 or len(members) != n:
-            continue
-        if {w for _, w, _ in entries} != {n} or sorted(r for _, _, r in entries) != list(range(n)):
-            continue
         ordered = sorted(entries, key=lambda e: e[2])
         out.append(
             {
@@ -383,7 +393,8 @@ def build_mesh(sources: Sources) -> dict:
     members += [_member(sources, m, o, False, res) for m, o in zip(peers, peer_obs)]
     try:
         topology = dict(sources.topology() or {})
-    except Exception:  # noqa: BLE001 - an unreadable topology is unknown, not a 500
+    # an unreadable topology is unknown, not a 500
+    except Exception:  # noqa: BLE001
         traceback.print_exc(file=sys.stderr)
         topology = {}
     for m in members:

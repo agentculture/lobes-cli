@@ -231,7 +231,8 @@ def test_vendor_serves_allow_listed_file(serve, tmp_path):
     (root / "index.html").write_text("<html></html>")
     (root / "vendor" / "lato-OFL.txt").write_text("OFL")
     code, headers, body = _get(serve(web_root=root), "/vendor/lato-OFL.txt")
-    assert code == 200 and body == b"OFL"
+    assert code == 200
+    assert body == b"OFL"
     assert headers["Content-Type"].startswith("text/plain")
 
 
@@ -256,7 +257,8 @@ def test_vendor_path_traversal_refused(serve, tmp_path, path):
     (tmp_path / "secret.txt").write_text("outside")
     code, _, body = _get(serve(web_root=root), path)
     assert code == 404
-    assert b"outside" not in body and b"nested" not in body
+    assert b"outside" not in body
+    assert b"nested" not in body
 
 
 def test_other_methods_refused_and_unknown_404(serve):
@@ -278,7 +280,8 @@ def test_mesh_members_versions_roles_and_lobes(serve):
     names = [m["name"] for m in data["members"]]
     assert names == ["cultureos", "spark", "spark2", "thor", "orin"]
     by = {m["name"]: m for m in data["members"]}
-    assert by["cultureos"]["local"] is True and by["spark"]["local"] is False
+    assert by["cultureos"]["local"] is True
+    assert by["spark"]["local"] is False
     assert by["spark"]["version"] == "0.92.0.dev694"
     assert data["versions"] == {
         "0.94.0": ["cultureos", "spark2", "orin"],
@@ -480,7 +483,8 @@ def test_unreachable_member_has_no_lobes(serve, tmp_path):
     _, data = _json(serve(src), "/api/mesh")
     by = {m["name"]: m for m in data["members"]}
     assert by["thor"]["reachable"] is False
-    assert by["thor"]["lobes"] == [] and by["thor"]["version"] is None
+    assert by["thor"]["lobes"] == []
+    assert by["thor"]["version"] is None
     assert by["thor"]["roles"] == ["reranker", "worker"]  # roster still says so
     assert data["pools"] == []
 
@@ -509,14 +513,18 @@ def test_api_rollout_projects_the_journal(serve, tmp_path):
     code, data = _json(serve(make_sources(tmp_path, journal=lambda: j)), "/api/rollout")
     assert code == 200
     by = {m["member"]: m for m in data["members"]}
-    assert by["thor"]["state"] == "done" and by["thor"]["done"] is True
-    assert by["spark"]["state"] == "in_progress" and by["spark"]["last_step"] == "rebuild_gateway"
+    assert by["thor"]["state"] == "done"
+    assert by["thor"]["done"] is True
+    assert by["spark"]["state"] == "in_progress"
+    assert by["spark"]["last_step"] == "rebuild_gateway"
     assert data["resume"] == {"member": "spark", "step": "wait_health"}
 
 
 def test_api_rollout_empty_journal(serve):
     code, data = _json(serve(), "/api/rollout")
-    assert code == 200 and data["members"] == [] and data["resume"] is None
+    assert code == 200
+    assert data["members"] == []
+    assert data["resume"] is None
     assert data["steps"] == list(STEPS)
 
 
@@ -580,7 +588,8 @@ def test_api_lobe_export_failure_is_502_without_traceback(serve, tmp_path):
     srv = serve(make_sources(tmp_path, export_listing=boom))
     code, _, body = _get(srv, "/api/lobe-export?role=cortex&member=spark")
     assert code == 502
-    assert SECRET.encode() not in body and b"Traceback" not in body
+    assert SECRET.encode() not in body
+    assert b"Traceback" not in body
 
 
 # ------------------------------------------------------------------ secrets
@@ -613,7 +622,8 @@ def test_no_secret_values_in_any_api_response(serve, tmp_path):
     ):
         code, _, body = _get(srv, path)
         assert code == 200, path
-        assert SECRET.encode() not in body and GW_SECRET.encode() not in body, path
+        assert SECRET.encode() not in body, path
+        assert GW_SECRET.encode() not in body, path
 
 
 # ------------------------------------------------------------- default sources
@@ -628,7 +638,8 @@ def test_default_sources_read_keys_from_env_and_resolve_local_origin(tmp_path):
     src = site.default_sources(tmp_path)
     assert src.local_origin == "http://127.0.0.1:8001"
     assert src.local_name == "cultureos"
-    assert SECRET in src.secrets and GW_SECRET in src.secrets
+    assert SECRET in src.secrets
+    assert GW_SECRET in src.secrets
 
 
 def test_default_observe_uses_only_get(tmp_path):
@@ -653,7 +664,8 @@ def test_default_observe_uses_only_get(tmp_path):
     (tmp_path / ".env").write_text(f"LOBES_MESH_KEY={SECRET}\n")
     src = site.default_sources(tmp_path, opener=opener)
     src.observe("http://127.0.0.1:1")
-    assert seen and set(seen) == {"GET"}
+    assert seen
+    assert set(seen) == {"GET"}
 
 
 # ------------------------------------------------------------------ CLI
@@ -698,7 +710,8 @@ def test_cli_apply_starts_the_server(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(site, "run_until_interrupted", fake_run)
     rc = main(["site", "--port", "0", "--apply"])
     assert rc == 0
-    assert ran and ran[0][0] == "127.0.0.1"
+    assert ran
+    assert ran[0][0] == "127.0.0.1"
     assert "http://127.0.0.1:" in capsys.readouterr().out
 
 
@@ -773,7 +786,7 @@ def _fleet_routes():
     return {
         "http://127.0.0.1:8001": {
             "/health": _evidence.health_payload(
-                {}, version="0.95.0", meminfo=Path("/nonexistent/meminfo")
+                version="0.95.0", meminfo=Path("/nonexistent/meminfo")
             ),
             "/capabilities": {},
             "/mesh/roster": {
@@ -953,7 +966,8 @@ def test_topology_targets_from_residents_and_the_local_box(tmp_path):
         tmp_path,
     )
     targets = site._topology_targets(tmp_path, "core")
-    assert targets["spark"].ssh_target == "spark" and targets["spark"].user == "spark"
+    assert targets["spark"].ssh_target == "spark"
+    assert targets["spark"].user == "spark"
     assert targets["orin"] is None
     assert targets["core"].local is True
     assert "cultureos" not in targets  # ssh=local but the running gateway says core
@@ -991,7 +1005,8 @@ def test_lanes_advertised_but_not_ready_are_not_pairs():
         for n, r in (("a", False), ("b", False), ("c", True))
     ]
     splits, pools = site._shapes(members)
-    assert pools == [] and splits == []
+    assert pools == []
+    assert splits == []
     members[1]["lobes"][0]["ready"] = True
     _, pools = site._shapes(members)
     assert pools == [{"model": "parakeet", "roles": ["stt"], "members": ["b", "c"]}]
@@ -1033,7 +1048,8 @@ def test_gateway_only_member_is_a_gateway_not_a_brain():
         True,
         site._residents.Residents(),
     )
-    assert m["lobes"] == [] and m["kind"] == "gateway"
+    assert m["lobes"] == []
+    assert m["kind"] == "gateway"
     assert m["routes"] == ["cortex", "worker"]
 
 
@@ -1066,7 +1082,8 @@ def test_a_wired_lane_that_is_down_is_still_a_lobe():
     m = site._member(
         src, {"name": "orin", "origin": "http://orin:8000"}, obs, False, site._residents.Residents()
     )
-    assert [lobe["role"] for lobe in m["lobes"]] == ["stt"] and m["kind"] == "brain"
+    assert [lobe["role"] for lobe in m["lobes"]] == ["stt"]
+    assert m["kind"] == "brain"
 
 
 def test_rollout_board_shows_latest_target_only(tmp_path):
@@ -1086,7 +1103,8 @@ def test_rollout_board_shows_latest_target_only(tmp_path):
         )
     )
     x = next(m for m in data["members"] if m["member"] == "x")
-    assert x["done"] is False and x["target"] == "0.97.0"
+    assert x["done"] is False
+    assert x["target"] == "0.97.0"
     assert x["rollback_command"]
 
 

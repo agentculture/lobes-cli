@@ -39,7 +39,8 @@ def test_running_gateway_wins_over_a_stale_env_and_warns():
     # 2026-11-10: core's .env said spark (another member's name)
     name, warning = ident.resolve_local_name("spark", ["spark", "thor"], inspect=lambda: "core")
     assert name == "core"
-    assert "spark" in warning and "core" in warning
+    assert "spark" in warning
+    assert "core" in warning
 
 
 def test_env_used_when_no_container():
