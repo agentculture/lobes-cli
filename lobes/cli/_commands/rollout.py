@@ -51,7 +51,7 @@ from lobes.rollout._observe import MemberObservation, observe_member
 from lobes.rollout._plan import PLANNED, SKIPPED_CURRENT
 from lobes.rollout._plan import SKIPPED_OFFLINE as PLAN_OFFLINE
 from lobes.rollout._plan import build_plan
-from lobes.rollout._preflight import check_release
+from lobes.rollout._preflight import check_release, dev_index_url
 from lobes.rollout._redact import redact
 from lobes.rollout._rollback import backup_from_journal, rollback, rollback_command
 from lobes.rollout._verify import verify_member
@@ -261,10 +261,19 @@ def _roster_origins(port: int, op_key: Optional[str], mesh_key: Optional[str]) -
     }
 
 
-def _read_key(m: _Member) -> Optional[str]:
+def _member_dir(m: _Member, deploy_dir: Path) -> str:
+    """This box's own deployment dir (``--compose-dir``) for the local member;
+    "" (= ``$HOME/.lobes``) for a remote one, whose dir residents.toml does not
+    record."""
+    return str(Path(deploy_dir).expanduser().absolute()) if m.is_local else ""
+
+
+def _read_key(m: _Member, deploy_dir: Path) -> Optional[str]:
     try:
         raw = _transport.read_remote_value(
-            m.target(), ["sh", "-c", _READ_KEY, "sh", ""], runner=SEAMS.runner
+            m.target(),
+            ["sh", "-c", _READ_KEY, "sh", _member_dir(m, deploy_dir)],
+            runner=SEAMS.runner,
         )
     except RuntimeError:
         m.note = "gateway key unreadable over ssh"
@@ -272,10 +281,12 @@ def _read_key(m: _Member) -> Optional[str]:
     return raw.strip().strip("\"'").strip() or None
 
 
-def _fetch_files(m: _Member) -> Optional[dict]:
+def _fetch_files(m: _Member, deploy_dir: Path) -> Optional[dict]:
     try:
         raw = _transport.read_remote_value(
-            m.target(), ["sh", "-c", _FETCH_FILES, "sh", ""], runner=SEAMS.runner
+            m.target(),
+            ["sh", "-c", _FETCH_FILES, "sh", _member_dir(m, deploy_dir)],
+            runner=SEAMS.runner,
         )
     except RuntimeError:
         return None
@@ -352,14 +363,14 @@ def _gather(args, target: str) -> _Ctx:
             m.note = "not in the mesh roster (no gateway origin)"
             continue
         if m.has_key:
-            m.key = _read_key(m)
+            m.key = _read_key(m, deploy_dir)
             if m.key:
                 secrets.append(m.key)
         m.obs = observe_member(m.origin, gateway_key=m.key, opener=SEAMS.opener)
         if not m.obs.reachable:
             m.note = "gateway unreachable"
             continue
-        files = _fetch_files(m)
+        files = _fetch_files(m, deploy_dir)
         if files is None:
             m.note = "compose files unreadable over ssh (drift unknown)"
             continue
@@ -574,14 +585,25 @@ def _order(ctx: _Ctx, journal: Journal) -> list:
 def _patch_override(ctx: _Ctx, m: _Member, journal: Journal) -> Optional[str]:
     """Back up + patch the member's override under its lock. Returns an error or None."""
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    patch = _drift.patch_override(ctx.template_text, m.files, now=stamp)
+    try:
+        patch = _drift.patch_override(ctx.template_text, m.files, now=stamp)
+    except _drift.OverridePatchError as exc:
+        return str(exc)
     if not patch.new_text:
         return None
     try:
         with member_lock(m.target(), runner=SEAMS.runner):
             r = _transport.run(
                 m.target(),
-                ["sh", "-c", _WRITE_OVERRIDE, "sh", "", patch.backup_name or "", patch.new_text],
+                [
+                    "sh",
+                    "-c",
+                    _WRITE_OVERRIDE,
+                    "sh",
+                    _member_dir(m, ctx.deploy_dir),
+                    patch.backup_name or "",
+                    patch.new_text,
+                ],
                 timeout=_SSH_TIMEOUT,
                 runner=SEAMS.runner,
                 secrets=ctx.secrets,
@@ -656,6 +678,8 @@ def _upgrade_member_inner(ctx: _Ctx, m: _Member, journal: Journal, args) -> dict
         m.name,
         m.target(),
         ctx.target,
+        deploy_dir=_member_dir(m, ctx.deploy_dir),
+        index_url=dev_index_url(),
         allow_window=bool(args.allow_window),
         journal=journal.append,
         runner=SEAMS.runner,
@@ -717,6 +741,11 @@ def _apply_text(ctx: _Ctx, data: dict) -> str:
         if h["rollback"]:
             lines.append(f"roll back with: {h['rollback']}")
     else:
+        if data.get("stopped_at"):
+            lines.append(
+                f"stopped after {data['stopped_at']} was skipped: later members untouched; "
+                "clear the cause (or pass --allow-window) and re-run apply"
+            )
         lines.append(f"rollout {data['state']}")
     return "\n".join(lines)
 
@@ -789,9 +818,15 @@ def cmd_apply(args: argparse.Namespace) -> int:
             )
             continue
         try:
-            data["results"].append(_upgrade_member(ctx, ctx.members[name], journal, args))
+            res = _upgrade_member(ctx, ctx.members[name], journal, args)
         except _Halt as exc:
             halt = exc
+            break
+        data["results"].append(res)
+        if res.get("result") == "skipped":
+            # canary first: a member that was not upgraded (e.g. a benchmark
+            # window) must not let the later waves go ahead without it
+            data["stopped_at"] = name
             break
     if halt is not None:
         data["state"] = "halted"

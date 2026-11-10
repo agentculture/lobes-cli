@@ -9,7 +9,8 @@ Order (each write only when it is still needed):
    ``docs/contracts/machine-cli-window.md``) unless ``allow_window``;
 4. back up ``.env`` (only while it still carries the pre-apply pin, so a
    resumed run never shadows the backup rollback restores);
-5. ``uv tool install lobes-cli==<target>`` by absolute path, then confirm
+5. ``uv tool install lobes-cli==<target>`` by absolute path (adding the dev
+   index when ``LOBES_DEV_INDEX_URL`` is set, as the preflight does), then confirm
    ``lobes --version`` really reports the target (index/CDN lag);
 6. ``lobes doctor --repin-version --apply`` — judged by the resulting ``.env``
    value, NOT its exit code: doctor exits non-zero on the very version skew it
@@ -141,6 +142,7 @@ class _Step:
         *,
         deploy_dir: str,
         uv_path: str,
+        index_url: str,
         machine_cli: Optional[str],
         allow_window: bool,
         journal: Optional[Journal],
@@ -156,6 +158,7 @@ class _Step:
         self.target = target_version
         self.deploy_dir = deploy_dir
         self.uv_path = uv_path
+        self.index_url = index_url
         self.machine_cli = machine_cli
         self.allow_window = allow_window
         self.journal = journal
@@ -259,7 +262,15 @@ class _Step:
 
     def install_cli(self) -> None:
         spec = f"lobes-cli=={self.target}"
-        r = self.run([self.uv_path, "tool", "install", spec], timeout=INSTALL_TIMEOUT)
+        argv = [self.uv_path, "tool", "install", spec]
+        if self.index_url:
+            # A .devN build lives on the dev index (TestPyPI) while its
+            # dependencies live on PyPI: add the dev index and let uv pick the
+            # best match across both, as pip's --extra-index-url does. Without
+            # it the preflight passes on the dev index and every member then
+            # fails to install from PyPI alone.
+            argv += ["--extra-index-url", self.index_url, "--index-strategy", "unsafe-best-match"]
+        r = self.run(argv, timeout=INSTALL_TIMEOUT)
         installed = self.installed_version()
         if not same_version(installed, self.target):
             raise _StepFailed(
@@ -397,6 +408,7 @@ def run_member_step(
     *,
     deploy_dir: str = "",
     uv_path: Optional[str] = None,
+    index_url: str = "",
     machine_cli: Optional[str] = None,
     allow_window: bool = False,
     journal: Optional[Journal] = None,
@@ -429,6 +441,7 @@ def run_member_step(
         target_version,
         deploy_dir=deploy_dir,
         uv_path=uv,
+        index_url=index_url,
         machine_cli=machine_cli,
         allow_window=allow_window,
         journal=journal,

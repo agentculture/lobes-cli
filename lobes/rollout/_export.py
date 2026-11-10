@@ -19,12 +19,14 @@ A role neither finds is reported ``unmapped``; it is never guessed.
 from __future__ import annotations
 
 import json
+import os
 import posixpath
 import re
 import shlex
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Optional, Sequence
 from urllib.parse import urlparse
 
 from lobes.rollout._redact import REDACTED, redact
@@ -73,6 +75,24 @@ _SECRET_ASSIGN = re.compile(
     r"(?<![\w{])[A-Za-z0-9_]*(?:API_KEY|TOKEN|MESH_KEY|GATEWAY_KEY)"
     r"[\"']?\s*[=:]\s*[\"']?(?P<ref>\$\{)?"
 )
+
+
+def local_lobes_path(configured: str = "") -> str:
+    """Absolute path of the ``lobes`` to run on THIS box.
+
+    The configured residents.toml value when it is absolute, else the
+    ``lobes`` on PATH resolved to an absolute path. The transport refuses a
+    relative path, so a bare "lobes" fallback would only crash later.
+    """
+    if configured and configured.startswith("/"):
+        return configured
+    found = shutil.which("lobes")
+    if found:
+        return os.path.abspath(found)
+    raise ExportError(
+        "no absolute lobes path for this box: set lobes_path in residents.toml "
+        "or put lobes on PATH"
+    )
 
 
 class ExportError(RuntimeError):
@@ -382,20 +402,27 @@ def _finish(r: RoleExport, secrets) -> RoleExport:
     return r
 
 
-def _add_file(r, target, chain, rel, runner, secrets, what) -> bool:
+def _bundle_key(rel: str) -> str:
+    """Where a deployment-relative file lands in the bundle."""
+    return posixpath.basename(rel) if "/" not in rel.strip("./") else rel.lstrip("./")
+
+
+def _add_file(r, target, chain, rel, runner, secrets, what) -> Optional[str]:
+    """Copy one deployment file into the bundle; its bundle key, or None."""
     path = _safe_join(chain.deployment_dir, rel)
     if path is None:
         r.notes.append(f"{what} {rel}: path would escape the deployment dir; not exported")
-        return False
+        return None
     if posixpath.basename(path) in _NEVER_READ:
         r.notes.append(f"{what} {rel}: secrets file; not exported")
-        return False
+        return None
     text = _cat(target, path, runner, secrets)
     if text is None:
         r.notes.append(f"{what} {rel}: not a readable file (directory or missing); not exported")
-        return False
-    r.files[posixpath.basename(rel) if "/" not in rel.strip("./") else rel.lstrip("./")] = text
-    return True
+        return None
+    key = _bundle_key(rel)
+    r.files[key] = text
+    return key
 
 
 def _export_service(r, name, spec, target, chain, runner, secrets):
@@ -419,10 +446,14 @@ def _export_service(r, name, spec, target, chain, runner, secrets):
         rel_ctx = posixpath.relpath(base, chain.deployment_dir)
         join = lambda p: posixpath.normpath(posixpath.join(rel_ctx, p))  # noqa: E731
         dpath = join(dockerfile)
-        if _add_file(r, target, chain, dpath, runner, secrets, "Dockerfile"):
-            for src in dockerfile_copy_sources(r.files[posixpath.basename(dpath)]).files:
+        key = _add_file(r, target, chain, dpath, runner, secrets, "Dockerfile")
+        if key is not None:
+            # look the Dockerfile up by the key it was stored under: a build
+            # context in a subdirectory stores it as "<dir>/Dockerfile"
+            sources = dockerfile_copy_sources(r.files[key])
+            for src in sources.files:
                 _add_file(r, target, chain, join(src), runner, secrets, "build input")
-            for sk in dockerfile_copy_sources(r.files[posixpath.basename(dpath)]).skipped:
+            for sk in sources.skipped:
                 r.notes.append(f"COPY {sk}: not exported")
     else:
         r.status = IMAGE_ONLY

@@ -44,7 +44,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `lobes lobe export <role> --member <m>`: role -> compose service -> Dockerfile
   and build inputs (or image reference for image-only lobes), merged by the
   member's own `docker compose config --no-interpolate`; zero secret values.
-  DECLARED/UNVALIDATED (#108).
+  A Dockerfile in a build subdirectory is exported with its inputs; `--local`
+  needs an absolute `lobes` (residents.toml `lobes_path` or PATH) and says so
+  instead of crashing. DECLARED/UNVALIDATED (#108).
 
 ## [0.96.0] - 2026-11-10
 
@@ -61,7 +63,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command, never rolls back by itself, and resumes from an append-only journal.
   Compose drift (gateway env keys the target passes but a member's compose
   lacks) refuses the run unless `--patch-drift` (backed-up override edit).
-  DECLARED/UNVALIDATED (#108).
+  Review fixes: a skipped member (benchmark window) stops the run so the
+  canary still gates later waves; a `rollback` record clears `done`, so a
+  re-apply upgrades that member again; member installs honour
+  `LOBES_DEV_INDEX_URL` as the preflight does; verify compares PEP 440
+  versions; the drift patch keeps a mapping-form `environment:` a mapping,
+  follows the file's indentation and refuses an inline one; the local member
+  uses `--compose-dir`. DECLARED/UNVALIDATED (#108).
 - Spec, design and plan: `docs/specs/2026-11-09-gradual-fleet-rollout.md`,
   `docs/design/lobes-site/`, `docs/plans/2026-11-09-gradual-fleet-rollout*.md`.
 

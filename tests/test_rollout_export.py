@@ -309,3 +309,32 @@ def test_cli_unknown_member(tmp_path, monkeypatch, capsys):
     rc = main(["lobe", "export", "stt-en", "--member", "nope", "--base-dir", str(tmp_path)])
     assert rc == 1
     assert "nope" in capsys.readouterr().err
+
+
+def test_dockerfile_in_build_subdirectory_is_exported_with_inputs():
+    sub = f"{DEPLOY}/sidecar"
+    files = {
+        f"{sub}/Dockerfile.parakeet": DOCKERFILE,
+        f"{sub}/listen_server.py": "# server\n",
+        f"{sub}/_readiness.py": "# ready\n",
+    }
+    r = _export.export_role(
+        "stt-en",
+        TARGET,
+        member="m",
+        runner=make_runner(files=files, config=_config(sub)),
+        secrets=[],
+    )
+    assert "sidecar/Dockerfile.parakeet" in r.files
+    assert "sidecar/listen_server.py" in r.files and "sidecar/_readiness.py" in r.files
+
+
+def test_local_lobes_path_resolves_absolute_or_refuses(monkeypatch):
+    import pytest
+
+    assert _export.local_lobes_path("/opt/lobes") == "/opt/lobes"
+    monkeypatch.setattr(_export.shutil, "which", lambda name: "bin/lobes")
+    assert _export.local_lobes_path("lobes").startswith("/")
+    monkeypatch.setattr(_export.shutil, "which", lambda name: None)
+    with pytest.raises(_export.ExportError):
+        _export.local_lobes_path("")

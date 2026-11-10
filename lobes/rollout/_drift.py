@@ -135,8 +135,14 @@ class OverridePatch:
     diff: str
 
 
-def _line(key: str, indent: int) -> str:
+def _line(key: str, indent: int, mapping: bool = False) -> str:
+    if mapping:
+        return f"{' ' * indent}{key}: ${{{key}:-}}"
     return f"{' ' * indent}- {key}=${{{key}:-}}"
+
+
+class OverridePatchError(ValueError):
+    """The override cannot be extended safely by line edits."""
 
 
 def patch_override(template_text: str, member_files: dict[str, str], *, now: str) -> OverridePatch:
@@ -144,6 +150,10 @@ def patch_override(template_text: str, member_files: dict[str, str], *, now: str
 
     Pure: returns the text, backup name (``<override>.bak.<now>``) and unified
     diff for the caller to write. Never involves docker-compose.yml or shapes.
+    New entries follow the block's own form (list ``- KEY=...`` or mapping
+    ``KEY: ...``) and the file's indentation. Raises :class:`OverridePatchError`
+    for a gateway ``environment:`` written inline (``[...]``/``{...}``), which
+    line edits cannot extend without producing a duplicate key.
     """
     report = detect_drift(template_text, member_files)
     if not report.missing:
@@ -161,25 +171,43 @@ def patch_override(template_text: str, member_files: dict[str, str], *, now: str
         blk = _find_env_block(lines)
         if blk is not None:
             env, ei, last = blk
-            item_indent = ei + 2
+            item_indent, mapping = ei + 2, False
             for i in range(env + 1, last + 1):
-                if lines[i].lstrip().startswith("- "):
-                    item_indent = _indent(lines[i])
-                    break
-            ins = [_line(k, item_indent) for k in report.missing]
+                if _is_skip(lines[i]):
+                    continue
+                item_indent = _indent(lines[i])
+                mapping = not lines[i].lstrip().startswith("- ")
+                break
+            ins = [_line(k, item_indent, mapping) for k in report.missing]
             lines[last + 1 : last + 1] = ins
         else:
             gw = next(
                 (i for i, ln in enumerate(lines) if re.match(r"^\s+gateway:\s*(#.*)?$", ln)),
                 None,
             )
-            block = ["    environment:"] + [_line(k, 6) for k in report.missing]
             if gw is not None:
+                gi = _indent(lines[gw])
+                step = gi  # the file's own indent unit (services -> gateway)
+                for i in range(gw + 1, len(lines)):
+                    if _is_skip(lines[i]):
+                        continue
+                    if _indent(lines[i]) <= gi:
+                        break
+                    if re.match(r"^\s+environment:", lines[i]):
+                        raise OverridePatchError(
+                            "gateway environment in docker-compose.override.yml is written "
+                            "inline; add the missing keys by hand: " + ", ".join(report.missing)
+                        )
+                block = [" " * (gi + step) + "environment:"] + [
+                    _line(k, gi + 2 * step) for k in report.missing
+                ]
                 lines[gw + 1 : gw + 1] = block
             elif any(re.match(r"^services:\s*(#.*)?$", ln) for ln in lines):
                 s = next(i for i, ln in enumerate(lines) if re.match(r"^services:", ln))
+                block = ["    environment:"] + [_line(k, 6) for k in report.missing]
                 lines[s + 1 : s + 1] = ["  gateway:"] + block
             else:
+                block = ["    environment:"] + [_line(k, 6) for k in report.missing]
                 lines += ["services:", "  gateway:"] + block
         new = "\n".join(lines) + "\n"
         backup = f"{OVERRIDE_NAME}.bak.{now}"
