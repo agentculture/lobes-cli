@@ -43,7 +43,7 @@ from lobes import __version__
 from lobes.cli import _runtime_ops
 from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
-from lobes.rollout import _drift, _residents, _transport
+from lobes.rollout import _drift, _identity, _residents, _transport
 from lobes.rollout._journal import SKIPPED_OFFLINE, Journal
 from lobes.rollout._member_lock import LockHeld, member_lock
 from lobes.rollout._member_step import run_member_step
@@ -105,6 +105,8 @@ class Seams:
     runner: Callable[..., Any] = _transport.default_runner
     preflight_runner: Optional[Callable[..., Any]] = None
     sleep: Callable[[float], Any] = time.sleep
+    # late-bound so the test suite can stub the docker lookup in one place
+    inspect_name: Callable[[], Optional[str]] = lambda: _identity.running_gateway_mesh_name()
 
 
 SEAMS = Seams()
@@ -288,13 +290,34 @@ def _reachable_by_ssh(m: _Member) -> bool:
     return bool(m.lobes_path and str(m.lobes_path).startswith("/") and (m.ssh or m.is_local))
 
 
+def _this_box(args, env: dict, roster_origins: dict) -> str:
+    """This box's mesh name: --local, else the running gateway's, never a roster peer."""
+    try:
+        name, warning = _identity.resolve_local_name(
+            env.get("LOBES_MESH_NAME"),
+            roster_origins.keys(),
+            explicit=getattr(args, "local", None),
+            inspect=SEAMS.inspect_name,
+        )
+    except _identity.IdentityError as exc:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=str(exc),
+            remediation="pass --local <this box's mesh name> (see lobes mesh status)",
+        ) from exc
+    if warning:
+        emit_diagnostic(f"warning: {warning}")
+    return name or ""
+
+
 def _gather(args, target: str) -> _Ctx:
     deploy_dir = _deploy_dir(args)
     env = _local_env(deploy_dir)
-    local = (getattr(args, "local", None) or env.get("LOBES_MESH_NAME") or "").strip()
     port = _runtime_ops.resolve_port(args, deploy_dir / _compose.ENV_FILE)
     mesh_key = (env.get("LOBES_MESH_KEY") or "").strip() or None
     op_key = (env.get("GATEWAY_API_KEY") or env.get("CULTURE_VLLM_API_KEY") or "").strip() or None
+    origins = _roster_origins(port, op_key, mesh_key)
+    local = _this_box(args, env, origins)
     secrets = _local_secrets(env)
     residents = _load_residents(deploy_dir)
 
@@ -314,7 +337,6 @@ def _gather(args, target: str) -> _Ctx:
             f"{target}'s; pass --template <target docker-compose.yml> to check the target's."
         )
 
-    origins = _roster_origins(port, op_key, mesh_key)
     members: dict = {}
     for name, entry in residents.residents.items():
         m = _member_from_entry(name, entry, local)
@@ -897,7 +919,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
             message=f"{member!r} is not a resident in {deploy_dir / _residents.DEFAULT_NAME}",
             remediation="pass a resident name (see lobes rollout status)",
         )
-    local = (env.get("LOBES_MESH_NAME") or "").strip()
+    local = _this_box(args, env, {})
     m = _member_from_entry(member, entry, local)
     base = Journal(deploy_dir, redact=clean)
     target = _latest_target(base, member)

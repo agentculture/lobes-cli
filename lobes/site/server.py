@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import parse_qs, urlsplit
 
-from lobes.rollout import _export, _residents
+from lobes.rollout import _export, _identity, _residents
 from lobes.rollout._journal import FAILED, STEPS, Journal
 from lobes.rollout._observe import MemberObservation, observe_member
 from lobes.rollout._redact import redact
@@ -125,6 +125,9 @@ def scrub(value: Any, secrets: tuple) -> Any:
     if isinstance(value, (list, tuple)):
         return [scrub(v, secrets) for v in value]
     return value
+
+
+LOBES_TUNNEL_CONTAINER = "lobes-cloudflared"
 
 
 # ------------------------------------------------------------------ /api/mesh
@@ -214,7 +217,9 @@ def _shapes(members: list) -> tuple:
                     "evidence": found[1],
                 }
             )
-        pooled = [(n, lobe) for n, lobe in hosts if n not in split_members]
+        # a pool needs members actually serving: an advertised-but-not-ready lane
+        # (e.g. stt/tts declared everywhere, served nowhere) is not a pair
+        pooled = [(n, lobe) for n, lobe in hosts if n not in split_members and lobe["ready"]]
         for n, lobe in hosts:
             if n in split_members:
                 lobe["shape"] = "split"
@@ -541,7 +546,7 @@ def _local_tunnel(deploy_dir: Path) -> Optional[str]:
     try:
         # fixed argv, read-only `docker ps`
         p = subprocess.run(  # nosec B603 B607
-            ["docker", "ps", "--filter", "name=cloudflared", "--format", "{{.Names}}"],
+            ["docker", "ps", "--format", "{{.Names}}"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -549,8 +554,11 @@ def _local_tunnel(deploy_dir: Path) -> Optional[str]:
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
-    names = [n for n in p.stdout.split() if n] if p.returncode == 0 else []
-    return f"container {names[0]} running" if names else None
+    names = set(p.stdout.split()) if p.returncode == 0 else set()
+    # only lobes' own tunnel; other projects' cloudflared containers are not the hub
+    return (
+        f"container {LOBES_TUNNEL_CONTAINER} running" if LOBES_TUNNEL_CONTAINER in names else None
+    )
 
 
 def _health_memory(health: dict) -> Optional[dict]:
@@ -589,12 +597,31 @@ def _export_target(member: str, local_name: Optional[str], deploy_dir: Path) -> 
     return Target(ssh_target=val("ssh"), user=val("user"), lobes_path=val("lobes_path"))
 
 
+def _resolve_self(env_name, roster: Callable[[], list], inspect) -> Optional[str]:
+    """This box's mesh name: the running gateway's, never a roster peer's."""
+    try:
+        peers = [str(m.get("name")) for m in (roster() or []) if m.get("name")]
+    except Exception:  # noqa: BLE001 - an unreachable gateway just means no peers
+        peers = []
+    try:
+        name, warning = _identity.resolve_local_name(
+            env_name, peers, inspect=inspect or (lambda: _identity.running_gateway_mesh_name())
+        )
+    except _identity.IdentityError as exc:
+        sys.stderr.write(f"warning: {exc}; this box is shown unnamed\n")
+        return None
+    if warning:
+        sys.stderr.write(f"warning: {warning}\n")
+    return name
+
+
 def default_sources(
     deploy_dir: Path | str,
     *,
     gateway: Optional[str] = None,
     opener: Callable[..., Any] = urllib.request.urlopen,  # nosec B310
     timeout: float = 5.0,
+    inspect: Optional[Callable[[], Optional[str]]] = None,
 ) -> Sources:
     """Live sources: this box's gateway, its .env keys, residents file and journal."""
     from lobes.runtime import _env
@@ -605,9 +632,19 @@ def default_sources(
     secrets = _secret_values(env)
     port = env.get("VLLM_PORT") or "8000"
     local_origin = (gateway or f"http://127.0.0.1:{port}").rstrip("/")
-    local_name = env.get("LOBES_MESH_NAME") or None
     mesh_key = env.get("LOBES_MESH_KEY") or None
     gateway_key = env.get("GATEWAY_API_KEY") or None
+    local_name = _resolve_self(
+        env.get("LOBES_MESH_NAME"),
+        lambda: observe_member(
+            local_origin,
+            gateway_key=gateway_key,
+            mesh_key=mesh_key,
+            opener=opener,
+            timeout=timeout,
+        ).roster,
+        inspect,
+    )
 
     def observe(origin: str) -> MemberObservation:
         local = origin.rstrip("/") == local_origin

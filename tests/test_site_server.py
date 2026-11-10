@@ -695,6 +695,8 @@ def _fleet_sources(tmp_path, monkeypatch, routes, *, local_tunnel=None, local_me
 
 def test_gateway_shape_end_to_end_split_memory_and_declared_hub(tmp_path, monkeypatch):
     src, opener = _fleet_sources(tmp_path, monkeypatch, _fleet_routes())
+    startup = len(opener.calls)  # one local read at startup resolves this box's name
+    assert startup == 3
     doc = site.build_mesh(src)
     assert [(s["model"], s["members"]) for s in doc["split_brains"]] == [
         ("zai/GLM-5.3-Flash", ["spark", "spark2"])
@@ -716,7 +718,7 @@ def test_gateway_shape_end_to_end_split_memory_and_declared_hub(tmp_path, monkey
         "declared": True,
     }
     # the evidence rides the three GETs per member the site already made
-    assert len(opener.calls) == 3 * 4
+    assert len(opener.calls) - startup == 3 * 4
 
 
 def test_remote_declared_tunnel_makes_that_member_the_hub(tmp_path, monkeypatch):
@@ -759,3 +761,53 @@ def test_remote_member_never_uses_the_local_probes(tmp_path, monkeypatch):
     )
     by = {m["name"]: m for m in site.build_mesh(src)["members"]}
     assert by["thor"]["memory"] is None
+
+
+def test_stale_env_name_that_is_a_roster_peer_is_not_this_box(tmp_path, monkeypatch, capsys):
+    # live 2026-11-10: core's .env said LOBES_MESH_NAME=spark; the gateway runs as core
+    (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=spark\n")
+    monkeypatch.setattr(site, "_local_tunnel", lambda base: None)
+    monkeypatch.setattr(site, "_read_meminfo", lambda path=None: None)
+    opener = _GatewayOpener(_fleet_routes())
+    src = site.default_sources(tmp_path, opener=opener, inspect=lambda: "core")
+    doc = site.build_mesh(src)
+    assert doc["self"] == "core"
+    by = {m["name"]: m for m in doc["members"]}
+    assert by["spark"]["local"] is False
+    assert by["spark"]["origin"] == "http://spark:8001"
+    assert "disagrees with the running gateway" in capsys.readouterr().err
+
+
+def test_peer_name_with_no_container_leaves_this_box_unnamed(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=spark\n")
+    monkeypatch.setattr(site, "_local_tunnel", lambda base: None)
+    monkeypatch.setattr(site, "_read_meminfo", lambda path=None: None)
+    opener = _GatewayOpener(_fleet_routes())
+    src = site.default_sources(tmp_path, opener=opener, inspect=lambda: None)
+    assert src.local_name is None
+    assert "is a peer" in capsys.readouterr().err
+
+
+def test_only_lobes_own_tunnel_container_is_hub_evidence(monkeypatch, tmp_path):
+    import subprocess as sp
+
+    def ps(names):
+        return lambda *a, **k: sp.CompletedProcess(a, 0, "\n".join(names), "")
+
+    foreign = ["xteink-cloudflared-ui-1", "culture-library-cloudflared-1"]
+    monkeypatch.setattr(site.subprocess, "run", ps(foreign))
+    assert site._local_tunnel(tmp_path) is None
+    monkeypatch.setattr(site.subprocess, "run", ps(foreign + ["lobes-cloudflared"]))
+    assert site._local_tunnel(tmp_path) == "container lobes-cloudflared running"
+
+
+def test_lanes_advertised_but_not_ready_are_not_pairs():
+    members = [
+        {"name": n, "lobes": [{"role": "stt", "model": "parakeet", "ready": r, "shape": "single"}]}
+        for n, r in (("a", False), ("b", False), ("c", True))
+    ]
+    splits, pairs = site._shapes(members)
+    assert pairs == [] and splits == []
+    members[1]["lobes"][0]["ready"] = True
+    _, pairs = site._shapes(members)
+    assert pairs == [{"model": "parakeet", "roles": ["stt"], "members": ["b", "c"]}]

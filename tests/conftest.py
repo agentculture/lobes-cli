@@ -100,3 +100,16 @@ def _pin_unknown_card(monkeypatch) -> None:
         return real_detect_card(*args, **kwargs)
 
     monkeypatch.setattr(_detect, "detect_card", _detect_card)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_gateway_identity(monkeypatch):
+    """Keep this box's real gateway container out of every test.
+
+    ``lobes.rollout._identity.running_gateway_mesh_name`` runs ``docker inspect``
+    on the live gateway; on a dev box that hosts one it would leak the real mesh
+    name into tests. Tests that exercise it pass their own runner.
+    """
+    from lobes.rollout import _identity
+
+    monkeypatch.setattr(_identity, "running_gateway_mesh_name", lambda *a, **k: None)
