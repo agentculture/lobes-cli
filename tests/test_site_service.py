@@ -121,7 +121,8 @@ def test_reinstall_rewrites_with_new_flags(tmp_path):
     ctx = _ctx(tmp_path, runner)
     _service.apply_install(_service.plan_install(deploy, ctx, host="127.0.0.1", port=9490), ctx)
     plan2 = _service.plan_install(deploy, ctx, host="100.1.2.3", port=9491)
-    assert plan2.replaces and plan2.blockers == []
+    assert plan2.replaces
+    assert plan2.blockers == []
     _service.apply_install(plan2, ctx)
     assert "--host 100.1.2.3 --port 9491" in plan2.unit_path.read_text()
 
@@ -138,7 +139,8 @@ def test_uninstall_removes_only_listed_unit(tmp_path):
     (deploy / _service.MANIFEST).write_text(json.dumps(m))
     out = _service.apply_uninstall(deploy, ctx)
     assert out["removed"] == [str(plan.unit_path)]
-    assert not plan.unit_path.exists() and stray.exists()
+    assert not plan.unit_path.exists()
+    assert stray.exists()
     assert not (deploy / _service.MANIFEST).exists()
     assert ["systemctl", "--user", "disable", "--now", "lobes-site.service"] in runner.calls
 
@@ -154,8 +156,11 @@ def test_status_reports_active_enabled(tmp_path):
     assert _service.status(deploy, ctx)["installed"] is False
     _service.apply_install(_service.plan_install(deploy, ctx, host="127.0.0.1", port=9490), ctx)
     st = _service.status(deploy, ctx)
-    assert st["installed"] and st["active"] == "active" and st["enabled"] == "enabled"
-    assert st["files_present"] and st["linger"] is True
+    assert st["installed"]
+    assert st["active"] == "active"
+    assert st["enabled"] == "enabled"
+    assert st["files_present"]
+    assert st["linger"] is True
 
 
 def _args(tmp_path, **kw):
@@ -178,7 +183,8 @@ def test_cli_install_dry_run_writes_nothing(tmp_path, monkeypatch, capsys):
     args = _args(tmp_path, action="install")
     assert site_cmd.cmd_site(args) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["dry_run"] is True and out["unit_type"] == "user"
+    assert out["dry_run"] is True
+    assert out["unit_type"] == "user"
     assert not Path(out["unit_path"]).exists()
     assert not any(c[0] == "systemctl" for c in runner.calls)
 
@@ -189,7 +195,8 @@ def test_cli_install_apply_then_status(tmp_path, monkeypatch, capsys):
     args = _args(tmp_path, action="install", apply=True)
     assert site_cmd.cmd_site(args) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["dry_run"] is False and Path(out["files"][0]).exists()
+    assert out["dry_run"] is False
+    assert Path(out["files"][0]).exists()
     args.action, args.apply = "status", False
     assert site_cmd.cmd_site(args) == 0
     assert json.loads(capsys.readouterr().out)["active"] == "active"

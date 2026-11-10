@@ -687,6 +687,31 @@ _LANE_KNOB_ENV = (
 LANE_KNOB_SUFFIXES = tuple(suffix for _, suffix in _LANE_KNOB_ENV)
 
 
+def _lane_env(shape: Shape) -> dict[str, str]:
+    """Each hosted lane's gateway wire and declared knobs."""
+    env: dict[str, str] = {}
+    for lane in shape.lanes:
+        env[lane_key(lane, "BASE_URL")] = f"http://embed-{lane}:8000"
+        for knob, suffix in _LANE_KNOB_ENV:
+            if knob in shape.lane_knobs.get(lane, {}):
+                env[lane_key(lane, suffix)] = str(shape.lane_knobs[lane][knob])
+    return env
+
+
+def _gateway_only_audio_env(shape: Shape) -> dict[str, str]:
+    """A shape that hosts NOTHING (gateway-only) declares the audio lanes off.
+
+    Absent STT/TTS_FEASIBLE reads as a sleeping lobe (feasible:true,
+    ready:false) by design, which is right for a box that may come to host
+    audio but wrong for one that never will: live 2026-11-10 the gateway-only
+    `core` advertised stt/tts as not-ready lanes it can never serve. Shapes
+    that host anything keep the sleeping-lobe default byte for byte.
+    """
+    if shape.hosts or shape.lanes:
+        return {}
+    return {f"{role.upper()}_FEASIBLE": "false" for role in AUDIO_ROLES}
+
+
 def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     """The ``.env`` projection for a (shape, card) pair.
 
@@ -732,21 +757,9 @@ def shape_env(shape: Shape, profile: Profile) -> dict[str, str]:
     # lane is un-gated by its own compose profile (the overlay's service is
     # `embed-<lane>`), and wired into the gateway by its <LANE>_BASE_URL. Only
     # HOSTED lanes are wired, so the gateway sees exactly the hosted set.
-    for lane in shape.lanes:
-        compose_profiles.append(lane)
-        env[lane_key(lane, "BASE_URL")] = f"http://embed-{lane}:8000"
-        for knob, suffix in _LANE_KNOB_ENV:
-            if knob in shape.lane_knobs.get(lane, {}):
-                env[lane_key(lane, suffix)] = str(shape.lane_knobs[lane][knob])
-    # A shape that hosts NOTHING (gateway-only) declares the audio lanes off
-    # too. Absent STT/TTS_FEASIBLE reads as a sleeping lobe (feasible:true,
-    # ready:false) by design, which is right for a box that may come to host
-    # audio but wrong for one that never will: live 2026-11-10 the gateway-only
-    # `core` advertised stt/tts as not-ready lanes it can never serve. Shapes
-    # that host anything keep the sleeping-lobe default byte for byte.
-    if not shape.hosts and not shape.lanes:
-        for role in AUDIO_ROLES:
-            env[f"{role.upper()}_FEASIBLE"] = "false"
+    compose_profiles += list(shape.lanes)
+    env.update(_lane_env(shape))
+    env.update(_gateway_only_audio_env(shape))
     if compose_profiles:
         env["COMPOSE_PROFILES"] = ",".join(compose_profiles)
     return env

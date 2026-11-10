@@ -60,7 +60,8 @@ def _get(s, path):
 
 def test_packaged_page_is_served_under_the_csp(srv):
     code, headers, body = _get(srv, "/")
-    assert code == 200 and headers["Content-Type"].startswith("text/html")
+    assert code == 200
+    assert headers["Content-Type"].startswith("text/html")
     csp = headers["Content-Security-Policy"]
     assert "default-src 'self'" in csp
     assert body.decode() == _html()
@@ -72,7 +73,8 @@ def test_page_makes_no_external_request():
     assert not re.search(r"https?://", html), "absolute URL in index.html"
     assert not re.search(r"""(src|href)\s*=\s*["']//""", html), "protocol-relative URL"
     assert not re.search(r"url\(\s*['\"]?//", html), "protocol-relative url()"
-    assert "fonts.googleapis" not in html and "cdn" not in html.lower()
+    assert "fonts.googleapis" not in html
+    assert "cdn" not in html.lower()
     # every src/href is same-origin: a fragment, a root path, or an inline data: icon
     for attr in re.findall(r"""(?:src|href)\s*=\s*["']([^"']*)["']""", html):
         assert attr.startswith(("#", "/", "data:")), attr
@@ -94,7 +96,8 @@ def test_fonts_and_licence_ship_in_the_package(srv):
         data = WEB.joinpath("vendor", name).read_bytes()
         assert data[:4] == b"wOF2", name
     code, headers, body = _get(srv, "/vendor/lato-OFL.txt")
-    assert code == 200 and headers["Content-Type"].startswith("text/plain")
+    assert code == 200
+    assert headers["Content-Type"].startswith("text/plain")
     assert b"SIL Open Font License" in body
 
 

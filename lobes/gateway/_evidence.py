@@ -13,7 +13,6 @@ unreadable the body is byte-identical to the original three keys.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
 
 MEMINFO = Path("/proc/meminfo")
@@ -36,13 +35,11 @@ def read_meminfo(path: Path | None = None) -> dict[str, int] | None:
     return {"total_bytes": kb["MemTotal"], "available_bytes": kb["MemAvailable"]}
 
 
-def health_payload(
-    env: Mapping[str, str] | None = None, *, version: str, meminfo: Path | None = None
-) -> dict:
+def health_payload(*, version: str, meminfo: Path | None = None) -> dict:
     """The ``GET /health`` body: the original three keys plus measured ``memory``.
 
-    ``env`` is accepted for call-site stability and not read: nothing on
-    ``/health`` is operator-declared any more (deviation d2).
+    Nothing on ``/health`` is operator-declared (deviation d2), so it reads no
+    environment at all.
     """
     body: dict[str, object] = {
         "status": "ok",

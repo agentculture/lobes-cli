@@ -62,7 +62,7 @@ def test_retired_api_is_gone():
 
 
 def test_health_never_carries_a_declared_tunnel(tmp_path):
-    body = E.health_payload(RETIRED, version="x", meminfo=tmp_path / "missing")
+    body = E.health_payload(version="x", meminfo=tmp_path / "missing")
     assert "tunnel" not in body
 
 
@@ -72,14 +72,14 @@ _MEMINFO = "MemTotal:       131072000 kB\nMemFree:  1000 kB\nMemAvailable:    65
 
 
 def test_health_payload_unchanged_when_nothing_measured(tmp_path):
-    body = E.health_payload({}, version="1.2.3", meminfo=tmp_path / "missing")
+    body = E.health_payload(version="1.2.3", meminfo=tmp_path / "missing")
     assert body == {"status": "ok", "service": "model-gear-gateway", "version": "1.2.3"}
 
 
 def test_health_payload_memory_from_meminfo(tmp_path):
     mi = tmp_path / "meminfo"
     mi.write_text(_MEMINFO)
-    body = E.health_payload({}, version="1.2.3", meminfo=mi)
+    body = E.health_payload(version="1.2.3", meminfo=mi)
     assert body["memory"] == {
         "total_bytes": 131072000 * 1024,
         "available_bytes": 65536000 * 1024,
@@ -90,7 +90,7 @@ def test_health_payload_memory_from_meminfo(tmp_path):
 def test_health_payload_memory_omitted_when_meminfo_incomplete(tmp_path):
     mi = tmp_path / "meminfo"
     mi.write_text("MemTotal: 100 kB\n")
-    assert "memory" not in E.health_payload({}, version="x", meminfo=mi)
+    assert "memory" not in E.health_payload(version="x", meminfo=mi)
 
 
 def test_health_route_serves_the_evidence(monkeypatch, tmp_path):
@@ -108,6 +108,7 @@ def test_health_route_serves_the_evidence(monkeypatch, tmp_path):
     finally:
         httpd.shutdown()
         httpd.server_close()
-    assert body["status"] == "ok" and body["version"] == __version__
+    assert body["status"] == "ok"
+    assert body["version"] == __version__
     assert body["memory"]["total_bytes"] == 131072000 * 1024
     assert "tunnel" not in body

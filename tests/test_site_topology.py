@@ -123,7 +123,8 @@ def test_remote_command_projects_only_the_allowlist(fake_docker):
         "model": "GLM-5.3-Flash",
         "env": {"TF_GLM_WORLD": "2", "TF_GLM_RANK": "1"},
     }
-    assert rows[1]["model"] == "unsloth/Qwen3.8-27B-NVFP4" and rows[1]["tp"] == 2
+    assert rows[1]["model"] == "unsloth/Qwen3.8-27B-NVFP4"
+    assert rows[1]["tp"] == 2
     assert rows[1]["env"] == {}
     assert rows[2] == {
         "name": "lobes-cloudflared",
@@ -136,7 +137,9 @@ def test_remote_command_projects_only_the_allowlist(fake_docker):
 def test_remote_command_drops_allowlist_keys_with_non_numeric_values(fake_docker):
     sneaky = glm(0, extra_env=(f"TF_GLM_SECRET={HF}", f"TF_X_WORLD={GW}", "TF_A_B_RANK=3"))
     rc, out, _ = fake_docker([sneaky])
-    assert rc == 0 and HF not in out and GW not in out
+    assert rc == 0
+    assert HF not in out
+    assert GW not in out
     assert json.loads(out)[0]["env"] == {
         "TF_GLM_WORLD": "2",
         "TF_GLM_RANK": "0",
@@ -146,12 +149,14 @@ def test_remote_command_drops_allowlist_keys_with_non_numeric_values(fake_docker
 
 def test_remote_command_with_no_containers_prints_an_empty_list(fake_docker):
     rc, out, _ = fake_docker([])
-    assert rc == 0 and json.loads(out) == []
+    assert rc == 0
+    assert json.loads(out) == []
 
 
 def test_remote_command_fails_when_docker_fails(fake_docker):
     rc, out, _ = fake_docker([glm(0)], fail=True)
-    assert rc != 0 and out.strip() == ""
+    assert rc != 0
+    assert out.strip() == ""
 
 
 @pytest.mark.parametrize(
@@ -170,7 +175,8 @@ def test_remote_command_parses_served_name_and_parallelism(fake_docker, cmd, ent
     assert rc == 0
     row = json.loads(out)[0]
     assert row["model"] == model
-    assert row.get("tp") == tp and row.get("pp") == pp
+    assert row.get("tp") == tp
+    assert row.get("pp") == pp
 
 
 # ------------------------------------------------- local re-validation
@@ -192,7 +198,9 @@ def test_parse_revalidates_and_redacts_locally():
     )
     rows = T.parse_projection(remote, secrets=(GW,))
     dumped = json.dumps([r.as_dict() for r in rows])
-    assert HF not in dumped and GW not in dumped and "HF_TOKEN" not in dumped
+    assert HF not in dumped
+    assert GW not in dumped
+    assert "HF_TOKEN" not in dumped
     assert [r.name for r in rows] == ["glm53-spark", "ok"]
     assert rows[0].ranks == (("TF_GLM", 2, 0),)
     assert rows[1].ranks == ()
@@ -291,7 +299,8 @@ def test_reader_uses_batchmode_ssh_with_the_remote_command():
     T.TopologyReader(lambda: {"spark": Target(ssh_target="spark")}, runner=runner).read()
     argv = seen[0]
     assert argv[:3] == ["ssh", "-o", "BatchMode=yes"]
-    assert "docker ps -q" in argv[-1] and "docker inspect" in argv[-1]
+    assert "docker ps -q" in argv[-1]
+    assert "docker inspect" in argv[-1]
 
 
 def test_reader_caches_for_the_ttl_then_refreshes():
@@ -321,7 +330,8 @@ def test_reader_runner_exception_is_unknown():
     runner = _runner()
     runner.by_dest["spark@spark"] = OSError("ssh missing")
     topo = T.TopologyReader(_targets, runner=runner).read()
-    assert topo["spark"] is None and topo["spark2"] is not None
+    assert topo["spark"] is None
+    assert topo["spark2"] is not None
 
 
 def test_reader_timeout_is_unknown():
@@ -362,4 +372,5 @@ def test_as_dict_carries_no_env():
 
 def test_module_is_stdlib_only():
     src = Path(T.__file__).read_text(encoding="utf-8")
-    assert "import yaml" not in src and "import requests" not in src
+    assert "import yaml" not in src
+    assert "import requests" not in src
