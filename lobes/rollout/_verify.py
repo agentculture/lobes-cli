@@ -15,6 +15,7 @@ import wave
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from lobes.rollout._member_step import same_version
 from lobes.rollout._observe import MemberObservation, Opener, diff, observe_member
 
 _CHAT_ROLES = {"cortex", "worker", "hand", "muse", "senses", "associate"}
@@ -144,7 +145,7 @@ def verify_member(
     after = observe_member(
         origin, gateway_key=gateway_key, mesh_key=mesh_key, opener=opener, timeout=timeout
     )
-    if not after.reachable or after.version != target_version:
+    if not after.reachable or not same_version(after.version, target_version):
         res.failures.append(
             Failure(origin, "health", None, f"version {after.version!r} != {target_version!r}")
         )

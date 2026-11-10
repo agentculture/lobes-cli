@@ -117,3 +117,30 @@ def test_real_template_parses():
     t = Path(d.__file__).parents[1] / "templates/fleet/docker-compose.yml"
     keys = d.gateway_env_keys(t.read_text())
     assert "GATEWAY_PORT" in keys and len(keys) > 20
+
+
+def test_patch_override_mapping_form_env_stays_mapping():
+    ov = "services:\n  gateway:\n    environment:\n      FOO: bar\n"
+    p = d.patch_override(
+        TEMPLATE, {"docker-compose.yml": SPARK2, "docker-compose.override.yml": ov}, now="T"
+    )
+    assert "      FOO: bar\n      STT_EN_BASE_URL: ${STT_EN_BASE_URL:-}\n" in p.new_text
+    assert "- STT_EN" not in p.new_text
+
+
+def test_patch_override_follows_four_space_indent():
+    ov = "services:\n    gateway:\n        restart: always\n"
+    p = d.patch_override(
+        TEMPLATE, {"docker-compose.yml": SPARK2, "docker-compose.override.yml": ov}, now="T"
+    )
+    assert "    gateway:\n        environment:\n            - STT_EN_BASE_URL" in p.new_text
+
+
+def test_patch_override_inline_env_refused():
+    import pytest
+
+    ov = "services:\n  gateway:\n    environment: {FOO: bar}\n"
+    with pytest.raises(d.OverridePatchError):
+        d.patch_override(
+            TEMPLATE, {"docker-compose.yml": SPARK2, "docker-compose.override.yml": ov}, now="T"
+        )

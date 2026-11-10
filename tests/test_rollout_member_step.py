@@ -366,3 +366,18 @@ def test_env_value_read_never_dumps_whole_env():
 def test_target_version_validated():
     with pytest.raises(ValueError):
         ms.run_member_step("m", T, "1.0; rm -rf /", runner=FakeMember())
+
+
+def test_install_adds_dev_index_when_set():
+    f = FakeMember()
+    step(f, index_url="https://test.pypi.org/simple/")
+    cmd = next(c for k, c in f.calls if k == "install")
+    assert "--extra-index-url https://test.pypi.org/simple/" in cmd
+    assert "--index-strategy unsafe-best-match" in cmd
+
+
+def test_install_without_dev_index_is_plain():
+    f = FakeMember()
+    step(f)
+    cmd = next(c for k, c in f.calls if k == "install")
+    assert "index" not in cmd
