@@ -87,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import governor as _governor_cmd
     from lobes.cli._commands import init as _init_cmd
     from lobes.cli._commands import learn as _learn_cmd
+    from lobes.cli._commands import lobe as _lobe_cmd
     from lobes.cli._commands import logs as _logs_cmd
     from lobes.cli._commands import measure as _measure_cmd
     from lobes.cli._commands import mesh as _mesh_cmd
@@ -137,6 +138,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Mesh membership (mesh-brain-join, t10): status is read-only; request/
     # approve/revoke are write verbs — dry-run by default, --apply commits.
     _mesh_cmd.register(sub)
+    _lobe_cmd.register(sub)
     _rollout_cmd.register(sub)  # gradual fleet rollout (plan/apply/status/rollback)
     _watcher_cmd.register(sub)  # host watcher unit (lane-safety section 5)
     _governor_cmd.register(sub)  # graded thermal governor (lane-safety adjunct)

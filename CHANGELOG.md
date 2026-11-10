@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.97.0] - 2026-11-10
+
+### Added
+
+- Residents: `~/.lobes/residents.toml` (who the operator can reach, per member;
+  every field detected or needs-you, never guessed) and `lobes mesh resident add
+  <name>` to turn a verified guest into a resident (dry-run; `--apply`).
+- `lobes doctor` residency checks: `new_mesh_member`, `resident_field_missing`,
+  `gateway_open`.
+- `lobes lobe export <role> --member <m>`: role -> compose service -> Dockerfile
+  and build inputs (or image reference for image-only lobes), merged by the
+  member's own `docker compose config --no-interpolate`; zero secret values.
+  A Dockerfile in a build subdirectory is exported with its inputs; `--local`
+  needs an absolute `lobes` (residents.toml `lobes_path` or PATH) and says so
+  instead of crashing. DECLARED/UNVALIDATED (#108).
+
 ## [0.96.0] - 2026-11-10
 
 ### Added

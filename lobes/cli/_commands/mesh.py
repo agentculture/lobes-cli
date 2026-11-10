@@ -38,11 +38,14 @@ import argparse
 import json
 import math
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from lobes.cli import _runtime_ops
-from lobes.cli._errors import EXIT_USER_ERROR, ModelGearError
+from lobes.cli._errors import EXIT_ENV_ERROR, EXIT_USER_ERROR, ModelGearError
 from lobes.cli._output import emit_diagnostic, emit_result
+from lobes.rollout import _residents
+from lobes.runtime import _compose
 
 _JSON_HELP = "Emit structured JSON."
 _COMPOSE_DIR_HELP = "Deployment dir (default: $LOBES_DIR or ~/.lobes)."
@@ -460,6 +463,85 @@ def cmd_mesh_revoke(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# lobes mesh resident add — promote a verified guest to a managed resident
+# ---------------------------------------------------------------------------
+
+
+def _origin_port(origin: object) -> int | None:
+    """The gateway port written in a roster origin URL, or ``None`` (never guessed)."""
+    try:
+        return urllib.parse.urlparse(str(origin or "")).port
+    except ValueError:
+        return None
+
+
+def _entry_json(entry: dict) -> dict:
+    return {f: {"value": v.value, "state": v.state} for f, v in entry.items()}
+
+
+def cmd_mesh_resident_add(args: argparse.Namespace) -> int:
+    json_mode = bool(getattr(args, "json", False))
+    port, _ = _runtime_ops.resolve_port_soft(args)
+    env = _runtime_ops.deployment_env_soft(args)
+    deploy_dir = _compose.resolve_deployment_dir(getattr(args, "compose_dir", None))
+    name = args.name
+
+    roster = _fetch_roster(port, _key_headers(env))
+    if roster is None:
+        raise ModelGearError(
+            code=EXIT_ENV_ERROR,
+            message="mesh roster unavailable — cannot confirm the member is verified",
+            remediation="start the gateway with LOBES_MESH_KEY set, or pass --port",
+        )
+    member = next((m for m in roster.get("members") or [] if m.get("name") == name), None)
+    if member is None:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name!r} is not a mesh member on the roster",
+            remediation="run 'lobes mesh status' for the exact mesh names (not hostnames)",
+        )
+    if not member.get("verified"):
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name!r} is on the roster but not verified",
+            remediation="wait for verification (or 'lobes mesh approve'), then retry",
+        )
+    current = _residents.load(deploy_dir)
+    if name in current.residents:
+        raise ModelGearError(
+            code=EXIT_USER_ERROR,
+            message=f"{name!r} is already a resident",
+            remediation=f"edit {_residents.DEFAULT_NAME} to change its fields",
+        )
+
+    # Only what the roster really says is detected; the rest is needs_you.
+    detected = _origin_port(member.get("origin"))
+    entry = _residents._entry({"port": detected} if detected else None, current.guests.get(name))
+    plan = {"name": name, "entry": _entry_json(entry)}
+    target = f"{deploy_dir}/{_residents.DEFAULT_NAME}"
+
+    if not args.apply:
+        if json_mode:
+            emit_result({"dry_run": True, "path": target, **plan}, json_mode=True)
+        else:
+            lines = [f"DRY RUN — would add resident {name!r} to {target}:"]
+            for f, v in entry.items():
+                lines.append(f"  {f}: {v.value if v.state == _residents.DETECTED else 'needs you'}")
+            lines.append("Re-run with --apply to write it.")
+            emit_result("\n".join(lines), json_mode=False)
+        return 0
+
+    current.guests.pop(name, None)
+    current.residents[name] = entry
+    _residents.save(current, deploy_dir)
+    if json_mode:
+        emit_result({"dry_run": False, "path": target, **plan}, json_mode=True)
+    else:
+        emit_result(f">> added resident {name!r} to {target}", json_mode=False)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 
@@ -525,3 +607,18 @@ def register(sub: argparse._SubParsersAction) -> None:
     revoke.add_argument("name", help="Member name to revoke.")
     revoke.add_argument("--apply", action="store_true", help="Actually POST /mesh/revoke.")
     revoke.set_defaults(func=cmd_mesh_revoke)
+
+    resident = noun.add_parser(
+        "resident",
+        help="Residents file: 'resident add <name>' promotes a verified guest. Dry-run; --apply.",
+    )
+    _add_common(resident)
+    resident.set_defaults(func=_no_verb)
+    rnoun = resident.add_subparsers(dest="resident_command", parser_class=type(p))
+    radd = rnoun.add_parser(
+        "add", help="Add a verified roster member as a resident. Dry-run; --apply."
+    )
+    _add_common(radd)
+    radd.add_argument("name", help="Mesh member name (not its hostname).")
+    radd.add_argument("--apply", action="store_true", help="Write residents.toml.")
+    radd.set_defaults(func=cmd_mesh_resident_add)
