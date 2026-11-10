@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.98.0] - 2026-11-10
+
+### Added
+
+- `lobes site`: a local, read-only site on 127.0.0.1:9490 (Mesh graph/table,
+  Rollout, Residents) per the confirmed design, fed by `/api/mesh`,
+  `/api/rollout`, `/api/residents`, `/api/lobe-export`. Plain JS, vendored Lato
+  (OFL), zero external requests.
+- Gateway evidence (deviation d1): `/capabilities` role entries carry
+  operator-typed `spans` / `world_size` (`<PREFIX>_SPANS`, `<PREFIX>_WORLD_SIZE`);
+  `/health` carries host `memory` and, when `LOBES_TUNNEL_PUBLIC_URL` is set, a
+  declared `tunnel`. Not part of the mesh fingerprint.
+- `docs/rollout.md`, `lobes explain rollout`, and a static boundary test that
+  rollout never touches lanes, checkpoints, shapes or profiles.
+  DECLARED/UNVALIDATED (#108).
+
 ## [0.97.0] - 2026-11-10
 
 ### Added
