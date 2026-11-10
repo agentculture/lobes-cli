@@ -4,15 +4,24 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.94.1] - 2026-11-09
+## [0.96.0] - 2026-11-10
 
 ### Added
 
-- Spec `docs/specs/2026-11-09-gradual-fleet-rollout.md` (devague /think): a
-  `lobes rollout plan|apply|status|rollback` flow that preflights a release,
-  upgrades mesh members' gateways in canary-first waves over SSH, verifies each
-  member through the mesh, and halts with a rollback command on the first
-  regression. Grounded in the 2026-11-09 stt-lanes upgrade of four gateways.
+- `lobes rollout plan|apply|status|rollback`: a gradual, canary-first gateway
+  upgrade across mesh residents over SSH. `plan` is read-only; `apply` preflights
+  the release (pip download in the gateway base image, with backoff), then per
+  member takes a lock, backs up `.env`, installs the CLI, repins
+  `MODEL_GEAR_VERSION`, tags the running gateway image as
+  `lobes-gateway:<old-version>`, rebuilds the gateway, waits for health and
+  verifies one request per role through the member's gateway. It halts at the
+  first failure with the exact `lobes rollout rollback --member <m> --apply`
+  command, never rolls back by itself, and resumes from an append-only journal.
+  Compose drift (gateway env keys the target passes but a member's compose
+  lacks) refuses the run unless `--patch-drift` (backed-up override edit).
+  DECLARED/UNVALIDATED (#108).
+- Spec, design and plan: `docs/specs/2026-11-09-gradual-fleet-rollout.md`,
+  `docs/design/lobes-site/`, `docs/plans/2026-11-09-gradual-fleet-rollout*.md`.
 
 ## [0.94.0] - 2026-11-04
 
