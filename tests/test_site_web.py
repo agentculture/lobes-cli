@@ -146,10 +146,9 @@ def test_page_never_invents_memory_or_a_hub():
     assert "mesh.hub && mesh.hub.member" in html
 
 
-def test_page_labels_a_declared_hub_as_declared():
-    # t21: a hub evidenced only by an operator declaration (/health tunnel) is
-    # shown as declared, never as a probed tunnel
+def test_page_has_no_declared_hub_label():
+    # deviation d2: the hub is only ever the member running lobes-cloudflared,
+    # read from the running system; nothing is labelled declared any more
     html = _html()
-    assert "mesh.hub.declared" in html
-    assert "outside (declared)" in html
-    assert "declares the outside tunnel" in html
+    assert "declared" not in html
+    assert "holds the outside tunnel" in html

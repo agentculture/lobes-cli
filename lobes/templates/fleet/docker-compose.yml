@@ -2477,27 +2477,6 @@ services:
       - LOBES_MESH_HEARTBEAT_S=${LOBES_MESH_HEARTBEAT_S:-60}
       - LOBES_MESH_MISSED_MAX=${LOBES_MESH_MISSED_MAX:-3}
       - LOBES_MESH_LEDGER_PATH=${LOBES_MESH_LEDGER_PATH:-/home/gateway/mesh/ledger.json}
-      # Advertised evidence for `lobes site` (t21, deviation d1), all
-      # OPERATOR-TYPED (#92), all empty by default so /capabilities and
-      # /health stay byte-identical. <PREFIX>_SPANS (comma-separated mesh
-      # member names, >= 2) / <PREFIX>_WORLD_SIZE (int >= 1) add the optional
-      # per-role `spans` / `world_size` keys to GET /capabilities for a role
-      # one engine serves across several boxes; they are never part of the
-      # mesh fingerprint. LOBES_TUNNEL_PUBLIC_URL adds `tunnel: {public_url,
-      # declared: true}` to GET /health on the box whose tunnel publishes it.
-      - PRIMARY_SPANS=${PRIMARY_SPANS:-}
-      - PRIMARY_WORLD_SIZE=${PRIMARY_WORLD_SIZE:-}
-      - MULTIMODAL_SPANS=${MULTIMODAL_SPANS:-}
-      - MULTIMODAL_WORLD_SIZE=${MULTIMODAL_WORLD_SIZE:-}
-      - MUSE_SPANS=${MUSE_SPANS:-}
-      - MUSE_WORLD_SIZE=${MUSE_WORLD_SIZE:-}
-      - WORKER_SPANS=${WORKER_SPANS:-}
-      - WORKER_WORLD_SIZE=${WORKER_WORLD_SIZE:-}
-      - ASSOCIATE_SPANS=${ASSOCIATE_SPANS:-}
-      - ASSOCIATE_WORLD_SIZE=${ASSOCIATE_WORLD_SIZE:-}
-      - HAND_SPANS=${HAND_SPANS:-}
-      - HAND_WORLD_SIZE=${HAND_WORLD_SIZE:-}
-      - LOBES_TUNNEL_PUBLIC_URL=${LOBES_TUNNEL_PUBLIC_URL:-}
     volumes:
       # The mesh runtime directory (mesh-brain-join, t4 / c9): the gateway's
       # FIRST bind mount. Mesh state — the approval ledger file lives here —

@@ -50,6 +50,11 @@ def offline_runtime(monkeypatch, tmp_path):
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var
     empty = tmp_path / "home-lobes"
     monkeypatch.setattr(_compose, "default_deployment_dir", lambda: empty)
+    # `lobes site` reads each member's containers over ssh / local docker
+    # (deviation d2); no test may reach a real docker or ssh by default.
+    from lobes.site import server as _site
+
+    monkeypatch.setattr(_site, "_TOPOLOGY_RUNNER", lambda argv, timeout: (1, "", "offline"))
 
 
 @pytest.fixture(autouse=True)
