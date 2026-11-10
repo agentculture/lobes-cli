@@ -166,3 +166,11 @@ def test_error_does_not_leak_key():
     )
     res = _run(net)
     assert "Bearer" not in repr(res)
+
+
+def test_equivalent_version_spelling_passes_health():
+    # /health reports the normalised form; the operator typed a shorter spelling
+    res = _verify.verify_member(
+        ORIGIN, target_version="1.2.3.0", gateway_key="k", opener=FakeNet(caps={})
+    )
+    assert not [f for f in res.failures if f.check == "health"]

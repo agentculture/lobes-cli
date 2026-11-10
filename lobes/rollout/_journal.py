@@ -1,7 +1,9 @@
 """Append-only rollout journal, status projection and resume point.
 
 One JSON object per line in ``<deployment dir>/rollout-journal.jsonl``.
-A member is done only after a ``verify`` record with result ``ok``.
+A member is done only after a ``verify`` record with result ``ok``, and stops
+being done after a later ``rollback`` record with result ``ok`` (so a re-run
+of apply upgrades it again rather than reporting it verified).
 Secrets are scrubbed by an injected ``redact`` callable (str -> str).
 """
 
@@ -26,6 +28,7 @@ STEPS = (
     "verify",
 )
 DONE_STEP = "verify"
+ROLLBACK_STEP = "rollback"
 OK = "ok"
 FAILED = "failed"
 SKIPPED_OFFLINE = "skipped_offline"
@@ -121,6 +124,8 @@ class Journal:
             m["step"], m["result"] = r["step"], r["result"]
             if r["step"] == DONE_STEP and r["result"] == OK:
                 m["done"] = True
+            elif r["step"] == ROLLBACK_STEP and r["result"] == OK:
+                m["done"] = False
         out = {}
         for name, m in acc.items():
             if m["done"]:

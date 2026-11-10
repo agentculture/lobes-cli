@@ -671,7 +671,26 @@ def test_window_active_member_skipped_with_reason(deploy, mesh, capsys):
     thor = next(r for r in data["results"] if r["member"] == "thor")
     assert thor["result"] == "skipped" and "benchmark window" in thor["reason"]
     assert mesh.boxes["thor"].running == OLD
-    assert mesh.boxes["spark"].running == NEW
+    # canary first: the later waves do not go ahead without the skipped canary
+    assert data["stopped_at"] == "thor"
+    assert [r["member"] for r in data["results"]] == ["thor"]
+    assert mesh.boxes["spark"].running == OLD
+
+
+def test_rolled_back_member_is_upgraded_again_on_reapply(deploy, mesh, capsys):
+    assert run(deploy, "apply", NEW, "--apply") == 0
+    from lobes.rollout._journal import Journal
+
+    j = Journal(deploy)
+    j.append("thor", "rollback", "ok", target=NEW, current=OLD)
+    assert j.status()["thor"].done is False
+    mesh.boxes["thor"].running = OLD
+    capsys.readouterr()
+    assert run(deploy, "apply", NEW, "--apply", "--json") == 0
+    data = json.loads(capsys.readouterr().out)
+    thor = next(r for r in data["results"] if r["member"] == "thor")
+    assert thor.get("note") != "verified earlier"
+    assert mesh.boxes["thor"].running == NEW
 
 
 def test_lock_held_member_halts(deploy, mesh, capsys):
@@ -827,3 +846,11 @@ def test_halt_after_patch_still_shows_the_override_diff(deploy, mesh, capsys):
     data = json.loads(capsys.readouterr().out)
     assert data["halt"]["member"] == "spark"
     assert "+      - STT_EN_BASE_URL" in data["halt"]["diff"]
+
+
+def test_local_member_uses_compose_dir_remote_uses_home(deploy, mesh, capsys):
+    assert run(deploy, "apply", NEW, "--apply") == 0
+    local = [c for k, c in mesh.boxes["cultureos"].calls if k in ("repin", "build", "backup")]
+    assert local and all(str(deploy) in c for c in local)
+    remote = [c for k, c in mesh.boxes["spark"].calls if k in ("repin", "build")]
+    assert remote and not any(str(deploy) in c for c in remote)
