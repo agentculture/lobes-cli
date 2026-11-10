@@ -111,7 +111,6 @@ def test_observe_keeps_the_health_body_without_extra_requests():
     health = dict(
         ROUTES["/health"],
         memory={"total_bytes": 10, "available_bytes": 4},
-        tunnel={"public_url": "https://lobes.culture.dev", "declared": True},
     )
     op = FakeOpener(dict(ROUTES, **{"/health": health}))
     obs = ob.observe_member("http://h:1", opener=op)

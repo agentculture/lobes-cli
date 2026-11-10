@@ -208,18 +208,30 @@ exposes it to that network and prints a warning.
   `$HOME/.lobes`.
 - A rolled-back member still shows `done` in `status`: the journal never
   clears `done`.
-- The site shows a split brain only when members advertise `spans` or
-  `world_size` in `/capabilities`, peer memory only from that member's own
-  `/health` `memory`, and a remote hub only from its `/health` `tunnel`
-  (labelled declared); the local box falls back to `/proc/meminfo` and a
-  tunnel probe. Gateways advertise these from t21 on: split and tunnel only
-  when the operator sets `<PREFIX>_SPANS` / `<PREFIX>_WORLD_SIZE` /
-  `LOBES_TUNNEL_PUBLIC_URL` (see
-  [gateway-fleet.md](gateway-fleet.md#advertised-evidence-split-memory-tunnel)).
-  DECLARED/UNVALIDATED (#108): no live member runs a t21 gateway yet, so
-  until then expect a single-model, local-memory view. Adding these keys to
-  the template's gateway env list makes `rollout` report every live member
-  as drifted; `lobes rollout apply --patch-drift` carries them over.
+- The site reads split brains and the hub from the running system, never
+  from typed declarations (deviation d2). On each page load (cached for
+  120 s) it runs one read-only command per resident over the residents' ssh
+  (BatchMode, 10 s timeout), and the same command on this box with local
+  docker. The command runs `docker ps` and `docker inspect` on the member and
+  prints only a fixed set of fields for each running container: name, image,
+  the served model name (`--served-model-name`, `--name` or `--model`, else
+  the argument after `serve`), integer `TF_<X>_WORLD` / `TF_<X>_RANK` env
+  values, and vLLM `--tensor-parallel-size` / `--pipeline-parallel-size`.
+  No other env value and no raw command line leaves the member, and the site
+  validates and redacts the output again on arrival. A split is one served
+  model whose containers on N distinct members all report world N, with
+  ranks exactly `0..N-1`. A TP>1 vLLM on one box is recorded but is not a
+  split. The split is tied to the role a span member's gateway advertises
+  for that model, compared on the final path segment with case and
+  punctuation ignored (`GLM-5.3-Flash` matches `zai/GLM-5.3-Flash`). The hub
+  is the one member running a container named `lobes-cloudflared`. A member
+  whose read fails (ssh refused, timeout, docker denied) shows topology
+  unknown and never completes a split or names a hub. Guests are not read,
+  and a resident whose ssh is `needs_you` is unknown. Peer memory comes only
+  from that member's own `/health` `memory`; the local box falls back to
+  `/proc/meminfo`. DECLARED/UNVALIDATED (#108): the reader is tested against
+  fake runners and a fake `docker` only, and has not run against the live
+  mesh.
 - An image-only lobe can be described by `lobe export`, not rebuilt.
 - Wire compatibility between consecutive releases is assumed, not checked:
   the mesh has no protocol-version check, so features new in the target are

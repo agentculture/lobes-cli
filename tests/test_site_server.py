@@ -16,10 +16,11 @@ from lobes.cli import main
 from lobes.rollout._journal import STEPS, Journal
 from lobes.rollout._observe import MemberObservation
 from lobes.rollout._residents import DETECTED, NEEDS_YOU, Field, Residents
+from lobes.site import _topology
 from lobes.site import server as site
 
-SECRET = "sk-mesh-very-secret-0001"
-GW_SECRET = "gw-secret-key-0002"
+SECRET = "fake-mesh-key-for-tests-0000"
+GW_SECRET = "fake-gateway-key-for-tests-0000"
 
 LOCAL = "http://127.0.0.1:8001"
 
@@ -47,17 +48,18 @@ def _caps():
     return {
         LOCAL: {
             # reaches cortex only through the mesh: not a lobe here
-            "cortex": _role("GLM-5.3-Flash", proxied=True, hosted_by="http://spark:8001"),
+            "cortex": _role("zai/GLM-5.3-Flash", proxied=True, hosted_by="http://spark:8001"),
             "tts": _role("ResembleAI/chatterbox", proxied=True),
         },
-        "http://spark:8001": {"cortex": _role("GLM-5.3-Flash", world_size=2)},
+        # live 2026-11-10: spark's gateway advertises the TensorFold cortex;
+        # spark2 (rank 0 of the same engine) does not list cortex at all
+        "http://spark:8001": {"cortex": _role("zai/GLM-5.3-Flash", runtime="tensorfold")},
         "http://spark2:8000": {
-            "cortex": _role("GLM-5.3-Flash", world_size=2),
             "stt-en": _role("nvidia/parakeet-tdt-0.6b-v2", runtime="parakeet"),
         },
         "http://thor:8000": {
             "reranker": _role("Qwen/Qwen3-Reranker-0.6B"),
-            "worker": _role("Nemotron-Super", world_size=1),
+            "worker": _role("Nemotron-Super"),
             "muse": _role("gemma", feasible=False),
         },
         "http://orin:8000": {
@@ -74,6 +76,37 @@ VERSIONS = {
     "http://thor:8000": "0.92.0.dev694",
     "http://orin:8000": "0.94.0",
 }
+
+
+def _tf(rank, world=2, model="GLM-5.3-Flash", group="TF_GLM"):
+    return _topology.Container(
+        name="glm53-spark",
+        image="tensorfold-glm53-spark:2026-11-01",
+        model=model,
+        ranks=((group, world, rank),),
+    )
+
+
+def _vllm_tp2():
+    return _topology.Container(
+        name="vllm-worker", image="vllm/vllm-openai:v0.31.0", model="Nemotron-Super", tp=2
+    )
+
+
+def _cloudflared(name="lobes-cloudflared"):
+    return _topology.Container(name=name, image="cloudflare/cloudflared:2026.10.0", model=None)
+
+
+def _topo(**over):
+    topo = {
+        "cultureos": [],
+        "spark": [_tf(1)],
+        "spark2": [_tf(0)],
+        "thor": [_vllm_tp2()],
+        "orin": None,  # unknown: never guessed
+    }
+    topo.update(over)
+    return topo
 
 
 def make_observe(caps=None, versions=None, roster=None, down=()):
@@ -141,7 +174,7 @@ def make_sources(tmp_path, **over):
         memory=lambda name, local, health: (
             {"total_bytes": 128 * 2**30, "available_bytes": 32 * 2**30} if local else None
         ),
-        tunnel=lambda name, local, health: None,
+        topology=lambda: _topo(),
         secrets=(SECRET, GW_SECRET),
     )
     kw.update(over)
@@ -258,7 +291,9 @@ def test_mesh_members_versions_roles_and_lobes(serve):
     assert set(thor_lobes) == {"reranker", "worker"}
     assert thor_lobes["reranker"]["model"] == "Qwen/Qwen3-Reranker-0.6B"
     spark2 = {lobe["role"]: lobe["model"] for lobe in by["spark2"]["lobes"]}
-    assert spark2 == {"cortex": "GLM-5.3-Flash", "stt-en": "nvidia/parakeet-tdt-0.6b-v2"}
+    # spark2 does not advertise cortex; it holds rank 0 of spark's engine, so the
+    # split gives it a cortex lobe the graph can draw
+    assert spark2 == {"cortex": "zai/GLM-5.3-Flash", "stt-en": "nvidia/parakeet-tdt-0.6b-v2"}
 
 
 def test_mesh_residency_from_residents_file(serve):
@@ -279,15 +314,40 @@ def test_mesh_memory_only_from_a_source(serve):
     assert by["thor"]["memory"] is None  # no evidence -> unknown, never a guess
 
 
-def test_split_brain_from_world_size_evidence(serve):
+def test_split_brain_from_tensorfold_world_rank(serve):
     _, data = _json(serve(), "/api/mesh")
-    assert len(data["split_brains"]) == 1
-    sb = data["split_brains"][0]
-    assert sb["model"] == "GLM-5.3-Flash"
-    assert sb["members"] == ["spark", "spark2"]
-    assert "world_size" in sb["evidence"]
+    assert data["split_brains"] == [
+        {
+            "model": "zai/GLM-5.3-Flash",
+            "served_name": "GLM-5.3-Flash",
+            "roles": ["cortex"],
+            "members": ["spark2", "spark"],  # rank order
+            "evidence": "TensorFold TF_GLM_WORLD=2: spark2 rank 0, spark rank 1",
+        }
+    ]
     by = {m["name"]: m for m in data["members"]}
     assert {lobe["shape"] for lobe in by["spark"]["lobes"]} == {"split"}
+    spark2 = {lobe["role"]: lobe for lobe in by["spark2"]["lobes"]}
+    assert spark2["cortex"]["shape"] == "split"
+    assert spark2["cortex"]["advertised"] is False  # drawn from topology, not its gateway
+    assert spark2["stt-en"]["shape"] == "single"
+
+
+def test_member_topology_is_the_allowlisted_projection(serve):
+    _, data = _json(serve(), "/api/mesh")
+    by = {m["name"]: m for m in data["members"]}
+    assert by["spark2"]["topology"] == [
+        {
+            "name": "glm53-spark",
+            "image": "tensorfold-glm53-spark:2026-11-01",
+            "model": "GLM-5.3-Flash",
+            "world_rank": [{"group": "TF_GLM", "world": 2, "rank": 0}],
+            "tp": None,
+            "pp": None,
+        }
+    ]
+    assert by["orin"]["topology"] is None  # unknown
+    assert by["cultureos"]["topology"] == []
 
 
 def test_pair_is_one_model_pooled_on_several(serve):
@@ -296,52 +356,123 @@ def test_pair_is_one_model_pooled_on_several(serve):
         ("Qwen/Qwen3-Reranker-0.6B", ["thor", "orin"])
     ]
     # the split model is not also reported as a pair
-    assert all(p["model"] != "GLM-5.3-Flash" for p in data["pairs"])
+    assert all("GLM" not in p["model"] for p in data["pairs"])
     by = {m["name"]: m for m in data["members"]}
     shapes = {lobe["role"]: lobe["shape"] for lobe in by["orin"]["lobes"]}
     assert shapes == {"reranker": "pair", "embedder": "single"}
 
 
-def test_no_split_evidence_means_pair_not_split(serve, tmp_path):
+def _spark2_hosts_cortex():
     caps = _caps()
-    for o in ("http://spark:8001", "http://spark2:8000"):
-        caps[o]["cortex"].pop("world_size")
-    _, data = _json(serve(make_sources(tmp_path, observe=make_observe(caps=caps))), "/api/mesh")
+    caps["http://spark2:8000"]["cortex"] = _role("zai/GLM-5.3-Flash")
+    return caps
+
+
+def test_no_topology_evidence_means_pair_not_split(serve, tmp_path):
+    src = make_sources(tmp_path, observe=make_observe(caps=_spark2_hosts_cortex()), topology=dict)
+    _, data = _json(serve(src), "/api/mesh")
     assert data["split_brains"] == []
-    assert ("GLM-5.3-Flash", ["spark", "spark2"]) in [
+    assert ("zai/GLM-5.3-Flash", ["spark", "spark2"]) in [
         (p["model"], p["members"]) for p in data["pairs"]
     ]
 
 
-def test_world_size_on_one_member_alone_is_single(serve, tmp_path):
-    caps = _caps()
-    caps["http://spark2:8000"].pop("cortex")
-    _, data = _json(serve(make_sources(tmp_path, observe=make_observe(caps=caps))), "/api/mesh")
-    assert data["split_brains"] == []
+@pytest.mark.parametrize(
+    "spark, spark2, why",
+    [
+        ([_tf(1)], [_tf(0, world=3)], "mismatched world"),
+        ([_tf(0)], [_tf(0)], "duplicate rank"),
+        ([_tf(1)], [_tf(2)], "ranks do not cover 0..N-1"),
+        ([_tf(1)], [], "world 2 on one member alone"),
+        ([_tf(1)], None, "the other member is unknown"),
+        ([_tf(1)], [_tf(0, model="Other-Model")], "different served model"),
+        ([_tf(1)], [_tf(0, group="TF_QWEN")], "different engine group"),
+    ],
+)
+def test_no_split_without_a_complete_matching_world(serve, tmp_path, spark, spark2, why):
+    src = make_sources(tmp_path, topology=lambda: _topo(spark=spark, spark2=spark2))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["split_brains"] == [], why
     by = {m["name"]: m for m in data["members"]}
-    assert by["spark"]["lobes"][0]["shape"] == "single"
+    assert by["spark"]["lobes"][0]["shape"] == "single", why
+    assert "cortex" not in {lobe["role"] for lobe in by["spark2"]["lobes"]}, why
 
 
-def test_spans_evidence_names_the_members(serve, tmp_path):
+def test_one_box_tensor_parallel_is_not_a_split(serve, tmp_path):
+    # thor's vLLM runs TP=2 on its own GPUs: recorded, never a cross-box split
+    _, data = _json(serve(), "/api/mesh")
+    assert all("Nemotron" not in s["model"] for s in data["split_brains"])
+    by = {m["name"]: m for m in data["members"]}
+    assert by["thor"]["topology"][0]["tp"] == 2
+    assert {lobe["role"]: lobe["shape"] for lobe in by["thor"]["lobes"]}["worker"] == "single"
+
+
+def test_split_with_no_advertising_member_has_no_roles(serve, tmp_path):
     caps = _caps()
-    caps["http://spark:8001"]["cortex"] = _role("GLM-5.3-Flash", spans=["spark", "spark2"])
-    caps["http://spark2:8000"]["cortex"] = _role("GLM-5.3-Flash")
-    _, data = _json(serve(make_sources(tmp_path, observe=make_observe(caps=caps))), "/api/mesh")
-    assert [s["members"] for s in data["split_brains"]] == [["spark", "spark2"]]
-    assert data["pairs"] == [
-        p for p in data["pairs"] if p["model"] != "GLM-5.3-Flash"
-    ]  # not double-counted
+    caps["http://spark:8001"].pop("cortex")
+    src = make_sources(tmp_path, observe=make_observe(caps=caps))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["split_brains"] == [
+        {
+            "model": "GLM-5.3-Flash",
+            "served_name": "GLM-5.3-Flash",
+            "roles": [],
+            "members": ["spark2", "spark"],
+            "evidence": "TensorFold TF_GLM_WORLD=2: spark2 rank 0, spark rank 1",
+        }
+    ]
+    by = {m["name"]: m for m in data["members"]}
+    assert by["spark"]["lobes"] == []  # no role to draw it under
 
 
-def test_hub_only_when_evidenced(serve, tmp_path):
+@pytest.mark.parametrize(
+    "served, advertised, match",
+    [
+        ("GLM-5.3-Flash", "zai/GLM-5.3-Flash", True),
+        ("glm_5.3_flash", "zai/GLM-5.3-Flash", True),
+        ("/model", "zai/GLM-5.3-Flash", False),
+        ("GLM-5.3", "zai/GLM-5.3-Flash", False),
+        ("zai/GLM-5.3-Flash", "other/GLM-5.3-Flash", True),
+    ],
+)
+def test_served_name_matches_on_the_final_path_segment(served, advertised, match):
+    assert site._same_model(served, advertised) is match
+
+
+def test_hub_only_from_a_running_lobes_cloudflared(serve, tmp_path):
     _, data = _json(serve(), "/api/mesh")
     assert data["hub"] is None
-    ev = make_sources(
-        tmp_path,
-        tunnel=lambda name, local, health: "cloudflared container running" if local else None,
+    src = make_sources(tmp_path, topology=lambda: _topo(cultureos=[_cloudflared()]))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["hub"] == {"member": "cultureos", "evidence": "container lobes-cloudflared running"}
+    # a remote member running it is the hub just the same
+    src = make_sources(tmp_path, topology=lambda: _topo(thor=[_vllm_tp2(), _cloudflared()]))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["hub"]["member"] == "thor"
+
+
+def test_other_projects_cloudflared_is_not_the_hub(serve, tmp_path):
+    foreign = [
+        _cloudflared("xteink-cloudflared-ui-1"),
+        _cloudflared("culture-library-cloudflared-1"),
+    ]
+    src = make_sources(tmp_path, topology=lambda: _topo(cultureos=foreign))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["hub"] is None
+
+
+def test_two_tunnel_holders_is_no_hub(serve, tmp_path):
+    src = make_sources(
+        tmp_path, topology=lambda: _topo(cultureos=[_cloudflared()], spark2=[_cloudflared()])
     )
-    _, data = _json(serve(ev), "/api/mesh")
-    assert data["hub"] == {"member": "cultureos", "evidence": "cloudflared container running"}
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["hub"] is None
+
+
+def test_topology_of_a_non_member_is_ignored(serve, tmp_path):
+    src = make_sources(tmp_path, topology=lambda: _topo(stranger=[_cloudflared()]))
+    _, data = _json(serve(src), "/api/mesh")
+    assert data["hub"] is None
 
 
 def test_unreachable_member_has_no_lobes(serve, tmp_path):
@@ -465,8 +596,13 @@ def test_no_secret_values_in_any_api_response(serve, tmp_path):
     def listing(role, member):
         return {"role": role, "member": member, "files": [], "notes": [f"LOBES_MESH_KEY={SECRET}"]}
 
+    leaky = _topology.Container(name="c", image=f"img:{SECRET}", model=f"m/{GW_SECRET}")
     src = make_sources(
-        tmp_path, observe=make_observe(caps=caps), journal=lambda: j, export_listing=listing
+        tmp_path,
+        observe=make_observe(caps=caps),
+        journal=lambda: j,
+        export_listing=listing,
+        topology=lambda: _topo(thor=[leaky]),
     )
     srv = serve(src)
     for path in (
@@ -572,22 +708,7 @@ def test_cli_works_without_a_deployment(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
 
 
-# ------------------------------------------------- t21: advertised evidence
-
-
-def test_declared_hub_is_labelled_declared(serve, tmp_path):
-    ev = make_sources(
-        tmp_path,
-        tunnel=lambda name, local, health: (
-            {"evidence": "declared: lobes.culture.dev", "declared": True} if local else None
-        ),
-    )
-    _, data = _json(serve(ev), "/api/mesh")
-    assert data["hub"] == {
-        "member": "cultureos",
-        "evidence": "declared: lobes.culture.dev",
-        "declared": True,
-    }
+# ------------------------------- gateway evidence (t21) and topology (d2)
 
 
 class _GatewayOpener:
@@ -621,16 +742,14 @@ class _GatewayOpener:
 
 
 def _spark_caps():
-    """spark's /capabilities as the real gateway renders it with t21's keys."""
+    """spark's /capabilities as the real gateway renders it (no declared keys)."""
     from lobes.gateway import server as gw
     from lobes.gateway._config import build_config
     from lobes.gateway._mesh_routing import RoutingSnapshot
 
     env = {
-        "PRIMARY_BASE_URL": "http://tensorfold:8000",
+        "PRIMARY_BASE_URL": "http://10.77.77.2:8010",
         "PRIMARY_SERVED_NAME": "zai/GLM-5.3-Flash",
-        "PRIMARY_SPANS": "spark,spark2",
-        "PRIMARY_WORLD_SIZE": "2",
     }
     table, cfg = build_config(env)
     return gw.capabilities_payload(
@@ -654,9 +773,7 @@ def _fleet_routes():
     return {
         "http://127.0.0.1:8001": {
             "/health": _evidence.health_payload(
-                {"LOBES_TUNNEL_PUBLIC_URL": "https://lobes.culture.dev"},
-                version="0.95.0",
-                meminfo=Path("/nonexistent/meminfo"),
+                {}, version="0.95.0", meminfo=Path("/nonexistent/meminfo")
             ),
             "/capabilities": {},
             "/mesh/roster": {
@@ -685,24 +802,80 @@ def _fleet_routes():
     }
 
 
-def _fleet_sources(tmp_path, monkeypatch, routes, *, local_tunnel=None, local_mem=None):
+def _tf_row(rank):
+    return {
+        "name": "glm53-spark",
+        "image": "tensorfold-glm53-spark:2026-11-01",
+        "model": "GLM-5.3-Flash",
+        "env": {"TF_GLM_WORLD": "2", "TF_GLM_RANK": str(rank)},
+    }
+
+
+CF_ROW = {
+    "name": "lobes-cloudflared",
+    "image": "cloudflare/cloudflared:1",
+    "model": None,
+    "env": {},
+}
+
+
+def _topology_runner(by_dest):
+    """Fake transport runner: ``local`` or the ssh destination -> projection rows."""
+    calls = []
+
+    def runner(argv, timeout):
+        dest = "local" if argv[0] == "sh" else argv[5]
+        calls.append(dest)
+        rows = by_dest.get(dest)
+        if rows is None:
+            return 255, "", "ssh: unreachable"
+        return 0, json.dumps(rows), ""
+
+    runner.calls = calls
+    return runner
+
+
+def _fleet_sources(tmp_path, monkeypatch, routes, *, topology=None, local_mem=None):
     (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=core\n")
-    monkeypatch.setattr(site, "_local_tunnel", lambda base: local_tunnel)
+    site._residents.save(
+        Residents(
+            residents={
+                "spark": _entry("spark", "spark", 8001, "/home/s/.local/bin/lobes", True),
+                "spark2": _entry("spark2", None, 8000, "/x/lobes", True),
+                "thor": _entry("thor", "thor", 8000, "/x/lobes", True),
+            }
+        ),
+        tmp_path,
+    )
     monkeypatch.setattr(site, "_read_meminfo", lambda path=None: local_mem)
+    runner = _topology_runner(
+        topology
+        if topology is not None
+        else {"local": [CF_ROW], "spark@spark": [_tf_row(1)], "spark2": [_tf_row(0)]}
+    )
     opener = _GatewayOpener(routes)
-    return site.default_sources(tmp_path, opener=opener), opener
+    src = site.default_sources(tmp_path, opener=opener, topology_runner=runner)
+    return src, opener, runner
 
 
-def test_gateway_shape_end_to_end_split_memory_and_declared_hub(tmp_path, monkeypatch):
-    src, opener = _fleet_sources(tmp_path, monkeypatch, _fleet_routes())
+def test_gateway_shape_end_to_end_split_memory_and_hub(tmp_path, monkeypatch):
+    src, opener, runner = _fleet_sources(tmp_path, monkeypatch, _fleet_routes())
     startup = len(opener.calls)  # one local read at startup resolves this box's name
     assert startup == 3
     doc = site.build_mesh(src)
-    assert [(s["model"], s["members"]) for s in doc["split_brains"]] == [
-        ("zai/GLM-5.3-Flash", ["spark", "spark2"])
+    assert doc["split_brains"] == [
+        {
+            "model": "zai/GLM-5.3-Flash",
+            "served_name": "GLM-5.3-Flash",
+            "roles": ["cortex"],
+            "members": ["spark2", "spark"],
+            "evidence": "TensorFold TF_GLM_WORLD=2: spark2 rank 0, spark rank 1",
+        }
     ]
-    assert "spans advertised by spark" == doc["split_brains"][0]["evidence"]
     by = {m["name"]: m for m in doc["members"]}
+    assert [lobe["shape"] for lobe in by["spark2"]["lobes"] if lobe["role"] == "cortex"] == [
+        "split"
+    ]
     # remote memory read from each member's own /health
     assert by["spark"]["memory"] == {
         "total_bytes": 128 * 2**30,
@@ -712,64 +885,89 @@ def test_gateway_shape_end_to_end_split_memory_and_declared_hub(tmp_path, monkey
     assert by["spark2"]["memory"] is None  # inconsistent figures -> unknown
     assert by["thor"]["memory"] is None  # not advertised -> unknown, never a guess
     assert by["core"]["memory"] is None  # local /proc fallback read nothing
-    assert doc["hub"] == {
-        "member": "core",
-        "evidence": "declared: lobes.culture.dev",
-        "declared": True,
-    }
-    # the evidence rides the three GETs per member the site already made
+    assert by["thor"]["topology"] is None  # ssh failed -> unknown
+    assert doc["hub"] == {"member": "core", "evidence": "container lobes-cloudflared running"}
+    # the gateway evidence rides the three GETs per member the site already made
     assert len(opener.calls) - startup == 3 * 4
+    # one topology command per member: residents over ssh, this box locally
+    assert sorted(runner.calls) == ["local", "spark2", "spark@spark", "thor@thor"]
 
 
-def test_remote_declared_tunnel_makes_that_member_the_hub(tmp_path, monkeypatch):
+def test_topology_is_cached_between_page_loads(tmp_path, monkeypatch):
+    src, _, runner = _fleet_sources(tmp_path, monkeypatch, _fleet_routes())
+    site.build_mesh(src)
+    site.build_mesh(src)
+    assert len(runner.calls) == 4
+
+
+def test_a_retired_tunnel_declaration_on_health_is_ignored(tmp_path, monkeypatch):
     routes = _fleet_routes()
-    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
     routes["http://thor:8000"]["/health"]["tunnel"] = {
         "public_url": "https://thor.example.org",
         "declared": True,
     }
-    src, _ = _fleet_sources(tmp_path, monkeypatch, routes)
-    hub = site.build_mesh(src)["hub"]
-    assert hub == {"member": "thor", "evidence": "declared: thor.example.org", "declared": True}
-
-
-def test_local_falls_back_to_proc_and_tunnel_probe(tmp_path, monkeypatch):
-    routes = _fleet_routes()
-    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
-    mem = {"total_bytes": 64 * 2**30, "available_bytes": 16 * 2**30}
-    src, _ = _fleet_sources(
-        tmp_path,
-        monkeypatch,
-        routes,
-        local_tunnel="container cloudflared running",
-        local_mem=mem,
+    src, _, _ = _fleet_sources(
+        tmp_path, monkeypatch, routes, topology={"spark@spark": [], "spark2": []}
     )
+    assert site.build_mesh(src)["hub"] is None
+
+
+def test_a_remote_lobes_cloudflared_makes_that_member_the_hub(tmp_path, monkeypatch):
+    src, _, _ = _fleet_sources(
+        tmp_path, monkeypatch, _fleet_routes(), topology={"local": [], "thor@thor": [CF_ROW]}
+    )
+    assert site.build_mesh(src)["hub"] == {
+        "member": "thor",
+        "evidence": "container lobes-cloudflared running",
+    }
+
+
+def test_local_memory_falls_back_to_proc(tmp_path, monkeypatch):
+    mem = {"total_bytes": 64 * 2**30, "available_bytes": 16 * 2**30}
+    src, _, _ = _fleet_sources(tmp_path, monkeypatch, _fleet_routes(), local_mem=mem)
     doc = site.build_mesh(src)
     assert {m["name"]: m for m in doc["members"]}["core"]["memory"]["total_bytes"] == 64 * 2**30
-    assert doc["hub"] == {"member": "core", "evidence": "container cloudflared running"}
 
 
 def test_remote_member_never_uses_the_local_probes(tmp_path, monkeypatch):
-    routes = _fleet_routes()
-    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
-    src, _ = _fleet_sources(
+    src, _, _ = _fleet_sources(
         tmp_path,
         monkeypatch,
-        routes,
-        local_tunnel="container cloudflared running",
+        _fleet_routes(),
         local_mem={"total_bytes": 64, "available_bytes": 16},
     )
     by = {m["name"]: m for m in site.build_mesh(src)["members"]}
     assert by["thor"]["memory"] is None
 
 
+def test_topology_targets_from_residents_and_the_local_box(tmp_path):
+    site._residents.save(
+        Residents(
+            residents={
+                "spark": _entry("spark", "spark", 8001, "/x/lobes", True),
+                "orin": _entry(None, None, 8000, None, True),  # ssh needs_you
+                "cultureos": _entry("local", "a", 8001, "/x/lobes", True),  # not this box
+            },
+            guests={"guest": _entry("g", None, 8000, None, True)},
+        ),
+        tmp_path,
+    )
+    targets = site._topology_targets(tmp_path, "core")
+    assert targets["spark"].ssh_target == "spark" and targets["spark"].user == "spark"
+    assert targets["orin"] is None
+    assert targets["core"].local is True
+    assert "cultureos" not in targets  # ssh=local but the running gateway says core
+    assert "guest" not in targets  # residents only
+
+
 def test_stale_env_name_that_is_a_roster_peer_is_not_this_box(tmp_path, monkeypatch, capsys):
     # live 2026-11-10: core's .env said LOBES_MESH_NAME=spark; the gateway runs as core
     (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=spark\n")
-    monkeypatch.setattr(site, "_local_tunnel", lambda base: None)
     monkeypatch.setattr(site, "_read_meminfo", lambda path=None: None)
     opener = _GatewayOpener(_fleet_routes())
-    src = site.default_sources(tmp_path, opener=opener, inspect=lambda: "core")
+    src = site.default_sources(
+        tmp_path, opener=opener, inspect=lambda: "core", topology_runner=_topology_runner({})
+    )
     doc = site.build_mesh(src)
     assert doc["self"] == "core"
     by = {m["name"]: m for m in doc["members"]}
@@ -780,25 +978,11 @@ def test_stale_env_name_that_is_a_roster_peer_is_not_this_box(tmp_path, monkeypa
 
 def test_peer_name_with_no_container_leaves_this_box_unnamed(tmp_path, monkeypatch, capsys):
     (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=spark\n")
-    monkeypatch.setattr(site, "_local_tunnel", lambda base: None)
     monkeypatch.setattr(site, "_read_meminfo", lambda path=None: None)
     opener = _GatewayOpener(_fleet_routes())
     src = site.default_sources(tmp_path, opener=opener, inspect=lambda: None)
     assert src.local_name is None
     assert "is a peer" in capsys.readouterr().err
-
-
-def test_only_lobes_own_tunnel_container_is_hub_evidence(monkeypatch, tmp_path):
-    import subprocess as sp
-
-    def ps(names):
-        return lambda *a, **k: sp.CompletedProcess(a, 0, "\n".join(names), "")
-
-    foreign = ["xteink-cloudflared-ui-1", "culture-library-cloudflared-1"]
-    monkeypatch.setattr(site.subprocess, "run", ps(foreign))
-    assert site._local_tunnel(tmp_path) is None
-    monkeypatch.setattr(site.subprocess, "run", ps(foreign + ["lobes-cloudflared"]))
-    assert site._local_tunnel(tmp_path) == "container lobes-cloudflared running"
 
 
 def test_lanes_advertised_but_not_ready_are_not_pairs():

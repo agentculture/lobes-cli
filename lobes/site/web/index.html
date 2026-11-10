@@ -389,7 +389,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       deco.push('<path d="M' + hp.x + " 92L" + hp.x + " " + (hp.y - hp.size / 2 - 2) + '" style="stroke:var(--accent);stroke-width:5"></path>');
     }
     var aria = "Full mesh of " + names.length + " member" + (names.length === 1 ? "" : "s") +
-      (L.hub ? "; " + L.hub.name + (mesh.hub.declared ? " declares the outside tunnel" : " holds the outside tunnel") : "; no outside tunnel evidenced");
+      (L.hub ? "; " + L.hub.name + " holds the outside tunnel" : "; no outside tunnel evidenced");
     h.push('<div class="canvas-scroll"><div class="sizer" data-w="' + L.W + '" data-h="' + L.H + '" style="width:' + L.W + "px;height:" + L.H + 'px"><div class="canvas" style="width:' + L.W + "px;height:" + L.H + 'px">');
     h.push('<svg class="links" width="' + L.W + '" height="' + L.H + '" viewBox="0 0 ' + L.W + " " + L.H + '" role="img" aria-label="' + esc(aria) + '">');
     if (web.length) h.push('<path d="' + web.join("") + '" style="stroke:var(--web);stroke-width:1.6"></path>');
@@ -399,7 +399,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       var hx = P[L.hub.name].x;
       h.push('<div style="position:absolute;left:' + (hx - 30) + 'px;top:30px;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:2px solid var(--accent);color:var(--accent)">' +
         '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Outside world"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"></path></svg></div>');
-      h.push('<div style="position:absolute;left:' + (hx + 42) + 'px;top:40px;max-width:360px;font-size:13px;line-height:16px;font-weight:700">' + (mesh.hub.declared ? "outside (declared)" : "outside") + '<div style="font-weight:400;color:var(--soft)">' + esc(mesh.hub.evidence) + "</div></div>");
+      h.push('<div style="position:absolute;left:' + (hx + 42) + 'px;top:40px;max-width:360px;font-size:13px;line-height:16px;font-weight:700">outside<div style="font-weight:400;color:var(--soft)">' + esc(mesh.hub.evidence) + "</div></div>");
     }
     tags.forEach(function (t) {
       h.push('<div class="tag" style="left:' + t.x.toFixed(0) + "px;top:" + t.y.toFixed(0) + "px;border:2px solid " + t.col + '">' + esc(t.text) + "</div>");

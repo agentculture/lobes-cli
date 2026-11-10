@@ -16,18 +16,28 @@ Routes (GET and HEAD; every other method is 405):
 - ``/api/lobe-export?role=&member=`` -- the export bundle listing (no writes)
 
 Every figure comes from an injected :class:`Sources` (live roster, ``/health``,
-``/capabilities``, residents file, journal); nothing is hard-coded. Three
+``/capabilities``, residents file, journal, and the members' running
+containers); nothing is hard-coded or hand-declared (deviation d2). Three
 derived facts follow strict evidence rules, never a guess:
 
-- **split brain** -- one model whose serving spans several members. Evidence is
-  a member's own ``/capabilities`` entry: ``spans`` (member names), or a
-  ``world_size`` N > 1 advertised for the same model by exactly N hosting
-  members. Without evidence the model is reported single (or a pair).
-- **pair** -- one model hosted (not mesh-proxied) by several members, a pool.
-- **hub** -- the member running the outside tunnel, only when evidenced: a
-  member's ``/health`` ``tunnel`` declaration (``LOBES_TUNNEL_PUBLIC_URL``,
-  reported with ``declared: true``) or, for the local box only, a tunnel probe;
-  otherwise ``null``.
+- **split brain** -- one engine spanning several members, read from the
+  running containers (:mod:`lobes.site._topology`): one served model whose
+  containers on N distinct members all report the same TensorFold
+  ``TF_<X>_WORLD=N`` with distinct ``TF_<X>_RANK`` values covering ``0..N-1``.
+  Members are listed in rank order. A vLLM ``--tensor-parallel-size`` > 1 on
+  one box is recorded in that member's ``topology`` but is never a split. The
+  split is associated with the role(s) a span member's gateway advertises for
+  that model; the match compares the final path segment of the served name
+  and the advertised model, lower-cased with every non-alphanumeric dropped
+  (``GLM-5.3-Flash`` matches ``zai/GLM-5.3-Flash``). A span member that does
+  not advertise the role itself gets a ``shape: "split"`` lobe for it
+  (``advertised: false``) so the graph draws it. A member whose topology could
+  not be read is unknown and never completes a split.
+- **pair** -- one model hosted (not mesh-proxied) by several ready members, a
+  pool; split members are excluded.
+- **hub** -- the one member actually running a container named
+  ``lobes-cloudflared`` (from the same topology read; this box is read with
+  local docker). Zero or several holders -> ``null``.
 
 Memory is reported only where a source measured it: a member's own ``/health``
 ``memory`` (its gateway reads ``/proc/meminfo``), falling back to this box's
@@ -43,7 +53,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess  # nosec B404
 import sys
 import threading
 import traceback
@@ -53,15 +62,16 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 from urllib.parse import parse_qs, urlsplit
 
-from lobes.rollout import _export, _identity, _residents
+from lobes.rollout import _export, _identity, _residents, _transport
 from lobes.rollout._journal import FAILED, STEPS, Journal
 from lobes.rollout._observe import MemberObservation, observe_member
 from lobes.rollout._redact import redact
 from lobes.rollout._rollback import rollback_command
 from lobes.rollout._transport import Target
+from lobes.site import _topology
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9490
@@ -97,9 +107,9 @@ class Sources:
     ``observe(origin)`` -> MemberObservation; ``residents()`` -> Residents;
     ``journal()`` -> Journal-like (``status()``, ``resume_point()``);
     ``export_listing(role, member)`` -> dict; ``memory(name, is_local, health)``
-    -> ``{"total_bytes", "available_bytes"}`` or None; ``tunnel(name, is_local,
-    health)`` -> evidence string, ``{"evidence": str, "declared": bool}`` or
-    None. ``health`` is the member's already-fetched ``/health`` body.
+    -> ``{"total_bytes", "available_bytes"}`` or None (``health`` is the
+    member's already-fetched ``/health`` body); ``topology()`` -> ``{member:
+    [_topology.Container, ...] | None}`` (``None``: unknown).
     """
 
     local_origin: str
@@ -109,7 +119,7 @@ class Sources:
     journal: Callable[[], Any]
     export_listing: Callable[[str, str], dict]
     memory: Callable[[str, bool, dict], Optional[dict]] = lambda name, local, health: None
-    tunnel: Callable[[str, bool, dict], Any] = lambda name, local, health: None
+    topology: Callable[[], Mapping[str, Optional[list]]] = dict
     secrets: tuple = field(default_factory=tuple)
 
 
@@ -128,6 +138,8 @@ def scrub(value: Any, secrets: tuple) -> Any:
 
 
 LOBES_TUNNEL_CONTAINER = "lobes-cloudflared"
+# The transport runner for the topology read; tests replace it (conftest).
+_TOPOLOGY_RUNNER: _transport.Runner = _transport.default_runner
 
 
 # ------------------------------------------------------------------ /api/mesh
@@ -169,10 +181,6 @@ def _lobes(obs: MemberObservation) -> list:
             "ready": bool(entry.get("ready")),
             "shape": "single",
         }
-        if _int(entry.get("world_size")) is not None:
-            lobe["world_size"] = entry["world_size"]
-        if isinstance(entry.get("spans"), list):
-            lobe["spans"] = [s for s in entry["spans"] if isinstance(s, str)]
         out.append(lobe)
     return out
 
@@ -186,51 +194,112 @@ def _memory(raw: Optional[dict]) -> Optional[dict]:
     return {"total_bytes": total, "available_bytes": avail, "used_bytes": total - avail}
 
 
-def _split_by_spans(hosts: list) -> Optional[tuple]:
-    for member, lobe in hosts:
-        spans = lobe.get("spans") or []
-        if len(set(spans)) >= 2:
-            return list(dict.fromkeys(spans)), f"spans advertised by {member}"
-    return None
+def _model_key(name: str) -> str:
+    """Final path segment, lower-cased, alphanumerics only (the split match)."""
+    return re.sub(r"[^a-z0-9]", "", name.rsplit("/", 1)[-1].lower())
 
 
-def _split_by_world_size(hosts: list) -> Optional[tuple]:
-    sizes: dict = {}
-    for member, lobe in hosts:
-        n = lobe.get("world_size")
-        if n is not None and n > 1:
-            sizes.setdefault(n, []).append(member)
-    for n, members in sizes.items():
-        if len(members) == n:  # exactly the advertised world; more or fewer is ambiguous
-            return members, f"world_size {n} advertised by {', '.join(members)}"
-    return None
+def _same_model(served: str, advertised: str) -> bool:
+    key = _model_key(served)
+    return bool(key) and key == _model_key(advertised)
 
 
-def _shapes(members: list) -> tuple:
-    """Group hosted lobes by model; mark split brains and pairs on each lobe."""
+def _topology_splits(topology: Mapping[str, Optional[list]], names: list) -> list:
+    """Complete TensorFold worlds: ``[{served_name, members, evidence}]``.
+
+    Groups containers by (served model, ``TF_<X>`` group); a group is a split
+    when its entries sit on N >= 2 distinct members, every entry reports
+    world N, and the ranks are exactly ``0..N-1``. Anything else is no split.
+    """
+    groups: dict = {}
+    for member in names:
+        for c in topology.get(member) or []:
+            if not c.model:
+                continue
+            for group, world, rank in c.ranks:
+                groups.setdefault((c.model, group), []).append((member, world, rank))
+    out = []
+    for (served, group), entries in groups.items():
+        n = len(entries)
+        members = {m for m, _, _ in entries}
+        if n < 2 or len(members) != n:
+            continue
+        if {w for _, w, _ in entries} != {n} or sorted(r for _, _, r in entries) != list(range(n)):
+            continue
+        ordered = sorted(entries, key=lambda e: e[2])
+        out.append(
+            {
+                "served_name": served,
+                "members": [m for m, _, _ in ordered],
+                "evidence": f"TensorFold {group}_WORLD={n}: "
+                + ", ".join(f"{m} rank {r}" for m, _, r in ordered),
+            }
+        )
+    return out
+
+
+def _apply_split(found: dict, members: list) -> dict:
+    """Associate a split with the advertised role(s); give span members lobes."""
+    by_name = {m["name"]: m for m in members}
+    span = found["members"]
+    adverts = [
+        lobe
+        for name in span
+        for lobe in by_name[name]["lobes"]
+        if _same_model(found["served_name"], lobe["model"])
+    ]
+    roles = sorted({lobe["role"] for lobe in adverts})
+    model = adverts[0]["model"] if adverts else found["served_name"]
+    for role in roles:
+        advert = next(lobe for lobe in adverts if lobe["role"] == role)
+        for name in span:
+            lobes = by_name[name]["lobes"]
+            mine = [
+                lobe for lobe in lobes if lobe["role"] == role and any(lobe is a for a in adverts)
+            ]
+            if mine:
+                for lobe in mine:
+                    lobe["shape"] = "split"
+                continue
+            lobes.append(
+                {
+                    "role": role,
+                    "model": advert["model"],
+                    "runtime": advert["runtime"],
+                    "ready": advert["ready"],
+                    "shape": "split",
+                    "advertised": False,
+                }
+            )
+            if by_name[name]["kind"] == "gateway":
+                by_name[name]["kind"] = "brain"
+    return {
+        "model": model,
+        "served_name": found["served_name"],
+        "roles": roles,
+        "members": span,
+        "evidence": found["evidence"],
+    }
+
+
+def _shapes(members: list, topology: Optional[Mapping[str, Optional[list]]] = None) -> tuple:
+    """Split brains from the topology, then pairs among the remaining hosts."""
+    names = [m["name"] for m in members]
+    splits = [_apply_split(f, members) for f in _topology_splits(topology or {}, names)]
+    in_split = {(name, s["model"]) for s in splits for name in s["members"]}
     by_model: dict = {}
     for m in members:
         for lobe in m["lobes"]:
             by_model.setdefault(lobe["model"], []).append((m["name"], lobe))
-    splits, pairs = [], []
+    pairs = []
     for model, hosts in by_model.items():
-        found = _split_by_spans(hosts) or _split_by_world_size(hosts)
-        split_members = set(found[0]) if found else set()
-        if found:
-            splits.append(
-                {
-                    "model": model,
-                    "roles": sorted({lobe["role"] for _, lobe in hosts}),
-                    "members": found[0],
-                    "evidence": found[1],
-                }
-            )
         # a pool needs members actually serving: an advertised-but-not-ready lane
         # (e.g. stt/tts declared everywhere, served nowhere) is not a pair
-        pooled = [(n, lobe) for n, lobe in hosts if n not in split_members and lobe["ready"]]
-        for n, lobe in hosts:
-            if n in split_members:
-                lobe["shape"] = "split"
+        pooled = [
+            (n, lobe)
+            for n, lobe in hosts
+            if (n, model) not in in_split and lobe["shape"] != "split" and lobe["ready"]
+        ]
         if len({n for n, _ in pooled}) >= 2:
             for _, lobe in pooled:
                 lobe["shape"] = "pair"
@@ -286,25 +355,16 @@ def _peers(sources: Sources, local_obs: MemberObservation) -> list:
     return out
 
 
-def _hub_entry(name: str, evidence: Any) -> Optional[dict]:
-    if isinstance(evidence, dict):
-        text = evidence.get("evidence")
-        if not isinstance(text, str) or not text:
-            return None
-        entry = {"member": name, "evidence": text}
-        if evidence.get("declared") is True:
-            entry["declared"] = True
-        return entry
-    return {"member": name, "evidence": str(evidence)} if evidence else None
-
-
-def _hub(sources: Sources, members: list) -> Optional[dict]:
-    found = []
-    for m in members:
-        entry = _hub_entry(m["name"], sources.tunnel(m["name"], m["local"], m["_health"]))
-        if entry:
-            found.append(entry)
-    return found[0] if len(found) == 1 else None
+def _hub(topology: Mapping[str, Optional[list]], members: list) -> Optional[dict]:
+    """The one member running ``lobes-cloudflared``; none or several -> None."""
+    found = [
+        m["name"]
+        for m in members
+        if any(c.name == LOBES_TUNNEL_CONTAINER for c in topology.get(m["name"]) or [])
+    ]
+    if len(found) != 1:
+        return None
+    return {"member": found[0], "evidence": f"container {LOBES_TUNNEL_CONTAINER} running"}
 
 
 def build_mesh(sources: Sources) -> dict:
@@ -319,10 +379,17 @@ def build_mesh(sources: Sources) -> dict:
     local_entry["roles"] = None
     members = [_member(sources, local_entry, local_obs, True, res)]
     members += [_member(sources, m, o, False, res) for m, o in zip(peers, peer_obs)]
-    splits, pairs = _shapes(members)
-    hub = _hub(sources, members)
+    try:
+        topology = dict(sources.topology() or {})
+    except Exception:  # noqa: BLE001 - an unreadable topology is unknown, not a 500
+        traceback.print_exc(file=sys.stderr)
+        topology = {}
     for m in members:
         del m["_health"]
+        rows = topology.get(m["name"])
+        m["topology"] = None if rows is None else [c.as_dict() for c in rows]
+    splits, pairs = _shapes(members, topology)
+    hub = _hub(topology, members)
     versions: dict = {}
     for m in members:
         versions.setdefault(m["version"] or "unknown", []).append(m["name"])
@@ -549,45 +616,9 @@ def _read_meminfo(path: Path = MEMINFO) -> Optional[dict]:
     return {"total_bytes": kb["MemTotal"], "available_bytes": kb["MemAvailable"]}
 
 
-def _local_tunnel(deploy_dir: Path) -> Optional[str]:
-    from lobes.runtime import _tunnel
-
-    pid = _tunnel.tunnel_pid(deploy_dir)
-    if pid:
-        return f"lobes tunnel: cloudflared pid {pid}"
-    try:
-        # fixed argv, read-only `docker ps`
-        p = subprocess.run(  # nosec B603 B607
-            ["docker", "ps", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    names = set(p.stdout.split()) if p.returncode == 0 else set()
-    # only lobes' own tunnel; other projects' cloudflared containers are not the hub
-    return (
-        f"container {LOBES_TUNNEL_CONTAINER} running" if LOBES_TUNNEL_CONTAINER in names else None
-    )
-
-
 def _health_memory(health: dict) -> Optional[dict]:
     mem = health.get("memory") if isinstance(health, dict) else None
     return mem if _memory(mem) is not None else None  # inconsistent -> next source
-
-
-def _declared_tunnel(health: dict) -> Optional[dict]:
-    """``/health`` ``tunnel`` (operator-declared) as hub evidence, or None."""
-    t = health.get("tunnel") if isinstance(health, dict) else None
-    if not isinstance(t, dict) or t.get("declared") is not True:
-        return None
-    url = t.get("public_url")
-    if not isinstance(url, str) or not url.strip():
-        return None
-    host = urlsplit(url.strip()).netloc or url.strip()
-    return {"evidence": f"declared: {host}", "declared": True}
 
 
 def _secret_values(env: dict) -> tuple:
@@ -607,6 +638,25 @@ def _export_target(member: str, local_name: Optional[str], deploy_dir: Path) -> 
     if not val("ssh") or not val("lobes_path"):
         raise ExportUnavailable(f"{member}: ssh or lobes_path is needs_you in residents.toml")
     return Target(ssh_target=val("ssh"), user=val("user"), lobes_path=val("lobes_path"))
+
+
+def _topology_targets(deploy_dir: Path, local_name: Optional[str]) -> dict:
+    """``{member: Target | None}``: every resident over ssh, this box locally.
+
+    A resident whose ssh is ``needs_you`` maps to None (unknown). A resident
+    marked ``ssh = "local"`` is read locally only when it IS this box (the
+    running gateway's name); otherwise it is skipped, since local docker would
+    describe this box under the wrong name. Guests are not read.
+    """
+    out: dict = {}
+    for name, entry in _residents.load(deploy_dir).residents.items():
+        ssh = entry["ssh"].value if entry["ssh"].value not in (None, "") else ""
+        user = entry["user"].value if entry["user"].value not in (None, "") else ""
+        if ssh == "local":
+            continue
+        out[name] = Target(ssh_target=str(ssh), user=str(user)) if ssh else None
+    out[local_name or "local"] = Target(local=True)
+    return out
 
 
 def _resolve_self(env_name, roster: Callable[[], list], inspect) -> Optional[str]:
@@ -634,6 +684,7 @@ def default_sources(
     opener: Callable[..., Any] = urllib.request.urlopen,  # nosec B310
     timeout: float = 5.0,
     inspect: Optional[Callable[[], Optional[str]]] = None,
+    topology_runner: Optional[_transport.Runner] = None,
 ) -> Sources:
     """Live sources: this box's gateway, its .env keys, residents file and journal."""
     from lobes.runtime import _env
@@ -668,6 +719,12 @@ def default_sources(
             timeout=timeout,
         )
 
+    reader = _topology.TopologyReader(
+        lambda: _topology_targets(base, local_name),
+        runner=topology_runner or _TOPOLOGY_RUNNER,
+        secrets=secrets,
+    )
+
     def export_listing(role: str, member: str) -> dict:
         target = _export_target(member, local_name, base)
         try:
@@ -694,12 +751,10 @@ def default_sources(
         journal=lambda: Journal(base, redact=lambda s: redact(s, secrets)),
         export_listing=export_listing,
         # remote members: only what their own /health advertised (already
-        # fetched by observe); local: the same, then /proc + the tunnel probe
+        # fetched by observe); local: the same, then /proc
         memory=lambda name, local, health: (
             _health_memory(health) or (_read_meminfo() if local else None)
         ),
-        tunnel=lambda name, local, health: (
-            _declared_tunnel(health) or (_local_tunnel(base) if local else None)
-        ),
+        topology=reader.read,
         secrets=secrets,
     )

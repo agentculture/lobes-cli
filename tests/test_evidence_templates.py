@@ -1,21 +1,20 @@
-"""t21: the split/tunnel evidence keys reach the gateway container.
+"""Deviation d2: the hand-defined split/tunnel keys t21 added are gone.
 
-The gateway takes an explicit ``environment:`` list, never env_file, so a key
-set in .env but absent from that list is silently inert.
+The site reads split brains and the hub from the running containers, so the
+gateway must neither receive nor document ``<PREFIX>_SPANS``,
+``<PREFIX>_WORLD_SIZE`` or ``LOBES_TUNNEL_PUBLIC_URL``.
 """
 
 from __future__ import annotations
 
-import re
 from importlib import resources
 
 import yaml
 
-from lobes.gateway._evidence import SPLIT_ROLE_PREFIX, TUNNEL_ENV
-
 _FLEET = resources.files("lobes.templates").joinpath("fleet")
-KEYS = [TUNNEL_ENV] + [
-    f"{p}_{s}" for p in SPLIT_ROLE_PREFIX.values() for s in ("SPANS", "WORLD_SIZE")
+_PREFIXES = ("PRIMARY", "MULTIMODAL", "MUSE", "WORKER", "ASSOCIATE", "HAND")
+RETIRED = ["LOBES_TUNNEL_PUBLIC_URL"] + [
+    f"{p}_{s}" for p in _PREFIXES for s in ("SPANS", "WORLD_SIZE")
 ]
 
 
@@ -24,13 +23,14 @@ def _gateway_env() -> dict[str, str]:
     return dict(e.partition("=")[::2] for e in compose["services"]["gateway"]["environment"])
 
 
-def test_every_evidence_key_is_an_empty_default_passthrough():
+def test_no_retired_key_reaches_the_gateway():
+    assert len(RETIRED) == 13
     env = _gateway_env()
-    for key in KEYS:
-        assert env.get(key) == f"${{{key}:-}}", key
+    for key in RETIRED:
+        assert key not in env, key
 
 
-def test_every_evidence_key_is_documented_in_env_example():
+def test_no_retired_key_is_documented_in_env_example():
     text = _FLEET.joinpath("env.example").read_text(encoding="utf-8")
-    for key in KEYS:
-        assert re.search(rf"^# {key}=$", text, re.M), key
+    for key in RETIRED:
+        assert key not in text, key
