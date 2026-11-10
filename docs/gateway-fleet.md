@@ -473,6 +473,28 @@ CLI's own version and fails the run on a real mismatch (remediation: bump
 `MODEL_GEAR_VERSION` in `.env` and `docker compose up -d --build gateway`) —
 see [Verbs](#verbs) below.
 
+### Advertised evidence: split, memory, tunnel
+
+Additive, for `lobes site` (t21). Every key below is omitted unless its
+source exists, so an untouched deployment answers byte-identically.
+
+- `GET /capabilities` — a generate role may carry `spans` (list of mesh
+  member names, at least two) and `world_size` (int >= 1), from the
+  operator-typed `<PREFIX>_SPANS` (comma-separated) and `<PREFIX>_WORLD_SIZE`.
+  `<PREFIX>` is the backend prefix: `PRIMARY` (cortex), `MULTIMODAL`
+  (senses), `MUSE`, `WORKER`, `ASSOCIATE`, `HAND`. Set them on the box that
+  hosts the role, e.g. `PRIMARY_SPANS=spark,spark2` for one engine across
+  two boxes. A malformed value is ignored with one log line. Neither key is
+  part of the mesh `fingerprint`, so pooling and verification are unchanged.
+- `GET /health` — `memory: {total_bytes, available_bytes}` from
+  `/proc/meminfo` (host-wide inside docker on Linux; omitted when
+  unreadable), and `tunnel: {public_url, declared: true}` only when the
+  operator sets `LOBES_TUNNEL_PUBLIC_URL`. The tunnel is declared, not
+  probed.
+
+The fleet template passes all thirteen keys to the gateway with empty
+defaults. DECLARED/UNVALIDATED (#108) until a live member serves them.
+
 ### Realtime lane: the one WebSocket route
 
 Every other data-plane route the gateway serves is an HTTP forward.

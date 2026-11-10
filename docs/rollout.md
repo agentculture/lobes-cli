@@ -209,10 +209,17 @@ exposes it to that network and prints a warning.
 - A rolled-back member still shows `done` in `status`: the journal never
   clears `done`.
 - The site shows a split brain only when members advertise `spans` or
-  `world_size` in `/capabilities`, peer memory only when a source measured it
-  (the local box's `/proc/meminfo` by default), and a remote hub only when a
-  tunnel probe evidences it. No gateway advertises these today, so expect a
-  single-model, local-memory view.
+  `world_size` in `/capabilities`, peer memory only from that member's own
+  `/health` `memory`, and a remote hub only from its `/health` `tunnel`
+  (labelled declared); the local box falls back to `/proc/meminfo` and a
+  tunnel probe. Gateways advertise these from t21 on: split and tunnel only
+  when the operator sets `<PREFIX>_SPANS` / `<PREFIX>_WORLD_SIZE` /
+  `LOBES_TUNNEL_PUBLIC_URL` (see
+  [gateway-fleet.md](gateway-fleet.md#advertised-evidence-split-memory-tunnel)).
+  DECLARED/UNVALIDATED (#108): no live member runs a t21 gateway yet, so
+  until then expect a single-model, local-memory view. Adding these keys to
+  the template's gateway env list makes `rollout` report every live member
+  as drifted; `lobes rollout apply --patch-drift` carries them over.
 - An image-only lobe can be described by `lobe export`, not rebuilt.
 - Wire compatibility between consecutive releases is assumed, not checked:
   the mesh has no protocol-version check, so features new in the target are

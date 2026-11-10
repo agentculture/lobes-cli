@@ -138,10 +138,10 @@ def make_sources(tmp_path, **over):
             "status": "built",
             "files": [f"{member}/{role}/Dockerfile"],
         },
-        memory=lambda name, local: (
+        memory=lambda name, local, health: (
             {"total_bytes": 128 * 2**30, "available_bytes": 32 * 2**30} if local else None
         ),
-        tunnel=lambda name, local: None,
+        tunnel=lambda name, local, health: None,
         secrets=(SECRET, GW_SECRET),
     )
     kw.update(over)
@@ -337,7 +337,8 @@ def test_hub_only_when_evidenced(serve, tmp_path):
     _, data = _json(serve(), "/api/mesh")
     assert data["hub"] is None
     ev = make_sources(
-        tmp_path, tunnel=lambda name, local: "cloudflared container running" if local else None
+        tmp_path,
+        tunnel=lambda name, local, health: "cloudflared container running" if local else None,
     )
     _, data = _json(serve(ev), "/api/mesh")
     assert data["hub"] == {"member": "cultureos", "evidence": "cloudflared container running"}
@@ -569,3 +570,192 @@ def test_cli_works_without_a_deployment(tmp_path, capsys):
     rc = main(["site", "--json"])  # conftest points ~/.lobes at an empty dir
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["dry_run"] is True
+
+
+# ------------------------------------------------- t21: advertised evidence
+
+
+def test_declared_hub_is_labelled_declared(serve, tmp_path):
+    ev = make_sources(
+        tmp_path,
+        tunnel=lambda name, local, health: (
+            {"evidence": "declared: lobes.culture.dev", "declared": True} if local else None
+        ),
+    )
+    _, data = _json(serve(ev), "/api/mesh")
+    assert data["hub"] == {
+        "member": "cultureos",
+        "evidence": "declared: lobes.culture.dev",
+        "declared": True,
+    }
+
+
+class _GatewayOpener:
+    """Serves fixture gateway JSON per origin; counts every request."""
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.calls = []
+
+    def __call__(self, req, timeout=None):
+        self.calls.append(req.full_url)
+        origin, _, path = req.full_url.partition("://")[2].partition("/")
+        body = self.routes.get(f"http://{origin}", {}).get("/" + path)
+        if body is None:
+            raise OSError("unreachable")
+        raw = json.dumps(body).encode()
+
+        class R:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self):
+                return raw
+
+        return R()
+
+
+def _spark_caps():
+    """spark's /capabilities as the real gateway renders it with t21's keys."""
+    from lobes.gateway import server as gw
+    from lobes.gateway._config import build_config
+    from lobes.gateway._mesh_routing import RoutingSnapshot
+
+    env = {
+        "PRIMARY_BASE_URL": "http://tensorfold:8000",
+        "PRIMARY_SERVED_NAME": "zai/GLM-5.3-Flash",
+        "PRIMARY_SPANS": "spark,spark2",
+        "PRIMARY_WORLD_SIZE": "2",
+    }
+    table, cfg = build_config(env)
+    return gw.capabilities_payload(
+        table,
+        cfg,
+        env,
+        gateway_url="http://spark:8001",
+        backend_ready={b.name: True for b in table.backends},
+        mesh_snapshot=RoutingSnapshot(members=(), announcements=()),
+    )
+
+
+def _fleet_routes():
+    from lobes.gateway import _evidence
+
+    mem = {"total_bytes": 128 * 2**30, "available_bytes": 40 * 2**30}
+
+    def health(version, **extra):
+        return {"status": "ok", "service": "model-gear-gateway", "version": version, **extra}
+
+    return {
+        "http://127.0.0.1:8001": {
+            "/health": _evidence.health_payload(
+                {"LOBES_TUNNEL_PUBLIC_URL": "https://lobes.culture.dev"},
+                version="0.95.0",
+                meminfo=Path("/nonexistent/meminfo"),
+            ),
+            "/capabilities": {},
+            "/mesh/roster": {
+                "members": _roster(
+                    ("spark", "http://spark:8001", ["cortex"]),
+                    ("spark2", "http://spark2:8000", ["stt-en"]),
+                    ("thor", "http://thor:8000", ["reranker"]),
+                )
+            },
+        },
+        "http://spark:8001": {
+            "/health": health("0.95.0", memory=mem),
+            "/capabilities": _spark_caps(),
+            "/mesh/roster": {"members": []},
+        },
+        "http://spark2:8000": {
+            "/health": health("0.95.0", memory={"total_bytes": 10, "available_bytes": 20}),
+            "/capabilities": {"stt-en": _role("nvidia/parakeet-tdt-0.6b-v2")},
+            "/mesh/roster": {"members": []},
+        },
+        "http://thor:8000": {
+            "/health": health("0.94.0"),
+            "/capabilities": {"reranker": _role("Qwen/Qwen3-Reranker-0.6B")},
+            "/mesh/roster": {"members": []},
+        },
+    }
+
+
+def _fleet_sources(tmp_path, monkeypatch, routes, *, local_tunnel=None, local_mem=None):
+    (tmp_path / ".env").write_text("VLLM_PORT=8001\nLOBES_MESH_NAME=core\n")
+    monkeypatch.setattr(site, "_local_tunnel", lambda base: local_tunnel)
+    monkeypatch.setattr(site, "_read_meminfo", lambda path=None: local_mem)
+    opener = _GatewayOpener(routes)
+    return site.default_sources(tmp_path, opener=opener), opener
+
+
+def test_gateway_shape_end_to_end_split_memory_and_declared_hub(tmp_path, monkeypatch):
+    src, opener = _fleet_sources(tmp_path, monkeypatch, _fleet_routes())
+    doc = site.build_mesh(src)
+    assert [(s["model"], s["members"]) for s in doc["split_brains"]] == [
+        ("zai/GLM-5.3-Flash", ["spark", "spark2"])
+    ]
+    assert "spans advertised by spark" == doc["split_brains"][0]["evidence"]
+    by = {m["name"]: m for m in doc["members"]}
+    # remote memory read from each member's own /health
+    assert by["spark"]["memory"] == {
+        "total_bytes": 128 * 2**30,
+        "available_bytes": 40 * 2**30,
+        "used_bytes": 88 * 2**30,
+    }
+    assert by["spark2"]["memory"] is None  # inconsistent figures -> unknown
+    assert by["thor"]["memory"] is None  # not advertised -> unknown, never a guess
+    assert by["core"]["memory"] is None  # local /proc fallback read nothing
+    assert doc["hub"] == {
+        "member": "core",
+        "evidence": "declared: lobes.culture.dev",
+        "declared": True,
+    }
+    # the evidence rides the three GETs per member the site already made
+    assert len(opener.calls) == 3 * 4
+
+
+def test_remote_declared_tunnel_makes_that_member_the_hub(tmp_path, monkeypatch):
+    routes = _fleet_routes()
+    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
+    routes["http://thor:8000"]["/health"]["tunnel"] = {
+        "public_url": "https://thor.example.org",
+        "declared": True,
+    }
+    src, _ = _fleet_sources(tmp_path, monkeypatch, routes)
+    hub = site.build_mesh(src)["hub"]
+    assert hub == {"member": "thor", "evidence": "declared: thor.example.org", "declared": True}
+
+
+def test_local_falls_back_to_proc_and_tunnel_probe(tmp_path, monkeypatch):
+    routes = _fleet_routes()
+    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
+    mem = {"total_bytes": 64 * 2**30, "available_bytes": 16 * 2**30}
+    src, _ = _fleet_sources(
+        tmp_path,
+        monkeypatch,
+        routes,
+        local_tunnel="container cloudflared running",
+        local_mem=mem,
+    )
+    doc = site.build_mesh(src)
+    assert {m["name"]: m for m in doc["members"]}["core"]["memory"]["total_bytes"] == 64 * 2**30
+    assert doc["hub"] == {"member": "core", "evidence": "container cloudflared running"}
+
+
+def test_remote_member_never_uses_the_local_probes(tmp_path, monkeypatch):
+    routes = _fleet_routes()
+    routes["http://127.0.0.1:8001"]["/health"].pop("tunnel")
+    src, _ = _fleet_sources(
+        tmp_path,
+        monkeypatch,
+        routes,
+        local_tunnel="container cloudflared running",
+        local_mem={"total_bytes": 64, "available_bytes": 16},
+    )
+    by = {m["name"]: m for m in site.build_mesh(src)["members"]}
+    assert by["thor"]["memory"] is None

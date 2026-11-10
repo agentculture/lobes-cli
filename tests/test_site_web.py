@@ -144,3 +144,12 @@ def test_page_never_invents_memory_or_a_hub():
     assert "memory not measured" in html
     assert "if (mem)" in html
     assert "mesh.hub && mesh.hub.member" in html
+
+
+def test_page_labels_a_declared_hub_as_declared():
+    # t21: a hub evidenced only by an operator declaration (/health tunnel) is
+    # shown as declared, never as a probed tunnel
+    html = _html()
+    assert "mesh.hub.declared" in html
+    assert "outside (declared)" in html
+    assert "declares the outside tunnel" in html

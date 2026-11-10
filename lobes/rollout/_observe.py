@@ -21,6 +21,8 @@ class MemberObservation:
     capabilities: dict[str, dict] = field(default_factory=dict)
     roster: list[dict] = field(default_factory=list)
     reachable: bool = False
+    # the raw /health body (t21: carries optional memory/tunnel evidence)
+    health: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -76,6 +78,7 @@ def observe_member(
         capabilities=_roles(caps),
         roster=[m for m in members if isinstance(m, dict)] if isinstance(members, list) else [],
         reachable=isinstance(health, dict),
+        health=health if isinstance(health, dict) else {},
     )
 
 
