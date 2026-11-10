@@ -1,0 +1,25 @@
+{
+  "plan_slug": "gradual-fleet-rollout",
+  "schema_version": 2,
+  "created": "2026-11-09T21:35:49Z",
+  "updated": "2026-11-09T21:35:49Z",
+  "deviations": [
+    {
+      "id": "d1",
+      "what": "Add t21: members advertise split-brain, memory and tunnel evidence (gateway /capabilities spans/world_size from operator-typed <PREFIX>_SPANS/_WORLD_SIZE; /health memory from /proc/meminfo and a declared LOBES_TUNNEL_PUBLIC_URL), and the site reads them for remote members",
+      "task_ref": "t17",
+      "reason": "Live probe 2026-11-09: no gateway advertises world_size/spans, memory or a tunnel, so t17's never-guess rule renders the TensorFold GLM cortex (spark+spark2) as single, peer memory as unknown and no remote hub; t20's success signal (1 split brain) cannot pass. Operator chose option (a) over softening t20.",
+      "affects": [
+        "t18",
+        "t20"
+      ],
+      "origin": "user",
+      "status": "approved",
+      "classification": "acceptable",
+      "seq": 1
+    }
+  ],
+  "evidence": [],
+  "deltas": [],
+  "supersessions": []
+}
