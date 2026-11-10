@@ -96,6 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from lobes.cli._commands import route as _route_cmd
     from lobes.cli._commands import run as _run_cmd
     from lobes.cli._commands import serve as _serve_cmd
+    from lobes.cli._commands import site as _site_cmd
     from lobes.cli._commands import status as _status_cmd
     from lobes.cli._commands import stop as _stop_cmd
     from lobes.cli._commands import switch as _switch_cmd
@@ -139,6 +140,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # approve/revoke are write verbs — dry-run by default, --apply commits.
     _mesh_cmd.register(sub)
     _lobe_cmd.register(sub)
+    # Local site + read-only /api (gradual-fleet-rollout t17): dry-run prints the
+    # URL; --apply serves in the foreground. Writes nothing either way.
+    _site_cmd.register(sub)
     _rollout_cmd.register(sub)  # gradual fleet rollout (plan/apply/status/rollback)
     _watcher_cmd.register(sub)  # host watcher unit (lane-safety section 5)
     _governor_cmd.register(sub)  # graded thermal governor (lane-safety adjunct)

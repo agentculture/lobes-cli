@@ -150,6 +150,8 @@ def test_renders_no_local_wiring_and_no_compose_profile_on_every_card(card: str)
     # ...or a shape-declared [host_env] key, which every shape renders.
     bare_card = set(profile_env(resolve_profile(card))) | shape_host_env_keys()
     markers = {f"{ROLE_ENV_PREFIX[role]}_FEASIBLE" for role in CORE_ROLES}
+    # a shape that hosts nothing declares the audio lanes off too (2026-11-10)
+    markers |= {"STT_FEASIBLE", "TTS_FEASIBLE"}
     for key in env:
         if key not in markers:
             assert key in bare_card, f"{card}: unexpected key {key!r}"
@@ -215,9 +217,9 @@ def test_build_config_on_a_no_local_backend_env_builds_without_exception(card: s
     # nothing local can actually serve.
     assert [b.name for b in table.backends] == ["primary"]
     assert "primary" in table.infeasible
-    assert table.infeasible == frozenset(
-        name for name in FEASIBLE_ENV if name not in ("stt", "tts")
-    )
+    # every role, stt/tts included: a box that hosts nothing never advertises
+    # a sleeping audio lane (live 2026-11-10: core showed stt/tts not-ready)
+    assert table.infeasible == frozenset(FEASIBLE_ENV)
 
 
 @pytest.mark.parametrize("card", builtin_names())

@@ -70,7 +70,7 @@ from lobes.profiles.render import (  # the allowlist is DERIVED from these table
     ROLE_ENV_PREFIX,
 )
 from lobes.profiles.shape_render import OPT_IN_ACTIVATION_ENV, OPT_IN_CORE_ACTIVATION_ENV
-from lobes.profiles.shapes import builtin_shape_names, resolve_shape
+from lobes.profiles.shapes import AUDIO_ROLES, builtin_shape_names, resolve_shape
 
 #: The committed lock's filename. Matches NEITHER the ``.env`` suffix rule nor
 #: the ``.env.`` prefix rule of the repo's positional gitignore convention —
@@ -159,6 +159,9 @@ def lock_keys() -> frozenset[str]:
     """
     suffixes = set(_KNOB_ENV_SUFFIX.values()) | set(_NON_KNOB_SUFFIXES)
     keys = {f"{prefix}_{suffix}" for prefix in ROLE_ENV_PREFIX.values() for suffix in suffixes}
+    # 6. the audio-lane markers a shape that hosts nothing renders
+    #    (shape_render.shape_env: STT_FEASIBLE / TTS_FEASIBLE=false)
+    keys |= {f"{role.upper()}_FEASIBLE" for role in AUDIO_ROLES}
     for name in builtin_names():
         keys |= set(resolve_profile(name).host_env)
     for name in builtin_shape_names():

@@ -287,3 +287,25 @@ def test_every_catalog_path_resolves(capsys: pytest.CaptureFixture[str]) -> None
         rc = main(["explain", *path])
         assert rc == 0, f"explain {' '.join(path)} failed"
         capsys.readouterr()
+
+
+@pytest.mark.parametrize("alias", ["rollout", "fleet-rollout"])
+def test_explain_rollout(alias: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """The rollout page renders, names its verbs and exit codes, and says it is
+    unvalidated (#108)."""
+    rc = main(["explain", alias])
+    assert rc == 0
+    out = capsys.readouterr().out
+    for needle in (
+        "lobes rollout plan",
+        "lobes rollout apply",
+        "lobes rollout status",
+        "lobes rollout rollback",
+        "lobes mesh resident add",
+        "lobes lobe export",
+        "lobes site",
+        "new_mesh_member",
+        "DECLARED/UNVALIDATED",
+        "docs/rollout.md",
+    ):
+        assert needle in out

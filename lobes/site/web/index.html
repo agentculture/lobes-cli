@@ -1,0 +1,837 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- lobes site. Built from the confirmed design in docs/design/lobes-site/*.dc.html (c38).
+     Every figure comes from /api/mesh, /api/rollout, /api/residents and /api/lobe-export on this
+     origin. No external request: Lato is vendored under /vendor/ (see vendor/README.txt). -->
+<title>lobes</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face{font-family:"Lato";font-style:normal;font-weight:300;font-display:swap;src:url(/vendor/lato-latin-300.woff2) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:400;font-display:swap;src:url(/vendor/lato-latin-400.woff2) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:700;font-display:swap;src:url(/vendor/lato-latin-700.woff2) format("woff2")}
+@font-face{font-family:"Lato";font-style:normal;font-weight:900;font-display:swap;src:url(/vendor/lato-latin-900.woff2) format("woff2")}
+:root{--bg:#f1eff6;--surface:#fbfafd;--raise:#e7e4ef;--ink:#24222f;--soft:#57536a;--faint:#6e6a82;
+  --line:rgba(36,34,47,.10);--line2:rgba(36,34,47,.18);--web:rgba(36,34,47,.17);
+  --accent:#5a3fd0;--accent-tint:rgba(90,63,208,.08);--on-accent:#fff;--on-badge:#fff;
+  --ok:#1b7a4c;--ok-tint:rgba(27,122,76,.09);--warn:#9a5b0b;--warn-tint:rgba(154,91,11,.09);
+  --crit:#b8302a;--crit-tint:rgba(184,48,42,.08);--on-crit:#fff;--info:#2f66ad;
+  --link:#2a78d6;
+  --track:#e4e1ec;--shell:#dcd8e8;--mono:ui-monospace,Menlo,Consolas,monospace;color-scheme:light}
+html[data-theme="dark"]{--bg:#0f0e17;--surface:#171622;--raise:#24222f;--ink:#ecebf3;--soft:#a9a5bb;--faint:#8a869e;
+  --line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.16);--web:rgba(255,255,255,.15);
+  --accent:#a593ff;--accent-tint:rgba(165,147,255,.10);--on-accent:#0f0e17;--on-badge:#0f0e17;
+  --ok:#4fc58a;--ok-tint:rgba(79,197,138,.10);--warn:#e6a64a;--warn-tint:rgba(230,166,74,.10);
+  --crit:#ff7a6b;--crit-tint:rgba(255,122,107,.10);--on-crit:#0f0e17;--info:#7fb0f0;
+  --link:#3987e5;
+  --track:#2a2836;--shell:#2c2a3a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink)}
+body{font-family:Lato,-apple-system,"Segoe UI",system-ui,sans-serif;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:var(--accent)}a:hover{color:var(--ink)}
+button:focus-visible,a:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button{font:inherit;color:inherit}
+code,pre{font-family:var(--mono)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+header.top{position:sticky;top:0;z-index:3;background:var(--bg);border-bottom:1px solid var(--line)}
+.bar{max-width:1320px;margin:0 auto;padding:14px 24px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:900;font-size:20px;letter-spacing:-.01em;color:var(--ink);text-decoration:none}
+.brand svg{color:var(--accent)}
+.seg{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;max-width:100%;overflow-x:auto}
+.seg a,.seg button{appearance:none;border:0;background:transparent;color:var(--soft);text-decoration:none;font-size:14px;padding:6px 16px;border-radius:999px;cursor:pointer;min-height:36px;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.seg [aria-current="page"],.seg [aria-selected="true"],.seg [aria-pressed="true"]{background:var(--raise);color:var(--ink);font-weight:700}
+.seg .n{color:var(--soft);font-weight:400;font-variant-numeric:tabular-nums}
+.who{margin-left:auto;display:flex;align-items:center;gap:12px;font-size:13px;color:var(--soft)}
+.pillbtn{appearance:none;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer;min-height:36px}
+main{max-width:1320px;margin:0 auto;padding:28px 24px 80px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:20px}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
+.grow{flex:1}
+.chip{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;background:var(--raise);color:var(--ink)}
+.guest{display:inline-flex;align-items:center;gap:8px;font-size:13px;padding:4px 6px 4px 12px;border-radius:16px;border:1px dashed var(--accent);background:var(--accent-tint);max-width:100%;flex-wrap:wrap}
+.guest .s{color:var(--soft)}
+.cmd{font-family:var(--mono);font-size:13px;background:var(--bg);border:1px solid var(--line2);border-radius:10px;padding:8px 12px;overflow-wrap:anywhere;min-width:0}
+.btn{appearance:none;border:0;background:var(--accent);color:var(--on-accent);border-radius:10px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;min-height:40px;display:inline-flex;align-items:center;gap:8px}
+.btn.ghost{background:var(--surface);color:var(--ink);border:1px solid var(--line2);font-weight:400}
+.copy{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;max-width:100%}
+.graphwrap{display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;align-items:flex-start}
+.graph{flex:999 1 860px;min-width:0;border-radius:28px;overflow:hidden}
+.canvas-scroll{overflow-x:auto}
+.sizer{margin:0 auto;overflow:hidden}
+.canvas{position:relative;transform-origin:0 0}
+.canvas>svg.links{position:absolute;left:0;top:0;fill:none;stroke-linecap:round}
+.brain{position:absolute}
+.brain .badge{position:absolute;right:2px;bottom:2px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;color:var(--on-badge);border:3px solid var(--surface)}
+.nm{position:absolute;text-align:center;font-size:15px;font-weight:700;line-height:18px;overflow-wrap:anywhere}
+.nm>span{display:inline-block;background:var(--surface);border-radius:8px;padding:1px 6px}
+.nm small{display:block;font-size:12px;font-weight:400;color:var(--soft);font-variant-numeric:tabular-nums}
+.tag{position:absolute;transform:translate(-50%,-50%);height:28px;display:flex;align-items:center;justify-content:center;padding:0 14px;background:var(--surface);border-radius:999px;font-size:13px;font-weight:700;white-space:nowrap;color:var(--ink)}
+.lobe{position:absolute;width:214px;height:42px;display:flex;align-items:center;gap:9px;padding:4px 12px 4px 8px;background:var(--surface);border:1px solid var(--line2);border-radius:14px;font-size:13px;line-height:15px;color:var(--ink);text-align:left;cursor:pointer;appearance:none}
+.lobe[aria-pressed="true"]{border:2px solid var(--accent)}
+.lobe svg{flex:none}
+.lobe>span{min-width:0;overflow:hidden}
+.lobe b,.lobe small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lobe small{font-size:11px;color:var(--soft)}
+.legend{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 20px;padding:14px 20px 18px;border-top:1px solid var(--line);font-size:13px;color:var(--soft)}
+.legend>span{display:inline-flex;align-items:center;gap:7px}
+.sw{display:inline-block}
+.panel{flex:1 1 340px;min-width:0;border-radius:24px;padding:20px}
+.panel h2{font-weight:700;font-size:1.25rem;line-height:1.2;margin:0;overflow-wrap:anywhere}
+.lbl{margin-top:14px;font-size:12px;color:var(--soft)}
+.val{display:block;font-size:12.5px;overflow-wrap:anywhere}
+.files{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.files li{display:flex;align-items:center;gap:8px;font-size:13px;min-width:0}
+.files code{font-size:12.5px;overflow-wrap:anywhere;min-width:0}
+.boxscroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:10px;border-top:1px solid var(--line);vertical-align:middle}
+thead th{border-top:0;border-bottom:1px solid var(--line);color:var(--soft);font-weight:700;text-align:left;padding:12px 10px}
+thead th.m{color:var(--ink);text-align:center}
+thead th small{display:block;font-size:11px;font-weight:400;color:var(--soft)}
+th:first-child,td:first-child{padding-left:20px}
+th:last-child,td:last-child{padding-right:20px}
+tbody th{text-align:left}
+.cell{display:inline-block;height:12px;vertical-align:middle}
+h1{font-weight:900;letter-spacing:-.025em;margin:0;line-height:1.04;overflow-wrap:anywhere}
+h1.big{font-size:clamp(2rem,4.4vw,3.4rem)}
+h1.mid{font-size:clamp(1.8rem,3.6vw,2.6rem)}
+h2.sec{font-weight:700;font-size:1.2rem;margin:0 0 12px}
+.waves{list-style:none;margin:0;padding:0;display:grid;gap:0}
+.waves li{position:relative;padding-right:20px;min-width:0}
+.wline{flex:1;height:3px;border-radius:2px;margin-left:8px}
+.halt{margin-top:20px;background:var(--crit-tint);border:1px solid var(--crit);border-radius:20px;padding:20px 22px}
+.halt .t{display:flex;align-items:center;gap:10px;color:var(--crit);font-weight:700}
+.empty{padding:28px 22px;color:var(--soft)}
+.err{color:var(--crit)}
+.ico{display:inline-grid;place-items:center}
+.inp{display:inline-flex;align-items:center;gap:7px}
+pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;white-space:pre}
+.stack{display:flex;flex-direction:column;gap:10px}
+@media (max-width:640px){.bar{padding:12px 16px}main{padding:20px 16px 64px}.who{margin-left:0}}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header class="top">
+<div class="bar">
+<a class="brand" href="#mesh"><svg width="24" height="24" viewBox="0 0 120 120" fill="none" aria-hidden="true"><path d="M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z" stroke="currentColor" stroke-width="7" stroke-linejoin="round"></path><circle cx="60" cy="58" r="9" fill="currentColor"></circle></svg><span>lobes</span></a>
+<nav class="seg" aria-label="Sections">
+<a href="#mesh" data-nav="mesh">Mesh</a><a href="#rollout" data-nav="rollout">Rollout</a><a href="#residents" data-nav="residents">Residents</a>
+</nav>
+<div class="who"><span id="self"></span><button type="button" class="pillbtn" id="theme">Dark</button></div>
+</div>
+</header>
+<main id="main"><p class="empty">Loading</p></main>
+<script>
+(function () {
+  "use strict";
+  var API = { mesh: "/api/mesh", rollout: "/api/rollout", residents: "/api/residents", exp: "/api/lobe-export" };
+  var BRAIN_L = "M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z";
+  var BRAIN_R = "M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z";
+  var GATEWAY_ARROWS = "M38 52h40m-9-7 9 7-9 7M82 68H42m9-7-9 7 9 7";
+  var TRACE_L = "M36 46H47V56H40M34 68H46V76M50 36V46M47 84V74H53";
+  var TRACE_R = "M84 46H73V56H80M86 68H74V76M70 36V46M73 84V74H67";
+  var CHECK = "M5 12l4 4 10-10", BANG = "M12 6v8M12 18h.01", PLUS = "M12 6v12M6 12h12", CROSS = "M7 7l10 10M17 7L7 17";
+  var CIRC = 2 * Math.PI * 55;
+  var FAM = { gen: "generate", dec: "decide", emb: "embed, rank", sp: "speech" };
+  var FAM_ORDER = ["gen", "dec", "emb", "sp"];
+  // a family is told apart by its SIGN, never by colour: colour means health
+  // (ink = ready, warn = not ready) and blue means a model spans boxes
+  var SIGN = {
+    gen: "M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2Z",
+    dec: "M12 21v-8M12 13L6 6M12 13l6-7M3.5 7.5L6 6l1 2.8M20.5 7.5L18 6l-1 2.8",
+    emb: "M4 6h16M4 12h11M4 18h6",
+    sp: "M3 12h2M7 8v8M11 4v16M15 8v8M19 10v4"
+  };
+  var STEP_LABEL = {
+    lock: "Take the member lock", window_check: "Check the machine window", backup_env: "Back up .env",
+    install_cli: "Install the lobes CLI", repin: "Pin MODEL_GEAR_VERSION", tag_image: "Tag the current gateway image",
+    rebuild_gateway: "Rebuild the gateway", wait_health: "Wait for health", verify: "Verify every role"
+  };
+  var S = { view: "mesh", tab: "graph", sel: null, resFilter: "all", data: {}, err: {}, exp: null, rollTimer: null };
+
+  // ---------------------------------------------------------------- helpers
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function family(role) {
+    var r = String(role || "").toLowerCase();
+    if (/^decider/.test(r)) return "dec";
+    if (/embed|rerank/.test(r)) return "emb";
+    if (/(^(stt|tts)(-|$))|realtime|speech/.test(r)) return "sp";
+    return "gen";
+  }
+  function stepName(s) { return STEP_LABEL[s] || String(s || "").replaceAll("_", " "); }
+  function shortModel(m) { var s = String(m || ""); var i = s.lastIndexOf("/"); return i >= 0 ? s.slice(i + 1) : s; }
+  function gb(bytes) { return Math.round(bytes / 1e9); }
+  function parseVer(v) {
+    var m = /^(\d+)\.(\d+)\.(\d+)(?:\.?(dev|rc|a|b)(\d+))?/.exec(String(v || ""));
+    if (!m) return null;
+    var pre = { dev: -4, a: -3, b: -2, rc: -1 }[m[4]] || 0;
+    return [+m[1], +m[2], +m[3], pre, m[5] ? +m[5] : 0];
+  }
+  function cmpVer(a, b) {
+    var x = parseVer(a), y = parseVer(b);
+    if (!x || !y) return 0;
+    for (var i = 0; i < 5; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1;
+    return 0;
+  }
+  function newest(members) {
+    var best = null;
+    members.forEach(function (m) { if (m.version && parseVer(m.version) && (!best || cmpVer(m.version, best) > 0)) best = m.version; });
+    return best;
+  }
+  function icon(d, size, color, label) {
+    var a = label ? ' role="img" aria-label="' + esc(label) + '"' : ' aria-hidden="true"';
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="' + (color || "currentColor") +
+      '" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"' + a + '><path d="' + d + '"></path></svg>';
+  }
+  function lobeGlyph(f, size, ready) {
+    var c = ready === false ? "var(--warn)" : "var(--ink)";
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="' + c +
+      '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' + (ready === false ? ' stroke-dasharray="3 2.5"' : "") + '><path d="' + SIGN[f] + '"></path></svg>';
+  }
+  function copyBtn(text) {
+    return '<span class="copy"><code class="cmd">' + esc(text) + '</code><button type="button" class="btn ghost" data-act="copy" data-text="' +
+      esc(text) + '" data-k="copy:' + esc(text) + '" aria-label="Copy ' + esc(text) + '">Copy</button></span>';
+  }
+  function getJSON(url) {
+    return fetch(url, { headers: { Accept: "application/json" }, cache: "no-store" }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (!r.ok) throw new Error((body && body.error) || ("HTTP " + r.status));
+        return body;
+      });
+    });
+  }
+  function load(name) {
+    S.err[name] = null;
+    return getJSON(API[name]).then(function (d) { S.data[name] = d; }, function (e) { S.err[name] = e.message || String(e); })
+      .then(render);
+  }
+
+  // ---------------------------------------------------------------- theme
+  var root = document.documentElement, themeBtn = document.getElementById("theme");
+  function setTheme(t, save) {
+    root.dataset.theme = t;
+    themeBtn.textContent = t === "dark" ? "Light" : "Dark";
+    themeBtn.setAttribute("aria-pressed", t === "dark" ? "true" : "false");
+    if (save) { try { localStorage.setItem("lobes-theme", t); } catch (e) { /* storage blocked */ } }
+  }
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem("lobes-theme"); } catch (e) { t = null; }
+    if (t !== "dark" && t !== "light") t = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    setTheme(t, false);
+  })();
+  themeBtn.setAttribute("title", "Switch light or dark");
+  themeBtn.addEventListener("click", function () { setTheme(root.dataset.theme === "dark" ? "light" : "dark", true); });
+
+  // ---------------------------------------------------------------- mesh model
+  function meshModel(mesh) {
+    var members = mesh.members || [], splitOf = {}, poolOf = {}, groups = {};
+    (mesh.split_brains || []).forEach(function (s) { splitOf[s.model] = s; });
+    (mesh.pools || []).forEach(function (p) { poolOf[p.model] = p; });
+    members.forEach(function (m) {
+      (m.lobes || []).forEach(function (l) {
+        var k = l.model + "\u0000" + l.role;
+        if (!groups[k]) groups[k] = { model: l.model, role: l.role, hosts: [], shape: l.shape };
+        groups[k].hosts.push(m.name);
+        if (l.shape !== "single") groups[k].shape = l.shape;
+      });
+    });
+    var rows = Object.keys(groups).map(function (k) { return groups[k]; });
+    rows.sort(function (a, b) {
+      return FAM_ORDER.indexOf(family(a.role)) - FAM_ORDER.indexOf(family(b.role)) || a.role.localeCompare(b.role) || a.model.localeCompare(b.model);
+    });
+    return { members: members, splitOf: splitOf, poolOf: poolOf, rows: rows, top: newest(members) };
+  }
+  function shapeLabel(l, M) {
+    if (l.shape === "split") { var s = M.splitOf[l.model]; return "split ×" + (s ? s.members.length : "?"); }
+    if (l.shape === "pool") { var p = M.poolOf[l.model]; return "shared pool ×" + (p ? p.members.length : "?"); }
+    return l.shape || "single";
+  }
+  function partLabel(l, M) {
+    if (l.shape !== "split") return "";
+    var s = M.splitOf[l.model], n = s ? s.members.length : 0;
+    if (n === 2) return " half";
+    return n ? " 1/" + n : "";
+  }
+
+  // ---------------------------------------------------------------- graph layout
+  function sizeFor(m, maxTotal, guest) {
+    if (m.memory && maxTotal) return Math.round(100 + 50 * Math.sqrt(m.memory.total_bytes / maxTotal));
+    return guest ? 88 : 120;
+  }
+  function ordered(ring, mesh) {
+    var out = [], seen = {};
+    function take(names) { names.forEach(function (n) { ring.forEach(function (m) { if (m.name === n && !seen[n]) { seen[n] = 1; out.push(m); } }); }); }
+    (mesh.split_brains || []).forEach(function (s) { take(s.members); });
+    (mesh.pools || []).forEach(function (p) { take(p.members); });
+    ring.forEach(function (m) { if (!seen[m.name]) out.push(m); });
+    return out;
+  }
+  function layout(mesh) {
+    var W = 1120, cx = 560, cy = 400, LH = 48, LW = 214;
+    var ms = mesh.members || [], maxTotal = 0, hub = null;
+    ms.forEach(function (m) { if (m.memory) maxTotal = Math.max(maxTotal, m.memory.total_bytes); });
+    var hubName = mesh.hub && mesh.hub.member;
+    ms.forEach(function (m) { if (m.name === hubName) hub = m; });
+    var guests = ms.filter(function (m) { return m !== hub && m.residency === "guest"; });
+    var ring = ordered(ms.filter(function (m) { return m !== hub && m.residency !== "guest"; }), mesh);
+    var nl = Math.ceil(ring.length / 2), sides = [ring.slice(0, nl), ring.slice(nl)];
+    var P = {}, lobes = [], bottom = 0, minTop = hub ? 220 : 170;
+    sides.forEach(function (side, si) {
+      var k = side.length, gap = k > 1 ? Math.max(210, 340 / (k - 1)) : 0, half = gap * (k - 1) / 2;
+      var shift = Math.max(0, minTop - (cy - half)), colBottom = 0;
+      side.forEach(function (m, j) {
+        var y = cy - half + j * gap + shift, dy = Math.abs(y - cy - shift);
+        var off = 250 + (k > 2 && half ? 30 * (1 - dy / half) : 0);
+        var x = si === 0 ? cx - off : cx + off, size = sizeFor(m, maxTotal, false);
+        P[m.name] = { x: x, y: y, size: size, m: m, below: y > cy + shift };
+        var n = (m.lobes || []).length, top = Math.max(y - (n * LH - 6) / 2, colBottom + 8);
+        (m.lobes || []).forEach(function (l, i) { lobes.push({ m: m, l: l, x: si === 0 ? 16 : W - 16 - LW, y: top + i * LH }); });
+        colBottom = top + n * LH;
+        bottom = Math.max(bottom, colBottom, y + size / 2 + 56);
+      });
+    });
+    if (hub) {
+      var ys = ring.map(function (m) { return P[m.name].y; });
+      var hy = ys.length ? (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2 : cy;
+      var hs = sizeFor(hub, maxTotal, false), ht = hy + hs / 2 + 56;
+      P[hub.name] = { x: cx, y: hy, size: hs, m: hub, hub: true, below: true };
+      (hub.lobes || []).forEach(function (l, i) { lobes.push({ m: hub, l: l, x: cx - LW / 2, y: ht + i * LH }); });
+      bottom = Math.max(bottom, ht + (hub.lobes || []).length * LH, hy + hs / 2 + 50);
+    }
+    if (guests.length) {
+      var step = 260, gy = bottom + 80, gx0 = cx - step * (guests.length - 1) / 2;
+      if (gx0 < 140) { W = Math.max(W, step * guests.length + 40); gx0 = 140; }
+      guests.forEach(function (m, i) {
+        var gs = sizeFor(m, maxTotal, true), gx = gx0 + i * step, t = gy + gs / 2 + 16;
+        P[m.name] = { x: gx, y: gy, size: gs, m: m, guest: true };
+        (m.lobes || []).forEach(function (l, j) { lobes.push({ m: m, l: l, x: gx - LW / 2, y: t + j * LH }); });
+        bottom = Math.max(bottom, t + (m.lobes || []).length * LH, gy + gs / 2 + 50);
+      });
+    }
+    return { W: W, H: Math.max(600, Math.ceil(bottom + 30)), P: P, lobes: lobes, hub: hub, maxTotal: maxTotal };
+  }
+  function edge(a, b, inset) {
+    var dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+    var ra = a.size / 2 + (inset || 0), rb = b.size / 2 + (inset || 0);
+    return { x1: a.x + dx * ra / d, y1: a.y + dy * ra / d, x2: b.x - dx * rb / d, y2: b.y - dy * rb / d, nx: -dy / d, ny: dx / d };
+  }
+  function line(e, ox, oy) {
+    return "M" + (e.x1 + ox).toFixed(1) + " " + (e.y1 + oy).toFixed(1) + "L" + (e.x2 + ox).toFixed(1) + " " + (e.y2 + oy).toFixed(1);
+  }
+
+  var HUB_RING = '<circle cx="60" cy="60" r="57" fill="none" stroke="var(--accent)" stroke-width="2"></circle>';
+  function brainDesc(p, m) {
+    var mem = m.memory, desc = [m.name];
+    if (p.hub) desc.push("the hub with outside access");
+    if (p.guest) desc.push("guest, not in the residents file");
+    if (!m.reachable) desc.push("unreachable");
+    desc.push(mem ? gb(mem.used_bytes) + " of " + gb(mem.total_bytes) + " GB in use" : "memory not measured",
+      m.version ? "version " + m.version : "version unknown");
+    var ls = (m.lobes || []).map(function (l) { return l.role; });
+    if (m.kind === "gateway") desc.push("gateway only, runs no model; routes " + (m.routes || []).length + " roles to the mesh");
+    else desc.push(ls.length ? "lobes: " + ls.join(", ") : "no lobes");
+    return desc.join("; ");
+  }
+  function ringSVG(mem, guest) {
+    if (mem) {
+      var used = Math.max(0, Math.min(1, mem.used_bytes / mem.total_bytes)) * CIRC;
+      return '<circle cx="60" cy="60" r="55" fill="none" stroke="var(--track)" stroke-width="5"></circle>' +
+        '<circle cx="60" cy="60" r="55" fill="none" stroke="var(--soft)" stroke-width="5" stroke-linecap="round" stroke-dasharray="' +
+        used.toFixed(1) + " " + CIRC.toFixed(1) + '" transform="rotate(-90 60 60)"></circle>';
+    }
+    return guest ? '<circle cx="60" cy="60" r="55" fill="none" stroke="var(--faint)" stroke-width="4" stroke-dasharray="7 7"></circle>' : "";
+  }
+  function splitPart(mesh, name) {
+    var sp = null;
+    (mesh.split_brains || []).forEach(function (s) { var i = s.members.indexOf(name); if (i >= 0 && !sp) sp = { s: s, i: i }; });
+    return sp;
+  }
+  function brainBody(p, sp) {
+    // a split member fills the half it holds; the other half keeps its traces
+    var leftOn = sp && sp.i % 2 === 1, rightOn = sp && sp.i % 2 === 0;
+    var tr = (leftOn ? "" : TRACE_L) + (rightOn ? "" : TRACE_R);
+    return '<path d="' + BRAIN_L + '" fill="' + (leftOn ? "var(--link)" : "var(--shell)") + '" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>' +
+      '<path d="' + BRAIN_R + '" fill="' + (rightOn ? "var(--link)" : "var(--shell)") + '" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>' +
+      (tr ? '<path d="' + tr + '" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>' : "") +
+      (p.hub ? HUB_RING : "") + '<circle cx="60" cy="58" r="9" fill="var(--accent)"></circle>';
+  }
+  function bodySVG(p, mesh) {
+    if (p.guest) return '<path d="' + BRAIN_L + " " + BRAIN_R + '" fill="none" stroke="var(--faint)" stroke-width="4" stroke-dasharray="9 7" stroke-linejoin="round"></path>';
+    if (p.m.kind === "gateway") {
+      // no model here: a router, not a brain
+      return '<rect x="24" y="38" width="72" height="44" rx="12" fill="var(--shell)" stroke="var(--ink)" stroke-width="3"></rect>' +
+        '<path d="' + GATEWAY_ARROWS + '" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>' +
+        (p.hub ? HUB_RING : "");
+    }
+    return brainBody(p, splitPart(mesh, p.m.name));
+  }
+  function brainBadge(m, M, guest) {
+    var badge = null;
+    if (guest) badge = ["var(--info)", PLUS, "guest"];
+    else if (m.version && M.top && parseVer(m.version)) badge = cmpVer(m.version, M.top) < 0 ? ["var(--warn)", BANG, "behind " + M.top] : ["var(--ok)", CHECK, "current"];
+    return badge ? '<span class="badge" style="background:' + badge[0] + '">' + icon(badge[1], 13, "currentColor", badge[2]) + "</span>" : "";
+  }
+  function brainSVG(p, M, mesh) {
+    var m = p.m;
+    return '<svg width="' + p.size + '" height="' + p.size + '" viewBox="0 0 120 120" role="img" aria-label="' + esc(brainDesc(p, m)) + '"' + (m.reachable ? "" : ' opacity="0.55"') + ">" +
+      '<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>' + ringSVG(m.memory, p.guest) + bodySVG(p, mesh) + "</svg>" + brainBadge(m, M, p.guest);
+  }
+
+  function shapeLinks(mesh, P) {
+    // split = one solid band; shared pool = a dashed double line; both blue
+    var deco = [], tags = [];
+    (mesh.split_brains || []).forEach(function (s) {
+      var ps = s.members.map(function (n) { return P[n]; }).filter(Boolean);
+      for (var k = 0; k + 1 < ps.length; k++) {
+        var e = edge(ps[k], ps[k + 1], 0);
+        deco.push('<path d="' + line(e, 0, 0) + '" style="stroke:var(--link);stroke-width:12"></path>');
+        if (k === 0) tags.push({ x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2, text: shortModel(s.model) + " split ×" + s.members.length });
+      }
+    });
+    (mesh.pools || []).forEach(function (pr) {
+      var ps = pr.members.map(function (n) { return P[n]; }).filter(Boolean);
+      for (var k = 0; k + 1 < ps.length; k++) {
+        var e = edge(ps[k], ps[k + 1], 0);
+        deco.push('<path d="' + line(e, e.nx * 7, e.ny * 7) + line(e, -e.nx * 7, -e.ny * 7) + '" style="stroke:var(--link);stroke-width:3;stroke-dasharray:8 6"></path>');
+        if (k === 0) tags.push({ x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2, text: pr.roles.join(", ") + " shared pool" });
+      }
+    });
+    return { deco: deco, tags: tags };
+  }
+  function hubHTML(mesh, hx) {
+    return '<div style="position:absolute;left:' + (hx - 30) + 'px;top:30px;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:2px solid var(--accent);color:var(--accent)">' +
+      '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" role="img" aria-label="Outside world"><circle cx="12" cy="12" r="9"></circle><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"></path></svg></div>' +
+      '<div style="position:absolute;left:' + (hx + 42) + 'px;top:40px;max-width:360px;font-size:13px;line-height:16px;font-weight:700">outside<div style="font-weight:400;color:var(--soft)">' + esc(mesh.hub.evidence) + "</div></div>";
+  }
+  function namePos(p) {
+    var s = p.size;
+    if (p.guest) return "left:" + (p.x + s / 2 + 12) + "px;top:" + (p.y - 18) + "px;width:180px;text-align:left";
+    var top = p.below ? p.y + s / 2 + 6 : p.y - s / 2 - 43;
+    return "left:" + (p.x - 90) + "px;top:" + top + "px;width:180px";
+  }
+  function memberHTML(n, p, M, mesh) {
+    var m = p.m, s = p.size, sub = [m.version || "version unknown"];
+    if (m.kind === "gateway") sub.push("gateway only, routes " + (m.routes || []).length + " roles");
+    if (p.hub) sub.push("hub");
+    if (p.guest) sub.push("guest");
+    if (!m.reachable) sub.push("unreachable");
+    return '<div class="brain" style="left:' + (p.x - s / 2) + "px;top:" + (p.y - s / 2) + "px;width:" + s + "px;height:" + s + 'px">' + brainSVG(p, M, mesh) + "</div>" +
+      '<div class="nm" style="' + namePos(p) + '"><span>' + esc(n) + "<small>" + esc(sub.join(", ")) + "</small></span></div>";
+  }
+  function lobeButton(o, M) {
+    var l = o.l, on = S.sel && S.sel.role === l.role && S.sel.member === o.m.name;
+    return '<button type="button" class="lobe" data-act="lobe" data-role="' + esc(l.role) + '" data-member="' + esc(o.m.name) + '" data-k="' + esc("lobe:" + l.role + "@" + o.m.name) +
+      '" aria-pressed="' + (on ? "true" : "false") + '" title="' + esc(l.model + " (" + l.role + " on " + o.m.name + ")") + '" style="left:' + o.x + "px;top:" + o.y.toFixed(0) + 'px">' +
+      lobeGlyph(family(l.role), 18, l.ready) + "<span><b>" + esc(shortModel(l.model)) + esc(partLabel(l, M)) + "</b><small>" + esc(l.role + ", " + shapeLabel(l, M) + (l.ready ? "" : ", not ready")) + "</small></span></button>";
+  }
+  function legendHTML(mesh, L) {
+    var leg = FAM_ORDER.map(function (f) { return "<span>" + lobeGlyph(f, 16) + FAM[f] + "</span>"; });
+    leg.push("<span>" + lobeGlyph("gen", 16, false) + "not ready</span>");
+    if ((mesh.split_brains || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:8px;border-radius:4px;background:var(--link)"></span>split brain</span>');
+    if ((mesh.pools || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--link)"></span>shared pool</span>');
+    leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:2px;background:var(--web)"></span>mesh link</span>');
+    if (L.hub) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:4px;border-radius:2px;background:var(--accent)"></span>outside tunnel</span>');
+    if (L.maxTotal) leg.push('<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:3px solid var(--soft)"></span>ring = memory in use</span>');
+    return '<div class="legend">' + leg.join("") + "</div>";
+  }
+  function graphHTML(mesh, M) {
+    var L = layout(mesh), P = L.P, names = Object.keys(P), h = [], web = [], dash = [];
+    for (var i = 0; i < names.length; i++) for (var j = i + 1; j < names.length; j++) {
+      var a = P[names[i]], b = P[names[j]];
+      (a.guest || b.guest ? dash : web).push(line(edge(a, b, 2), 0, 0));
+    }
+    var links = shapeLinks(mesh, P), deco = links.deco;
+    if (L.hub) {
+      var hp = P[L.hub.name];
+      deco.push('<path d="M' + hp.x + " 92L" + hp.x + " " + (hp.y - hp.size / 2 - 2) + '" style="stroke:var(--accent);stroke-width:5"></path>');
+    }
+    var aria = "Full mesh of " + names.length + " member" + (names.length === 1 ? "" : "s") +
+      (L.hub ? "; " + L.hub.name + " holds the outside tunnel" : "; no outside tunnel evidenced");
+    h.push('<div class="canvas-scroll"><div class="sizer" data-w="' + L.W + '" data-h="' + L.H + '" style="width:' + L.W + "px;height:" + L.H + 'px"><div class="canvas" style="width:' + L.W + "px;height:" + L.H + 'px">',
+      '<svg class="links" width="' + L.W + '" height="' + L.H + '" viewBox="0 0 ' + L.W + " " + L.H + '" role="img" aria-label="' + esc(aria) + '">');
+    if (web.length) h.push('<path d="' + web.join("") + '" style="stroke:var(--web);stroke-width:1.6"></path>');
+    if (dash.length) h.push('<path d="' + dash.join("") + '" style="stroke:var(--faint);stroke-width:1.4;stroke-dasharray:5 7"></path>');
+    h.push(deco.join("") + "</svg>");
+    if (L.hub) h.push(hubHTML(mesh, P[L.hub.name].x));
+    links.tags.forEach(function (t) {
+      h.push('<div class="tag" style="left:' + t.x.toFixed(0) + "px;top:" + t.y.toFixed(0) + 'px;border:2px solid var(--link)">' + esc(t.text) + "</div>");
+    });
+    names.forEach(function (n) { h.push(memberHTML(n, P[n], M, mesh)); });
+    L.lobes.forEach(function (o) { h.push(lobeButton(o, M)); });
+    h.push("</div></div></div>");
+    return '<section class="card graph" aria-label="Mesh graph">' + h.join("") + legendHTML(mesh, L) + "</section>";
+  }
+
+  function hostVerb(on, split) {
+    if (!on) return " does not host ";
+    return split ? " holds part of " : " runs ";
+  }
+  function tableHTML(mesh, M) {
+    var ms = M.members, h = [];
+    h.push('<section class="card boxscroll" aria-label="Lobes by member" style="margin-top:14px"><table style="min-width:' + Math.max(640, 420 + ms.length * 110) + 'px">',
+      '<caption class="sr">Which model runs on which member</caption><thead><tr><th scope="col">Lobe</th><th scope="col">Role</th>');
+    ms.forEach(function (m) {
+      var sub = [m.version || "version unknown"];
+      if (m.kind === "gateway") sub.push("gateway only");
+      if (mesh.hub && mesh.hub.member === m.name) sub.push("hub");
+      if (m.residency === "guest") sub.push("guest");
+      h.push('<th scope="col" class="m">' + esc(m.name) + "<small>" + esc(sub.join(", ")) + "</small></th>");
+    });
+    h.push('<th scope="col">Shape</th><th scope="col">Container</th></tr></thead><tbody>');
+    if (!M.rows.length) h.push('<tr><td colspan="' + (ms.length + 4) + '" class="empty">No member reports a hosted lobe.</td></tr>');
+    M.rows.forEach(function (r) {
+      var f = family(r.role), col = "var(--link)", split = r.shape === "split", first = r.hosts[0];
+      h.push('<tr><th scope="row"><span style="display:inline-flex;align-items:center;gap:8px">' + lobeGlyph(f, 14) + '<span title="' + esc(r.model) + '">' + esc(shortModel(r.model)) + "</span></span></th>",
+        '<td style="color:var(--soft)">' + esc(r.role) + "</td>");
+      ms.forEach(function (m) {
+        var on = r.hosts.includes(m.name), w = on && split ? 22 : 12;
+        var label = m.name + hostVerb(on, split) + r.model;
+        h.push('<td style="text-align:center"><span class="cell" role="img" aria-label="' + esc(label) + '" style="width:' + w + "px;border-radius:" + (on && split ? "4px" : "50%") +
+          ";background:" + (on ? col : "transparent") + ";border:" + (on ? "0" : "1.5px solid var(--line2)") + '"></span></td>');
+      });
+      h.push('<td><span class="chip">' + esc(shapeLabel({ model: r.model, shape: r.shape }, M)) + "</span></td>",
+        '<td><button type="button" class="btn ghost" data-act="lobe" data-role="' + esc(r.role) + '" data-member="' + esc(first) + '" data-k="' + esc("row:" + r.role + "@" + first) +
+        '" aria-label="' + esc("Export " + r.role + " from " + first) + '">Export</button></td></tr>');
+    });
+    h.push("</tbody></table></section>");
+    return h.join("");
+  }
+
+  function lobeOf(M, role, member) {
+    var found = null;
+    M.members.forEach(function (m) { if (m.name === member) (m.lobes || []).forEach(function (l) { if (l.role === role) found = l; }); });
+    return found;
+  }
+  function exportLabel(st) {
+    if (st === "built") return "has build files";
+    if (st === "image-only") return "image only";
+    return st || "unknown";
+  }
+  function panelChips(d, l, M) {
+    var chips = [];
+    if (d) chips.push('<span class="chip"' + (d.status === "built" ? ' style="background:var(--accent-tint);color:var(--accent)"' : "") + ">" + esc(exportLabel(d.status)) + "</span>");
+    if (l) chips.push('<span class="chip">' + esc(shapeLabel(l, M)) + "</span>");
+    if (d) chips.push('<span class="chip">secrets removed</span>');
+    return '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px">' + chips.join("") + "</div>";
+  }
+  var FILE_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="color:var(--soft);flex:none"><path d="M14 3H6v18h12V7zM14 3v4h4"></path></svg>';
+  function exportFiles(files) {
+    if (!files.length) return '<div class="lbl">Files</div><div style="font-size:13px;color:var(--soft)">none</div>';
+    return '<div class="lbl">Files</div><ul class="files">' + files.map(function (p) { return "<li>" + FILE_ICON + "<code>" + esc(p) + "</code></li>"; }).join("") + "</ul>";
+  }
+  function exportBody(E) {
+    if (!E || E.loading) return '<p style="color:var(--soft)">Loading export</p>';
+    if (E.error) return '<p class="err" role="alert">' + esc(E.error) + "</p>";
+    var d = E.data, h = [];
+    if (d.image) h.push('<div class="lbl">Image</div><code class="val">' + esc(d.image) + "</code>");
+    if (d.service) h.push('<div class="lbl">Service</div><code class="val">' + esc(d.service) + "</code>");
+    if (d.reason) h.push('<div class="lbl">Reason</div><div style="font-size:13px">' + esc(d.reason) + "</div>");
+    h.push(exportFiles(d.files || []));
+    if ((d.notes || []).length) {
+      h.push('<div class="lbl">Notes</div><ul style="margin:4px 0 0;padding-left:18px;font-size:13px">' + d.notes.map(function (n) { return "<li>" + esc(n) + "</li>"; }).join("") + "</ul>");
+    }
+    if (d.cli) h.push('<div class="lbl">Write the bundle</div><div style="margin-top:4px">' + copyBtn(d.cli) + "</div>");
+    return h.join("");
+  }
+  function alsoOn(l, M, role, member) {
+    var g = l && l.shape !== "single" ? M.splitOf[l.model] || M.poolOf[l.model] : null;
+    if (!g) return "";
+    return g.members.filter(function (n) { return n !== member; }).map(function (n) {
+      return '<button type="button" class="btn ghost" style="margin-top:12px;margin-right:8px" data-act="lobe" data-role="' + esc(role) + '" data-member="' + esc(n) + '" data-k="' + esc("also:" + n) + '">Also on ' + esc(n) + "</button>";
+    }).join("");
+  }
+  function panelHTML(M) {
+    var open = '<aside class="card panel" aria-label="Selected lobe" aria-live="polite">';
+    if (!S.sel) return open + '<p style="margin:0;color:var(--soft)">Pick a lobe to see its export.</p></aside>';
+    var role = S.sel.role, member = S.sel.member, l = lobeOf(M, role, member);
+    var E = S.exp && S.exp.key === role + "@" + member ? S.exp : null, d = E && E.data;
+    return open +
+      '<div style="display:flex;align-items:center;gap:10px">' + lobeGlyph(family(role), 26, l ? l.ready : undefined) + '<div style="min-width:0"><h2>' + esc(l ? shortModel(l.model) : role) +
+      '</h2><div style="font-size:13px;color:var(--soft)">' + esc(role + " on " + member) + "</div></div></div>" +
+      panelChips(d, l, M) +
+      (l ? '<div class="lbl">Model</div><code class="val">' + esc(l.model) + "</code>" : "") +
+      exportBody(E) + alsoOn(l, M, role, member) + "</aside>";
+  }
+
+  function errorBox(name) {
+    return '<div class="card empty" role="alert"><p class="err" style="margin:0 0 12px">Could not load ' + esc(API[name]) + ": " + esc(S.err[name]) +
+      '</p><button type="button" class="btn" data-act="refresh" data-what="' + name + '" data-k="retry:' + name + '">Retry</button></div>';
+  }
+  function refreshBtn(name) {
+    return '<button type="button" class="btn ghost" data-act="refresh" data-what="' + name + '" data-k="refresh:' + name + '">Refresh</button>';
+  }
+
+  function meshView() {
+    var mesh = S.data.mesh;
+    if (!mesh) return S.err.mesh ? errorBox("mesh") : '<p class="empty">Loading</p>';
+    var M = meshModel(mesh), h = [];
+    h.push('<div class="row" style="margin-top:22px"><div class="seg" role="tablist" aria-label="View">');
+    [["graph", "Graph"], ["table", "Table"]].forEach(function (t) {
+      var on = S.tab === t[0];
+      h.push('<button type="button" role="tab" id="tab-' + t[0] + '" aria-controls="tabpanel" tabindex="' + (on ? 0 : -1) + '" aria-selected="' + on + '" data-act="tab" data-tab="' + t[0] + '" data-k="tab:' + t[0] + '">' + t[1] + "</button>");
+    });
+    h.push('</div><span class="grow"></span>');
+    M.members.filter(function (m) { return m.residency === "guest"; }).forEach(function (m) {
+      h.push('<span class="guest"><b>' + esc(m.name) + '</b><span class="s">guest</span>' + copyBtn("lobes mesh resident add " + m.name) + "</span>");
+    });
+    h.push(refreshBtn("mesh") + "</div>", '<div id="tabpanel" role="tabpanel" aria-labelledby="tab-' + S.tab + '">');
+    if (S.tab === "graph") h.push('<div class="graphwrap">' + graphHTML(mesh, M) + panelHTML(M) + "</div>");
+    else h.push(tableHTML(mesh, M) + (S.sel ? '<div class="graphwrap">' + panelHTML(M) + "</div>" : ""));
+    h.push("</div>");
+    return h.join("");
+  }
+
+  // ---------------------------------------------------------------- rollout
+  function stepState(st, idx, steps) {
+    var last = steps.indexOf(st.last_step);
+    if (st.done || idx < last) return ["Done", "var(--ok)", 400];
+    if (last < 0) return ["Waiting", "var(--faint)", 400];
+    if (idx === last) {
+      if (st.last_result === "ok") return ["Done", "var(--ok)", 400];
+      if (st.last_result === "failed") return ["Failed", "var(--crit)", 700];
+      if (st.last_result === "skipped_offline") return ["Offline", "var(--warn)", 700];
+      return [st.last_result || "Running", "var(--accent)", 700];
+    }
+    return [st.last_result === "failed" ? "Skipped" : "Waiting", "var(--faint)", 400];
+  }
+  function waveState(st, resume) {
+    if (st.done) return { label: "Verified", color: "var(--ok)", bg: "var(--ok)", fg: "var(--surface)", border: "var(--ok)", icon: CHECK };
+    if (st.last_result === "failed") return { label: "Halted", color: "var(--crit)", bg: "var(--crit)", fg: "var(--surface)", border: "var(--crit)", icon: CROSS };
+    if (st.state === "pending") return { label: "Offline, skipped", color: "var(--warn)", bg: "var(--surface)", fg: "var(--ink)", border: "var(--warn)", icon: BANG };
+    var here = resume && resume.member === st.member;
+    return { label: here ? "Next: " + stepName(resume.step) : "In progress", color: "var(--accent)", bg: "var(--accent)", fg: "var(--surface)", border: "var(--accent)", icon: null };
+  }
+  function verLabel(m) {
+    if (!m.current && !m.target) return "";
+    var arrow = m.target && m.target !== m.current ? " → " + m.target : "";
+    return (m.current || "?") + arrow;
+  }
+  function waveLine(m, last) {
+    if (last) return "";
+    return '<span class="wline" aria-hidden="true" style="background:' + (m.done ? "var(--ok)" : "var(--track)") + '"></span>';
+  }
+  function rolloutView() {
+    var R = S.data.rollout;
+    if (!R) return S.err.rollout ? errorBox("rollout") : '<p class="empty">Loading</p>';
+    var ms = R.members || [], steps = R.steps || [], h = [], targets = {};
+    ms.forEach(function (m) { if (m.target) targets[m.target] = (targets[m.target] || 0) + 1; });
+    var target = Object.keys(targets).sort(function (a, b) { return targets[b] - targets[a]; })[0] || null;
+    var failed = ms.filter(function (m) { return m.last_result === "failed" && !m.done; });
+    var done = ms.filter(function (m) { return m.done; });
+    var pre = target ? target + ": " : "", head;
+    if (!ms.length) head = "No rollout yet";
+    else if (failed.length) head = pre + "halted at " + failed.map(function (m) { return m.member; }).join(", ");
+    else if (done.length === ms.length) head = pre + "every member verified";
+    else head = pre + done.length + " of " + ms.length + " verified";
+    h.push('<div class="row" style="justify-content:space-between;align-items:flex-end"><h1 class="big">' + esc(head) + "</h1>" + refreshBtn("rollout") + "</div>");
+    if (!ms.length) {
+      h.push('<section class="card" aria-label="Run it" style="margin-top:28px;padding:18px 22px"><div class="row"><div class="grow" style="font-weight:700;min-width:200px">The rollout journal is empty</div>' + copyBtn("lobes rollout plan") + "</div></section>");
+      return h.join("");
+    }
+    h.push('<section class="card boxscroll" aria-label="Waves" style="margin-top:36px;padding:28px 28px 24px"><ol class="waves" style="grid-template-columns:repeat(' + ms.length + ',minmax(180px,1fr));min-width:' + ms.length * 200 + 'px">');
+    ms.forEach(function (m, i) {
+      var w = waveState(m, R.resume), last = i === ms.length - 1;
+      var badge = w.icon ? icon(w.icon, 12, w.border) : esc(i + 1);
+      var ver = verLabel(m);
+      h.push('<li><div style="display:flex;align-items:center"><span style="flex:none;position:relative;width:64px;height:64px">' +
+        '<svg width="64" height="64" viewBox="0 0 120 120" aria-hidden="true"><path d="' + BRAIN_L + " " + BRAIN_R + '" fill="' + w.bg + '" stroke="' + w.border + '" stroke-width="4" stroke-linejoin="round"></path><circle cx="60" cy="58" r="8" fill="' + w.fg + '"></circle></svg>' +
+        '<span style="position:absolute;right:-2px;bottom:0;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:2px solid ' + w.border + ';font-size:12px;font-weight:900">' + badge + "</span></span>" +
+        waveLine(m, last) + "</div>" +
+        '<div style="margin-top:14px;font-size:13px;color:var(--soft)">Wave ' + (i + 1) + "</div>" +
+        '<div style="font-weight:700;font-size:1.35rem;line-height:1.2;overflow-wrap:anywhere">' + esc(m.member) + "</div>" +
+        '<div style="font-size:14px;font-weight:700;margin-top:4px;color:' + w.color + '">' + esc(w.label) + "</div>" +
+        (ver ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px"><span class="chip">' + esc(ver) + "</span></div>" : "") + "</li>");
+    });
+    h.push("</ol></section>");
+    failed.forEach(function (m) {
+      h.push('<section class="halt" aria-label="Rollout halted"><div class="t">' + icon("M12 7v6M12 16.5h.01", 18, "currentColor") +
+        "<span>" + esc(m.member + " halted at " + stepName(m.last_step)) + "</span></div>" +
+        (m.rollback_command ? '<div class="row" style="margin-top:12px">' + copyBtn(m.rollback_command) + "</div>" : "") + "</section>");
+    });
+    h.push('<section class="card" aria-label="Member steps" style="margin-top:20px;padding:20px 22px"><h2 class="sec">Steps</h2><div class="boxscroll"><table style="min-width:' + (220 + ms.length * 130) + 'px"><thead><tr><th scope="col">Step</th>');
+    ms.forEach(function (m) { h.push('<th scope="col" style="color:var(--ink)">' + esc(m.member) + "</th>"); });
+    h.push("</tr></thead><tbody>");
+    steps.forEach(function (s, idx) {
+      h.push('<tr><th scope="row" style="font-weight:400">' + esc(stepName(s)) + "</th>");
+      ms.forEach(function (m) { var c = stepState(m, idx, steps); h.push('<td style="color:' + c[1] + ";font-weight:" + c[2] + '">' + esc(c[0]) + "</td>"); });
+      h.push("</tr>");
+    });
+    h.push("</tbody></table></div></section>");
+    var cta;
+    if (failed.length) cta = [failed[0].member + ": your call", failed[0].rollback_command || "lobes rollout status"];
+    else if (R.resume) cta = ["Resume at " + R.resume.member + ", " + stepName(R.resume.step), "lobes rollout apply --apply"];
+    else if (done.length === ms.length) cta = ["Done", "lobes rollout status"];
+    else cta = ["Next wave", "lobes rollout apply --apply"];
+    h.push('<section class="card" aria-label="Run it" style="margin-top:20px;padding:18px 22px"><div class="row"><div class="grow" style="font-weight:700;min-width:200px">' + esc(cta[0]) + "</div>" + copyBtn(cta[1]) + "</div></section>");
+    return h.join("");
+  }
+
+  // ---------------------------------------------------------------- residents
+  var COLS = [["ssh", "SSH"], ["user", "User"], ["port", "Port"], ["lobes_path", "lobes"], ["gateway_key", "Gateway key"]];
+  function fieldCell(name, f) {
+    if (!f || f.state !== "detected") {
+      return '<span class="inp"><span class="ico" style="color:var(--warn)">' + icon(BANG, 14, "currentColor") + '</span><span style="color:var(--warn);font-weight:700">needs you</span></span>';
+    }
+    var v = f.value, warn = false;
+    if (name === "gateway_key") { if (v === false) { v = "none (open)"; warn = true; } else v = "set"; }
+    else if (v === true) v = "yes"; else if (v === false) v = "no";
+    return '<span class="inp"><span class="ico" style="color:' + (warn ? "var(--warn)" : "var(--ok)") + '">' + icon(warn ? BANG : CHECK, 14, "currentColor", warn ? "needs you" : "detected") +
+      '</span><span style="font-variant-numeric:tabular-nums;overflow-wrap:anywhere;color:' + (warn ? "var(--warn)" : "var(--ink)") + '">' + esc(v) + "</span></span>";
+  }
+  function needsList(r) {
+    var n = (r.needs_you || []).slice(), k = r.fields && r.fields.gateway_key;
+    if (k && k.state === "detected" && k.value === false) n.push("gateway_key (open)");
+    return n;
+  }
+  function tomlVal(name, v) {
+    if (name === "gateway_key" && typeof v !== "boolean") return '"<set>"';
+    if (typeof v === "boolean") return v ? "true" : "false";
+    if (typeof v === "number") return String(v);
+    return JSON.stringify(String(v));
+  }
+  function fileText(D) {
+    var out = ['# generated by lobes from the mesh roster; fix lines marked "fix:"'];
+    [["resident", D.residents || []], ["guest", D.guests || []]].forEach(function (g) {
+      g[1].forEach(function (r) {
+        out.push("", "[" + g[0] + "." + r.name + "]");
+        COLS.forEach(function (c) {
+          var f = r.fields[c[0]];
+          out.push(f && f.state === "detected" ? c[0] + " = " + tomlVal(c[0], f.value) : "# fix: " + c[0] + " unknown");
+        });
+        if ((r.needs_you || []).length) out.push("needs_you = [" + r.needs_you.map(function (n) { return '"' + n + '"'; }).join(", ") + "]");
+      });
+    });
+    return out.join("\n");
+  }
+  function residentsView() {
+    var D = S.data.residents;
+    if (!D) return S.err.residents ? errorBox("residents") : '<p class="empty">Loading</p>';
+    var all = (D.residents || []).map(function (r) { return { r: r, guest: false }; }).concat((D.guests || []).map(function (r) { return { r: r, guest: true }; }));
+    var nNeeds = all.filter(function (x) { return needsList(x.r).length; }).length, nGuests = (D.guests || []).length;
+    var rows = all.filter(function (x) { return S.resFilter === "all" || (S.resFilter === "needs" && needsList(x.r).length) || (S.resFilter === "guests" && x.guest); });
+    var h = ['<div class="row" style="gap:14px 20px"><h1 class="mid">Residents</h1><code class="cmd" style="color:var(--soft);background:var(--surface);border-color:var(--line)">' + esc(D.file) + "</code>"];
+    h.push('<div class="seg" role="group" aria-label="Filter" style="margin-left:auto">');
+    [["all", "All", all.length], ["needs", "Needs you", nNeeds], ["guests", "Guests", nGuests]].forEach(function (t) {
+      h.push('<button type="button" data-act="filter" data-f="' + t[0] + '" data-k="filter:' + t[0] + '" aria-pressed="' + (S.resFilter === t[0]) + '">' + t[1] + ' <span class="n">' + t[2] + "</span></button>");
+    });
+    h.push("</div>" + refreshBtn("residents") + "</div>",
+      '<div class="row" style="gap:8px 18px;margin-top:14px;font-size:13px;color:var(--soft)">' +
+      '<span class="inp"><span class="ico" style="color:var(--ok)">' + icon(CHECK, 14) + "</span>detected</span>" +
+      '<span class="inp"><span class="ico" style="color:var(--warn)">' + icon(BANG, 14) + "</span>needs you</span>" +
+      '<span class="inp"><span class="ico" style="color:var(--info)">' + icon(PLUS, 14) + "</span>guest</span></div>",
+      '<section class="card boxscroll" aria-label="Residents" style="margin-top:16px"><table style="min-width:900px"><caption class="sr">Residents file</caption><thead><tr><th scope="col">Machine</th>');
+    COLS.forEach(function (c) { h.push('<th scope="col">' + c[1] + "</th>"); });
+    h.push("</tr></thead><tbody>");
+    if (!all.length) h.push('<tr><td colspan="6" class="empty">No residents file yet.</td></tr>');
+    else if (!rows.length) h.push('<tr><td colspan="6" class="empty">None.</td></tr>');
+    rows.forEach(function (x) {
+      var r = x.r, color = x.guest ? "var(--info)" : "var(--accent)";
+      h.push('<tr style="background:' + (x.guest ? "var(--accent-tint)" : "transparent") + '"><th scope="row"><span style="display:inline-flex;align-items:center;gap:10px">' +
+        '<svg width="30" height="30" viewBox="0 0 120 120" aria-hidden="true"><path d="' + BRAIN_L + " " + BRAIN_R + '" fill="var(--shell)" stroke="' + color + '" stroke-width="7" stroke-dasharray="' + (x.guest ? "10 8" : "none") + '" stroke-linejoin="round"></path><circle cx="60" cy="58" r="10" fill="' + color + '"></circle></svg>' +
+        "<span>" + esc(r.name) + (x.guest ? ' <span class="chip">guest</span>' : "") + "</span></span></th>");
+      COLS.forEach(function (c) { h.push("<td>" + fieldCell(c[0], r.fields[c[0]]) + "</td>"); });
+      h.push("</tr>");
+    });
+    h.push("</tbody></table></section>");
+    var fixes = [];
+    all.forEach(function (x) { var n = needsList(x.r); if (n.length) fixes.push("<li><b>" + esc(x.r.name) + "</b> " + esc(n.join(", ")) + "</li>"); });
+    h.push('<div class="row" style="align-items:flex-start;gap:16px;margin-top:16px">',
+      '<section class="card" aria-label="File" style="flex:2 1 520px;min-width:0;padding:16px 18px"><div class="row" style="gap:10px;margin-bottom:10px"><h2 class="sec" style="margin:0">' + esc(D.file) + "</h2>" +
+      (nNeeds ? '<span class="chip" style="background:var(--warn-tint);color:var(--warn)">' + nNeeds + " to fix</span>" : "") + '</div><pre class="file" tabindex="0" aria-label="' + esc(D.file) + '">' + esc(fileText(D)) + "</pre></section>",
+      '<section class="card" aria-label="Needs you" style="flex:1 1 320px;min-width:0;padding:16px 18px"><h2 class="sec">Needs you</h2>' +
+      (fixes.length ? '<ul class="stack" style="list-style:none;margin:0;padding:0;font-size:14px">' + fixes.join("") + "</ul>" : '<p style="margin:0;color:var(--soft)">Nothing.</p>'));
+    (D.guests || []).forEach(function (g) { h.push('<div style="margin-top:12px">' + copyBtn("lobes mesh resident add " + g.name) + "</div>"); });
+    h.push("</section></div>");
+    return h.join("");
+  }
+
+  // ---------------------------------------------------------------- render + events
+  var VIEWS = { mesh: meshView, rollout: rolloutView, residents: residentsView };
+  function refocus(main, key) {
+    if (!key) return;
+    for (const el of main.querySelectorAll("[data-k]")) if (el.dataset.k === key) { el.focus(); break; }
+  }
+  function render() {
+    var ae = document.activeElement, key = ae && ae.dataset ? ae.dataset.k : null;
+    var main = document.getElementById("main");
+    main.innerHTML = (VIEWS[S.view] || meshView)();
+    for (const nav of document.querySelectorAll("[data-nav]")) {
+      if (nav.dataset.nav === S.view) nav.setAttribute("aria-current", "page"); else nav.removeAttribute("aria-current");
+    }
+    document.getElementById("self").textContent = S.data.mesh ? S.data.mesh.self : "";
+    fit();
+    refocus(main, key);
+  }
+  function fit() {
+    for (const z of document.querySelectorAll(".sizer")) {
+      var w = +z.dataset.w, hh = +z.dataset.h, avail = z.parentNode.clientWidth, ratio = avail / w;
+      // shrink to fit down to 75 %; below that keep full size and let it scroll
+      var sc = avail >= w || ratio < 0.75 ? 1 : ratio;
+      z.style.width = Math.floor(w * sc) + "px";
+      z.style.height = Math.ceil(hh * sc) + "px";
+      z.firstChild.style.transform = sc === 1 ? "" : "scale(" + sc.toFixed(4) + ")";
+    }
+  }
+  window.addEventListener("resize", fit);
+  function select(role, member) {
+    var key = role + "@" + member;
+    S.sel = { role: role, member: member };
+    S.exp = { key: key, loading: true };
+    render();
+    getJSON(API.exp + "?role=" + encodeURIComponent(role) + "&member=" + encodeURIComponent(member)).then(function (d) {
+      if (S.exp && S.exp.key === key) S.exp = { key: key, data: d };
+    }, function (e) {
+      if (S.exp && S.exp.key === key) S.exp = { key: key, error: e.message || String(e) };
+    }).then(render);
+  }
+  function copy(btn) {
+    var text = btn.dataset.text;
+    function done(ok) {
+      btn.textContent = ok ? "Copied" : "Select to copy";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
+    else done(false);
+  }
+  document.addEventListener("click", function (ev) {
+    var t = ev.target && ev.target.closest ? ev.target.closest("[data-act]") : null;
+    if (!t) return;
+    var act = t.dataset.act;
+    if (act === "tab") { S.tab = t.dataset.tab; render(); }
+    else if (act === "lobe") select(t.dataset.role, t.dataset.member);
+    else if (act === "copy") copy(t);
+    else if (act === "filter") { S.resFilter = t.dataset.f; render(); }
+    else if (act === "refresh") load(t.dataset.what);
+  });
+  document.addEventListener("keydown", function (ev) {
+    var t = ev.target;
+    if (!t || !t.getAttribute || t.getAttribute("role") !== "tab" || (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft")) return;
+    S.tab = S.tab === "graph" ? "table" : "graph";
+    render();
+    var n = document.getElementById("tab-" + S.tab);
+    if (n) n.focus();
+    ev.preventDefault();
+  });
+  function route() {
+    var v = (location.hash || "#mesh").slice(1);
+    S.view = v === "rollout" || v === "residents" ? v : "mesh";
+    if (S.rollTimer) { clearInterval(S.rollTimer); S.rollTimer = null; }
+    if (S.view === "rollout") S.rollTimer = setInterval(function () { if (!document.hidden) load("rollout"); }, 10000);
+    render();
+    load(S.view);
+    if (S.view !== "mesh" && !S.data.mesh && !S.err.mesh) load("mesh");
+  }
+  window.addEventListener("hashchange", route);
+  route();
+})();
+</script>
+</body>
+</html>

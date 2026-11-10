@@ -50,6 +50,11 @@ def offline_runtime(monkeypatch, tmp_path):
     monkeypatch.delenv("MODEL_GEAR_DIR", raising=False)  # also clear legacy back-compat var
     empty = tmp_path / "home-lobes"
     monkeypatch.setattr(_compose, "default_deployment_dir", lambda: empty)
+    # `lobes site` reads each member's containers over ssh / local docker
+    # (deviation d2); no test may reach a real docker or ssh by default.
+    from lobes.site import server as _site
+
+    monkeypatch.setattr(_site, "_TOPOLOGY_RUNNER", lambda argv, timeout: (1, "", "offline"))
 
 
 @pytest.fixture(autouse=True)
@@ -100,3 +105,16 @@ def _pin_unknown_card(monkeypatch) -> None:
         return real_detect_card(*args, **kwargs)
 
     monkeypatch.setattr(_detect, "detect_card", _detect_card)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_gateway_identity(monkeypatch):
+    """Keep this box's real gateway container out of every test.
+
+    ``lobes.rollout._identity.running_gateway_mesh_name`` runs ``docker inspect``
+    on the live gateway; on a dev box that hosts one it would leak the real mesh
+    name into tests. Tests that exercise it pass their own runner.
+    """
+    from lobes.rollout import _identity
+
+    monkeypatch.setattr(_identity, "running_gateway_mesh_name", lambda *a, **k: None)

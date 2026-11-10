@@ -271,6 +271,7 @@ class FakeMesh:
                     "members": [
                         {"name": b.name, "origin": b.origin, "verified": True}
                         for b in self.boxes.values()
+                        if b is not box  # a gateway never lists itself (live-verified)
                     ]
                 }
             )

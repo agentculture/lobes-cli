@@ -105,3 +105,20 @@ def test_diff_regressions_and_new():
     assert d.improved == ["d"]
     assert not d.ok
     assert ob.diff(before, before).ok
+
+
+def test_observe_keeps_the_health_body_without_extra_requests():
+    health = dict(
+        ROUTES["/health"],
+        memory={"total_bytes": 10, "available_bytes": 4},
+    )
+    op = FakeOpener(dict(ROUTES, **{"/health": health}))
+    obs = ob.observe_member("http://h:1", opener=op)
+    assert obs.health == health
+    assert obs.version == "0.94.0"  # extra /health keys are tolerated
+    assert len(op.calls) == 3
+
+
+def test_unreachable_member_has_empty_health():
+    op = FakeOpener({p: OSError("down") for p in ROUTES})
+    assert ob.observe_member("http://h:1", opener=op).health == {}

@@ -473,6 +473,21 @@ CLI's own version and fails the run on a real mismatch (remediation: bump
 `MODEL_GEAR_VERSION` in `.env` and `docker compose up -d --build gateway`) —
 see [Verbs](#verbs) below.
 
+### Advertised evidence: memory
+
+Additive, for `lobes site` (t21, amended by deviation d2). `GET /health`
+carries `memory: {total_bytes, available_bytes}` from `/proc/meminfo`
+(host-wide inside docker on Linux), omitted when unreadable, so an
+unreadable host answers byte-identically to the original three keys.
+
+Nothing on `/health` or `/capabilities` is operator-declared. Deviation d2
+removed the hand-typed `<PREFIX>_SPANS`, `<PREFIX>_WORLD_SIZE` and
+`LOBES_TUNNEL_PUBLIC_URL` keys that t21 added, because a typed fact can drift
+from what is running. `lobes site` now reads split brains and the hub from
+each member's running containers instead (see
+[rollout.md](rollout.md#known-limits)). A leftover key in an existing `.env`
+does nothing.
+
 ### Realtime lane: the one WebSocket route
 
 Every other data-plane route the gateway serves is an HTTP forward.

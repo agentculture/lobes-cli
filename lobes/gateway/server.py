@@ -86,6 +86,7 @@ from lobes.gateway._config import (
     RENDER_BODY_LIMIT_ENV,
     ServerConfig,
 )
+from lobes.gateway._evidence import health_payload
 from lobes.gateway._mesh_config import MeshConfigError
 from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
@@ -5881,9 +5882,10 @@ class _Handler(BaseHTTPRequestHandler):
             # silently run a stale release for days after the host CLI (and PyPI)
             # moved on — exactly what made issue #92 look like a code regression
             # when the fix was already published and simply undeployed.
-            self._send_json(
-                200, {"status": "ok", "service": "model-gear-gateway", "version": __version__}
-            )
+            #
+            # t21 (amended by deviation d2): `memory` (host /proc/meminfo,
+            # omitted when unreadable) is additive evidence for `lobes site`.
+            self._send_json(200, health_payload(version=__version__))
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.

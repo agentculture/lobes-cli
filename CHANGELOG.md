@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.98.0] - 2026-11-10
+
+### Added
+
+- `lobes site`: a local, read-only site on 127.0.0.1:9490 (Mesh graph/table,
+  Rollout, Residents) per the confirmed design, fed by `/api/mesh`,
+  `/api/rollout`, `/api/residents`, `/api/lobe-export`. Plain JS, vendored Lato
+  (OFL), zero external requests.
+- Read, never hand-defined (deviations d1, d2): a split brain is read from
+  each resident's running serving containers over SSH (an allowlisted
+  projection: served model name, TensorFold `TF_*_WORLD`/`TF_*_RANK`, vLLM TP/PP
+  flags); a split needs N members reporting world=N with ranks 0..N-1. The hub
+  is the member running `lobes-cloudflared`. Gateway `/health` carries measured
+  host `memory`.
+- Live-review fixes: this box's name comes from the running gateway, not `.env`
+  (a roster peer's name is refused — also protects `lobes rollout`); a shared
+  pool needs ready members; a role with no backend wired is not a lobe; a member
+  serving no model is drawn as a gateway; a lobe's family is a sign (generate,
+  decide, embed/rank, speech), never a colour, so amber means only "not
+  ready" or "behind"; the `gateway-only` shape renders
+  `STT_FEASIBLE`/`TTS_FEASIBLE=false`.
+- `lobes site install|uninstall|status`: keep the site up across reboots as a
+  systemd user unit (`Restart=always`, which also rides out a tailnet IP that
+  is not up yet at boot; linger required; manifest-tracked removal).
+- `docs/rollout.md`, `lobes explain rollout`, and a static boundary test that
+  rollout never touches lanes, checkpoints, shapes or profiles.
+  DECLARED/UNVALIDATED (#108).
+
 ## [0.97.0] - 2026-11-10
 
 ### Added

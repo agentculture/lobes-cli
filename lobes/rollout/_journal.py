@@ -154,3 +154,24 @@ class Journal:
                 step = st.last_step
             return ResumePoint(name, step)
         return None
+
+
+class TargetJournal(Journal):
+    """The journal restricted to one rollout target, so an earlier rollout's
+    verified records never mark a member done for this one."""
+
+    def __init__(self, deployment_dir, target: str, redact: Optional[Callable[[str], str]] = None):
+        super().__init__(deployment_dir, redact=redact)
+        self.target = target
+
+    def records(self) -> list:
+        return [r for r in super().records() if r.get("target") == self.target]
+
+
+def latest_target(journal: Journal, member: Optional[str] = None) -> Optional[str]:
+    """The target of the most recent record (for *member*, when given)."""
+    target = None
+    for r in journal.records():
+        if member is None or r.get("member") == member:
+            target = r.get("target") or target
+    return target

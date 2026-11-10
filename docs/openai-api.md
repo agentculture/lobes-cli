@@ -23,7 +23,7 @@ request's `model` field. Clients point at the same URL either way.
 | `/v1/models` | GET | gateway | OpenAI-standard list of loaded backends (what is hot now) |
 | `/v1/models/supported` | GET | gateway | full supported-model catalog (every gear you can switch to; each flagged `loaded`/`default`) |
 | `/capabilities` | GET | gateway | the nine-role Colleague contract (`cortex`/`senses`/`muse`/`worker`/`embedder`/`reranker`/`stt`/`tts`) resolved to live endpoint + metadata — non-OpenAI, lobes-native |
-| `/health` | GET | gateway | liveness |
+| `/health` | GET | gateway | liveness, plus optional measured `memory` ([gateway-fleet.md](gateway-fleet.md#advertised-evidence-memory)) |
 
 **Unlisted POST paths pass through.** The POST router is path-agnostic: it
 resolves the model from the request body and forwards the *original* path to
