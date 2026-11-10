@@ -24,11 +24,14 @@ derived facts follow strict evidence rules, never a guess:
   ``world_size`` N > 1 advertised for the same model by exactly N hosting
   members. Without evidence the model is reported single (or a pair).
 - **pair** -- one model hosted (not mesh-proxied) by several members, a pool.
-- **hub** -- the member running the outside tunnel, only when a tunnel probe
-  evidences it; otherwise ``null``.
+- **hub** -- the member running the outside tunnel, only when evidenced: a
+  member's ``/health`` ``tunnel`` declaration (``LOBES_TUNNEL_PUBLIC_URL``,
+  reported with ``declared: true``) or, for the local box only, a tunnel probe;
+  otherwise ``null``.
 
-Memory is reported only where a source measured it (by default the local box's
-``/proc/meminfo``); every other member reads ``null``.
+Memory is reported only where a source measured it: a member's own ``/health``
+``memory`` (its gateway reads ``/proc/meminfo``), falling back to this box's
+``/proc/meminfo`` for the local member; anything else reads ``null``.
 
 Every ``/api`` body is scrubbed with :func:`lobes.rollout._redact.redact`
 against the deployment's secret values. The default bind is loopback and the
@@ -93,9 +96,10 @@ class Sources:
 
     ``observe(origin)`` -> MemberObservation; ``residents()`` -> Residents;
     ``journal()`` -> Journal-like (``status()``, ``resume_point()``);
-    ``export_listing(role, member)`` -> dict; ``memory(name, is_local)`` ->
-    ``{"total_bytes", "available_bytes"}`` or None; ``tunnel(name, is_local)``
-    -> evidence string or None.
+    ``export_listing(role, member)`` -> dict; ``memory(name, is_local, health)``
+    -> ``{"total_bytes", "available_bytes"}`` or None; ``tunnel(name, is_local,
+    health)`` -> evidence string, ``{"evidence": str, "declared": bool}`` or
+    None. ``health`` is the member's already-fetched ``/health`` body.
     """
 
     local_origin: str
@@ -104,8 +108,8 @@ class Sources:
     residents: Callable[[], _residents.Residents]
     journal: Callable[[], Any]
     export_listing: Callable[[str, str], dict]
-    memory: Callable[[str, bool], Optional[dict]] = lambda name, local: None
-    tunnel: Callable[[str, bool], Optional[str]] = lambda name, local: None
+    memory: Callable[[str, bool, dict], Optional[dict]] = lambda name, local, health: None
+    tunnel: Callable[[str, bool, dict], Any] = lambda name, local, health: None
     secrets: tuple = field(default_factory=tuple)
 
 
@@ -244,9 +248,10 @@ def _member(sources: Sources, entry: dict, obs: MemberObservation, local: bool, 
         "verified": bool(entry.get("verified", local)),
         "reachable": obs.reachable,
         "version": obs.version,
-        "memory": _memory(sources.memory(name, local)),
+        "memory": _memory(sources.memory(name, local, obs.health)),
         "roles": [r for r in roles if isinstance(r, str)],
         "lobes": _lobes(obs) if obs.reachable else [],
+        "_health": obs.health,
     }
 
 
@@ -264,12 +269,24 @@ def _peers(sources: Sources, local_obs: MemberObservation) -> list:
     return out
 
 
+def _hub_entry(name: str, evidence: Any) -> Optional[dict]:
+    if isinstance(evidence, dict):
+        text = evidence.get("evidence")
+        if not isinstance(text, str) or not text:
+            return None
+        entry = {"member": name, "evidence": text}
+        if evidence.get("declared") is True:
+            entry["declared"] = True
+        return entry
+    return {"member": name, "evidence": str(evidence)} if evidence else None
+
+
 def _hub(sources: Sources, members: list) -> Optional[dict]:
     found = []
     for m in members:
-        evidence = sources.tunnel(m["name"], m["local"])
-        if evidence:
-            found.append({"member": m["name"], "evidence": str(evidence)})
+        entry = _hub_entry(m["name"], sources.tunnel(m["name"], m["local"], m["_health"]))
+        if entry:
+            found.append(entry)
     return found[0] if len(found) == 1 else None
 
 
@@ -286,6 +303,9 @@ def build_mesh(sources: Sources) -> dict:
     members = [_member(sources, local_entry, local_obs, True, res)]
     members += [_member(sources, m, o, False, res) for m, o in zip(peers, peer_obs)]
     splits, pairs = _shapes(members)
+    hub = _hub(sources, members)
+    for m in members:
+        del m["_health"]
     versions: dict = {}
     for m in members:
         versions.setdefault(m["version"] or "unknown", []).append(m["name"])
@@ -295,7 +315,7 @@ def build_mesh(sources: Sources) -> dict:
         "versions": versions,
         "split_brains": splits,
         "pairs": pairs,
-        "hub": _hub(sources, members),
+        "hub": hub,
     }
 
 
@@ -533,6 +553,23 @@ def _local_tunnel(deploy_dir: Path) -> Optional[str]:
     return f"container {names[0]} running" if names else None
 
 
+def _health_memory(health: dict) -> Optional[dict]:
+    mem = health.get("memory") if isinstance(health, dict) else None
+    return mem if _memory(mem) is not None else None  # inconsistent -> next source
+
+
+def _declared_tunnel(health: dict) -> Optional[dict]:
+    """``/health`` ``tunnel`` (operator-declared) as hub evidence, or None."""
+    t = health.get("tunnel") if isinstance(health, dict) else None
+    if not isinstance(t, dict) or t.get("declared") is not True:
+        return None
+    url = t.get("public_url")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    host = urlsplit(url.strip()).netloc or url.strip()
+    return {"evidence": f"declared: {host}", "declared": True}
+
+
 def _secret_values(env: dict) -> tuple:
     return tuple(sorted({v for k, v in env.items() if _SECRET_KEY.search(k) and v and len(v) >= 6}))
 
@@ -607,7 +644,13 @@ def default_sources(
         residents=lambda: _residents.load(base),
         journal=lambda: Journal(base, redact=lambda s: redact(s, secrets)),
         export_listing=export_listing,
-        memory=lambda name, local: _read_meminfo() if local else None,
-        tunnel=lambda name, local: _local_tunnel(base) if local else None,
+        # remote members: only what their own /health advertised (already
+        # fetched by observe); local: the same, then /proc + the tunnel probe
+        memory=lambda name, local, health: (
+            _health_memory(health) or (_read_meminfo() if local else None)
+        ),
+        tunnel=lambda name, local, health: (
+            _declared_tunnel(health) or (_local_tunnel(base) if local else None)
+        ),
         secrets=secrets,
     )

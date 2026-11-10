@@ -86,6 +86,7 @@ from lobes.gateway._config import (
     RENDER_BODY_LIMIT_ENV,
     ServerConfig,
 )
+from lobes.gateway._evidence import annotate_split, health_payload
 from lobes.gateway._mesh_config import MeshConfigError
 from lobes.gateway._mesh_config import build_mesh_config as _build_mesh_config
 from lobes.gateway._mesh_routes import (
@@ -5345,6 +5346,11 @@ def capabilities_payload(
     # it (table.peer_origins). With no peer config (the default) this is a
     # no-op and the payload stays byte-identical to the pre-referral contract.
     payload = annotate_peer_referrals(payload, table)
+    # Declared split evidence (t21, deviation d1): the optional per-role
+    # `spans`/`world_size` keys from operator-typed <PREFIX>_SPANS /
+    # <PREFIX>_WORLD_SIZE. Unset -> no-op, byte-identical. Never part of the
+    # mesh `fingerprint` (added separately by annotate_replicas below).
+    payload = annotate_split(payload, resolved_env)
     # The replica pool (t8, issues #199 c9/c33): the additive per-role
     # `fingerprint` + `replicas` keys, from the LIVE background snapshot when
     # this process has one. `fingerprint` is what makes the pool checkable
@@ -5881,9 +5887,11 @@ class _Handler(BaseHTTPRequestHandler):
             # silently run a stale release for days after the host CLI (and PyPI)
             # moved on — exactly what made issue #92 look like a code regression
             # when the fix was already published and simply undeployed.
-            self._send_json(
-                200, {"status": "ok", "service": "model-gear-gateway", "version": __version__}
-            )
+            #
+            # t21 (deviation d1): `memory` (host /proc/meminfo, omitted when
+            # unreadable) and `tunnel` (only when the operator typed
+            # LOBES_TUNNEL_PUBLIC_URL) are additive evidence for `lobes site`.
+            self._send_json(200, health_payload(os.environ, version=__version__))
         elif route == "/status":
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.

@@ -275,7 +275,10 @@ _EXPECTED_NON_PRIMARY_HASHES = {
     # Recomputed for stt-lanes: the gateway gains the four STT_HE_/STT_EN_
     # BASE_URL/FEASIBLE passthroughs (empty defaults). `gateway` is the ONLY
     # service moved.
-    "gateway": "d19794e85500dfdae2dbc0c5c78439bd7868817be41a13f1ce1872feeca1ab9f",
+    # Recomputed for t21 (deviation d1): the gateway gains the twelve
+    # <PREFIX>_SPANS/_WORLD_SIZE passthroughs and LOBES_TUNNEL_PUBLIC_URL
+    # (empty defaults). `gateway` is the ONLY service moved.
+    "gateway": "cae4c3471d71cdbd673dfd1f2571e0c6b477319bba135f5495c39213bcae1e03",
     # The opt-in llama.cpp cortex lane (t4), profile-gated behind `llamacpp` so
     # no existing deployment starts it. Hashed here from the day it landed, so a
     # later edit to it is as visible as an edit to any other lane.
