@@ -352,14 +352,14 @@ def test_member_topology_is_the_allowlisted_projection(serve):
 
 def test_pair_is_one_model_pooled_on_several(serve):
     _, data = _json(serve(), "/api/mesh")
-    assert [(p["model"], p["members"]) for p in data["pairs"]] == [
+    assert [(p["model"], p["members"]) for p in data["pools"]] == [
         ("Qwen/Qwen3-Reranker-0.6B", ["thor", "orin"])
     ]
-    # the split model is not also reported as a pair
-    assert all("GLM" not in p["model"] for p in data["pairs"])
+    # the split model is not also reported as a pool
+    assert all("GLM" not in p["model"] for p in data["pools"])
     by = {m["name"]: m for m in data["members"]}
     shapes = {lobe["role"]: lobe["shape"] for lobe in by["orin"]["lobes"]}
-    assert shapes == {"reranker": "pair", "embedder": "single"}
+    assert shapes == {"reranker": "pool", "embedder": "single"}
 
 
 def _spark2_hosts_cortex():
@@ -373,7 +373,7 @@ def test_no_topology_evidence_means_pair_not_split(serve, tmp_path):
     _, data = _json(serve(src), "/api/mesh")
     assert data["split_brains"] == []
     assert ("zai/GLM-5.3-Flash", ["spark", "spark2"]) in [
-        (p["model"], p["members"]) for p in data["pairs"]
+        (p["model"], p["members"]) for p in data["pools"]
     ]
 
 
@@ -482,7 +482,7 @@ def test_unreachable_member_has_no_lobes(serve, tmp_path):
     assert by["thor"]["reachable"] is False
     assert by["thor"]["lobes"] == [] and by["thor"]["version"] is None
     assert by["thor"]["roles"] == ["reranker", "worker"]  # roster still says so
-    assert data["pairs"] == []
+    assert data["pools"] == []
 
 
 def test_mesh_data_is_live_not_hard_coded(serve, tmp_path):
@@ -990,11 +990,11 @@ def test_lanes_advertised_but_not_ready_are_not_pairs():
         {"name": n, "lobes": [{"role": "stt", "model": "parakeet", "ready": r, "shape": "single"}]}
         for n, r in (("a", False), ("b", False), ("c", True))
     ]
-    splits, pairs = site._shapes(members)
-    assert pairs == [] and splits == []
+    splits, pools = site._shapes(members)
+    assert pools == [] and splits == []
     members[1]["lobes"][0]["ready"] = True
-    _, pairs = site._shapes(members)
-    assert pairs == [{"model": "parakeet", "roles": ["stt"], "members": ["b", "c"]}]
+    _, pools = site._shapes(members)
+    assert pools == [{"model": "parakeet", "roles": ["stt"], "members": ["b", "c"]}]
 
 
 def test_gateway_only_member_is_a_gateway_not_a_brain():

@@ -9,7 +9,7 @@ Routes (GET and HEAD; every other method is 405):
 - ``/vendor/<file>`` -- one plain filename from ``web/vendor/`` (no ``/``, no
   ``..``, allow-listed extension); anything else is 404
 - ``/api/mesh`` -- members, versions, memory, roles, lobes (model ids), split
-  brains, pairs and the outside-access hub
+  brains, pools and the outside-access hub
 - ``/api/rollout`` -- the rollout journal's status projection, its step order, the
   resume point and the rollback command for a failed member
 - ``/api/residents`` -- the residents file (detected / needs_you per field)
@@ -33,8 +33,10 @@ derived facts follow strict evidence rules, never a guess:
   not advertise the role itself gets a ``shape: "split"`` lobe for it
   (``advertised: false``) so the graph draws it. A member whose topology could
   not be read is unknown and never completes a split.
-- **pair** -- one model hosted (not mesh-proxied) by several ready members, a
-  pool; split members are excluded.
+- **pool** -- a shared pool: one model hosted (not mesh-proxied) by several
+  ready members, each a complete copy the gateway places requests across;
+  split members are excluded. Deliberately not called a "pair", which reads as
+  the two halves of a split.
 - **hub** -- the one member actually running a container named
   ``lobes-cloudflared`` (from the same topology read; this box is read with
   local docker). Zero or several holders -> ``null``.
@@ -283,7 +285,7 @@ def _apply_split(found: dict, members: list) -> dict:
 
 
 def _shapes(members: list, topology: Optional[Mapping[str, Optional[list]]] = None) -> tuple:
-    """Split brains from the topology, then pairs among the remaining hosts."""
+    """Split brains from the topology, then pools among the remaining hosts."""
     names = [m["name"] for m in members]
     splits = [_apply_split(f, members) for f in _topology_splits(topology or {}, names)]
     in_split = {(name, s["model"]) for s in splits for name in s["members"]}
@@ -291,10 +293,10 @@ def _shapes(members: list, topology: Optional[Mapping[str, Optional[list]]] = No
     for m in members:
         for lobe in m["lobes"]:
             by_model.setdefault(lobe["model"], []).append((m["name"], lobe))
-    pairs = []
+    pools = []
     for model, hosts in by_model.items():
         # a pool needs members actually serving: an advertised-but-not-ready lane
-        # (e.g. stt/tts declared everywhere, served nowhere) is not a pair
+        # (e.g. stt/tts declared everywhere, served nowhere) is not a pool
         pooled = [
             (n, lobe)
             for n, lobe in hosts
@@ -302,15 +304,15 @@ def _shapes(members: list, topology: Optional[Mapping[str, Optional[list]]] = No
         ]
         if len({n for n, _ in pooled}) >= 2:
             for _, lobe in pooled:
-                lobe["shape"] = "pair"
-            pairs.append(
+                lobe["shape"] = "pool"
+            pools.append(
                 {
                     "model": model,
                     "roles": sorted({lobe["role"] for _, lobe in pooled}),
                     "members": list(dict.fromkeys(n for n, _ in pooled)),
                 }
             )
-    return splits, pairs
+    return splits, pools
 
 
 def _residency(name: str, res: _residents.Residents) -> str:
@@ -388,7 +390,7 @@ def build_mesh(sources: Sources) -> dict:
         del m["_health"]
         rows = topology.get(m["name"])
         m["topology"] = None if rows is None else [c.as_dict() for c in rows]
-    splits, pairs = _shapes(members, topology)
+    splits, pools = _shapes(members, topology)
     hub = _hub(topology, members)
     versions: dict = {}
     for m in members:
@@ -398,7 +400,7 @@ def build_mesh(sources: Sources) -> dict:
         "members": members,
         "versions": versions,
         "split_brains": splits,
-        "pairs": pairs,
+        "pools": pools,
         "hub": hub,
     }
 

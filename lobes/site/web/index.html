@@ -224,9 +224,9 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
 
   // ---------------------------------------------------------------- mesh model
   function meshModel(mesh) {
-    var members = mesh.members || [], splitOf = {}, pairOf = {}, groups = {};
+    var members = mesh.members || [], splitOf = {}, poolOf = {}, groups = {};
     (mesh.split_brains || []).forEach(function (s) { splitOf[s.model] = s; });
-    (mesh.pairs || []).forEach(function (p) { pairOf[p.model] = p; });
+    (mesh.pools || []).forEach(function (p) { poolOf[p.model] = p; });
     members.forEach(function (m) {
       (m.lobes || []).forEach(function (l) {
         var k = l.model + "\u0000" + l.role;
@@ -238,10 +238,11 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     rows.sort(function (a, b) {
       return FAM_ORDER.indexOf(family(a.role)) - FAM_ORDER.indexOf(family(b.role)) || a.role.localeCompare(b.role) || a.model.localeCompare(b.model);
     });
-    return { members: members, splitOf: splitOf, pairOf: pairOf, rows: rows, top: newest(members) };
+    return { members: members, splitOf: splitOf, poolOf: poolOf, rows: rows, top: newest(members) };
   }
   function shapeLabel(l, M) {
     if (l.shape === "split") { var s = M.splitOf[l.model]; return "split ×" + (s ? s.members.length : "?"); }
+    if (l.shape === "pool") { var p = M.poolOf[l.model]; return "shared pool ×" + (p ? p.members.length : "?"); }
     return l.shape || "single";
   }
   function partLabel(l, M) {
@@ -259,7 +260,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     var out = [], seen = {};
     function take(names) { names.forEach(function (n) { ring.forEach(function (m) { if (m.name === n && !seen[n]) { seen[n] = 1; out.push(m); } }); }); }
     (mesh.split_brains || []).forEach(function (s) { take(s.members); });
-    (mesh.pairs || []).forEach(function (p) { take(p.members); });
+    (mesh.pools || []).forEach(function (p) { take(p.members); });
     ring.forEach(function (m) { if (!seen[m.name]) out.push(m); });
     return out;
   }
@@ -376,12 +377,12 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
         if (k === 0) tags.push({ x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2, text: shortModel(s.model) + " split ×" + s.members.length, col: col });
       }
     });
-    (mesh.pairs || []).forEach(function (pr) {
+    (mesh.pools || []).forEach(function (pr) {
       var ps = pr.members.map(function (n) { return P[n]; }).filter(Boolean), col = fvar(family(pr.roles[0]));
       for (var k = 0; k + 1 < ps.length; k++) {
         var e = edge(ps[k], ps[k + 1], 0);
         deco.push('<path d="' + line(e, e.nx * 7, e.ny * 7) + line(e, -e.nx * 7, -e.ny * 7) + '" style="stroke:' + col + ';stroke-width:3;stroke-dasharray:8 6"></path>');
-        if (k === 0) tags.push({ x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2, text: pr.roles.join(", ") + " pair", col: col });
+        if (k === 0) tags.push({ x: (e.x1 + e.x2) / 2, y: (e.y1 + e.y2) / 2, text: pr.roles.join(", ") + " shared pool", col: col });
       }
     });
     if (L.hub) {
@@ -426,7 +427,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       return '<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50% 50% 45% 55%;background:' + fvar(f) + '"></span>' + FAM[f] + "</span>";
     });
     if ((mesh.split_brains || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:8px;border-radius:4px;background:var(--f-gen)"></span>split brain</span>');
-    if ((mesh.pairs || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--f-emb)"></span>pair</span>');
+    if ((mesh.pools || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--f-emb)"></span>shared pool</span>');
     leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:2px;background:var(--web)"></span>mesh link</span>');
     if (L.hub) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:4px;border-radius:2px;background:var(--accent)"></span>outside tunnel</span>');
     if (L.maxTotal) leg.push('<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50%;border:3px solid var(--soft)"></span>ring = memory in use</span>');
@@ -507,7 +508,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       }
       if (d.cli) h.push('<div class="lbl">Write the bundle</div><div style="margin-top:4px">' + copyBtn(d.cli) + "</div>");
     }
-    var g = l && l.shape !== "single" ? M.splitOf[l.model] || M.pairOf[l.model] : null;
+    var g = l && l.shape !== "single" ? M.splitOf[l.model] || M.poolOf[l.model] : null;
     if (g) g.members.forEach(function (n) {
       if (n === member) return;
       h.push('<button type="button" class="btn ghost" style="margin-top:12px;margin-right:8px" data-act="lobe" data-role="' + esc(role) + '" data-member="' + esc(n) + '" data-k="' + esc("also:" + n) + '">Also on ' + esc(n) + "</button>");

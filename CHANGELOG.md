@@ -19,8 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is the member running `lobes-cloudflared`. Gateway `/health` carries measured
   host `memory`.
 - Live-review fixes: this box's name comes from the running gateway, not `.env`
-  (a roster peer's name is refused — also protects `lobes rollout`); a pair
-  needs ready members; a role with no backend wired is not a lobe; a member
+  (a roster peer's name is refused — also protects `lobes rollout`); a shared
+  pool needs ready members; a role with no backend wired is not a lobe; a member
   serving no model is drawn as a gateway; the `gateway-only` shape renders
   `STT_FEASIBLE`/`TTS_FEASIBLE=false`.
 - `lobes site install|uninstall|status`: keep the site up across reboots as a
