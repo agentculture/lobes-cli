@@ -142,7 +142,15 @@ def _hosted(entry: dict) -> bool:
         and entry.get("feasible", True) is not False
         and not entry.get("proxied")
         and not entry.get("hosted_by")
+        # a role the gateway lists but has no backend wired for (gateway-only
+        # core advertised stt/tts with endpoint "" and loaded false) is not a lobe
+        and not (entry.get("endpoint") == "" and not entry.get("loaded"))
     )
+
+
+def _routed(entry: dict) -> bool:
+    """A role this member answers by forwarding it to a mesh peer."""
+    return bool(entry.get("proxied") or entry.get("hosted_by"))
 
 
 def _int(value: Any) -> Optional[int]:
@@ -245,6 +253,7 @@ def _member(sources: Sources, entry: dict, obs: MemberObservation, local: bool, 
     roles = entry.get("roles")
     if not isinstance(roles, list):
         roles = sorted(r for r, e in obs.capabilities.items() if _hosted(e))
+    lobes = _lobes(obs) if obs.reachable else []
     return {
         "name": name,
         "origin": entry["origin"],
@@ -255,7 +264,10 @@ def _member(sources: Sources, entry: dict, obs: MemberObservation, local: bool, 
         "version": obs.version,
         "memory": _memory(sources.memory(name, local, obs.health)),
         "roles": [r for r in roles if isinstance(r, str)],
-        "lobes": _lobes(obs) if obs.reachable else [],
+        "lobes": lobes,
+        # a member that serves no model itself is a gateway, not a brain
+        "kind": "brain" if lobes or not obs.reachable else "gateway",
+        "routes": sorted(r for r, e in obs.capabilities.items() if _routed(e)),
         "_health": obs.health,
     }
 

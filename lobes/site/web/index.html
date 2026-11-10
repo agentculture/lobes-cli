@@ -47,10 +47,6 @@ header.top{position:sticky;top:0;z-index:3;background:var(--bg);border-bottom:1p
 .pillbtn{appearance:none;border:1px solid var(--line2);background:var(--surface);color:var(--ink);border-radius:999px;padding:6px 14px;font-size:13px;cursor:pointer;min-height:36px}
 main{max-width:1320px;margin:0 auto;padding:28px 24px 80px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:20px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.stat{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px;min-width:0}
-.stat b{display:block;font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.stat span{font-size:12px;color:var(--soft)}
 .row{display:flex;flex-wrap:wrap;align-items:center;gap:12px}
 .grow{flex:1}
 .chip{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;background:var(--raise);color:var(--ink)}
@@ -134,6 +130,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
   var API = { mesh: "/api/mesh", rollout: "/api/rollout", residents: "/api/residents", exp: "/api/lobe-export" };
   var BRAIN_L = "M57 26C39 22 24 34 26 50C16 57 18 76 31 80C33 93 49 98 57 90Z";
   var BRAIN_R = "M63 26C81 22 96 34 94 50C104 57 102 76 89 80C87 93 71 98 63 90Z";
+  var GATEWAY_ARROWS = "M38 52h40m-9-7 9 7-9 7M82 68H42m9-7-9 7 9 7";
   var TRACE_L = "M36 46H47V56H40M34 68H46V76M50 36V46M47 84V74H53";
   var TRACE_R = "M84 46H73V56H80M86 68H74V76M70 36V46M73 84V74H67";
   var LOBE = "M10 2C5 2 2 5 2.5 9C1 12 3 17 8 17C9 18.5 13 18.5 14 16.5C18 16 19 11 17.5 8.5C18 4 14 2 10 2Z";
@@ -328,8 +325,9 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     if (!m.reachable) desc.push("unreachable");
     desc.push(mem ? gb(mem.used_bytes) + " of " + gb(mem.total_bytes) + " GB in use" : "memory not measured");
     desc.push(m.version ? "version " + m.version : "version unknown");
-    var ls = (m.lobes || []).map(function (l) { return l.role; });
-    desc.push(ls.length ? "lobes: " + ls.join(", ") : "no lobes");
+    var ls = (m.lobes || []).map(function (l) { return l.role; }), gw = m.kind === "gateway";
+    if (gw) desc.push("gateway only, runs no model; routes " + (m.routes || []).length + " roles to the mesh");
+    else desc.push(ls.length ? "lobes: " + ls.join(", ") : "no lobes");
     out.push('<svg width="' + size + '" height="' + size + '" viewBox="0 0 120 120" role="img" aria-label="' + esc(desc.join("; ")) + '"' + (m.reachable ? "" : ' opacity="0.55"') + ">");
     out.push('<circle cx="60" cy="60" r="58" fill="var(--surface)"></circle>');
     if (mem) {
@@ -342,9 +340,11 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     }
     if (guest) {
       out.push('<path d="' + BRAIN_L + " " + BRAIN_R + '" fill="none" stroke="var(--faint)" stroke-width="4" stroke-dasharray="9 7" stroke-linejoin="round"></path>');
-    } else if (p.hub && !(m.lobes || []).length) {
-      out.push('<circle cx="60" cy="60" r="46" fill="var(--accent-tint)" stroke="var(--accent)" stroke-width="2"></circle>');
-      out.push('<path d="' + BRAIN_L + " " + BRAIN_R + '" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"></path>');
+    } else if (gw) {
+      // no model here: a router, not a brain
+      out.push('<rect x="24" y="38" width="72" height="44" rx="12" fill="var(--shell)" stroke="var(--ink)" stroke-width="3"></rect>');
+      out.push('<path d="' + GATEWAY_ARROWS + '" fill="none" stroke="var(--ink)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path>');
+      if (p.hub) out.push('<circle cx="60" cy="60" r="57" fill="none" stroke="var(--accent)" stroke-width="2"></circle>');
     } else {
       var col = sp ? fvar(family(sp.s.roles[0])) : null, leftOn = sp && sp.i % 2 === 1, rightOn = sp && sp.i % 2 === 0;
       out.push('<path d="' + BRAIN_L + '" fill="' + (leftOn ? col : "var(--shell)") + '" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round"></path>');
@@ -353,7 +353,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
       if (tr) out.push('<path d="' + tr + '" fill="none" stroke="var(--ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"></path>');
       if (p.hub) out.push('<circle cx="60" cy="60" r="57" fill="none" stroke="var(--accent)" stroke-width="2"></circle>');
     }
-    if (!guest) out.push('<circle cx="60" cy="58" r="9" fill="var(--accent)"></circle>');
+    if (!guest && !gw) out.push('<circle cx="60" cy="58" r="9" fill="var(--accent)"></circle>');
     out.push("</svg>");
     var badge = null;
     if (guest) badge = ["var(--info)", PLUS, "guest"];
@@ -407,6 +407,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     names.forEach(function (n) {
       var p = P[n], m = p.m, s = p.size, sub = [m.version || "version unknown"];
       h.push('<div class="brain" style="left:' + (p.x - s / 2) + "px;top:" + (p.y - s / 2) + "px;width:" + s + "px;height:" + s + 'px">' + brainSVG(p, M, mesh) + "</div>");
+      if (m.kind === "gateway") sub.push("gateway only, routes " + (m.routes || []).length + " roles");
       if (p.hub) sub.push("hub");
       if (p.guest) sub.push("guest");
       if (!m.reachable) sub.push("unreachable");
@@ -438,6 +439,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     h.push('<caption class="sr">Which model runs on which member</caption><thead><tr><th scope="col">Lobe</th><th scope="col">Role</th>');
     ms.forEach(function (m) {
       var sub = [m.version || "version unknown"];
+      if (m.kind === "gateway") sub.push("gateway only");
       if (mesh.hub && mesh.hub.member === m.name) sub.push("hub");
       if (m.residency === "guest") sub.push("guest");
       h.push('<th scope="col" class="m">' + esc(m.name) + "<small>" + esc(sub.join(", ")) + "</small></th>");
@@ -514,26 +516,6 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     return h.join("");
   }
 
-  function statsHTML(mesh, M) {
-    var ms = M.members, res = 0, gst = 0, lobes = 0, tot = 0, avail = 0, measured = 0, onTop = 0;
-    var nsb = (mesh.split_brains || []).length, np = (mesh.pairs || []).length;
-    ms.forEach(function (m) {
-      if (m.residency === "guest") gst++; else res++;
-      lobes += (m.lobes || []).length;
-      if (m.memory) { measured++; tot += m.memory.total_bytes; avail += m.memory.available_bytes; }
-      if (m.version && M.top && cmpVer(m.version, M.top) === 0) onTop++;
-    });
-    var st = [
-      [res + (gst ? " + " + gst : ""), gst ? "members + guest" + (gst > 1 ? "s" : "") : "members"],
-      [lobes, "lobes"],
-      [nsb, nsb === 1 ? "split brain" : "split brains"],
-      [np, np === 1 ? "pair" : "pairs"],
-      M.top ? [onTop + " / " + ms.length, "on " + M.top] : ["unknown", "versions"],
-      measured ? [gb(avail) + " / " + gb(tot) + " GB", "memory free, " + measured + " of " + ms.length + " measured"] : ["unknown", "memory not measured"]
-    ];
-    return '<div class="stats">' + st.map(function (s) { return '<div class="stat"><b>' + esc(s[0]) + "</b><span>" + esc(s[1]) + "</span></div>"; }).join("") + "</div>";
-  }
-
   function errorBox(name) {
     return '<div class="card empty" role="alert"><p class="err" style="margin:0 0 12px">Could not load ' + esc(API[name]) + ": " + esc(S.err[name]) +
       '</p><button type="button" class="btn" data-act="refresh" data-what="' + name + '" data-k="retry:' + name + '">Retry</button></div>';
@@ -545,7 +527,7 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
   function meshView() {
     var mesh = S.data.mesh;
     if (!mesh) return S.err.mesh ? errorBox("mesh") : '<p class="empty">Loading</p>';
-    var M = meshModel(mesh), h = [statsHTML(mesh, M)];
+    var M = meshModel(mesh), h = [];
     h.push('<div class="row" style="margin-top:22px"><div class="seg" role="tablist" aria-label="View">');
     [["graph", "Graph"], ["table", "Table"]].forEach(function (t) {
       var on = S.tab === t[0];

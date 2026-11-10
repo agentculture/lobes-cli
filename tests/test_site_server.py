@@ -811,3 +811,75 @@ def test_lanes_advertised_but_not_ready_are_not_pairs():
     members[1]["lobes"][0]["ready"] = True
     _, pairs = site._shapes(members)
     assert pairs == [{"model": "parakeet", "roles": ["stt"], "members": ["b", "c"]}]
+
+
+def test_gateway_only_member_is_a_gateway_not_a_brain():
+    # live 2026-11-10, core: every role proxied; stt/tts listed with no backend wired
+    caps = {
+        "cortex": {"model": "zai/GLM-5.3-Flash", "feasible": False, "proxied": True},
+        "worker": {"model": "w", "feasible": False, "hosted_by": "http://thor:8000"},
+        "stt": {
+            "model": "nvidia/parakeet-tdt-0.6b-v2",
+            "feasible": True,
+            "ready": False,
+            "loaded": False,
+            "endpoint": "",
+        },
+    }
+    obs = MemberObservation(
+        origin="http://127.0.0.1:8001",
+        reachable=True,
+        version="0.94.0",
+        capabilities=caps,
+        roster=[],
+        health={},
+    )
+    src = site.Sources(
+        local_origin="http://127.0.0.1:8001",
+        local_name="core",
+        observe=None,
+        residents=None,
+        journal=None,
+        export_listing=None,
+    )
+    m = site._member(
+        src,
+        {"name": "core", "origin": "http://127.0.0.1:8001"},
+        obs,
+        True,
+        site._residents.Residents(),
+    )
+    assert m["lobes"] == [] and m["kind"] == "gateway"
+    assert m["routes"] == ["cortex", "worker"]
+
+
+def test_a_wired_lane_that_is_down_is_still_a_lobe():
+    caps = {
+        "stt": {
+            "model": "p",
+            "feasible": True,
+            "ready": False,
+            "loaded": True,
+            "endpoint": "http://orin:8000",
+        }
+    }
+    obs = MemberObservation(
+        origin="http://orin:8000",
+        reachable=True,
+        version="0.94.0",
+        capabilities=caps,
+        roster=[],
+        health={},
+    )
+    src = site.Sources(
+        local_origin="http://127.0.0.1:8001",
+        local_name="core",
+        observe=None,
+        residents=None,
+        journal=None,
+        export_listing=None,
+    )
+    m = site._member(
+        src, {"name": "orin", "origin": "http://orin:8000"}, obs, False, site._residents.Residents()
+    )
+    assert [lobe["role"] for lobe in m["lobes"]] == ["stt"] and m["kind"] == "brain"
