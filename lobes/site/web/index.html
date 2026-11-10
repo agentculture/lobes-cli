@@ -426,6 +426,12 @@ pre.file{margin:0;font-size:13px;line-height:1.6;background:var(--bg);border:1px
     var leg = FAM_ORDER.map(function (f) {
       return '<span><span class="sw" aria-hidden="true" style="width:14px;height:14px;border-radius:50% 50% 45% 55%;background:' + fvar(f) + '"></span>' + FAM[f] + "</span>";
     });
+    // role-family colours: the colour says what a lobe does, never its health
+    var fams = {};
+    (mesh.members || []).forEach(function (m) { (m.lobes || []).forEach(function (l) { fams[family(l.role)] = 1; }); });
+    [["gen", "generate"], ["dec", "decider"], ["emb", "embed / rerank"], ["sp", "speech (stt / tts)"]].forEach(function (fl) {
+      if (fams[fl[0]]) leg.push('<span><span class="sw" aria-hidden="true" style="width:12px;height:12px;border-radius:50%;background:' + fvar(fl[0]) + '"></span>' + fl[1] + "</span>");
+    });
     if ((mesh.split_brains || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:8px;border-radius:4px;background:var(--f-gen)"></span>split brain</span>');
     if ((mesh.pools || []).length) leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:6px;border-radius:4px;border:2px dashed var(--f-emb)"></span>shared pool</span>');
     leg.push('<span><span class="sw" aria-hidden="true" style="width:24px;height:2px;background:var(--web)"></span>mesh link</span>');
