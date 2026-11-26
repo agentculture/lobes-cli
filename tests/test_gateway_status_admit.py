@@ -333,3 +333,141 @@ def test_the_documented_reasons_are_the_ones_status_can_emit() -> None:
         "no-sample",
     ):
         assert reason in row
+
+
+# --- findings from the second review (an OpenCode run through `agents`) ------
+
+
+def _status_at(now: float, sampled_at, pressure=None, **kw) -> dict:
+    return S.fleet_status_payload(
+        _table(),
+        _cfg(),
+        dict(pressure or _NO_PRESSURE),
+        probe=_probe(),
+        clock=lambda: now,
+        sampled_at=sampled_at,
+        **kw,
+    )
+
+
+def test_a_sampler_that_fails_after_a_success_reads_as_no_sample_at_once() -> None:
+    """The zeros a failed read leaves behind are not a measurement, even 1 s later."""
+    answers = [dict(_HIGH_SWAP)]
+
+    def sampler() -> dict:
+        if answers:
+            return answers.pop()
+        raise OSError("unreadable")
+
+    cache = PressureCache(sampler=sampler, start=False, clock=lambda: _EPOCH)
+    assert cache.sampled_at() == _EPOCH
+    cache.refresh()
+    assert cache.current()["swap_used_percent"] == 0.0
+    assert cache.sampled_at() is None
+
+
+def test_a_raising_clock_does_not_escape_the_cache() -> None:
+    def clock() -> float:
+        raise RuntimeError("clock")
+
+    cache = PressureCache(sampler=lambda: dict(_NO_PRESSURE), start=False, clock=clock)
+    assert cache.sampled_at() is None
+    cache.refresh()  # must not raise: a raise here would end the refresh thread
+
+
+def test_a_sample_stamped_in_the_future_is_not_trusted() -> None:
+    """After the clock steps back, the stamp says nothing about the sample's age."""
+    payload = _status_at(_EPOCH - 60, _EPOCH)
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_STALE
+
+
+def test_a_stale_sample_is_reported_before_a_shed() -> None:
+    payload = _status_at(_EPOCH + A.STALE_AFTER_S + 1, _EPOCH, _HIGH_SWAP)
+    assert payload["reason"] == A.REASON_STALE
+
+
+def test_a_sample_exactly_stale_after_s_old_is_still_trusted() -> None:
+    assert _status_at(_EPOCH + A.STALE_AFTER_S, _EPOCH)["admit"] is True
+
+
+def test_a_sample_time_that_is_not_a_number_holds() -> None:
+    payload = _status_at(_EPOCH, "now")
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_NO_SAMPLE
+
+
+def test_a_fleet_with_no_backends_holds() -> None:
+    table = RoutingTable(backends=(), default_model="P", aliases={})
+    payload = S.fleet_status_payload(
+        table, _cfg(), dict(_NO_PRESSURE), probe=_probe(), clock=lambda: _EPOCH
+    )
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_UNREACHABLE
+
+
+def test_a_backend_without_in_flight_counts_cannot_fire_waiting() -> None:
+    """The documented limit: `busy.partial` admits, because the queue is not measured."""
+
+    def probe(base_url, *, timeout):  # noqa: ARG001
+        return {
+            "health": "ok",
+            "metrics": {"engine": "llamacpp", "unsupported": ["running", "waiting"]},
+        }
+
+    payload = S.fleet_status_payload(
+        _table(), _cfg(), dict(_NO_PRESSURE), probe=probe, clock=lambda: _EPOCH
+    )
+    assert payload["busy"].get("partial") is True
+    assert payload["admit"] is True
+
+
+def test_a_pooled_box_is_not_held_on_iowait_alone() -> None:
+    """A live pooled request is served under iowait-only pressure, so /status must admit."""
+    assert _status_at(_EPOCH, _EPOCH, _HIGH_IOWAIT)["reason"] == "shed:iowait"
+    pooled = _status_at(_EPOCH, _EPOCH, _HIGH_IOWAIT, pooled=True)
+    assert pooled["admit"] is True
+    assert pooled["pressure"]["shed"] is False
+
+
+def test_a_pooled_box_still_holds_under_swap() -> None:
+    assert _status_at(_EPOCH, _EPOCH, _HIGH_SWAP, pooled=True)["reason"] == "shed:swap"
+
+
+def _wire_status(cache) -> dict:
+    handler = S._make_handler(_table("http://127.0.0.1:1"), _cfg(), pressure_cache=cache)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    host, port = httpd.server_address
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/status", timeout=10) as resp:
+            return json.loads(resp.read())
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_on_the_wire_at_is_the_sample_time() -> None:
+    cache = PressureCache(sampler=lambda: dict(_NO_PRESSURE), start=False, clock=lambda: _EPOCH)
+    payload = _wire_status(cache)
+    assert payload["at"] == _AT  # the sample's stamp, not the wall clock of this test
+    assert payload["reason"] == A.REASON_STALE  # and that sample is long stale by now
+
+
+def test_on_the_wire_a_cache_without_a_sample_time_stamps_the_response() -> None:
+    class Bare:
+        def current(self) -> dict:
+            return dict(_NO_PRESSURE)
+
+    payload = _wire_status(Bare())
+    assert _RFC3339_UTC.match(payload["at"])
+    assert payload["at"] != _AT
+    assert payload["reason"] == A.REASON_UNREACHABLE  # the one backend refuses the probe
+
+
+def test_the_docs_say_what_at_is_when_the_sample_time_is_unknown() -> None:
+    doc = (
+        __import__("pathlib").Path(__file__).parent.parent / "docs" / "gateway-fleet.md"
+    ).read_text()
+    row = next(line for line in doc.splitlines() if line.lstrip().startswith("| `at` |"))
+    assert "when the status was computed" in row

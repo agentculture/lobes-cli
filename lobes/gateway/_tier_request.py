@@ -200,39 +200,60 @@ class PressureCache:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        # Epoch seconds of the last sample that SUCCEEDED; None until one does.
-        # A failed sample degrades the value to zeros, which reads as "no
-        # pressure": this is what lets a reader tell that apart from a real idle.
+        # Epoch seconds of the sample the CURRENT value came from; None when
+        # that value is the zero baseline a failed read leaves behind (or the
+        # clock itself failed). A failed read reads as "no pressure": this is
+        # what lets a reader tell that apart from a real idle.
         self._sampled_at: float | None = None
         # Seed synchronously so the very first request never blocks on a sample.
-        self._value: dict[str, float | None] = self._read()
+        self._value: dict[str, float | None] = dict(_ZERO_PRESSURE)
+        self.refresh()
         if start:
             self.start()
 
-    def _read(self) -> dict[str, float | None]:
-        """Sample once, degrading to the zero baseline if the sampler raises."""
+    def _sample(self) -> tuple[dict[str, float | None], float | None]:
+        """Sample once: ``(value, when)``. Never raises.
+
+        A sampler that raises degrades to the zero baseline with no time; so
+        does a clock that raises, since an unstamped reading cannot be aged.
+        """
         try:
             sampled = self._sampler()
             thermal = sampled.get("thermal_c")
-            value = {
+            value: dict[str, float | None] = {
                 "swap_used_percent": float(sampled.get("swap_used_percent") or 0.0),
                 "iowait_percent": float(sampled.get("iowait_percent") or 0.0),
                 "thermal_c": None if thermal is None else float(thermal),
             }
         except Exception:  # nosec B110 — pressure is best-effort; never crash the gateway
-            return dict(_ZERO_PRESSURE)
-        self._sampled_at = self._clock()
-        return value
+            return dict(_ZERO_PRESSURE), None
+        try:
+            return value, float(self._clock())
+        except Exception:  # nosec B110 — same rule for an injected clock
+            return value, None
+
+    def _read(self) -> dict[str, float | None]:
+        """Sample once, degrading to the zero baseline if the sampler raises."""
+        return self._sample()[0]
+
+    def refresh(self) -> None:
+        """Take one sample now and publish it with its time, atomically."""
+        value, when = self._sample()
+        with self._lock:
+            self._value = value
+            self._sampled_at = when
 
     def sampled_at(self) -> float | None:
-        """Epoch seconds of the last successful sample, or ``None`` if none succeeded.
+        """When the current value was sampled, or ``None`` if it is not a measurement.
 
         Kept apart from :meth:`current` so the pressure dict keeps its shape.
         ``GET /status`` reads it to stamp and to distrust its admission answer
-        (issue #346): a sampler that fails, or a refresh thread that stalls,
-        leaves this behind while :meth:`current` goes on reporting zeros.
+        (issue #346): ``None`` means the latest read failed (or none has
+        succeeded) and :meth:`current` is reporting zeros that were never
+        measured; an old time means the refresh thread has stalled.
         """
-        return self._sampled_at
+        with self._lock:
+            return self._sampled_at
 
     def current(self) -> dict[str, float | None]:
         """Return a copy of the cached pressure dict. Never samples, never blocks."""
@@ -250,9 +271,7 @@ class PressureCache:
         # Event.wait(interval) returns True only when stop() is set, so this both
         # paces the refresh and exits promptly on shutdown.
         while not self._stop.wait(self._interval):
-            value = self._read()
-            with self._lock:
-                self._value = value
+            self.refresh()
 
     def stop(self) -> None:
         """Signal the background thread to exit (best-effort; daemon anyway)."""

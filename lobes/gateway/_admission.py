@@ -20,20 +20,24 @@ fields:
 
 The rule, in reporting order:
 
-1. no pressure sample ever succeeded → hold, ``no-sample``;
-2. the last successful sample is older than ``stale_after_s`` → hold, ``stale``;
+1. the pressure reading is not a measurement (the latest sample failed, or
+   none has succeeded) → hold, ``no-sample``;
+2. the sample is older than ``stale_after_s``, or stamped in the future → hold,
+   ``stale``;
 3. the pressure policy sheds a full-tier request → hold, ``shed:<signal>``
-   (``swap``, ``thermal`` or ``iowait`` on ``/status``; plain ``shed`` when the
-   policy names no signal);
-4. the fleet has backends and none of them is healthy → hold, ``unreachable``;
+   (``swap``, ``thermal`` or ``iowait`` on ``/status``; the policy always names
+   a signal today, and plain ``shed`` is kept for one that does not);
+4. no backend is healthy, which includes a fleet with none → hold,
+   ``unreachable``;
 5. any backend reports requests waiting in its queue → hold, ``waiting``;
 6. otherwise → admit.
 
 ``admit`` is never ``True`` while ``pressure.shed`` is ``True``. ``at`` is the
 time of the pressure sample behind the answer when the caller knows it, so a
-reader's own ``stale_after_s`` check also catches a stalled sampler; otherwise
-it is the time the status was computed. The rule cannot see the queue of a
-backend that exports no in-flight counts (``busy.partial``).
+reader's own ``stale_after_s`` check also catches a stalled sampler; when the
+caller does not know it, ``at`` is the time the status was computed. The rule
+cannot see the queue of a backend that exports no in-flight counts
+(``busy.partial``).
 
 Stdlib only, pure: the caller supplies the clock reading.
 """
@@ -63,14 +67,10 @@ def rfc3339_utc(now: float) -> str:
     return datetime.fromtimestamp(int(now), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _reason(
-    *, shed: bool, shed_signal: str, waiting: int, healthy: int | None, age: float | None
-) -> str:
+def _reason(*, shed: bool, shed_signal: str, waiting: int, healthy: int | None, sample: str) -> str:
     """Why the gateway holds, or ``""`` when it admits. See the module docstring."""
-    if age is not None and age < 0:  # no sample ever succeeded
-        return REASON_NO_SAMPLE
-    if age is not None and age > STALE_AFTER_S:
-        return REASON_STALE
+    if sample in (REASON_NO_SAMPLE, REASON_STALE):
+        return sample
     if shed:
         return f"{REASON_SHED}:{shed_signal}" if shed_signal else REASON_SHED
     if healthy == 0:
@@ -78,6 +78,23 @@ def _reason(
     if waiting > 0:
         return REASON_WAITING
     return ""
+
+
+def _judge_sample(sampled_at: object, now: float) -> tuple[str, float]:
+    """``(verdict, stamp)`` for the pressure sample behind the answer.
+
+    The verdict is ``""`` (trusted, or the caller could not say), ``no-sample``
+    or ``stale``. A sample stamped AFTER *now* is stale too: the clock stepped
+    back, so the stamp says nothing about the sample's age.
+    """
+    if sampled_at is SAMPLE_TIME_UNKNOWN:
+        return "", now
+    if isinstance(sampled_at, bool) or not isinstance(sampled_at, (int, float)):
+        return REASON_NO_SAMPLE, now  # None, or not a time at all
+    age = now - float(sampled_at)
+    if age < 0 or age > STALE_AFTER_S:
+        return REASON_STALE, float(sampled_at)
+    return "", float(sampled_at)
 
 
 def admission(
@@ -94,18 +111,15 @@ def admission(
     *shed* and *shed_signal* come from the pressure decision ``/status``
     already makes for a full tier, *waiting* is the fleet's aggregate waiting
     count, *now* is the epoch-seconds instant the status was computed.
-    *healthy* is how many backends answered healthy (``None``: not known, or
-    the fleet has no backend to judge). *sampled_at* is the epoch seconds of
-    the last successful pressure sample, ``None`` when none succeeded, and
-    left out when the caller cannot say.
+    *healthy* is how many backends answered healthy (``None``: not known).
+    *sampled_at* is the epoch seconds of the sample the pressure reading came
+    from, ``None`` when that reading is not a measurement, and left out when
+    the caller cannot say.
     """
-    if sampled_at is SAMPLE_TIME_UNKNOWN:
-        age, stamp = None, now
-    elif sampled_at is None:
-        age, stamp = -1.0, now
-    else:
-        age, stamp = max(0.0, now - float(sampled_at)), float(sampled_at)  # type: ignore[arg-type]
-    reason = _reason(shed=shed, shed_signal=shed_signal, waiting=waiting, healthy=healthy, age=age)
+    sample, stamp = _judge_sample(sampled_at, now)
+    reason = _reason(
+        shed=shed, shed_signal=shed_signal, waiting=waiting, healthy=healthy, sample=sample
+    )
     fields: dict = {
         "admit": not reason,
         "at": rfc3339_utc(stamp),

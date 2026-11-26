@@ -463,24 +463,29 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   | Field | Type | Meaning |
   | --- | --- | --- |
   | `admit` | bool | `true`: the gateway wants new work now. `false`: hold. |
-  | `at` | string | When the pressure sample behind the answer was taken: RFC 3339, UTC, to the second (`2026-11-26T12:00:00Z`). |
+  | `at` | string | When the pressure sample behind the answer was taken; when the gateway cannot say, when the status was computed. RFC 3339, UTC, to the second (`2026-11-26T12:00:00Z`). |
   | `stale_after_s` | float | Treat the answer as unknown once `at` is older than this (`10.0`, five 2 s pressure samples). |
   | `reason` | string | Only when `admit` is `false`: `no-sample`, `stale`, `shed:swap`, `shed:thermal`, `shed:iowait`, `unreachable`, or `waiting`. |
 
   The rule, in reporting order:
 
-  1. no pressure sample has succeeded since the gateway started → `no-sample`;
-  2. the last successful sample is older than `stale_after_s` → `stale`;
+  1. the pressure reading is not a measurement, because the latest sample
+     failed or none has succeeded → `no-sample`;
+  2. the sample is older than `stale_after_s`, or stamped in the future after
+     a clock step → `stale`;
   3. the pressure policy would shed a full-tier request (`pressure.shed`) →
      `shed:<pressure.shed_signal>`;
-  4. no backend is healthy (`backends[].health`) → `unreachable`;
+  4. no backend is healthy (`backends[].health`), which includes a fleet with
+     no backend → `unreachable`;
   5. any backend reports a waiting queue (`busy.waiting > 0`) → `waiting`;
   6. otherwise admit.
 
   `admit` is therefore never `true` while `pressure.shed` is `true`. A failed
-  pressure sample reads as zeros in the `pressure` block; `no-sample` and
-  `stale` are what keep that from being reported as an idle box. Limits,
-  stated rather than implied:
+  pressure sample reads as zeros in the `pressure` block; `no-sample` is
+  reported from the first failed sample on, so those zeros are never presented
+  as an idle box. The decision is the one a live full-tier request meets,
+  including the pool rule: a pooled box is not shed on iowait alone, so it is
+  not held on it either. Limits, stated rather than implied:
 
   - The policy's `engine` shed signal needs the engine's load, which `/status`
     does not pass, so no engine-based reason appears here.

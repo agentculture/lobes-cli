@@ -4599,6 +4599,7 @@ def fleet_status_payload(
     probe=_metrics.probe_backend,
     clock: Callable[[], float] = time.time,
     sampled_at: object = SAMPLE_TIME_UNKNOWN,
+    pooled: bool = False,
 ) -> dict:
     """Live status for every backend + an aggregate busy count + the endpoint list.
 
@@ -4625,8 +4626,10 @@ def fleet_status_payload(
     injectable for tests. *sampled_at* is when the pressure sample last
     SUCCEEDED (``PressureCache.sampled_at()``; ``None`` = never): ``at`` then
     carries that instant, and a missing or stale sample holds admission rather
-    than reporting the zero baseline as an idle box. A fleet whose backends
-    are all unhealthy holds as well.
+    than reporting the zero baseline as an idle box. A fleet with no healthy
+    backend holds as well. *pooled* says whether a full-tier request is
+    pooled here, exactly as the request path tells :func:`decide`: a pooled
+    box is not shed on iowait alone, so ``/status`` must not hold on it.
 
     Capacity (capacity-relative pool routing, t5): each HOSTED backend row
     additionally carries this box's own declared max-active-requests capacity
@@ -4688,6 +4691,7 @@ def fleet_status_payload(
             pressure.get("swap_used_percent", 0.0),
             pressure.get("iowait_percent", 0.0),
             requested_tier="main",
+            pooled=pooled,
             thermal_c=thermal_c,
             thermal_latched=latched,
         )
@@ -4711,7 +4715,7 @@ def fleet_status_payload(
                 shed_signal=d["shed_signal"],
                 waiting=waiting,
                 now=clock(),
-                healthy=(sum(1 for row in backends if row["health"] == "ok") if backends else None),
+                healthy=sum(1 for row in backends if row["health"] == "ok"),
                 sampled_at=sampled_at,
             )
         )
@@ -5918,15 +5922,23 @@ class _Handler(BaseHTTPRequestHandler):
             # Live aggregate the host CLI can't get otherwise: the backends are
             # internal-only, so the gateway fans out to each one's /health + /metrics.
             # The cached pressure sample surfaces the busy-policy state (#85).
-            pressure = self._current_pressure()
-            # A cache that cannot say when it sampled (a stand-in without the
-            # method, or none wired) leaves the sample time unknown, not "never".
+            # The sample time is read BEFORE the value: if a refresh lands in
+            # between, `at` is older than the reading, never newer. A cache
+            # that cannot say when it sampled (a stand-in without the method,
+            # or none wired) leaves the time unknown, not "never".
             read_sampled_at = getattr(self.pressure_cache, "sampled_at", None)
             sampled_at = read_sampled_at() if callable(read_sampled_at) else SAMPLE_TIME_UNKNOWN
+            pressure = self._current_pressure()
             self._send_json(
                 200,
                 fleet_status_payload(
-                    self.table, self.server_config, pressure, sampled_at=sampled_at
+                    self.table,
+                    self.server_config,
+                    pressure,
+                    sampled_at=sampled_at,
+                    pooled=_role_is_pooled(
+                        self.table, "main", self.replica_snapshot, mesh_snapshot
+                    ),
                 ),
             )
         elif route == "/v1/models":
