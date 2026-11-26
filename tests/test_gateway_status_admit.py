@@ -214,14 +214,122 @@ def _get_status(pressure: dict) -> dict:
 
 
 def test_get_status_carries_the_admission_signal() -> None:
+    # The one backend refuses the probe, so the gateway holds: nothing here
+    # could serve the work. The pressure sample itself is fresh and calm.
     payload = _get_status(_NO_PRESSURE)
-    assert payload["admit"] is True
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_UNREACHABLE
     assert _RFC3339_UTC.match(payload["at"])
     assert payload["stale_after_s"] == A.STALE_AFTER_S
-    assert "reason" not in payload
 
 
 def test_get_status_holds_under_pressure() -> None:
     payload = _get_status(_HIGH_SWAP)
     assert payload["admit"] is False
     assert payload["reason"] == "shed:swap"
+
+
+# --- findings from the review of PR #347 ------------------------------------
+
+
+def _unreachable_probe(base_url, *, timeout):  # noqa: ARG001 - matches _metrics.probe_backend
+    return {"health": "unreachable", "metrics": None}
+
+
+def test_cache_records_when_it_last_sampled_successfully() -> None:
+    cache = PressureCache(sampler=lambda: dict(_NO_PRESSURE), start=False, clock=lambda: _EPOCH)
+    assert cache.sampled_at() == _EPOCH
+
+
+def test_cache_that_never_sampled_has_no_sample_time() -> None:
+    def boom() -> dict:
+        raise OSError("unreadable")
+
+    assert PressureCache(sampler=boom, start=False, clock=lambda: _EPOCH).sampled_at() is None
+
+
+def test_status_holds_when_the_pressure_sample_never_succeeded() -> None:
+    payload = S.fleet_status_payload(
+        _table(), _cfg(), dict(_NO_PRESSURE), probe=_probe(), clock=lambda: _EPOCH, sampled_at=None
+    )
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_NO_SAMPLE
+    assert payload["at"] == _AT
+
+
+def test_status_stamps_the_sample_time_not_the_response_time() -> None:
+    payload = S.fleet_status_payload(
+        _table(),
+        _cfg(),
+        dict(_NO_PRESSURE),
+        probe=_probe(),
+        clock=lambda: _EPOCH + 4,
+        sampled_at=_EPOCH,
+    )
+    assert payload["admit"] is True
+    assert payload["at"] == _AT
+
+
+def test_status_holds_when_the_pressure_sample_is_stale() -> None:
+    late = _EPOCH + A.STALE_AFTER_S + 1
+    payload = S.fleet_status_payload(
+        _table(), _cfg(), dict(_NO_PRESSURE), probe=_probe(), clock=lambda: late, sampled_at=_EPOCH
+    )
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_STALE
+    assert payload["at"] == _AT
+
+
+def test_status_holds_when_no_backend_is_healthy() -> None:
+    payload = S.fleet_status_payload(
+        _table(), _cfg(), dict(_NO_PRESSURE), probe=_unreachable_probe, clock=lambda: _EPOCH
+    )
+    assert payload["admit"] is False
+    assert payload["reason"] == A.REASON_UNREACHABLE
+
+
+def test_status_admits_when_one_of_two_backends_is_healthy() -> None:
+    table = RoutingTable(
+        backends=(
+            Backend("primary", "http://p:8000", "P", "generate"),
+            Backend("second", "http://q:8000", "Q", "generate"),
+        ),
+        default_model="P",
+        aliases={},
+    )
+
+    def probe(base_url, *, timeout):  # noqa: ARG001
+        if "//p:" in base_url:
+            return {"health": "unreachable", "metrics": None}
+        return {"health": "ok", "metrics": {"running": 0, "waiting": 0}}
+
+    payload = S.fleet_status_payload(
+        table, _cfg(), dict(_NO_PRESSURE), probe=probe, clock=lambda: _EPOCH
+    )
+    assert payload["admit"] is True
+
+
+def test_a_shed_is_reported_before_an_unreachable_fleet() -> None:
+    payload = S.fleet_status_payload(
+        _table(), _cfg(), dict(_HIGH_SWAP), probe=_unreachable_probe, clock=lambda: _EPOCH
+    )
+    assert payload["reason"] == "shed:swap"
+
+
+def test_the_documented_reasons_are_the_ones_status_can_emit() -> None:
+    """`shed:engine` is not reachable from /status: it passes no engine load."""
+    doc = (
+        __import__("pathlib").Path(__file__).parent.parent / "docs" / "gateway-fleet.md"
+    ).read_text()
+    row = next(line for line in doc.splitlines() if line.lstrip().startswith("| `reason` |"))
+    assert "shed:engine" not in row
+    for reason in (
+        "shed:swap",
+        "shed:thermal",
+        "shed:iowait",
+        "waiting",
+        "unreachable",
+        "stale",
+        "no-sample",
+    ):
+        assert reason in row

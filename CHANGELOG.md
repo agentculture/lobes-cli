@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Gateway `GET /status` carries an admission signal (issue #346): top-level `admit` (bool), `at` (when the status was computed, RFC 3339 in UTC to the second), `stale_after_s` (10.0) and, only when `admit` is false, `reason` (`shed:swap`, `shed:thermal`, `shed:engine`, `shed:iowait` or `waiting`). The gateway holds when its pressure policy would shed a full-tier request or when any backend reports a waiting queue, so a caller does not rebuild the rule from `busy` and `pressure`. Additive: existing fields are unchanged, and the four keys are absent when no pressure sample is wired. Backend health is not part of the rule. The rule lives in `lobes/gateway/_admission.py`; documented in `docs/gateway-fleet.md`.
+- Gateway `GET /status` carries an admission signal (issue #346): top-level `admit` (bool), `at` (when the pressure sample behind the answer was taken, RFC 3339 in UTC to the second), `stale_after_s` (10.0) and, only when `admit` is false, `reason` (`no-sample`, `stale`, `shed:swap`, `shed:thermal`, `shed:iowait`, `unreachable` or `waiting`). The gateway holds when no pressure sample has succeeded or the last one is older than `stale_after_s`, when its pressure policy would shed a full-tier request, when no backend is healthy, or when any backend reports a waiting queue; otherwise it admits. The fields are additive and appear only when a pressure sample is wired; a reader that finds no `admit` treats the signal as not available. The rule lives in `lobes/gateway/_admission.py`; documented in `docs/gateway-fleet.md`.
 
 ## [0.98.1] - 2026-11-10
 

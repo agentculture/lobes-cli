@@ -76,7 +76,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
-from lobes.gateway._admission import admission
+from lobes.gateway._admission import SAMPLE_TIME_UNKNOWN, admission
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.lane_keys import lane_env_prefix
 
@@ -4598,6 +4598,7 @@ def fleet_status_payload(
     pressure: dict | None = None,
     probe=_metrics.probe_backend,
     clock: Callable[[], float] = time.time,
+    sampled_at: object = SAMPLE_TIME_UNKNOWN,
 ) -> dict:
     """Live status for every backend + an aggregate busy count + the endpoint list.
 
@@ -4620,8 +4621,12 @@ def fleet_status_payload(
     a rule from ``busy`` and ``pressure``. The rule lives in
     :mod:`lobes.gateway._admission`. Without *pressure* the gateway cannot
     answer, so all four are omitted: a reader that finds no ``admit`` treats
-    the signal as not available. *clock* is the epoch-seconds source for
-    ``at``, injectable for tests.
+    the signal as not available. *clock* is the epoch-seconds source,
+    injectable for tests. *sampled_at* is when the pressure sample last
+    SUCCEEDED (``PressureCache.sampled_at()``; ``None`` = never): ``at`` then
+    carries that instant, and a missing or stale sample holds admission rather
+    than reporting the zero baseline as an idle box. A fleet whose backends
+    are all unhealthy holds as well.
 
     Capacity (capacity-relative pool routing, t5): each HOSTED backend row
     additionally carries this box's own declared max-active-requests capacity
@@ -4706,6 +4711,8 @@ def fleet_status_payload(
                 shed_signal=d["shed_signal"],
                 waiting=waiting,
                 now=clock(),
+                healthy=(sum(1 for row in backends if row["health"] == "ok") if backends else None),
+                sampled_at=sampled_at,
             )
         )
     return payload
@@ -5912,7 +5919,16 @@ class _Handler(BaseHTTPRequestHandler):
             # internal-only, so the gateway fans out to each one's /health + /metrics.
             # The cached pressure sample surfaces the busy-policy state (#85).
             pressure = self._current_pressure()
-            self._send_json(200, fleet_status_payload(self.table, self.server_config, pressure))
+            # A cache that cannot say when it sampled (a stand-in without the
+            # method, or none wired) leaves the sample time unknown, not "never".
+            read_sampled_at = getattr(self.pressure_cache, "sampled_at", None)
+            sampled_at = read_sampled_at() if callable(read_sampled_at) else SAMPLE_TIME_UNKNOWN
+            self._send_json(
+                200,
+                fleet_status_payload(
+                    self.table, self.server_config, pressure, sampled_at=sampled_at
+                ),
+            )
         elif route == "/v1/models":
             self._get_v1_models(mesh_snapshot=mesh_snapshot)
         elif route == "/v1/models/supported":

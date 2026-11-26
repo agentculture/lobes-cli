@@ -23,6 +23,7 @@ decision-making core stays unit-testable offline:
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable
 
 from lobes.catalog import TIER_ROLE
@@ -191,12 +192,18 @@ class PressureCache:
         interval: float = 2.0,
         *,
         start: bool = True,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._sampler: Sampler = sampler or sample_pressure
         self._interval = interval
+        self._clock = clock
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        # Epoch seconds of the last sample that SUCCEEDED; None until one does.
+        # A failed sample degrades the value to zeros, which reads as "no
+        # pressure": this is what lets a reader tell that apart from a real idle.
+        self._sampled_at: float | None = None
         # Seed synchronously so the very first request never blocks on a sample.
         self._value: dict[str, float | None] = self._read()
         if start:
@@ -207,13 +214,25 @@ class PressureCache:
         try:
             sampled = self._sampler()
             thermal = sampled.get("thermal_c")
-            return {
+            value = {
                 "swap_used_percent": float(sampled.get("swap_used_percent") or 0.0),
                 "iowait_percent": float(sampled.get("iowait_percent") or 0.0),
                 "thermal_c": None if thermal is None else float(thermal),
             }
         except Exception:  # nosec B110 — pressure is best-effort; never crash the gateway
             return dict(_ZERO_PRESSURE)
+        self._sampled_at = self._clock()
+        return value
+
+    def sampled_at(self) -> float | None:
+        """Epoch seconds of the last successful sample, or ``None`` if none succeeded.
+
+        Kept apart from :meth:`current` so the pressure dict keeps its shape.
+        ``GET /status`` reads it to stamp and to distrust its admission answer
+        (issue #346): a sampler that fails, or a refresh thread that stalls,
+        leaves this behind while :meth:`current` goes on reporting zeros.
+        """
+        return self._sampled_at
 
     def current(self) -> dict[str, float | None]:
         """Return a copy of the cached pressure dict. Never samples, never blocks."""
