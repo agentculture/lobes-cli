@@ -344,7 +344,9 @@ request is the floor and is always served. There is no silent degrade and no
 the hard `502` (`type: upstream_unavailable`, all backends down); clients must
 honour `429` + `Retry-After` and retry with backoff. `X-Lobes-Override: true`
 forces the requested tier (served, not shed). `lobes status --pressure` and the
-gateway `GET /status` (`pressure` block) report the current busy state.
+gateway `GET /status` (`pressure` block) report the current busy state. `GET
+/status` also answers "start new work now?" directly: top-level `admit`
+(bool), `at` (RFC 3339, UTC), `stale_after_s`, and `reason` on a hold.
 
 ## Force-strict tool calling (opt-in, colleague#320)
 

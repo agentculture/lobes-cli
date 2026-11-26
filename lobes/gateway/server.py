@@ -63,6 +63,7 @@ import re
 import socket
 import sys
 import threading
+import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Collection, Mapping
@@ -75,6 +76,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from lobes import __version__, _metrics
 from lobes.catalog import SUPPORTED_MODELS
 from lobes.catalog import as_dicts as supported_models_catalog
+from lobes.gateway._admission import admission
 from lobes.gateway._authlog import RejectionLog, rejection_reason
 from lobes.lane_keys import lane_env_prefix
 
@@ -4595,6 +4597,7 @@ def fleet_status_payload(
     cfg: ServerConfig,
     pressure: dict | None = None,
     probe=_metrics.probe_backend,
+    clock: Callable[[], float] = time.time,
 ) -> dict:
     """Live status for every backend + an aggregate busy count + the endpoint list.
 
@@ -4609,6 +4612,16 @@ def fleet_status_payload(
     the ``reason`` and the raw swap/iowait numbers — so operators can see *why*
     callers are being told to wait (#85). Omitted entirely when *pressure* is
     ``None`` (no cache wired), keeping the payload back-compatible.
+
+    Admission (issue #346): with *pressure* supplied the payload also carries
+    four additive TOP-LEVEL fields — ``admit``, ``at`` (RFC 3339, UTC),
+    ``stale_after_s`` and, only on a hold, ``reason`` — so a caller deciding
+    whether to start work reads the gateway's own answer instead of rebuilding
+    a rule from ``busy`` and ``pressure``. The rule lives in
+    :mod:`lobes.gateway._admission`. Without *pressure* the gateway cannot
+    answer, so all four are omitted: a reader that finds no ``admit`` treats
+    the signal as not available. *clock* is the epoch-seconds source for
+    ``at``, injectable for tests.
 
     Capacity (capacity-relative pool routing, t5): each HOSTED backend row
     additionally carries this box's own declared max-active-requests capacity
@@ -4687,6 +4700,14 @@ def fleet_status_payload(
             payload["pressure"]["thermal_c"] = thermal_c
             payload["pressure"]["thermal_shedding"] = thermal_hot(thermal_c, latched)
             payload["pressure"]["shed_signal"] = d["shed_signal"]
+        payload.update(
+            admission(
+                shed=d["shed"],
+                shed_signal=d["shed_signal"],
+                waiting=waiting,
+                now=clock(),
+            )
+        )
     return payload
 
 

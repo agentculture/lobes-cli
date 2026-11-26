@@ -455,6 +455,37 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   cannot report in-flight counts, the top-level `busy` object gains
   `partial: true`; an all-vLLM fleet's payload is unchanged.
 
+  **Admission signal (issue #346).** For a caller that decides whether to
+  *start* work which will use this gateway, `/status` carries the gateway's own
+  answer as four additive top-level fields, so the caller does not rebuild a
+  rule from `busy` and `pressure`:
+
+  | Field | Type | Meaning |
+  | --- | --- | --- |
+  | `admit` | bool | `true`: the gateway wants new work now. `false`: hold. |
+  | `at` | string | When this status was computed: RFC 3339, UTC, to the second (`2026-11-26T12:00:00Z`). |
+  | `stale_after_s` | float | Treat the answer as unknown once it is older than this (`10.0`, five 2 s pressure samples). |
+  | `reason` | string | Only when `admit` is `false`: `shed:swap`, `shed:thermal`, `shed:engine`, `shed:iowait`, or `waiting`. |
+
+  The rule, in reporting order: the pressure policy would shed a full-tier
+  request (`pressure.shed`) → hold with `shed:<pressure.shed_signal>`; any
+  backend reports a waiting queue (`busy.waiting > 0`) → hold with `waiting`;
+  otherwise admit. `admit` is therefore never `true` while `pressure.shed` is
+  `true`. Three limits, stated rather than implied:
+
+  - It does **not** include backend health. A box whose lanes are all
+    `unreachable` and whose host is idle still says `admit: true`; read
+    `backends[].health` as well.
+  - A backend that exports no in-flight counts (`busy.partial`) contributes no
+    waiting queue, so `waiting` cannot fire for it.
+  - It is a full-tier answer. An explicit `hand` request is the servable floor
+    and is served even while `admit` is `false`.
+
+  A reader that finds no `admit` key treats the signal as **not available**:
+  that is every gateway older than 0.99.0, and a payload built without a
+  pressure sample. `at` is a string here; it is not an epoch number. The
+  endpoint is keyless, like `/health` and `/capabilities`.
+
 The gateway image is built from the scaffolded `Dockerfile.gateway`
 (`pip install lobes-cli==${MODEL_GEAR_VERSION}`, as a non-root user); `lobes init
 --fleet` pins `MODEL_GEAR_VERSION` to the running lobes-cli release. The version
