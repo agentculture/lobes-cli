@@ -455,6 +455,50 @@ A pure-stdlib (`http.server` + `http.client`, no third-party deps) reverse proxy
   cannot report in-flight counts, the top-level `busy` object gains
   `partial: true`; an all-vLLM fleet's payload is unchanged.
 
+  **Admission signal (issue #346).** For a caller that decides whether to
+  *start* work which will use this gateway, `/status` carries the gateway's own
+  answer as four additive top-level fields, so the caller does not rebuild a
+  rule from `busy` and `pressure`:
+
+  | Field | Type | Meaning |
+  | --- | --- | --- |
+  | `admit` | bool | `true`: the gateway wants new work now. `false`: hold. |
+  | `at` | string | When the pressure sample behind the answer was taken; when the gateway cannot say, when the status was computed. RFC 3339, UTC, to the second (`2026-11-26T12:00:00Z`). |
+  | `stale_after_s` | float | Treat the answer as unknown once `at` is older than this (`10.0`, five 2 s pressure samples). |
+  | `reason` | string | Only when `admit` is `false`: `no-sample`, `stale`, `shed:swap`, `shed:thermal`, `shed:iowait`, `unreachable`, or `waiting`. |
+
+  The rule, in reporting order:
+
+  1. the pressure reading is not a measurement, because the latest sample
+     failed or none has succeeded → `no-sample`;
+  2. the sample is older than `stale_after_s`, or stamped in the future after
+     a clock step → `stale`;
+  3. the pressure policy would shed a full-tier request (`pressure.shed`) →
+     `shed:<pressure.shed_signal>`;
+  4. no backend is healthy (`backends[].health`), which includes a fleet with
+     no backend → `unreachable`;
+  5. any backend reports a waiting queue (`busy.waiting > 0`) → `waiting`;
+  6. otherwise admit.
+
+  `admit` is therefore never `true` while `pressure.shed` is `true`. A failed
+  pressure sample reads as zeros in the `pressure` block; `no-sample` is
+  reported from the first failed sample on, so those zeros are never presented
+  as an idle box. The decision is the one a live full-tier request meets,
+  including the pool rule: a pooled box is not shed on iowait alone, so it is
+  not held on it either. Limits, stated rather than implied:
+
+  - The policy's `engine` shed signal needs the engine's load, which `/status`
+    does not pass, so no engine-based reason appears here.
+  - A backend that exports no in-flight counts (`busy.partial`) contributes no
+    waiting queue, so `waiting` cannot fire for it.
+  - It is a full-tier answer. An explicit `hand` request is the servable floor
+    and is served even while `admit` is `false`.
+
+  A reader that finds no `admit` key treats the signal as **not available**:
+  that is every gateway older than 0.99.0, and a payload built without a
+  pressure sample. `at` is a string here; it is not an epoch number. The
+  endpoint is keyless, like `/health` and `/capabilities`.
+
 The gateway image is built from the scaffolded `Dockerfile.gateway`
 (`pip install lobes-cli==${MODEL_GEAR_VERSION}`, as a non-root user); `lobes init
 --fleet` pins `MODEL_GEAR_VERSION` to the running lobes-cli release. The version

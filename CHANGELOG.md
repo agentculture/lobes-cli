@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.99.0] - 2026-11-26
+
+### Added
+
+- Gateway `GET /status` carries an admission signal (issue #346): top-level `admit` (bool), `at` (when the pressure sample behind the answer was taken, or when the status was computed if the gateway cannot say; RFC 3339 in UTC to the second), `stale_after_s` (10.0) and, only when `admit` is false, `reason` (`no-sample`, `stale`, `shed:swap`, `shed:thermal`, `shed:iowait`, `unreachable` or `waiting`). The gateway holds when the latest pressure sample failed or none has succeeded, when the sample is older than `stale_after_s` or stamped in the future, when its pressure policy would shed a full-tier request (a pooled box is not held on iowait alone, as on the request path), when no backend is healthy, or when any backend reports a waiting queue; otherwise it admits. The fields are additive and appear only when a pressure sample is wired; a reader that finds no `admit` treats the signal as not available. `PressureCache` gains `sampled_at()` and `refresh()`. The rule lives in `lobes/gateway/_admission.py`; documented in `docs/gateway-fleet.md`.
+
 ## [0.98.1] - 2026-11-10
 
 ### Added

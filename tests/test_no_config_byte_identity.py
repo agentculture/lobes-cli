@@ -184,6 +184,9 @@ def _fake_probe(_url, timeout):  # noqa: ARG001 - signature must match _metrics.
     return {"health": "ok", "metrics": {"running": 0, "waiting": 0}}
 
 
+# The `/status` keys issue #346 added after the golden was captured.
+_ADMISSION_KEYS = ("admit", "at", "stale_after_s", "reason")
+
 _STATUS_CASES = {
     "status-warm": _NO_PRESSURE,
     "status-busy": _HIGH,
@@ -560,7 +563,18 @@ def test_status_is_byte_identical_to_the_pre_pool_golden(case: str) -> None:
     # measured capacity of nothing.
     table, cfg = build_config(_env())
     payload = S.fleet_status_payload(table, cfg, pressure=_STATUS_CASES[case], probe=_fake_probe)
-    assert json.loads(json.dumps(payload)) == _GOLDEN[case]
+    observed = json.loads(json.dumps(payload))
+    # Issue #346 (adjudicated, not a refreshed fixture): `/status` gained the
+    # admission signal as ADDITIVE top-level keys, present only when a pressure
+    # sample is wired. The golden stays the pre-pool capture; those keys are
+    # set aside by name and everything else must still match it exactly, so
+    # any OTHER new key fails here as before.
+    added = {key: observed.pop(key) for key in _ADMISSION_KEYS if key in observed}
+    if _STATUS_CASES[case] is None:
+        assert added == {}
+    else:
+        assert {"admit", "at", "stale_after_s"} <= set(added)
+    assert observed == _GOLDEN[case]
     for row in payload["backends"]:
         assert "max_active" not in row  # the t5 capacity key, by any spelling
         assert set(row) == {"name", "task", "served_name", "health", "metrics"}
